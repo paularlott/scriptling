@@ -273,6 +273,62 @@ func TestBuiltinIterablesOnDictViewsSetsStrings(t *testing.T) {
 		// multi-arg form still works (regression guard)
 		{name: "min multi-arg", script: `min(5, 2, 8)`, expected: `2`},
 		{name: "max multi-arg", script: `max(5, 2, 8)`, expected: `8`},
+		// key function: the item whose key wins is returned, not the key
+		{name: "max key returns original item", script: `max([{"v": 1, "n": "a"}, {"v": 3, "n": "b"}, {"v": 2, "n": "c"}], key=lambda r: r["v"])["n"]`, expected: `b`},
+		{name: "min key returns original item", script: `min([{"v": 1, "n": "a"}, {"v": 3, "n": "b"}, {"v": 2, "n": "c"}], key=lambda r: r["v"])["n"]`, expected: `a`},
+		{name: "min key builtin len", script: `min(["pear", "fig", "banana"], key=len)`, expected: `fig`},
+		{name: "max key builtin len", script: `max(["pear", "fig", "banana"], key=len)`, expected: `banana`},
+		{name: "max key ties keep first", script: `max([{"v": 5, "t": 1}, {"v": 5, "t": 2}], key=lambda r: r["v"])["t"]`, expected: `1`},
+		{name: "min key ties keep first", script: `min([{"v": 5, "t": 1}, {"v": 5, "t": 2}], key=lambda r: r["v"])["t"]`, expected: `1`},
+		{name: "max key with multiple arguments", script: `max({"v": 1}, {"v": 9}, key=lambda r: r["v"])["v"]`, expected: `9`},
+		{name: "max key None means no key", script: `max([1, 2], key=None)`, expected: `2`},
+		// default for empty iterables
+		{name: "max empty with default", script: `max([], default="none")`, expected: `none`},
+		{name: "min empty with default", script: `min([], default=0)`, expected: `0`},
+		{name: "max empty without default errors", script: `def f():
+    return max([])
+msg = "no error"
+try:
+    f()
+except Exception as e:
+    msg = str(e)
+msg`, expected: `max() arg is an empty sequence`},
+		{name: "max default rejected with multiple args", script: `def f():
+    return max(1, 2, default=0)
+msg = "no error"
+try:
+    f()
+except Exception as e:
+    msg = str(e)
+msg`, expected: `Cannot specify a default for max() with multiple arguments`},
+		{name: "min default rejected with multiple args", script: `def f():
+    return min(1, 2, default=0)
+msg = "no error"
+try:
+    f()
+except Exception as e:
+    msg = str(e)
+msg`, expected: `Cannot specify a default for min() with multiple arguments`},
+		// booleans order as 0 and 1, against each other and against numbers
+		{name: "min bools", script: `min([True, False])`, expected: `False`},
+		{name: "max bools", script: `max([False, True])`, expected: `True`},
+		{name: "min bool multi-arg", script: `min(True, False, True)`, expected: `False`},
+		{name: "max with bool among numbers", script: `max(0, True, 2)`, expected: `2`},
+		{name: "min tie between 1 and True keeps first", script: `str(min(1, True))`, expected: `1`},
+		{name: "max tie between True and 1 keeps first", script: `str(max(True, 1))`, expected: `True`},
+		{name: "sorted bools", script: `sorted([True, False, True])`, expected: `[False, True, True]`},
+		{name: "sorted mixed bool and int stable", script: `sorted([2, True, 0, False, 1])`, expected: `[0, False, True, 1, 2]`},
+		{name: "sorted mixed bool and float", script: `str(sorted([1.5, True, 0.5]))`, expected: `[0.5, True, 1.5]`},
+		{name: "max key returning bool", script: `max([{"ok": False, "n": "a"}, {"ok": True, "n": "b"}], key=lambda r: r["ok"])["n"]`, expected: `b`},
+		{name: "tuple ordering with bools", script: `str(min([(True, "x"), (False, "y")]))`, expected: `(False, y)`},
+		{name: "sorted bool vs string still errors", script: `def f():
+    return sorted([True, "x"])
+msg = "no error"
+try:
+    f()
+except Exception as e:
+    msg = str(e)
+msg`, expected: `cannot compare STRING with BOOLEAN`},
 	}
 
 	for _, tt := range tests {

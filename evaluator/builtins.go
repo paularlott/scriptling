@@ -22,6 +22,7 @@ var (
 	mapFunction    func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 	filterFunction func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 	sortedFunction func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
+	minMaxFunction func(ctx context.Context, kwargs object.Kwargs, wantMax bool, args ...object.Object) object.Object
 	helpFunction   func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 	dirFunction    func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 	iterFunction   func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
@@ -769,99 +770,39 @@ Works with both integers and floats.`,
 	},
 	"min": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) == 0 {
-				return errors.NewError("min() requires at least 1 argument")
-			}
-			// If single argument, treat as iterable
-			if len(args) == 1 {
-				// Fast path for FloatArray.
-				if fa, ok := args[0].(*object.FloatArray); ok {
-					if len(fa.Data) == 0 {
-						return errors.NewError("min() arg is an empty sequence")
-					}
-					minVal := fa.Data[0]
-					for _, v := range fa.Data[1:] {
-						if v < minVal {
-							minVal = v
-						}
-					}
-					return object.NewFloat(minVal)
-				}
-				// Any other iterable: list, tuple, string, set, dict, dict views, iterator.
-				if elements, ok, rerr := iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx)); rerr != nil {
-					return rerr
-				} else if ok {
-					if len(elements) == 0 {
-						return errors.NewError("min() arg is an empty sequence")
-					}
-					args = elements
-				}
-			}
-			minVal := args[0]
-			env := GetEnvFromContext(ctx)
-			for _, arg := range args[1:] {
-				cmp, raised := compareObjectsCtx(ctx, minVal, arg, env)
-				if raised != nil {
-					return raised
-				}
-				if cmp > 0 {
-					minVal = arg
-				}
-			}
-			return minVal
+			return minMaxFunction(ctx, kwargs, false, args...)
 		},
-		HelpText: `min(iterable) or min(a, b, c, ...) - Return the smallest item
+		HelpText: `min(iterable, [key], [default]) or min(a, b, c, ..., [key]) - Return the smallest item
 
 With a single iterable argument, returns its smallest item.
-With multiple arguments, returns the smallest argument.`,
+With multiple arguments, returns the smallest argument.
+key (a function) computes the comparison value for each item; the item with
+the smallest key is returned, not the key itself. Ties keep the first item.
+default is returned when a single iterable argument is empty (it cannot be
+combined with multiple arguments).
+
+Example:
+  min([3, 1, 2])                          # 1
+  min(words, key=lambda w: len(w))         # shortest word
+  min([], default=None)                    # None`,
 	},
 	"max": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if len(args) == 0 {
-				return errors.NewError("max() requires at least 1 argument")
-			}
-			// If single argument, treat as iterable
-			if len(args) == 1 {
-				// Fast path for FloatArray.
-				if fa, ok := args[0].(*object.FloatArray); ok {
-					if len(fa.Data) == 0 {
-						return errors.NewError("max() arg is an empty sequence")
-					}
-					maxVal := fa.Data[0]
-					for _, v := range fa.Data[1:] {
-						if v > maxVal {
-							maxVal = v
-						}
-					}
-					return object.NewFloat(maxVal)
-				}
-				// Any other iterable: list, tuple, string, set, dict, dict views, iterator.
-				if elements, ok, rerr := iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx)); rerr != nil {
-					return rerr
-				} else if ok {
-					if len(elements) == 0 {
-						return errors.NewError("max() arg is an empty sequence")
-					}
-					args = elements
-				}
-			}
-			maxVal := args[0]
-			env := GetEnvFromContext(ctx)
-			for _, arg := range args[1:] {
-				cmp, raised := compareObjectsCtx(ctx, maxVal, arg, env)
-				if raised != nil {
-					return raised
-				}
-				if cmp < 0 {
-					maxVal = arg
-				}
-			}
-			return maxVal
+			return minMaxFunction(ctx, kwargs, true, args...)
 		},
-		HelpText: `max(iterable) or max(a, b, c, ...) - Return the largest item
+		HelpText: `max(iterable, [key], [default]) or max(a, b, c, ..., [key]) - Return the largest item
 
 With a single iterable argument, returns its largest item.
-With multiple arguments, returns the largest argument.`,
+With multiple arguments, returns the largest argument.
+key (a function) computes the comparison value for each item; the item with
+the largest key is returned, not the key itself. Ties keep the first item.
+default is returned when a single iterable argument is empty (it cannot be
+combined with multiple arguments).
+
+Example:
+  max([3, 1, 2])                          # 3
+  max(records, key=lambda r: r["amount"]) # record with the highest amount
+  max([], default=None)                    # None`,
 	},
 	"round": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -2138,6 +2079,26 @@ func compareObjectsCtx(ctx context.Context, a, b object.Object, env *object.Envi
 	return compareObjects(a, b), nil
 }
 
+// boolNumber returns 0 or 1 for a boolean, giving booleans Python's ordering:
+// False < True, and booleans order against numbers as 0 and 1.
+func boolNumber(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// cmpFloats compares two numbers for the boolean/number ordering arms.
+func cmpFloats(a, b float64) int {
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
+}
+
 func compareObjects(a, b object.Object) int {
 	switch av := a.(type) {
 	case *object.Integer:
@@ -2157,6 +2118,8 @@ func compareObjects(a, b object.Object) int {
 				return 1
 			}
 			return 0
+		case *object.Boolean:
+			return cmpFloats(float64(av.IntValue()), boolNumber(bv.BoolValue()))
 		}
 	case *object.Float:
 		switch bv := b.(type) {
@@ -2175,6 +2138,18 @@ func compareObjects(a, b object.Object) int {
 				return 1
 			}
 			return 0
+		case *object.Boolean:
+			return cmpFloats(av.FloatValue(), boolNumber(bv.BoolValue()))
+		}
+	case *object.Boolean:
+		af := boolNumber(av.BoolValue())
+		switch bv := b.(type) {
+		case *object.Boolean:
+			return cmpFloats(af, boolNumber(bv.BoolValue()))
+		case *object.Integer:
+			return cmpFloats(af, float64(bv.IntValue()))
+		case *object.Float:
+			return cmpFloats(af, bv.FloatValue())
 		}
 	case *object.String:
 		if bv, ok := b.(*object.String); ok {
@@ -2225,6 +2200,7 @@ func init() {
 	mapFunction = mapFunctionImpl
 	filterFunction = filterFunctionImpl
 	sortedFunction = sortedFunctionImpl
+	minMaxFunction = minMaxFunctionImpl
 	helpFunction = helpFunctionImpl
 	dirFunction = dirFunctionImpl
 	iterFunction = iterFunctionImpl
@@ -2348,6 +2324,8 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 					} else if lf > r.FloatValue() {
 						cmp = 1
 					}
+				} else if r, ok := right.(*object.Boolean); ok {
+					cmp = cmpFloats(float64(l.IntValue()), boolNumber(r.BoolValue()))
 				} else {
 					sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
 				}
@@ -2365,6 +2343,18 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 					} else if l.FloatValue() > rf {
 						cmp = 1
 					}
+				} else if r, ok := right.(*object.Boolean); ok {
+					cmp = cmpFloats(l.FloatValue(), boolNumber(r.BoolValue()))
+				} else {
+					sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
+				}
+			case *object.Boolean:
+				if r, ok := right.(*object.Boolean); ok {
+					cmp = cmpFloats(boolNumber(l.BoolValue()), boolNumber(r.BoolValue()))
+				} else if r, ok := right.(*object.Integer); ok {
+					cmp = cmpFloats(boolNumber(l.BoolValue()), float64(r.IntValue()))
+				} else if r, ok := right.(*object.Float); ok {
+					cmp = cmpFloats(boolNumber(l.BoolValue()), r.FloatValue())
 				} else {
 					sortErr = errors.NewError("cannot compare %s with %s", left.Type(), right.Type())
 				}
@@ -3051,4 +3041,118 @@ func GetImportBuiltin() *object.Builtin {
 			return &object.Null{}
 		},
 	}
+}
+
+// minMaxFunction implements both min() and max() (wantMax picks which).
+// Both accept a single iterable or multiple arguments, an optional key
+// function (the item whose key wins is returned, never the key itself, ties
+// keep the first item) and, for the single-iterable form only, a default for
+// an empty input, mirroring Python's semantics.
+func minMaxFunctionImpl(ctx context.Context, kwargs object.Kwargs, wantMax bool, args ...object.Object) object.Object {
+	name := "min"
+	if wantMax {
+		name = "max"
+	}
+	if len(args) == 0 {
+		return errors.NewError("%s() requires at least 1 argument", name)
+	}
+
+	// Optional key function: builtin, function, or lambda, like sorted().
+	var keyFunc object.Object
+	if k := kwargs.Get("key"); k != nil {
+		switch k.(type) {
+		case *object.Builtin, *object.Function, *object.LambdaFunction:
+			keyFunc = k
+		case *object.Null:
+			// key=None means no key, as in Python.
+		default:
+			return errors.NewError("%s() key parameter must be a function", name)
+		}
+	}
+
+	// Optional default, only for the single-iterable form (as in Python).
+	var defaultVal object.Object
+	hasDefault := false
+	if d := kwargs.Get("default"); d != nil {
+		defaultVal = d
+		hasDefault = true
+		if len(args) > 1 {
+			return errors.NewError("Cannot specify a default for %s() with multiple arguments", name)
+		}
+	}
+
+	// Single argument is treated as an iterable (the FloatArray fast path
+	// only applies without a key function, which needs per-element calls).
+	if len(args) == 1 {
+		if keyFunc == nil {
+			if fa, ok := args[0].(*object.FloatArray); ok {
+				if len(fa.Data) == 0 {
+					if hasDefault {
+						return defaultVal
+					}
+					return errors.NewError("%s() arg is an empty sequence", name)
+				}
+				best := fa.Data[0]
+				for _, v := range fa.Data[1:] {
+					if (wantMax && v > best) || (!wantMax && v < best) {
+						best = v
+					}
+				}
+				return object.NewFloat(best)
+			}
+		}
+		// Any other iterable: list, tuple, string, set, dict, dict views, iterator.
+		if elements, ok, rerr := iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx)); rerr != nil {
+			return rerr
+		} else if ok {
+			if len(elements) == 0 {
+				if hasDefault {
+					return defaultVal
+				}
+				return errors.NewError("%s() arg is an empty sequence", name)
+			}
+			args = elements
+		}
+	}
+
+	// keyFor computes an element's comparison value, calling keyFunc when set.
+	env := GetEnvFromContext(ctx)
+	keyFor := func(elem object.Object) (object.Object, object.Object) {
+		if keyFunc == nil {
+			return elem, nil
+		}
+		var key object.Object
+		switch fn := keyFunc.(type) {
+		case *object.Builtin:
+			key = fn.Fn(ctx, object.NewKwargs(nil), elem)
+		case *object.Function, *object.LambdaFunction:
+			key = applyFunctionWithContext(ctx, fn, []object.Object{elem}, nil, env)
+		}
+		if object.IsError(key) || isRaised(key) {
+			return nil, key
+		}
+		return key, nil
+	}
+
+	best := args[0]
+	bestKey, rerr := keyFor(best)
+	if rerr != nil {
+		return rerr
+	}
+	for _, arg := range args[1:] {
+		key, rerr := keyFor(arg)
+		if rerr != nil {
+			return rerr
+		}
+		cmp, raised := compareObjectsCtx(ctx, bestKey, key, env)
+		if raised != nil {
+			return raised
+		}
+		// Strict comparison: ties keep the first item, as in Python.
+		if (wantMax && cmp < 0) || (!wantMax && cmp > 0) {
+			best = arg
+			bestKey = key
+		}
+	}
+	return best
 }
