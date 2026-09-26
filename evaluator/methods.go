@@ -908,7 +908,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 			// incomparable is an error rather than a silent no-op (which is
 			// what compareObjects' 0-for-incomparable would do here).
 			var sortErr object.Object
-			sort.Slice(indices, func(i, j int) bool {
+			sort.SliceStable(indices, func(i, j int) bool {
 				var left, right object.Object
 				if keys != nil {
 					left, right = keys[indices[i]], keys[indices[j]]

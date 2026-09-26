@@ -575,6 +575,12 @@ Returns a view object of (key, value) pairs for all items in the dictionary.`,
 					return errors.ParameterError("start", err)
 				}
 				start = startObj
+			} else if kwargs.Has("start") {
+				startObj, err := kwargs.Get("start").AsInt()
+				if err != nil {
+					return errors.ParameterError("start", err)
+				}
+				start = startObj
 			}
 			// Validate iterable type; instances run the iterator protocol.
 			iterArg, rerr := acceptInstanceIterableFn(ctx, args[0])
@@ -833,7 +839,8 @@ Example:
 				return errors.NewError("round() takes 1 or 2 arguments (%d given)", len(args))
 			}
 			ndigits := 0
-			if len(args) == 2 {
+			gaveNdigits := len(args) == 2
+			if gaveNdigits {
 				nd, err := args[1].AsInt()
 				if err != nil {
 					return errors.ParameterError("ndigits", err)
@@ -841,31 +848,47 @@ Example:
 				ndigits = int(nd)
 			}
 			var value float64
+			wasInt := false
 			switch num := args[0].(type) {
 			case *object.Integer:
 				if ndigits >= 0 {
 					return num
 				}
+				wasInt = true
 				value = float64(num.IntValue())
 			case *object.Float:
 				value = num.FloatValue()
 			default:
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
-			if ndigits == 0 {
-				return object.NewInteger(int64(math.Round(value)))
+			if !gaveNdigits {
+				return object.NewInteger(int64(roundHalfEven(value)))
+			}
+			if ndigits >= 0 {
+				// FormatFloat rounds the true binary value to ndigits decimal
+				// places with ties to even, which is exactly Python's
+				// round(float, n). The multiply-by-10^n approach is not: it
+				// can land on a binary tie the real value doesn't have
+				// (round(2.675, 2) would give 2.68 instead of 2.67).
+				f, err := strconv.ParseFloat(strconv.FormatFloat(value, 'f', ndigits, 64), 64)
+				if err != nil {
+					return errors.NewError("round() cannot represent the rounded value")
+				}
+				return object.NewFloat(f)
 			}
 			multiplier := math.Pow(10, float64(ndigits))
-			rounded := math.Round(value*multiplier) / multiplier
-			if ndigits < 0 {
+			rounded := roundHalfEven(value*multiplier) / multiplier
+			// Python: negative ndigits keeps the input's type (int in, int
+			// out; float in, float out).
+			if wasInt {
 				return object.NewInteger(int64(rounded))
 			}
 			return object.NewFloat(rounded)
 		},
 		HelpText: `round(number[, ndigits]) - Round a number to given precision
 
-Rounds to ndigits decimal places (default 0).
-Returns an integer if ndigits is omitted or 0.`,
+Rounds to ndigits decimal places (default 0), ties going to the even digit
+like Python. Returns an integer if ndigits is omitted or 0.`,
 	},
 	"hex": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -2111,6 +2134,23 @@ func boolNumber(b bool) float64 {
 	return 0
 }
 
+// roundHalfEven rounds to the nearest integer with exact .5 ties going to
+// the even neighbor, matching Python's round(). math.Round would send ties
+// away from zero instead.
+func roundHalfEven(v float64) float64 {
+	floor := math.Floor(v)
+	switch diff := v - floor; {
+	case diff > 0.5:
+		return floor + 1
+	case diff < 0.5:
+		return floor
+	}
+	if math.Mod(floor, 2) == 0 {
+		return floor
+	}
+	return floor + 1
+}
+
 
 // compareForSort orders two values for sorted() and list.sort(): numbers
 // order together (booleans as 0 and 1), strings lexicographically, tuples
@@ -2386,7 +2426,7 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 
 		// Sort indices
 		sortEnv := GetEnvFromContext(ctx)
-		sort.Slice(indices, func(i, j int) bool {
+		sort.SliceStable(indices, func(i, j int) bool {
 			var left, right object.Object
 			if keys != nil {
 				left, right = keys[indices[i]], keys[indices[j]]

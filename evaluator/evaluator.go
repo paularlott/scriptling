@@ -1084,7 +1084,13 @@ func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object
 		if rightVal == 0 {
 			return errors.NewZeroDivisionError()
 		}
-		return object.NewInteger(leftVal / rightVal)
+		// Python floors toward negative infinity; Go truncates toward zero,
+		// so adjust when the signs differ and the division is inexact.
+		q := leftVal / rightVal
+		if leftVal%rightVal != 0 && (leftVal < 0) != (rightVal < 0) {
+			q--
+		}
+		return object.NewInteger(q)
 	case ast.OpPow:
 		if rightVal < 0 {
 			return evalFloatInfixValues(ast.OpPow, float64(leftVal), float64(rightVal))
@@ -1107,7 +1113,13 @@ func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object
 		if rightVal == 0 {
 			return errors.NewZeroDivisionError()
 		}
-		return object.NewInteger(leftVal % rightVal)
+		// Python's % takes the sign of the divisor; Go's takes the sign of
+		// the dividend, so fold the remainder over when they disagree.
+		m := leftVal % rightVal
+		if m != 0 && (m < 0) != (rightVal < 0) {
+			m += rightVal
+		}
+		return object.NewInteger(m)
 	case ast.OpBitAnd:
 		return object.NewInteger(leftVal & rightVal)
 	case ast.OpBitOr:
@@ -1177,6 +1189,16 @@ func evalFloatInfixValues(operator ast.Op, leftVal, rightVal float64) object.Obj
 			return errors.NewZeroDivisionError()
 		}
 		return object.NewFloat(math.Floor(leftVal / rightVal))
+	case ast.OpMod:
+		if rightVal == 0 {
+			return errors.NewZeroDivisionError()
+		}
+		// Python's % takes the sign of the divisor, like the integer path.
+		m := math.Mod(leftVal, rightVal)
+		if m != 0 && (m < 0) != (rightVal < 0) {
+			m += rightVal
+		}
+		return object.NewFloat(m)
 	case ast.OpPow:
 		return object.NewFloat(math.Pow(leftVal, rightVal))
 	case ast.OpLt:
@@ -3039,6 +3061,48 @@ func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.Augm
 				for k, v := range r.Pairs {
 					cur.Pairs[k] = v
 				}
+				return NULL
+			}
+		}
+	}
+
+	// Fast path: list += list extends and list *= n repeats in place, since
+	// Python's list iadd/imul mutate and aliases observe the update.
+	if cur, ok := currentVal.(*object.List); ok {
+		switch node.Operator {
+		case ast.OpAddEq:
+			if r, ok := newVal.(*object.List); ok {
+				cur.Elements = append(cur.Elements, r.Elements...)
+				return NULL
+			}
+		case ast.OpMulEq:
+			if r, ok := newVal.(*object.Integer); ok {
+				elements, errObj := repeatElements(cur.Elements, r.IntValue())
+				if errObj != nil {
+					return errObj
+				}
+				cur.Elements = elements
+				return NULL
+			}
+		}
+	}
+
+	// Fast path: set augmented operators mutate in place, matching Python
+	// (set __ior__ and friends are in-place updates).
+	if cur, ok := currentVal.(*object.Set); ok {
+		if r, ok := newVal.(*object.Set); ok {
+			switch node.Operator {
+			case ast.OpBitOrEq:
+				cur.InPlaceUnion(r)
+				return NULL
+			case ast.OpBitAndEq:
+				cur.InPlaceIntersection(r)
+				return NULL
+			case ast.OpSubEq:
+				cur.InPlaceDifference(r)
+				return NULL
+			case ast.OpBitXorEq:
+				cur.InPlaceSymmetricDifference(r)
 				return NULL
 			}
 		}

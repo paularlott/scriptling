@@ -88,6 +88,43 @@ func (s *Set) Union(other *Set) *Set {
 	return result
 }
 
+// InPlaceUnion merges other into s (Python's s |= other). Aliases of s
+// observe the update.
+func (s *Set) InPlaceUnion(other *Set) {
+	for key, e := range other.Elements {
+		s.AddKeyed(key, e)
+	}
+}
+
+// InPlaceIntersection keeps only elements of s that are also in other
+// (Python's s &= other).
+func (s *Set) InPlaceIntersection(other *Set) {
+	for key := range s.Elements {
+		if _, ok := other.Elements[key]; !ok {
+			delete(s.Elements, key)
+		}
+	}
+}
+
+// InPlaceDifference removes other's elements from s (Python's s -= other).
+func (s *Set) InPlaceDifference(other *Set) {
+	for key := range other.Elements {
+		delete(s.Elements, key)
+	}
+}
+
+// InPlaceSymmetricDifference keeps elements in exactly one of s and other
+// (Python's s ^= other).
+func (s *Set) InPlaceSymmetricDifference(other *Set) {
+	for key, e := range other.Elements {
+		if _, ok := s.Elements[key]; ok {
+			delete(s.Elements, key)
+		} else {
+			s.AddKeyed(key, e)
+		}
+	}
+}
+
 // Intersection returns a new set with elements common to both sets
 func (s *Set) Intersection(other *Set) *Set {
 	result := NewSet()

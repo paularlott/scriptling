@@ -110,7 +110,7 @@ result = 7 // 2
 assert result == 3
 
 result = -7 // 2
-assert result == -3
+assert result == -4
 
 result = 10 // 3
 assert result == 3

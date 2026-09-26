@@ -104,8 +104,8 @@ func TestFoldIntegerDivision(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected *IntegerLiteral, got %T", result)
 		}
-		if lit.Value != -3 {
-			t.Errorf("got %d, want -3 (matching runtime truncation)", lit.Value)
+		if lit.Value != -4 {
+			t.Errorf("got %d, want -4 (Python floor division)", lit.Value)
 		}
 	})
 
@@ -126,8 +126,8 @@ func TestFoldIntegerDivision(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected *IntegerLiteral, got %T", result)
 		}
-		if lit.Value != -1 {
-			t.Errorf("got %d, want -1 (matching runtime)", lit.Value)
+		if lit.Value != 1 {
+			t.Errorf("got %d, want 1 (Python modulo takes the divisor's sign)", lit.Value)
 		}
 	})
 
@@ -1030,8 +1030,8 @@ func TestFoldFloorDivInt(t *testing.T) {
 		expected int64
 	}{
 		{"10 / 3", 10, 3, 3},
-		{"-7 / 2", -7, 2, -3},
-		{"7 / -2", 7, -2, -3},
+		{"-7 / 2", -7, 2, -4},
+		{"7 / -2", 7, -2, -4},
 		{"-7 / -2", -7, -2, 3},
 		{"0 / 5", 0, 5, 0},
 	}
@@ -1053,8 +1053,8 @@ func TestFoldModInt(t *testing.T) {
 		expected int64
 	}{
 		{"10 % 3", 10, 3, 1},
-		{"-7 % 2", -7, 2, -1},
-		{"7 % -2", 7, -2, 1},
+		{"-7 % 2", -7, 2, 1},
+		{"7 % -2", 7, -2, -1},
 		{"-7 % -2", -7, -2, -1},
 		{"0 % 5", 0, 5, 0},
 	}

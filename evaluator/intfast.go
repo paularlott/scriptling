@@ -64,7 +64,7 @@ func evalIntOperand(node ast.Expression, env *object.Environment) (int64, bool) 
 }
 
 // applyIntFastOp mirrors the integer cases of evalIntegerInfixExpression
-// exactly, including its Go-style truncating // and %. Cases that must raise an
+// exactly, including its Python-style flooring // and %. Cases that must raise an
 // error (division by zero, negative shift counts) return ok=false so the normal
 // path produces the error object.
 func applyIntFastOp(op ast.Op, l, r int64) (int64, bool) {
@@ -79,12 +79,20 @@ func applyIntFastOp(op ast.Op, l, r int64) (int64, bool) {
 		if r == 0 {
 			return 0, false
 		}
-		return l / r, true
+		q := l / r
+		if l%r != 0 && (l < 0) != (r < 0) {
+			q--
+		}
+		return q, true
 	case ast.OpMod:
 		if r == 0 {
 			return 0, false
 		}
-		return l % r, true
+		m := l % r
+		if m != 0 && (m < 0) != (r < 0) {
+			m += r
+		}
+		return m, true
 	case ast.OpBitAnd:
 		return l & r, true
 	case ast.OpBitOr:

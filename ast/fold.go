@@ -552,14 +552,24 @@ func tryFoldPrefix(op Op, right Expression) Expression {
 	return nil
 }
 
-// floorDivInt computes integer floor division matching the evaluator's behavior.
+// floorDivInt computes integer floor division matching the evaluator's
+// behavior: Python floors toward negative infinity, Go truncates toward zero.
 func floorDivInt(a, b int64) int64 {
-	return a / b
+	q := a / b
+	if a%b != 0 && (a < 0) != (b < 0) {
+		q--
+	}
+	return q
 }
 
-// modInt computes integer modulo matching the evaluator's behavior.
+// modInt computes integer modulo matching the evaluator's behavior: Python's
+// % takes the sign of the divisor, Go's takes the sign of the dividend.
 func modInt(a, b int64) int64 {
-	return a % b
+	m := a % b
+	if m != 0 && (m < 0) != (b < 0) {
+		m += b
+	}
+	return m
 }
 
 // safeIPow computes a**b for integers. Returns nil on overflow or invalid input.
