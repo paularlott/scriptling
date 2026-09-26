@@ -1,13 +1,10 @@
 package main
 
 import (
-	"archive/zip"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/paularlott/cli"
@@ -62,7 +59,12 @@ func packCmd() *cli.Command {
 				return nil
 			}
 			if cmd.GetBool("list") {
-				return listPackage(cmd.GetStringArg("dir"))
+				summary, err := pack.ListPackage(cmd.GetStringArg("dir"))
+				if err != nil {
+					return err
+				}
+				fmt.Print(summary)
+				return nil
 			}
 			output := cmd.GetString("output")
 			if output == "" {
@@ -234,80 +236,3 @@ func (b bytesReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	return copy(p, b[off:]), nil
 }
 
-// listPackage prints a package's manifest, its convention directories with
-// per-directory file counts, and the sha256: a pre-deploy sanity check for
-// what actually shipped in the artifact.
-func listPackage(path string) error {
-	zr, err := zip.OpenReader(path)
-	if err != nil {
-		return fmt.Errorf("failed to open package: %w", err)
-	}
-	defer zr.Close()
-
-	byDir := map[string][]string{}
-	var manifestName, manifestVersion, manifestServe string
-	var total int
-	for _, f := range zr.File {
-		if f.FileInfo().IsDir() {
-			continue
-		}
-		parts := strings.SplitN(f.Name, "/", 2)
-		dir := "(root)"
-		if len(parts) == 2 {
-			dir = parts[0]
-		}
-		byDir[dir] = append(byDir[dir], f.Name)
-		total++
-		if f.Name == "manifest.toml" {
-			if data, err := readZipFile(f); err == nil {
-				for _, line := range strings.Split(string(data), "\n") {
-					line = strings.TrimSpace(line)
-					for _, key := range []string{"name", "version", "serve"} {
-						prefix := key + " = "
-						if strings.HasPrefix(line, prefix) {
-							v := strings.Trim(strings.TrimPrefix(line, prefix), "\"[]")
-							switch key {
-							case "name":
-								manifestName = v
-							case "version":
-								manifestVersion = v
-							case "serve":
-								manifestServe = v
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	if manifestName != "" {
-		fmt.Printf("package: %s %s\n", manifestName, manifestVersion)
-	}
-	if manifestServe != "" {
-		fmt.Printf("serves: %s\n", manifestServe)
-	}
-	dirs := make([]string, 0, len(byDir))
-	for dir := range byDir {
-		dirs = append(dirs, dir)
-	}
-	sort.Strings(dirs)
-	for _, dir := range dirs {
-		fmt.Printf("  %-12s %d file(s)\n", dir+"/", len(byDir[dir]))
-	}
-	fmt.Printf("  %-12s %d\n", "total", total)
-
-	if data, err := os.ReadFile(path); err == nil {
-		fmt.Printf("sha256=%s\n", pack.HashBytes(data))
-	}
-	return nil
-}
-
-func readZipFile(f *zip.File) ([]byte, error) {
-	rc, err := f.Open()
-	if err != nil {
-		return nil, err
-	}
-	defer rc.Close()
-	return io.ReadAll(rc)
-}

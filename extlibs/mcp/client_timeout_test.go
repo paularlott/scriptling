@@ -11,6 +11,7 @@ import (
 	"github.com/paularlott/scriptling"
 	ai "github.com/paularlott/scriptling/extlibs/ai"
 	"github.com/paularlott/scriptling/extlibs/mcp"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 )
 
 // slowServer sleeps before answering, so a short client timeout fires while
@@ -148,5 +149,40 @@ assert "timeout" in mcpErr.lower() or "deadline" in mcpErr.lower(), "mcp timeout
 	}
 	if got, _ := result.AsString(); got != "OK" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// TestClientTimeoutUnderNetworkPolicy covers the guarded branch of the
+// timeout wiring: with a network policy attached, the client still honors the
+// timeout kwarg (the guard's client is shallow-copied, keeping its policy
+// transport while gaining the deadline) and the policy still admits the
+// loopback test server.
+func TestClientTimeoutUnderNetworkPolicy(t *testing.T) {
+	ts := slowServer(600 * time.Millisecond)
+	defer ts.Close()
+
+	p := scriptling.New()
+	ai.Register(p)
+	mcp.Register(p, &netsecurity.Config{AllowLoopback: true, AllowIPLiterals: true})
+	result, err := p.Eval(`
+import scriptling.ai as ai
+import scriptling.mcp as mcp
+
+fast_timeout = mcp.Client("` + ts.URL + `", namespace="slow", timeout=0.2)
+msg = "no error"
+try:
+    fast_timeout.tools()
+except Exception as e:
+    msg = str(e)
+assert "timeout" in msg.lower() or "deadline" in msg.lower(), "guarded timeout must fire: " + msg
+
+slow_timeout = mcp.Client("` + ts.URL + `", namespace="slow2", timeout=5)
+str(len(slow_timeout.tools()))
+`)
+	if err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+	if got, _ := result.AsString(); got != "0" {
+		t.Fatalf("generous guarded timeout must complete, got %q", got)
 	}
 }

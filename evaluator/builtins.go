@@ -261,11 +261,18 @@ Returns the number of items in a string, bytes, list, dict, or tuple.`,
 			if instance, ok := obj.(*object.Instance); ok {
 				return object.NewString(instance.Class.Name)
 			}
+			// An exception reports the class it was raised as ("ValueError"),
+			// not the generic wrapper type: except blocks need to tell them
+			// apart without message sniffing.
+			if exc, ok := obj.(*object.Exception); ok && exc.ExceptionType != "" {
+				return object.NewString(exc.ExceptionType)
+			}
 			return object.NewString(obj.Type().String())
 		},
 		HelpText: `type(obj) - Return the type of an object
 
-Returns a string representing the type of the object.`,
+Returns a string representing the type of the object. For exceptions this is
+the class it was raised as (e.g. "ValueError"), not the generic "EXCEPTION".`,
 	},
 	"str": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

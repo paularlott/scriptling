@@ -468,3 +468,38 @@ r`, expected: `1`},
 		})
 	}
 }
+
+// TestTypeOfExceptionReportsRaisedClass: type(e) returns the class the
+// exception was raised as, not the generic "EXCEPTION", so except blocks can
+// discriminate without message sniffing. (Custom exception classes are not
+// possible: classes cannot derive from the built-in exception types.)
+func TestTypeOfExceptionReportsRaisedClass(t *testing.T) {
+	tests := []struct {
+		name     string
+		script   string
+		expected string
+	}{
+		{"ValueError", `try:
+    raise ValueError("v")
+except Exception as e:
+    t = type(e)
+t`, "ValueError"},
+		{"KeyError", `try:
+    raise KeyError("k")
+except Exception as e:
+    t = type(e)
+t`, "KeyError"},
+		{"constructed value reports class too", `type(ValueError("not raised"))`, "ValueError"},
+		{"other types unchanged", `type(1)`, "INTEGER"},
+		{"string type unchanged", `type("x")`, "STRING"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := testEval(tt.script)
+			if result.Inspect() != tt.expected {
+				t.Errorf("got=%s, want=%s", result.Inspect(), tt.expected)
+			}
+		})
+	}
+}
+

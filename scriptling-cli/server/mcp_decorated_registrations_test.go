@@ -380,3 +380,64 @@ required = true
 		t.Fatalf("legacy missing-arg error, got: %v", err)
 	}
 }
+
+// TestMCPDecoratedUIResourceMimeForced: a decorated ui:// resource gets the
+// MCP Apps mime type regardless of the declared mime_type, on the descriptor
+// and on every read.
+func TestMCPDecoratedUIResourceMimeForced(t *testing.T) {
+	libDir := t.TempDir()
+	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "")
+	extlibs.ResetRuntime()
+
+	toolsDir := t.TempDir()
+	writeFile(t, filepath.Join(toolsDir, "view.py"), []byte(`
+import scriptling.runtime.mcp as mcp
+
+@mcp.resource("ui://panel/view.html", mime_type="text/plain")
+def view():
+    return "<html>panel</html>"
+`))
+
+	s := &Server{
+		config: ServerConfig{
+			MCPToolsDir: toolsDir,
+			LibDirs:     []string{libDir},
+		},
+		mcpHandler: &reloadableMCPHandler{},
+	}
+	server, err := s.createMCPServer()
+	if err != nil {
+		t.Fatalf("createMCPServer: %v", err)
+	}
+	s.mcpHandler.server.Store(server)
+	client, cleanup := pipeClientServer(t, server)
+	defer cleanup()
+	ctx := context.Background()
+
+	resources, err := client.ListResources(ctx)
+	if err != nil {
+		t.Fatalf("ListResources: %v", err)
+	}
+	var found bool
+	for _, r := range resources {
+		if r.URI == "ui://panel/view.html" {
+			found = true
+			if r.MimeType != "text/html;profile=mcp-app" {
+				t.Errorf("descriptor mimeType: got %q, want the MCP Apps type", r.MimeType)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("ui:// resource not listed: %+v", resources)
+	}
+	rr, err := client.ReadResource(ctx, "ui://panel/view.html")
+	if err != nil {
+		t.Fatalf("ReadResource: %v", err)
+	}
+	if rr.Contents[0].MimeType != "text/html;profile=mcp-app" {
+		t.Fatalf("read mimeType: got %q, want the MCP Apps type", rr.Contents[0].MimeType)
+	}
+	if rr.Contents[0].Text != "<html>panel</html>" {
+		t.Fatalf("content: %q", rr.Contents[0].Text)
+	}
+}

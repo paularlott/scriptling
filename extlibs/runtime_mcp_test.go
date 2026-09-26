@@ -1,6 +1,7 @@
 package extlibs_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/paularlott/scriptling"
@@ -27,7 +28,7 @@ import scriptling.runtime.mcp as mcp
 
 @mcp.tool("Calculate an expression", params={"expr": "Math expression"})
 def calc(expr):
-    return str(eval(expr))
+    return str(int(expr) * 2)
 `)
 	if err != nil {
 		t.Fatalf("eval error: %v", err)
@@ -395,5 +396,108 @@ func assertDictBool(t *testing.T, d *object.Dict, key string, expected bool) {
 	}
 	if got != expected {
 		t.Errorf("key %q: expected %v, got %v", key, expected, got)
+	}
+}
+
+// TestMCPResourcePromptSkillDecorators covers the non-tool registration
+// decorators recording their entries in __mcp_registry with the right type
+// and fields, plus their validation errors.
+func TestMCPResourcePromptSkillDecorators(t *testing.T) {
+	p := newTestScriptling()
+	_, err := p.Eval(`
+import scriptling.runtime.mcp as mcp
+
+@mcp.resource("config://app", name="App config", mime_type="application/json")
+def app_config():
+    return {"debug": True}
+
+@mcp.resource("user://docs/{topic}", template=True, mime_type="text/markdown")
+def user_doc(topic):
+    return "# " + topic
+
+@mcp.prompt(description="Summarise")
+def summarise(text, style="brief"):
+    return text
+
+@mcp.skill(files={"extra.md": "x"})
+def guide():
+    return "body"
+`)
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+
+	registry := getMCPRegistry(t, p)
+	if len(registry) != 4 {
+		t.Fatalf("expected 4 registrations, got %d", len(registry))
+	}
+
+	res := registry[0]
+	assertDictString(t, res, "type", "resource")
+	assertDictString(t, res, "uri", "config://app")
+	assertDictString(t, res, "name", "App config")
+	assertDictString(t, res, "mime_type", "application/json")
+	assertDictString(t, res, "func", "app_config")
+	assertDictBool(t, res, "template", false)
+
+	tmpl := registry[1]
+	assertDictString(t, tmpl, "uri", "user://docs/{topic}")
+	assertDictBool(t, tmpl, "template", true)
+
+	prm := registry[2]
+	assertDictString(t, prm, "type", "prompt")
+	assertDictString(t, prm, "name", "summarise")
+	assertDictString(t, prm, "func", "summarise")
+
+	skl := registry[3]
+	assertDictString(t, skl, "type", "skill")
+	assertDictString(t, skl, "name", "guide")
+	assertDictString(t, skl, "func", "guide")
+}
+
+// TestMCPSkillDecoratorFilesNotDict: a non-dict files argument errors at the
+// decorator call.
+func TestMCPSkillDecoratorFilesNotDict(t *testing.T) {
+	p := newTestScriptling()
+	_, err := p.Eval(`
+import scriptling.runtime.mcp as mcp
+
+@mcp.skill(files=["not", "a", "dict"])
+def guide():
+    return "body"
+`)
+	if err == nil || !strings.Contains(err.Error(), "files") {
+		t.Fatalf("expected a files type error, got: %v", err)
+	}
+}
+
+// TestMCPPromptDecoratorArgumentsNotList: a non-list arguments errors at the
+// decorator call.
+func TestMCPPromptDecoratorArgumentsNotList(t *testing.T) {
+	p := newTestScriptling()
+	_, err := p.Eval(`
+import scriptling.runtime.mcp as mcp
+
+@mcp.prompt(description="d", arguments={"name": "x"})
+def pr(x):
+    return x
+`)
+	if err == nil || !strings.Contains(err.Error(), "arguments") {
+		t.Fatalf("expected an arguments type error, got: %v", err)
+	}
+}
+
+// TestMCPResourceDecoratorEmptyURI: an empty uri errors at the decorator call.
+func TestMCPResourceDecoratorEmptyURI(t *testing.T) {
+	p := newTestScriptling()
+	_, err := p.Eval(`
+import scriptling.runtime.mcp as mcp
+
+@mcp.resource("")
+def broken():
+    return "x"
+`)
+	if err == nil || !strings.Contains(err.Error(), "uri") {
+		t.Fatalf("expected a uri error, got: %v", err)
 	}
 }

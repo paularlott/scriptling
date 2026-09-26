@@ -939,7 +939,15 @@ func executeToolCalls(ctx context.Context, registry *object.Instance, toolCalls 
 
 		handler, errObj := tools.GetHandlerObject(registry, name)
 		if errObj != nil {
-			return nil, errObj
+			// An unknown tool becomes a tool-result message rather than
+			// aborting the batch: the model learns the name it sent is not
+			// callable and can correct itself on the next turn.
+			results = append(results, map[string]any{
+				"role":         "tool",
+				"tool_call_id": stringValue(toolCall["id"]),
+				"content":      "Error: " + errObj.Message,
+			})
+			continue
 		}
 
 		argsMap, _ := normalizeToolArguments(function["arguments"]).(map[string]any)
@@ -953,11 +961,28 @@ func executeToolCalls(ctx context.Context, registry *object.Instance, toolCalls 
 		callArg := conversion.FromGo(argsMap)
 		resultObj := eval.CallObjectFunction(ctx, handler, []object.Object{callArg}, nil, env)
 
+		// A failing handler becomes a tool-result message carrying the error,
+		// not a batch-wide abort: the model sees what went wrong and can
+		// retry or route around it, instead of the whole turn dying.
 		if errObj, ok := resultObj.(*object.Error); ok {
-			return nil, errObj
+			results = append(results, map[string]any{
+				"role":         "tool",
+				"tool_call_id": stringValue(toolCall["id"]),
+				"content":      "Error: " + errObj.Message,
+			})
+			continue
 		}
 		if exObj, ok := resultObj.(*object.Exception); ok {
-			return nil, &object.Error{Message: exObj.Message}
+			msg := exObj.Message
+			if msg == "" {
+				msg = "tool raised an exception"
+			}
+			results = append(results, map[string]any{
+				"role":         "tool",
+				"tool_call_id": stringValue(toolCall["id"]),
+				"content":      "Error: " + msg,
+			})
+			continue
 		}
 
 		results = append(results, map[string]any{

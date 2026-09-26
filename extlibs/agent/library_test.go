@@ -741,3 +741,57 @@ assert not bot._should_compact(), "Should not compact when max_tokens=0"
 		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
 	}
 }
+
+// TestAgentToolErrorFeedsBackToModel: a raising tool handler must not kill
+// the turn — the error comes back as a tool result the model can see, and
+// the loop continues to a final answer.
+func TestAgentToolErrorFeedsBackToModel(t *testing.T) {
+	script := `
+import scriptling.ai as ai
+import scriptling.ai.agent as agent
+
+class MockClient:
+    def __init__(self):
+        self.turn = 0
+        self.saw_error = ""
+    def completion(self, model, messages, **kwargs):
+        self.turn += 1
+        if self.turn == 1:
+            content, tc = "", [{"id": "c1", "type": "function", "function": {"name": "explode", "arguments": "{}"}}]
+        else:
+            for m in messages:
+                if isinstance(m, dict) and m.get("role") == "tool":
+                    self.saw_error = m.get("content", "")
+            content, tc = "recovered after the failure", []
+        return {"choices": [{"message": {"role": "assistant", "content": content, "tool_calls": tc}}]}
+
+def explode(args):
+    raise ValueError("that input was nonsense")
+
+tools = ai.ToolRegistry()
+tools.add("explode", "A tool that rejects bad input", {}, explode)
+
+client = MockClient()
+bot = agent.Agent(client, tools=tools, model="m")
+resp = bot.trigger("do the thing", max_iterations=3)
+
+assert resp.content == "recovered after the failure", "content: " + str(resp.content)
+assert client.saw_error.startswith("Error:"), "model must see the error result: " + client.saw_error
+assert "nonsense" in client.saw_error
+
+"OK"
+`
+
+	p := scriptlib.New()
+	stdlib.RegisterAll(p)
+	ai.Register(p)
+	Register(p)
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("script failed: %v", err)
+	}
+	if str, err := result.AsString(); err != nil || str != "OK" {
+		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
+	}
+}

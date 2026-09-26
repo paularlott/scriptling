@@ -1387,17 +1387,21 @@ results[0]["content"]
 			},
 		},
 		{
-			"unknown tool returns error",
+			"unknown tool becomes an error result",
 			`
 import scriptling.ai as ai
 tools = ai.ToolRegistry()
 tools.add("echo", "Echo", {"msg": "string"}, lambda args: "ok")
 tool_calls = [{"id": "c1", "type": "function", "function": {"name": "unknown", "arguments": {}}}]
 results = ai.execute_tool_calls(tools, tool_calls)
-results[0]["content"]
+results[0]["content"].split(":")[0]
 `,
-			true,
-			nil,
+			false,
+			func(t *testing.T, result string) {
+				if result != "Error" {
+					t.Fatalf("unknown tool must yield an Error: result, got %q", result)
+				}
+			},
 		},
 		{
 			"tool_call_id preserved in result",
@@ -3005,5 +3009,47 @@ func TestCosineSimilarity(t *testing.T) {
 				t.Errorf("cosine_similarity = %f, want %f", f.FloatValue(), tt.want)
 			}
 		})
+	}
+}
+
+// TestExecuteToolCallsErrorsBecomeResults: a raising handler or an unknown
+// tool name produces a tool-result message carrying the error, not a
+// batch-wide abort — the model sees what went wrong and can retry.
+func TestExecuteToolCallsErrorsBecomeResults(t *testing.T) {
+	script := `
+import scriptling.ai as ai
+
+tools = ai.ToolRegistry()
+def boom(args):
+    raise ValueError("bad input from model")
+tools.add("boom", "Raises", {"x": "string"}, boom)
+tools.add("fine", "Fine", {}, lambda args: "ok")
+
+tool_calls = [
+    {"id": "c1", "type": "function", "function": {"name": "boom", "arguments": {"x": "junk"}}},
+    {"id": "c2", "type": "function", "function": {"name": "nonexistent", "arguments": {}}},
+    {"id": "c3", "type": "function", "function": {"name": "fine", "arguments": {}}},
+]
+results = ai.execute_tool_calls(tools, tool_calls)
+
+assert len(results) == 3, "all three calls must produce results: " + str(len(results))
+assert results[0]["tool_call_id"] == "c1"
+assert results[0]["content"].startswith("Error:"), "raising handler: " + results[0]["content"]
+assert "bad input from model" in results[0]["content"]
+assert results[1]["content"].startswith("Error:"), "unknown tool: " + results[1]["content"]
+assert "nonexistent" in results[1]["content"]
+assert results[2]["content"] == "ok", "good call after failures still runs: " + results[2]["content"]
+
+"OK"
+`
+	p := scriptlib.New()
+	Register(p)
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("script failed: %v", err)
+	}
+	if str, err := result.AsString(); err != nil || str != "OK" {
+		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
 	}
 }
