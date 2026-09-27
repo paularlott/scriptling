@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -68,19 +67,7 @@ func RunServer(ctx context.Context, config ServerConfig) error {
 					if !ok {
 						return
 					}
-					ext := filepath.Ext(event.Name)
-					if ext == ".toml" || ext == ".py" {
-						server.reloadMu.Lock()
-						if server.reloadDebounce != nil {
-							server.reloadDebounce.Stop()
-						}
-						eventCopy := event
-						server.reloadDebounce = time.AfterFunc(server.debounceDuration, func() {
-							Log.Debug("Tool file changed", "event", eventCopy.Op.String(), "file", filepath.Base(eventCopy.Name))
-							server.reloadMCP()
-						})
-						server.reloadMu.Unlock()
-					}
+					server.handleWatchEvent(event)
 				case err, ok := <-server.watcher.Errors:
 					if ok {
 						Log.Error("File watcher error", "error", err)

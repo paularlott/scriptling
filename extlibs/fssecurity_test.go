@@ -1168,3 +1168,41 @@ env.exit_code()
 		t.Errorf("Expected exit code 1 for denied relative path, got %d", i.IntValue())
 	}
 }
+
+// TestOSPathAttributeRestriction: os.path used as an attribute of os must
+// honor the same AllowedPaths restrictions as the standalone os.path
+// import (the attribute shares the configured builtins).
+func TestOSPathAttributeRestriction(t *testing.T) {
+	allowedDir := t.TempDir()
+	deniedDir := t.TempDir()
+
+	allowedFile := filepath.Join(allowedDir, "exists.txt")
+	deniedFile := filepath.Join(deniedDir, "exists.txt")
+	os.WriteFile(allowedFile, []byte("test"), 0644)
+	os.WriteFile(deniedFile, []byte("test"), 0644)
+
+	p := scriptling.New()
+	RegisterOSLibrary(p, []string{allowedDir})
+
+	// Attribute form on an allowed file works.
+	result, err := p.Eval(`import os
+os.path.exists("` + allowedFile + `") and os.path.isfile("` + allowedFile + `") and os.path.getsize("` + allowedFile + `") == 4
+`)
+	if err != nil {
+		t.Fatalf("Script error: %v", err)
+	}
+	if b, _ := result.(*object.Boolean); b == nil || !b.BoolValue() {
+		t.Errorf("Expected True for allowed file via os.path attribute, got %v", result)
+	}
+
+	// Attribute form on a denied file must be rejected, per path
+	// restriction, for each entry point.
+	for _, fn := range []string{"exists", "isfile", "isdir", "getsize"} {
+		_, err := p.Eval(`import os
+os.path.` + fn + `("` + deniedFile + `")
+`)
+		if err == nil {
+			t.Errorf("Expected restriction error for os.path.%s on denied file", fn)
+		}
+	}
+}

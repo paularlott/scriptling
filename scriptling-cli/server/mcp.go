@@ -1,6 +1,7 @@
 package server
 
 import (
+	"path/filepath"
 	"context"
 	"fmt"
 	"io/fs"
@@ -30,32 +31,46 @@ func (s *Server) setupMCP() error {
 	s.mcpHandler.server.Store(server)
 
 	// Watch every configured source folder so any change triggers a reload.
-	watchDirs := make([]string, 0, 3)
+	// Tools and prompts are flat folders; resources and skills are trees
+	// (subdirectories are part of the resource URI scheme, and each skill is
+	// a directory of files), so those two are watched recursively — a flat
+	// watch would miss edits nested one level down.
+	flatDirs := make([]string, 0, 2)
 	if s.config.MCPToolsDir != "" {
-		watchDirs = append(watchDirs, s.config.MCPToolsDir)
-	}
-	if s.config.MCPResourcesDir != "" {
-		watchDirs = append(watchDirs, s.config.MCPResourcesDir)
+		flatDirs = append(flatDirs, s.config.MCPToolsDir)
 	}
 	if s.config.MCPPromptsDir != "" {
-		watchDirs = append(watchDirs, s.config.MCPPromptsDir)
+		flatDirs = append(flatDirs, s.config.MCPPromptsDir)
 	}
-
+	treeDirs := make([]string, 0, 2)
+	if s.config.MCPResourcesDir != "" {
+		treeDirs = append(treeDirs, s.config.MCPResourcesDir)
+	}
 	if s.config.MCPSkillsDir != "" {
-		watchDirs = append(watchDirs, s.config.MCPSkillsDir)
+		treeDirs = append(treeDirs, s.config.MCPSkillsDir)
 	}
+	watchDirs := append(append([]string{}, flatDirs...), treeDirs...)
 	if len(watchDirs) > 0 {
 		watcher, err := fsnotify.NewWatcher()
 		if err != nil {
 			Log.Warn("Failed to create file watcher, auto-reload disabled", "error", err)
 		} else {
 			failed := false
-			for _, dir := range watchDirs {
+			for _, dir := range flatDirs {
 				if err := watcher.Add(dir); err != nil {
 					Log.Warn("Failed to watch folder, auto-reload disabled for it", "path", dir, "error", err)
 					failed = true
 				} else {
 					Log.Info("Watching folder for changes", "path", dir)
+				}
+			}
+			for _, dir := range treeDirs {
+				added := watchTree(watcher, dir)
+				if added == 0 {
+					Log.Warn("Failed to watch folder tree, auto-reload disabled for it", "path", dir)
+					failed = true
+				} else {
+					Log.Info("Watching folder tree for changes", "path", dir, "dirs", added)
 				}
 			}
 			if failed && len(watchDirs) == 0 {
@@ -67,6 +82,26 @@ func (s *Server) setupMCP() error {
 	}
 
 	return nil
+}
+
+
+// watchTree walks dir and adds it plus every subdirectory to the watcher;
+// fsnotify is non-recursive, so tree-shaped source folders (resources,
+// skills) need each level added explicitly. Returns the number of
+// directories added; 0 means the root itself could not be watched.
+func watchTree(watcher *fsnotify.Watcher, dir string) int {
+	count := 0
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || !info.IsDir() {
+			return nil
+		}
+		if err := watcher.Add(path); err != nil {
+			return nil
+		}
+		count++
+		return nil
+	})
+	return count
 }
 
 // createMCPServer creates a new MCP server with all tools, resources and prompts
@@ -636,4 +671,22 @@ func frontmatterValue(doc, key string) string {
 		}
 	}
 	return ""
+}
+
+// handleWatchEvent applies the reload debounce to one watcher event. Every
+// event in a watched folder triggers the (idempotent, full) reloadMCP: the
+// source kinds span .py/.toml tools, .md/.txt resources and prompts, and
+// skill directories of arbitrary files, so filtering by extension would
+// silently miss most of them. The debounce collapses editor save-storms.
+func (s *Server) handleWatchEvent(event fsnotify.Event) {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+	if s.reloadDebounce != nil {
+		s.reloadDebounce.Stop()
+	}
+	eventCopy := event
+	s.reloadDebounce = time.AfterFunc(s.debounceDuration, func() {
+		Log.Debug("Source file changed", "event", eventCopy.Op.String(), "file", filepath.Base(eventCopy.Name))
+		s.reloadMCP()
+	})
 }
