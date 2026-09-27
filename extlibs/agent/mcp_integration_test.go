@@ -591,3 +591,60 @@ assert result == "custom handler saw skill://keep/kept-skill/SKILL.md", "custom 
 		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
 	}
 }
+
+func TestAgentMCPSkillsPromptSorted(t *testing.T) {
+	// A third-party server may list skills in any order; the agent's
+	// system prompt must be byte-identical across runs regardless, so
+	// provider prompt caches are not defeated. This server registers
+	// skills in deliberately non-alphabetical order via raw registration.
+	s := mcplib.NewServer("thirdparty", "1.0")
+	for _, name := range []string{"zulu", "alpha", "mike"} {
+		if err := s.RegisterSkill(mcplib.NewSkill(name).
+			Description("Skill " + name).
+			File("SKILL.md", []byte("---\nname: "+name+"\ndescription: Skill "+name+"\n---\nBody."))); err != nil {
+			t.Fatalf("register skill: %v", err)
+		}
+	}
+	ts := httptest.NewServer(http.HandlerFunc(s.HandleRequest))
+	defer ts.Close()
+
+	build := func() string {
+		script := `
+import scriptling.ai.agent as agent
+import scriptling.mcp as mcp
+
+server = mcp.Client("` + ts.URL + `", namespace="srv")
+bot = agent.Agent(Keep(), mcp_servers=[server])
+bot.system_prompt
+`
+		script = "class Keep:\n    def completion(self, model, messages, **kwargs):\n        return {\"choices\": [{\"message\": {\"role\": \"assistant\", \"content\": \"ok\"}}]}\n" + script
+		p := scriptlib.New()
+		stdlib.RegisterAll(p)
+		ai.Register(p)
+		Register(p)
+		scriptlingmcp.Register(p)
+		val, err := p.Eval(script)
+		if err != nil {
+			t.Fatalf("eval error: %v", err)
+		}
+		str, strErr := val.AsString()
+		if strErr != nil {
+			t.Fatalf("not a string: %T (%v)", val, strErr)
+		}
+		return str
+	}
+
+	first := build()
+	second := build()
+	if first != second {
+		t.Fatal("system prompt differs between two runs with the same servers")
+	}
+	// The skill lines themselves are alphabetical.
+	iAlpha, iMike, iZulu := strings.Index(first, "- srv/alpha:"), strings.Index(first, "- srv/mike:"), strings.Index(first, "- srv/zulu:")
+	if iAlpha < 0 || iMike < 0 || iZulu < 0 {
+		t.Fatalf("skill lines missing: %s", first)
+	}
+	if !(iAlpha < iMike && iMike < iZulu) {
+		t.Fatalf("skill lines not alphabetical: alpha=%d mike=%d zulu=%d", iAlpha, iMike, iZulu)
+	}
+}

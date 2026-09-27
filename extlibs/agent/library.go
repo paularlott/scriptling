@@ -135,6 +135,9 @@ class Agent:
                         continue
                     skill_lines.append("- " + namespace + "/" + skill_name + ": " + fm.get("description", "") + " (skill://" + namespace + "/" + skill.uri[len("skill://"):] + ")")
 
+            # Sort so the prompt is byte-identical across runs to help prompt caches.
+            skill_lines = sorted(skill_lines)
+
             if len(skill_lines) > 0:
                 # Register get_skill only when the name is free: a caller
                 # that registered their own get_skill keeps it.
