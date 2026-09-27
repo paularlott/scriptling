@@ -143,6 +143,18 @@ func buildLibrary(guard *netsecurity.Guard) *object.Library {
 				v := kwargs.MustGetBool("retry_on_server_error", true)
 				retryOnServerError = &v
 			}
+			// Strictly boolean: String.AsBool coerces any non-empty
+			// string to true, so a bare GetBool would silently accept
+			// prompt_caching="yes" as True.
+			var promptCaching *bool
+			if v := kwargs.Get("prompt_caching"); v != nil {
+				b, ok := v.(*object.Boolean)
+				if !ok {
+					return nil, fmt.Errorf("prompt_caching must be a boolean")
+				}
+				val := b.BoolValue()
+				promptCaching = &val
+			}
 
 			extraHeaders := http.Header{}
 			if kwargs.Has("headers") {
@@ -250,6 +262,9 @@ func buildLibrary(guard *netsecurity.Guard) *object.Library {
 			if retryOnServerError != nil {
 				openaiConfig.RetryOnServerError = retryOnServerError
 			}
+			if promptCaching != nil {
+				openaiConfig.PromptCaching = promptCaching
+			}
 
 			client, err := ai.NewClient(ai.Config{
 				Provider: providerType,
@@ -280,6 +295,7 @@ Parameters:
   retry_backoff (float, optional): Base backoff in seconds between retries. Default: 1.0
   retry_on_rate_limit (bool, optional): Retry on 429 errors. Default: True
   retry_on_server_error (bool, optional): Retry on 5xx errors. Default: True
+  prompt_caching (bool, optional): Claude only: send prompt-caching breakpoints (system prompt, last tool, last message) so repeated prefixes are served from Anthropic's cache. Default: True
 
 Returns:
   AIClient: A client instance with methods for API calls
