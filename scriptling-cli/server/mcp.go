@@ -1,12 +1,12 @@
 package server
 
 import (
-	"path/filepath"
 	"context"
 	"fmt"
 	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -83,7 +83,6 @@ func (s *Server) setupMCP() error {
 
 	return nil
 }
-
 
 // watchTree walks dir and adds it plus every subdirectory to the watcher;
 // fsnotify is non-recursive, so tree-shaped source folders (resources,

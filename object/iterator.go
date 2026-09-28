@@ -155,7 +155,7 @@ func NewRangeIterator(start, stop, step int64) *Iterator {
 
 	return &Iterator{
 		length: length,
-		next:   func() (Object, bool) {
+		next: func() (Object, bool) {
 			if step > 0 {
 				if current >= stop {
 					return nil, false

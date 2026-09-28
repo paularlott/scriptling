@@ -1,9 +1,9 @@
 package stdlib
 
 import (
+	"context"
 	"fmt"
 	"math"
-	"context"
 	"strings"
 	"time"
 

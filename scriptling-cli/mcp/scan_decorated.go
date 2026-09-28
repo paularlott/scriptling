@@ -10,9 +10,9 @@ import (
 	mcplib "github.com/paularlott/mcp"
 	"github.com/paularlott/mcp/toolmetadata"
 	"github.com/paularlott/scriptling"
-	extlibsmcp "github.com/paularlott/scriptling/extlibs/mcp"
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/extlibs"
+	extlibsmcp "github.com/paularlott/scriptling/extlibs/mcp"
 	"github.com/paularlott/scriptling/object"
 )
 

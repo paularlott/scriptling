@@ -12,11 +12,11 @@ import (
 func TestListPackage(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
-		"manifest.toml": "name = \"listapp\"\nversion = \"2.1.0\"\nmain = \"setup.py\"\nserve = [\"mcp\", \"http\"]\n",
-		"setup.py":      "# entry\n",
-		"tools/one.py":  "import scriptling.runtime.mcp as mcp\n\n@mcp.tool(\"One\")\ndef one():\n    return 1\n",
-		"tools/two.py":  "import scriptling.runtime.mcp as mcp\n\n@mcp.tool(\"Two\")\ndef two():\n    return 2\n",
-		"skills/s/SKILL.md": "---\nname: s\ndescription: d\n---\n\nbody",
+		"manifest.toml":      "name = \"listapp\"\nversion = \"2.1.0\"\nmain = \"setup.py\"\nserve = [\"mcp\", \"http\"]\n",
+		"setup.py":           "# entry\n",
+		"tools/one.py":       "import scriptling.runtime.mcp as mcp\n\n@mcp.tool(\"One\")\ndef one():\n    return 1\n",
+		"tools/two.py":       "import scriptling.runtime.mcp as mcp\n\n@mcp.tool(\"Two\")\ndef two():\n    return 2\n",
+		"skills/s/SKILL.md":  "---\nname: s\ndescription: d\n---\n\nbody",
 		"webroot/index.html": "<html></html>",
 	}
 	for name, content := range files {

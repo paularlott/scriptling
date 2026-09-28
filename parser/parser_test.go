@@ -1359,9 +1359,11 @@ func TestFromImportStatementHyphenModule(t *testing.T) {
 
 // TestMultilineConditionalExpression covers conditional expressions written
 // across lines inside brackets, where newlines are whitespace:
-//   [ {..}
-//     if cond
-//     else {..}, ]
+//
+//	[ {..}
+//	  if cond
+//	  else {..}, ]
+//
 // Regression: the same-line-only IF guard used to kill the ternary in
 // bracket contexts, derailing the parse into a typed-nil statement.
 func TestMultilineConditionalExpression(t *testing.T) {

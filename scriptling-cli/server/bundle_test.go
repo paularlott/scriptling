@@ -433,7 +433,7 @@ required = true
 		"prompts/cheer.py": `import scriptling.mcp.tool as tool
 tool.return_string("Go " + tool.get_string("team") + "!")
 `,
-		"skills/team-spirit/SKILL.md": "---\nname: team-spirit\ndescription: How to cheer effectively\n---\n\n# Team spirit\nCheer loudly.",
+		"skills/team-spirit/SKILL.md":  "---\nname: team-spirit\ndescription: How to cheer effectively\n---\n\n# Team spirit\nCheer loudly.",
 		"skills/team-spirit/chants.md": "Go team!\nWin team!\n",
 	}
 	for name, content := range files {
@@ -452,7 +452,7 @@ tool.return_string("Go " + tool.get_string("team") + "!")
 	if _, _, err := pack.Pack(dir, zipPath, false); err != nil {
 		t.Fatalf("Pack: %v", err)
 	}
- zf, err := os.Open(zipPath)
+	zf, err := os.Open(zipPath)
 	if err != nil {
 		t.Fatal(err)
 	}

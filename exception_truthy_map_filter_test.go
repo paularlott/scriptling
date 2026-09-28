@@ -50,16 +50,16 @@ class B:
         raise ValueError("bool-boom")
 `
 	cases := map[string]string{
-		"bool()":   "x = bool(B())",
-		"not":      "x = not B()",
-		"if":       "if B():\n        pass",
-		"while":    "while B():\n        break",
-		"and":      "x = B() and True",
-		"or":       "x = B() or True",
-		"ternary":  "x = 1 if B() else 2",
-		"any":      "x = any([B()])",
-		"all":      "x = all([B()])",
-		"filter":   "x = list(filter(None, [B()]))",
+		"bool()":  "x = bool(B())",
+		"not":     "x = not B()",
+		"if":      "if B():\n        pass",
+		"while":   "while B():\n        break",
+		"and":     "x = B() and True",
+		"or":      "x = B() or True",
+		"ternary": "x = 1 if B() else 2",
+		"any":     "x = any([B()])",
+		"all":     "x = all([B()])",
+		"filter":  "x = list(filter(None, [B()]))",
 	}
 	for name, stmt := range cases {
 		t.Run(name, func(t *testing.T) {

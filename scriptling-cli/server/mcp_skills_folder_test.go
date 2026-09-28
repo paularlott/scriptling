@@ -140,10 +140,10 @@ func TestMCPSkillsFolderBrokenSkillSkipped(t *testing.T) {
 func TestMCPDirBundleSkills(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
-		"manifest.toml": "name = \"dirskill\"\nversion = \"1.0.0\"\nmain = \"setup.py\"\nserve = [\"mcp\"]\n",
-		"setup.py":      "# mcp only\n",
-		"tools/ping.py": "import scriptling.runtime.mcp as mcp\n\n@mcp.tool(\"Ping\")\ndef ping():\n    return \"pong\"\n",
-		"skills/dir-skill/SKILL.md":  "---\nname: dir-skill\ndescription: Dir bundle skill\n---\n\nDir body.",
+		"manifest.toml":             "name = \"dirskill\"\nversion = \"1.0.0\"\nmain = \"setup.py\"\nserve = [\"mcp\"]\n",
+		"setup.py":                  "# mcp only\n",
+		"tools/ping.py":             "import scriptling.runtime.mcp as mcp\n\n@mcp.tool(\"Ping\")\ndef ping():\n    return \"pong\"\n",
+		"skills/dir-skill/SKILL.md": "---\nname: dir-skill\ndescription: Dir bundle skill\n---\n\nDir body.",
 		"skills/dir-skill/notes.md": "dir notes",
 	}
 	for name, content := range files {

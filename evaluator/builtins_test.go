@@ -503,7 +503,6 @@ t`, "KeyError"},
 	}
 }
 
-
 // TestSumWithStart: sum(iterable, start) offsets the total and can seed a
 // float result, as in Python.
 func TestSumWithStart(t *testing.T) {

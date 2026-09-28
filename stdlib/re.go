@@ -1060,7 +1060,6 @@ Flags:
 	"S":          object.NewInteger(RE_DOTALL),
 }, "Regular expression library")
 
-
 // pythonReplToGo converts Python replacement-string backreferences to Go's
 // regexp replacement syntax: \1..\99 become $1..$99 and \g<name> becomes
 // ${name}; a literal \\ stays a literal backslash.
