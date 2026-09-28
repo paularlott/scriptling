@@ -74,6 +74,8 @@ github.com/paularlott/logger v0.3.0 h1:QwVUoxmlEFkfHI25y5dn56OJvK4Bpe3OvoJu4GZM7
 github.com/paularlott/logger v0.3.0/go.mod h1:vjAOY1vUvYigmJxxQ0eMclryIjDS6VWNK6FprtTMce0=
 github.com/paularlott/mcp v0.29.0 h1:dMe16GDY9MnCfWKg1W3u2ke+q0Atjt8JPbPBH6Nd9ZM=
 github.com/paularlott/mcp v0.29.0/go.mod h1:5csMUltf1r9r4L76ddPddp5iQUqZ/i9ojwJmdbkA5dE=
+github.com/paularlott/mcp v0.29.1 h1:dtFOc4LBtB93h9ArObSW9nysrSYpwdfx9emjWowp1j4=
+github.com/paularlott/mcp v0.29.1/go.mod h1:5csMUltf1r9r4L76ddPddp5iQUqZ/i9ojwJmdbkA5dE=
 github.com/paularlott/snapshotkv v0.6.0 h1:bGUVANfPg7+2fsVnnnCWQvkuDrBWPg3mchGoEgel28Q=
 github.com/paularlott/snapshotkv v0.6.0/go.mod h1:TAiDx8gWhRS5cy1i8iKpxCQsWWpmQ0zA4IBEwLX58Ow=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
