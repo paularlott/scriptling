@@ -34,7 +34,7 @@ func TestAgentMCPServersEndToEnd(t *testing.T) {
 			if err != nil {
 				return nil, mcplib.NewToolErrorInvalidParams("sku is required")
 			}
-			return mcplib.NewToolResponseText("price of "+sku+": 4.99"), nil
+			return mcplib.NewToolResponseText("price of " + sku + ": 4.99"), nil
 		},
 	)
 	if err := server.RegisterSkill(mcplib.NewSkill("product-copy").
@@ -435,7 +435,7 @@ func TestAgentMCPServersTwoServersSkills(t *testing.T) {
 	mkServer := func(name string) *httptest.Server {
 		s := mcplib.NewServer(name, "1.0")
 		if err := s.RegisterSkill(mcplib.NewSkill("guide").
-			Description("Guide of " + name).
+			Description("Guide of "+name).
 			File("SKILL.md", []byte("---\nname: guide\ndescription: Guide of "+name+"\n---\nBody of "+name+".")).
 			File("notes.md", []byte("notes of "+name))); err != nil {
 			t.Fatalf("register skill: %v", err)
@@ -600,7 +600,7 @@ func TestAgentMCPSkillsPromptSorted(t *testing.T) {
 	s := mcplib.NewServer("thirdparty", "1.0")
 	for _, name := range []string{"zulu", "alpha", "mike"} {
 		if err := s.RegisterSkill(mcplib.NewSkill(name).
-			Description("Skill " + name).
+			Description("Skill "+name).
 			File("SKILL.md", []byte("---\nname: "+name+"\ndescription: Skill "+name+"\n---\nBody."))); err != nil {
 			t.Fatalf("register skill: %v", err)
 		}

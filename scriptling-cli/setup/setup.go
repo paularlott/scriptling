@@ -9,6 +9,7 @@ import (
 	aimemory "github.com/paularlott/scriptling/extlibs/ai/memory"
 	scriptlingconsole "github.com/paularlott/scriptling/extlibs/console"
 	scriptlingcontainer "github.com/paularlott/scriptling/extlibs/container"
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	scriptlingmcp "github.com/paularlott/scriptling/extlibs/mcp"
 	messagingconsole "github.com/paularlott/scriptling/extlibs/messaging/console"
 	"github.com/paularlott/scriptling/extlibs/messaging/discord"
@@ -179,8 +180,20 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.UnicastLibraryName, func() { scriptlingunicast.Register(p) })
 	reg(extlibs.GossipLibraryName, func() { scriptlinggossip.Register(p, log) })
 	reg(extlibs.ResolveLibraryName, func() { scriptlingresolve.Register(p, scriptResolver(netPolicy)) })
-	reg(extlibs.FileProvisionLibraryName, func() { provisionfile.Register(p) })
-	reg(extlibs.FetchProvisionLibraryName, func() { provisionfetch.Register(p) })
+	reg(extlibs.FileProvisionLibraryName, func() {
+		provisionfile.RegisterConfigured(p, fssecurity.Config{AllowedPaths: allowedPaths})
+	})
+	reg(extlibs.FetchProvisionLibraryName, func() {
+		var guard *netsecurity.Guard
+		if policy := firstPolicy(netPolicy); policy != nil {
+			g, err := netsecurity.NewGuard(policy)
+			if err != nil {
+				g = netsecurity.FailClosed(err)
+			}
+			guard = g
+		}
+		provisionfetch.RegisterConfigured(p, fssecurity.Config{AllowedPaths: allowedPaths}, guard)
+	})
 
 	reg(extlibs.AILibraryName, func() { ai.Register(p, netPolicy...) })
 	reg(aimemory.MemoryLibraryName, func() { aimemory.Register(p, log) })

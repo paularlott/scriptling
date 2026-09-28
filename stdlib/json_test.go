@@ -102,3 +102,54 @@ func TestJSONDecodeErrorIsValueError(t *testing.T) {
 		t.Errorf("expected ValueError classification, got %q", err.ExceptionType)
 	}
 }
+
+// A cyclic dict must serialize to a placeholder instead of recursing
+// forever: unbounded recursion in objectToJSON overflows the Go stack with a
+// fatal error that no recover() can catch, aborting the whole host process.
+func TestJSONDumpsHandlesCyclicStructures(t *testing.T) {
+	dumps := JSONLibrary.Functions()["dumps"]
+	ctx := context.Background()
+
+	call := func(v object.Object) string {
+		t.Helper()
+		result := dumps.Fn(ctx, object.NewKwargs(nil), v)
+		s, ok := result.(*object.String)
+		if !ok {
+			t.Fatalf("dumps returned %s: %s", result.Type(), result.Inspect())
+		}
+		return s.StringValue()
+	}
+
+	t.Run("direct dict self-reference", func(t *testing.T) {
+		d := &object.Dict{Pairs: map[string]object.DictPair{}}
+		key := object.NewString("self")
+		d.Pairs[object.DictKey(key)] = object.DictPair{Key: key, Value: d}
+		got := call(d)
+		want := "{\"self\":\"\\u003ccyclic reference\\u003e\"}"
+		if got != want {
+			t.Fatalf("dumps() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("indirect dict-list-dict cycle", func(t *testing.T) {
+		d := &object.Dict{Pairs: map[string]object.DictPair{}}
+		l := &object.List{Elements: []object.Object{d}}
+		key := object.NewString("k")
+		d.Pairs[object.DictKey(key)] = object.DictPair{Key: key, Value: l}
+		got := call(d)
+		want := "{\"k\":[\"\\u003ccyclic reference\\u003e\"]}"
+		if got != want {
+			t.Fatalf("dumps() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("shared but acyclic subtree still fully renders", func(t *testing.T) {
+		shared := &object.List{Elements: []object.Object{object.NewInteger(1)}}
+		outer := &object.List{Elements: []object.Object{shared, shared}}
+		got := call(outer)
+		want := `[[1],[1]]`
+		if got != want {
+			t.Fatalf("dumps() = %q, want %q (a DAG is not a cycle)", got, want)
+		}
+	})
+}

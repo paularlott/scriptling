@@ -976,7 +976,7 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		MCPToolsDir:         cmd.GetString("mcp-tools"),
 		MCPResourcesDir:     cmd.GetString("mcp-resources"),
 		MCPPromptsDir:       cmd.GetString("mcp-prompts"),
-			MCPSkillsDir:        cmd.GetString("mcp-skills"),
+		MCPSkillsDir:        cmd.GetString("mcp-skills"),
 		MCPExecTool:         cmd.GetBool("mcp-exec-script"),
 		JSONRPC:             cmd.GetBool("json-rpc"),
 		KVStoragePath:       cmd.GetString("kv-storage"),
@@ -1090,7 +1090,7 @@ func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 		MCPToolsDir:     cmd.GetString("mcp-tools"),
 		MCPResourcesDir: cmd.GetString("mcp-resources"),
 		MCPPromptsDir:   cmd.GetString("mcp-prompts"),
-			MCPSkillsDir:    cmd.GetString("mcp-skills"),
+		MCPSkillsDir:    cmd.GetString("mcp-skills"),
 		MCPExecTool:     cmd.GetBool("mcp-exec-script"),
 		KVStoragePath:   cmd.GetString("kv-storage"),
 		SecretRegistry:  secretRegistry,
@@ -1123,6 +1123,10 @@ func loadPluginManager(ctx context.Context, dirs []string, plugins []string, plu
 		}
 	})
 	if len(policy) > 0 {
+		// Forward the operator's policy to every plugin this manager
+		// handshakes with (the remote plugin's own benefit). This does not
+		// gate the host-side spawn or connection, so it can be set before the
+		// boot-time preloads.
 		manager.SetPolicy(policy[0])
 	}
 	// Explicit --plugin entries load first, in parallel (capped). Plugin

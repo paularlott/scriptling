@@ -1,9 +1,9 @@
 package stdlib
 
 import (
-	"math"
 	"context"
 	"encoding/json"
+	"math"
 	"strings"
 
 	"github.com/paularlott/scriptling/conversion"
@@ -120,6 +120,14 @@ func (p pyFloat) MarshalJSON() ([]byte, error) {
 }
 
 func objectToJSON(obj object.Object) interface{} {
+	return objectToJSONSeen(obj, make(map[object.Object]struct{}))
+}
+
+// objectToJSONSeen is objectToJSON with the set of containers on the current
+// path. A container already on the path is a cycle; it is rendered as a
+// string placeholder rather than recursed into, which otherwise overflows
+// the Go stack and aborts the host process (unrecoverable).
+func objectToJSONSeen(obj object.Object, seen map[object.Object]struct{}) interface{} {
 	switch obj := obj.(type) {
 	case *object.Integer:
 		return obj.IntValue()
@@ -130,15 +138,25 @@ func objectToJSON(obj object.Object) interface{} {
 	case *object.Boolean:
 		return obj.BoolValue()
 	case *object.List:
+		if _, cyclic := seen[obj]; cyclic {
+			return "<cyclic reference>"
+		}
+		seen[obj] = struct{}{}
+		defer delete(seen, obj)
 		arr := make([]interface{}, len(obj.Elements))
 		for i, el := range obj.Elements {
-			arr[i] = objectToJSON(el)
+			arr[i] = objectToJSONSeen(el, seen)
 		}
 		return arr
 	case *object.Dict:
+		if _, cyclic := seen[obj]; cyclic {
+			return "<cyclic reference>"
+		}
+		seen[obj] = struct{}{}
+		defer delete(seen, obj)
 		m := make(map[string]interface{}, len(obj.Pairs))
 		for _, pair := range obj.Pairs {
-			m[pair.StringKey()] = objectToJSON(pair.Value)
+			m[pair.StringKey()] = objectToJSONSeen(pair.Value, seen)
 		}
 		return m
 	case *object.Null:

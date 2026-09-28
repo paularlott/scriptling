@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
 )
 
 func TestProvisionFetchRegistration(t *testing.T) {
@@ -328,6 +329,102 @@ except Exception as e:
 	}
 	if _, err := os.Stat(filepath.Join(dir, "..", "escape.txt")); !os.IsNotExist(err) {
 		t.Fatalf("escape file should not exist, stat err=%v", err)
+	}
+}
+
+// safeZipTarget only rejects ../-style traversal in the archive's own entry
+// names. It says nothing about a symlink already sitting inside dest,
+// planted by an earlier, unrelated operation, that would redirect this
+// entry's write outside the allowed directories — the same bug class fixed
+// for shutil.copytree. Each entry must be re-validated against the policy.
+func TestFetchUnpackZipRejectsSymlinkEscape(t *testing.T) {
+	allowedDir := t.TempDir()
+	outsideDir := t.TempDir()
+
+	extractDir := filepath.Join(allowedDir, "extract")
+	if err := os.MkdirAll(extractDir, 0755); err != nil {
+		t.Fatalf("mkdir extractDir: %v", err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(extractDir, "evil")); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
+	}
+
+	zipBytes := makeZip(t, map[string]string{
+		"evil/pwn.txt": "PAYLOAD-OUTSIDE-JAIL",
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(zipBytes)
+	}))
+	defer server.Close()
+
+	p := scriptling.New()
+	RegisterConfigured(p, fssecurity.Config{AllowedPaths: []string{allowedDir}}, nil)
+	_, err := p.Eval(`
+import scriptling.provision.fetch as fetch
+fetch.file("` + server.URL + `", "` + extractDir + `", unpack_zip=True)
+`)
+	if err == nil || !strings.Contains(err.Error(), "outside allowed directories") {
+		t.Fatalf("expected the symlink escape to be denied, got: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(outsideDir, "pwn.txt")); statErr == nil {
+		t.Fatal("payload must not have been written outside the allowed directory")
+	}
+}
+
+// A legitimate multi-level extraction (several new directory levels created
+// in one call) must still succeed: the fix must not turn into a blanket
+// false-positive denial for ordinary nested new paths.
+func TestFetchUnpackZipMultiLevelSucceeds(t *testing.T) {
+	allowedDir := t.TempDir()
+	extractDir := filepath.Join(allowedDir, "extract")
+
+	zipBytes := makeZip(t, map[string]string{
+		"a/b/c/hello.txt": "HELLO",
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(zipBytes)
+	}))
+	defer server.Close()
+
+	p := scriptling.New()
+	RegisterConfigured(p, fssecurity.Config{AllowedPaths: []string{allowedDir}}, nil)
+	_, err := p.Eval(`
+import scriptling.provision.fetch as fetch
+fetch.file("` + server.URL + `", "` + extractDir + `", unpack_zip=True)
+`)
+	if err != nil {
+		t.Fatalf("expected multi-level nested extraction to succeed, got: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(extractDir, "a", "b", "c", "hello.txt"))
+	if err != nil || string(content) != "HELLO" {
+		t.Fatalf("expected extracted file content %q, got %q (err=%v)", "HELLO", content, err)
+	}
+}
+
+// RegisterConfigured previously cached the first call's library behind a
+// process-wide sync.Once, so a second call with a different policy silently
+// reused the first call's policy instead of applying its own — unsafe for
+// any caller that registers this library against interpreters with
+// different per-request/per-tenant configs in the same process.
+func TestRegisterConfiguredAppliesItsOwnPolicyPerCall(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("hello"))
+	}))
+	defer server.Close()
+
+	unrestricted := scriptling.New()
+	Register(unrestricted) // no policy — registered first, would win the old singleton
+
+	dir := t.TempDir()
+	restricted := scriptling.New()
+	RegisterConfigured(restricted, fssecurity.Config{AllowedPaths: []string{}}, nil) // deny-all
+
+	_, err := restricted.Eval(`
+import scriptling.provision.fetch as fetch
+fetch.file("` + server.URL + `", "` + filepath.Join(dir, "out.txt") + `")
+`)
+	if err == nil || !strings.Contains(err.Error(), "outside allowed directories") {
+		t.Fatalf("expected the second interpreter's own deny-all policy to apply, got: %v", err)
 	}
 }
 

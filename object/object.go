@@ -2059,15 +2059,50 @@ type List struct {
 func (l *List) Type() ObjectType { return LIST_OBJ }
 func (l *List) Inspect() string {
 	var out strings.Builder
+	inspectListInto(&out, l, make(inspectSeen))
+	return out.String()
+}
+
+// cyclicInspectPlaceholder is rendered in place of a container that refers to
+// itself (directly or through a chain) during Inspect. Without this guard a
+// self-referential list/tuple/dict recurses until the Go stack overflows,
+// which no recover() can catch and which aborts the whole host process.
+const cyclicInspectPlaceholder = "<cyclic reference>"
+
+// inspectSeen holds the containers currently being rendered on the path from
+// the Inspect root, so a cycle is detected instead of recursed into.
+type inspectSeen map[Object]struct{}
+
+// inspectInto renders obj into out, delegating containers to the cycle-aware
+// helpers and falling back to the object's own Inspect for leaves.
+func inspectInto(out *strings.Builder, obj Object, seen inspectSeen) {
+	switch o := obj.(type) {
+	case *List:
+		inspectListInto(out, o, seen)
+	case *Tuple:
+		inspectTupleInto(out, o, seen)
+	case *Dict:
+		inspectDictInto(out, o, seen)
+	default:
+		out.WriteString(obj.Inspect())
+	}
+}
+
+func inspectListInto(out *strings.Builder, l *List, seen inspectSeen) {
+	if _, cyclic := seen[l]; cyclic {
+		out.WriteString(cyclicInspectPlaceholder)
+		return
+	}
+	seen[l] = struct{}{}
+	defer delete(seen, l)
 	out.WriteString("[")
 	for i, el := range l.Elements {
 		if i > 0 {
 			out.WriteString(", ")
 		}
-		out.WriteString(el.Inspect())
+		inspectInto(out, el, seen)
 	}
 	out.WriteString("]")
-	return out.String()
 }
 
 func (l *List) AsString() (string, Object) { return "", errMustBeString }
@@ -2092,18 +2127,28 @@ type Tuple struct {
 func (t *Tuple) Type() ObjectType { return TUPLE_OBJ }
 func (t *Tuple) Inspect() string {
 	var out strings.Builder
+	inspectTupleInto(&out, t, make(inspectSeen))
+	return out.String()
+}
+
+func inspectTupleInto(out *strings.Builder, t *Tuple, seen inspectSeen) {
+	if _, cyclic := seen[t]; cyclic {
+		out.WriteString(cyclicInspectPlaceholder)
+		return
+	}
+	seen[t] = struct{}{}
+	defer delete(seen, t)
 	out.WriteString("(")
 	for i, el := range t.Elements {
 		if i > 0 {
 			out.WriteString(", ")
 		}
-		out.WriteString(el.Inspect())
+		inspectInto(out, el, seen)
 	}
 	if len(t.Elements) == 1 {
 		out.WriteString(",") // Single element tuple needs trailing comma
 	}
 	out.WriteString(")")
-	return out.String()
 }
 
 func (t *Tuple) AsString() (string, Object) { return "", errMustBeString }
@@ -2153,19 +2198,29 @@ func NewStringDict(entries map[string]Object) *Dict {
 func (d *Dict) Type() ObjectType { return DICT_OBJ }
 func (d *Dict) Inspect() string {
 	var out strings.Builder
+	inspectDictInto(&out, d, make(inspectSeen))
+	return out.String()
+}
+
+func inspectDictInto(out *strings.Builder, d *Dict, seen inspectSeen) {
+	if _, cyclic := seen[d]; cyclic {
+		out.WriteString(cyclicInspectPlaceholder)
+		return
+	}
+	seen[d] = struct{}{}
+	defer delete(seen, d)
 	out.WriteString("{")
 	i := 0
 	for _, pair := range d.Pairs {
 		if i > 0 {
 			out.WriteString(", ")
 		}
-		out.WriteString(pair.Key.Inspect())
+		inspectInto(out, pair.Key, seen)
 		out.WriteString(": ")
-		out.WriteString(pair.Value.Inspect())
+		inspectInto(out, pair.Value, seen)
 		i++
 	}
 	out.WriteString("}")
-	return out.String()
 }
 
 func (d *Dict) AsString() (string, Object) { return "", errMustBeString }

@@ -239,6 +239,19 @@ func copyDir(config fssecurity.Config, src string, dst string, mode os.FileMode)
 		srcPath := filepath.Join(src, entry.Name())
 		dstPath := filepath.Join(dst, entry.Name())
 
+		// SECURITY: re-validate every entry on each recursion. A symlink
+		// planted inside an allowed directory can point outside it, and a
+		// symlinked destination component can point outside it too. Without
+		// resolving and re-checking each entry the recursive copy reads from
+		// (or writes to) outside the allowed paths, even though the
+		// top-level src/dst passed the check in copyPath.
+		if result := checkPathSecurity(config, srcPath); result != nil {
+			return result
+		}
+		if result := checkPathSecurity(config, dstPath); result != nil {
+			return result
+		}
+
 		info, err := entry.Info()
 		if err != nil {
 			return errors.NewError("cannot copy directory: %s", err.Error())

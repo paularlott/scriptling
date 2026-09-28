@@ -240,6 +240,66 @@ func TestConfig_IsPathAllowed_NonExistentPaths(t *testing.T) {
 	}
 }
 
+// A single call that creates several directory levels at once (a fresh
+// extraction directory, a multi-segment config path) means neither the
+// final path nor its immediate parent exist yet at check time. Stopping the
+// symlink resolution at one level up (instead of walking to the nearest
+// existing ancestor) falls back to an unresolved path and can wrongly deny
+// a legitimate nested path whenever an allowed directory itself sits under
+// a symlink (e.g. macOS's /tmp -> /private/tmp).
+func TestConfig_IsPathAllowed_MultiLevelNonExistentPath(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "fssecurity_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	config := Config{AllowedPaths: []string{tempDir}}
+
+	// Neither "a", "a/b", nor "a/b/c.txt" exist yet.
+	deepNonExistent := filepath.Join(tempDir, "a", "b", "c.txt")
+	if !config.IsPathAllowed(deepNonExistent) {
+		t.Errorf("multi-level non-existent path within an allowed directory should be allowed, got denied for %s", deepNonExistent)
+	}
+}
+
+// The symlink case from TestConfig_IsPathAllowed_Symlinks, but with the
+// escaping symlink itself several levels deep and additional non-existent
+// path components trailing after it — proving the walk-to-nearest-ancestor
+// resolution still finds and resolves the symlink rather than giving up
+// after one level (which would fall back to an unresolved, and therefore
+// wrongly-allowed, path).
+func TestConfig_IsPathAllowed_MultiLevelSymlinkEscape(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "fssecurity_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	outsideDir := filepath.Join(tempDir, "..", "outside_multilevel")
+	if err := os.MkdirAll(outsideDir, 0755); err != nil {
+		t.Fatalf("Failed to create outside dir: %v", err)
+	}
+	defer os.RemoveAll(outsideDir)
+
+	nested := filepath.Join(tempDir, "sub")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatalf("Failed to create nested dir: %v", err)
+	}
+	symlinkPath := filepath.Join(nested, "evil")
+	if err := os.Symlink(outsideDir, symlinkPath); err != nil {
+		t.Skipf("Symlinks not supported or failed to create: %v", err)
+	}
+
+	config := Config{AllowedPaths: []string{tempDir}}
+
+	// "evil" exists (it's the symlink); "new" and "file.txt" do not.
+	escaping := filepath.Join(symlinkPath, "new", "file.txt")
+	if config.IsPathAllowed(escaping) {
+		t.Errorf("path through a multi-level symlink escape should be denied, got allowed for %s", escaping)
+	}
+}
+
 func TestConfig_IsPathAllowed_MultipleAllowedPaths(t *testing.T) {
 	tempDir1, err := os.MkdirTemp("", "fssecurity_test1")
 	if err != nil {

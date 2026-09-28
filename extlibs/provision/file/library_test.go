@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
 )
 
 func TestProvisionFileRegistration(t *testing.T) {
@@ -1119,4 +1120,26 @@ try:
 except:
     error_caught = True
 `)
+}
+
+// RegisterConfigured previously cached the first call's library behind a
+// process-wide sync.Once, so a second call with a different policy silently
+// reused the first call's policy instead of applying its own — unsafe for
+// any caller that registers this library against interpreters with
+// different per-request/per-tenant configs in the same process.
+func TestRegisterConfiguredAppliesItsOwnPolicyPerCall(t *testing.T) {
+	unrestricted := scriptling.New()
+	Register(unrestricted) // no policy — registered first, would win the old singleton
+
+	dir := t.TempDir()
+	restricted := scriptling.New()
+	RegisterConfigured(restricted, fssecurity.Config{AllowedPaths: []string{}}) // deny-all
+
+	_, err := restricted.Eval(`
+import scriptling.provision.file as file
+file.ensure("` + filepath.Join(dir, "out.txt") + `", "content")
+`)
+	if err == nil || !strings.Contains(err.Error(), "outside allowed directories") {
+		t.Fatalf("expected the second interpreter's own deny-all policy to apply, got: %v", err)
+	}
 }

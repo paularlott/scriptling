@@ -1609,3 +1609,72 @@ func TestGetFloatMatrix(t *testing.T) {
 		t.Fatal("expected ok=false for List")
 	}
 }
+
+// A self-referential container must render a placeholder instead of
+// recursing forever: unbounded recursion here overflows the Go stack with a
+// fatal error that no recover() can catch, aborting the whole host process.
+func TestInspectHandlesCyclicContainers(t *testing.T) {
+	t.Run("list", func(t *testing.T) {
+		l := &List{Elements: []Object{NewInteger(1)}}
+		l.Elements = append(l.Elements, l)
+		want := "[1, <cyclic reference>]"
+		if got := l.Inspect(); got != want {
+			t.Fatalf("Inspect() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("dict", func(t *testing.T) {
+		d := &Dict{Pairs: map[string]DictPair{}}
+		key := NewString("self")
+		d.Pairs[DictKey(key)] = DictPair{Key: key, Value: d}
+		want := "{self: <cyclic reference>}"
+		if got := d.Inspect(); got != want {
+			t.Fatalf("Inspect() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("tuple", func(t *testing.T) {
+		inner := &Tuple{Elements: []Object{NewInteger(1)}}
+		outer := &Tuple{Elements: []Object{inner}}
+		inner.Elements = append(inner.Elements, outer)
+		got := outer.Inspect()
+		if got == "" {
+			t.Fatal("Inspect() returned empty string")
+		}
+		// Must terminate and mention the placeholder somewhere on the cycle.
+		if !containsSubstr(got, "<cyclic reference>") {
+			t.Fatalf("Inspect() = %q, want it to contain the cyclic placeholder", got)
+		}
+	})
+
+	t.Run("indirect dict-list-dict cycle", func(t *testing.T) {
+		d := &Dict{Pairs: map[string]DictPair{}}
+		l := &List{Elements: []Object{d}}
+		key := NewString("k")
+		d.Pairs[DictKey(key)] = DictPair{Key: key, Value: l}
+		want := "{k: [<cyclic reference>]}"
+		if got := d.Inspect(); got != want {
+			t.Fatalf("Inspect() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("shared but acyclic subtree still fully renders", func(t *testing.T) {
+		shared := &List{Elements: []Object{NewInteger(1)}}
+		outer := &List{Elements: []Object{shared, shared}}
+		want := "[[1], [1]]"
+		if got := outer.Inspect(); got != want {
+			t.Fatalf("Inspect() = %q, want %q (a DAG is not a cycle)", got, want)
+		}
+	})
+}
+
+func containsSubstr(s, substr string) bool {
+	return len(s) >= len(substr) && (func() bool {
+		for i := 0; i+len(substr) <= len(s); i++ {
+			if s[i:i+len(substr)] == substr {
+				return true
+			}
+		}
+		return false
+	})()
+}

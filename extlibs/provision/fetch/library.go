@@ -11,10 +11,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/paularlott/scriptling/conversion"
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/pool"
 )
@@ -32,19 +33,54 @@ const (
 	StatusUnchanged = "unchanged"
 )
 
-var (
-	library     *object.Library
-	libraryOnce sync.Once
-)
-
-func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
-	libraryOnce.Do(func() {
-		library = buildLibrary()
-	})
-	registrar.RegisterLibrary(library)
+// libraryInstance holds the filesystem policy and the policy-enforcing HTTP
+// client this library was registered with. A nil client means no restrictions.
+type libraryInstance struct {
+	paths  fssecurity.Config
+	client *http.Client
 }
 
-func buildLibrary() *object.Library {
+// allowed reports whether dest is inside the configured allowed directories.
+func (i *libraryInstance) allowed(dest string) error {
+	if !i.paths.IsPathAllowed(dest) {
+		return fmt.Errorf("access denied: path '%s' is outside allowed directories", dest)
+	}
+	return nil
+}
+
+func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
+	RegisterConfigured(registrar, fssecurity.Config{}, nil)
+}
+
+// RegisterConfigured registers the library with a filesystem allow-path policy
+// and a netsecurity guard. It threads the same configs used by os/pathlib and
+// requests so that scriptling.provision.fetch obeys --allowed-paths and
+// --network-policy. Pass fssecurity.Config{} and a nil guard for no restriction.
+//
+// A fresh library is built on every call, so each registrar gets exactly the
+// policy and guard it passed — safe for an embedder that registers this
+// library against interpreters with different per-request/per-tenant
+// configs, not just a single process-wide policy set once at startup.
+func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, paths fssecurity.Config, guard *netsecurity.Guard) {
+	if paths.AllowedPaths != nil {
+		normalized := make([]string, 0, len(paths.AllowedPaths))
+		for _, p := range paths.AllowedPaths {
+			abs, err := filepath.Abs(p)
+			if err != nil {
+				continue
+			}
+			normalized = append(normalized, filepath.Clean(abs))
+		}
+		paths.AllowedPaths = normalized
+	}
+	inst := &libraryInstance{paths: paths}
+	if guard != nil {
+		inst.client = guard.HTTPClient()
+	}
+	registrar.RegisterLibrary(buildLibrary(inst))
+}
+
+func buildLibrary(inst *libraryInstance) *object.Library {
 	return object.NewLibrary(LibraryName, map[string]*object.Builtin{
 		"file": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -110,15 +146,18 @@ func buildLibrary() *object.Library {
 					}
 				}
 
-				data, err := fetchURL(ctx, src, insecure, time.Duration(timeoutSecs)*time.Second, maxBytes)
+				data, err := fetchURL(ctx, inst.client, src, insecure, time.Duration(timeoutSecs)*time.Second, maxBytes)
 				if err != nil {
 					return &object.Error{Message: "file: " + err.Error()}
 				}
 
 				dest = expandPath(dest)
+				if err := inst.allowed(dest); err != nil {
+					return &object.Error{Message: "file: " + err.Error()}
+				}
 				var result fetchResult
 				if unpackZip {
-					result, err = unpackZipBytes(data, dest, os.FileMode(mode), os.FileMode(dirMode))
+					result, err = unpackZipBytes(data, dest, os.FileMode(mode), os.FileMode(dirMode), inst.allowed)
 				} else {
 					result, err = writeFetchedFile(data, dest, os.FileMode(mode), os.FileMode(dirMode))
 				}
@@ -193,7 +232,7 @@ func (r fetchResult) toMap() map[string]interface{} {
 	}
 }
 
-func fetchURL(ctx context.Context, rawURL string, insecure bool, timeout time.Duration, maxBytes int64) ([]byte, error) {
+func fetchURL(ctx context.Context, client *http.Client, rawURL string, insecure bool, timeout time.Duration, maxBytes int64) ([]byte, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid URL: %w", err)
@@ -205,9 +244,20 @@ func fetchURL(ctx context.Context, rawURL string, insecure bool, timeout time.Du
 		return nil, fmt.Errorf("URL host is required")
 	}
 
-	client := &http.Client{
-		Timeout:   timeout,
-		Transport: fetchTransport(insecure),
+	if client == nil {
+		client = &http.Client{
+			Timeout:   timeout,
+			Transport: fetchTransport(insecure),
+		}
+	} else {
+		// A policy-enforcing client is always used as-is (with its guarded
+		// transport). While any URL is permitted the request timeout still
+		// applies; once a policy is in force, keep the client's own timeout.
+		clone := *client
+		if clone.Timeout == 0 {
+			clone.Timeout = timeout
+		}
+		client = &clone
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
@@ -292,7 +342,7 @@ func writeFetchedFile(data []byte, dest string, mode, dirMode os.FileMode) (fetc
 	return fetchResult{Status: status, Files: []string{dest}}, nil
 }
 
-func unpackZipBytes(data []byte, dest string, mode, dirMode os.FileMode) (fetchResult, error) {
+func unpackZipBytes(data []byte, dest string, mode, dirMode os.FileMode, allowed func(string) error) (fetchResult, error) {
 	if dest == "" {
 		return fetchResult{}, fmt.Errorf("dest must not be empty")
 	}
@@ -317,6 +367,16 @@ func unpackZipBytes(data []byte, dest string, mode, dirMode os.FileMode) (fetchR
 		}
 		target, err := safeZipTarget(cleanDest, f.Name)
 		if err != nil {
+			return fetchResult{}, err
+		}
+
+		// SECURITY: safeZipTarget only rejects ../-style path traversal
+		// within the archive's own entry names; it says nothing about a
+		// symlink already sitting inside dest (planted by an earlier,
+		// unrelated call) that would redirect this entry's write outside the
+		// allowed directories. Re-validate every entry, the same fix applied
+		// to shutil.copytree's copyDir for the identical reason.
+		if err := allowed(target); err != nil {
 			return fetchResult{}, err
 		}
 

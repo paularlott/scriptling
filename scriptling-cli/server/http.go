@@ -839,7 +839,8 @@ func (s *Server) buildRequestProviders(regs *extlibs.RequestRegistrations) (requ
 //     as above, just requiring one extra header to trigger.
 func (s *Server) bearerTokenMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		isMCPPreflight := r.Method == http.MethodOptions &&
+		isMCPPreflight := s.mcpHandler != nil &&
+			r.Method == http.MethodOptions &&
 			r.URL.Path == "/mcp" &&
 			r.Header.Get("Access-Control-Request-Method") != ""
 		if !isMCPPreflight && r.Header.Get("Authorization") != s.bearerExpected {

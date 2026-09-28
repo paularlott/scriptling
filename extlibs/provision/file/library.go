@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -17,10 +17,19 @@ const (
 	LibraryDesc = "File provisioning utilities for creating and updating files with correct permissions"
 )
 
-var (
-	library     *object.Library
-	libraryOnce sync.Once
-)
+// libraryInstance holds the filesystem policy this library was registered with.
+type libraryInstance struct {
+	paths fssecurity.Config
+}
+
+// allowed reports whether path is inside the configured allowed directories.
+// A nil AllowedPaths means no restriction, matching every other fs library.
+func (i *libraryInstance) allowed(path string) error {
+	if !i.paths.IsPathAllowed(path) {
+		return fmt.Errorf("access denied: path '%s' is outside allowed directories", path)
+	}
+	return nil
+}
 
 const (
 	defaultFileMode = 0o644
@@ -40,13 +49,34 @@ const (
 )
 
 func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
-	libraryOnce.Do(func() {
-		library = buildLibrary()
-	})
-	registrar.RegisterLibrary(library)
+	RegisterConfigured(registrar, fssecurity.Config{})
 }
 
-func buildLibrary() *object.Library {
+// RegisterConfigured registers the library with a filesystem allow-path policy.
+// It threads the same fssecurity.Config used by os/pathlib/shutil/zipfile so
+// that scriptling.provision.file obeys --allowed-paths. Pass fssecurity.Config{}
+// for no restriction.
+//
+// A fresh library is built on every call, so each registrar gets exactly the
+// policy it passed — safe for an embedder that registers this library
+// against interpreters with different per-request/per-tenant configs, not
+// just a single process-wide policy set once at startup.
+func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, paths fssecurity.Config) {
+	if paths.AllowedPaths != nil {
+		normalized := make([]string, 0, len(paths.AllowedPaths))
+		for _, p := range paths.AllowedPaths {
+			abs, err := filepath.Abs(p)
+			if err != nil {
+				continue
+			}
+			normalized = append(normalized, filepath.Clean(abs))
+		}
+		paths.AllowedPaths = normalized
+	}
+	registrar.RegisterLibrary(buildLibrary(&libraryInstance{paths: paths}))
+}
+
+func buildLibrary(inst *libraryInstance) *object.Library {
 	return object.NewLibrary(LibraryName, map[string]*object.Builtin{
 		"ensure": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -68,6 +98,10 @@ func buildLibrary() *object.Library {
 				createOnly := kwargs.MustGetBool("create_only", false)
 
 				path = expandPath(path)
+
+				if err := inst.allowed(path); err != nil {
+					return &object.Error{Message: "ensure: " + err.Error()}
+				}
 
 				existing, err := os.ReadFile(path)
 				if err == nil && bytes.Equal(existing, []byte(content)) {
@@ -143,6 +177,10 @@ Example:
 
 				path = expandPath(path)
 
+				if err := inst.allowed(path); err != nil {
+					return &object.Error{Message: "absent: " + err.Error()}
+				}
+
 				if _, err := os.Stat(path); os.IsNotExist(err) {
 					return object.NewString(StatusAbsent)
 				}
@@ -184,6 +222,10 @@ Example:
 				mode := int(kwargs.MustGetInt("mode", defaultDirMode))
 
 				path = expandPath(path)
+
+				if err := inst.allowed(path); err != nil {
+					return &object.Error{Message: "ensure_directory: " + err.Error()}
+				}
 
 				info, err := os.Stat(path)
 				if err == nil {
@@ -229,6 +271,10 @@ Example:
 				}
 
 				path = expandPath(path)
+
+				if err := inst.allowed(path); err != nil {
+					return &object.Error{Message: "absent_directory: " + err.Error()}
+				}
 
 				info, err := os.Stat(path)
 				if os.IsNotExist(err) {
@@ -308,6 +354,10 @@ Example:
 				}
 
 				path = expandPath(path)
+
+				if err := inst.allowed(path); err != nil {
+					return &object.Error{Message: "ensure_block: " + err.Error()}
+				}
 
 				lines, trailingNL, existed, err := readFileLines(path)
 				if err != nil {
@@ -416,6 +466,10 @@ Example:
 				beginLine, endLine := blockMarkerLines(comment, id)
 
 				path = expandPath(path)
+
+				if err := inst.allowed(path); err != nil {
+					return &object.Error{Message: "absent_block: " + err.Error()}
+				}
 
 				lines, trailingNL, existed, err := readFileLines(path)
 				if err != nil {

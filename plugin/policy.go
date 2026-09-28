@@ -81,6 +81,17 @@ func (p *Policy) NetworkEnabled() bool {
 	return p != nil && p.Network != nil
 }
 
+// ExecPaths returns the exec-path restriction this policy implies for
+// script-driven plugin loading, or nil when the policy does not restrict
+// paths. It mirrors the nil-vs-empty convention of fssecurity.Config: a nil
+// AllowedPaths means unrestricted, an empty (non-nil) slice means deny all.
+func (p *Policy) ExecPaths() *fssecurity.Config {
+	if p == nil || p.AllowedPaths == nil {
+		return nil
+	}
+	return &fssecurity.Config{AllowedPaths: p.AllowedPaths}
+}
+
 // Guard returns a netsecurity.Guard enforcing the policy's network rules, or
 // (nil, nil) when the network is unrestricted. The returned Guard validates
 // every resolved IP at dial time, so connections made through its DialContext

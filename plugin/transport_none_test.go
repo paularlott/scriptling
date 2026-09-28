@@ -657,6 +657,65 @@ func TestWithExecPathsCombinesWithHTTPTransport(t *testing.T) {
 	}
 }
 
+// TestSetHTTPTransportRestrictsPluginHTTPLoading proves the manager-level
+// setter (as opposed to the NewScope-time WithHTTPTransport option) enforces
+// an operator's network policy on an existing, already-constructed manager —
+// the pattern a host application (or the CLI's persistent plugin manager)
+// uses: build the manager once, then install the guard's transport once a
+// policy is known, rather than threading it through NewScope every time.
+// Without this, a manager's default pooled transport performs no
+// netsecurity check at all, so plugin HTTP loads and calls are an SSRF sink
+// regardless of any network policy configured for the rest of the script.
+func TestSetHTTPTransportRestrictsPluginHTTPLoading(t *testing.T) {
+	echo := object.NewFunctionBuilder()
+	echo.Function(func(v any) any { return v })
+	srv := httptestServer(t, NewServer("httptransportdemo", "1.0.0", "SetHTTPTransport demo").RegisterFunc("echo", echo))
+
+	// No transport installed: unrestricted, matching the documented default.
+	unrestricted := NewManager(nil)
+	defer unrestricted.Close()
+	client, err := unrestricted.LoadURL(context.Background(), "unrestricted", srv.URL, false, false)
+	if err != nil {
+		t.Fatalf("LoadURL with no transport installed: %v", err)
+	}
+	if _, err := client.CallFunction(context.Background(), "echo",
+		[]Value{{Type: valueString, Value: "x"}}, nil); err != nil {
+		t.Fatalf("expected the unrestricted manager to still reach the loopback server, got: %v", err)
+	}
+
+	// A deny-everything guard installed after construction must block it.
+	guard, err := netsecurity.NewGuard(&netsecurity.Config{})
+	if err != nil {
+		t.Fatalf("NewGuard: %v", err)
+	}
+	restricted := NewManager(nil)
+	defer restricted.Close()
+	restricted.SetHTTPTransport(guard.HTTPClient().Transport)
+
+	client, err = restricted.LoadURL(context.Background(), "restricted", srv.URL, false, false)
+	if err != nil {
+		t.Fatalf("LoadURL (no handshake, should not dial yet): %v", err)
+	}
+	if _, err := client.CallFunction(context.Background(), "echo",
+		[]Value{{Type: valueString, Value: "x"}}, nil); err == nil || !strings.Contains(err.Error(), "network policy") {
+		t.Fatalf("expected the installed network policy to block this loopback call, got: %v", err)
+	}
+
+	// A nil transport (e.g. no policy configured) must not disturb the
+	// manager's existing default — the documented "leave unrestricted" case.
+	untouched := NewManager(nil)
+	defer untouched.Close()
+	untouched.SetHTTPTransport(nil)
+	client, err = untouched.LoadURL(context.Background(), "untouched", srv.URL, false, false)
+	if err != nil {
+		t.Fatalf("LoadURL after SetHTTPTransport(nil): %v", err)
+	}
+	if _, err := client.CallFunction(context.Background(), "echo",
+		[]Value{{Type: valueString, Value: "x"}}, nil); err != nil {
+		t.Fatalf("SetHTTPTransport(nil) must leave the manager unrestricted, got: %v", err)
+	}
+}
+
 // TestWithExecPathsScriptLevel proves the WithExecPaths doc example works
 // through the actual scriptling.plugin control library, not just the Go
 // Manager API: a startup-preloaded plugin stays fully usable from a script,
@@ -718,4 +777,34 @@ scriptling.plugin.load("evil", ` + strconv.Quote(outsideHelper) + `, scriptling=
 			t.Fatalf("expected a not-in-the-allowed-paths error, got: %v", err)
 		}
 	})
+}
+
+// TestRegisterLibrariesDoesNotRestrictScriptLoadsFromPolicy locks in the
+// opposite of an earlier, reverted design: RegisterLibraries's policy
+// argument does not gate scriptling.plugin.load. A caller running scripts
+// through this package already has whatever access the manager itself has —
+// the CLI's trust model, where CLI/script access implies full access — so
+// script-driven loads are exactly as permissive as boot-time preloads. A
+// caller that wants a genuinely lower-trust script principal (e.g. a
+// multi-tenant embedder) builds its own restricted scope with WithExecPaths/
+// WithHTTPTransport and registers libraries against that instead.
+func TestRegisterLibrariesDoesNotRestrictScriptLoadsFromPolicy(t *testing.T) {
+	outsideDir := t.TempDir()
+	outsideHelper := filepath.Join(outsideDir, "loader")
+	writeScriptlingHelper(t, outsideHelper)
+
+	manager := NewManager(nil)
+	defer manager.Close()
+
+	policy := &Policy{AllowedPaths: []string{t.TempDir()}} // does not include outsideDir
+	p := scriptling.New()
+	RegisterLibraries(p, manager, policy)
+
+	_, err := p.Eval(`
+import scriptling.plugin
+scriptling.plugin.load("evil", ` + strconv.Quote(outsideHelper) + `, scriptling=True)
+`)
+	if err != nil {
+		t.Fatalf("expected scriptling.plugin.load to ignore the policy's AllowedPaths, got: %v", err)
+	}
 }

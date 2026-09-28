@@ -48,7 +48,7 @@ func TestClientConsumesNamespacedParallelAndSkillResources(t *testing.T) {
 		mcplib.NewTool("echo", "Echo", mcplib.String("text", "Text", mcplib.Required())),
 		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 			text, _ := req.String("text")
-			return mcplib.NewToolResponseText("echo: "+text), nil
+			return mcplib.NewToolResponseText("echo: " + text), nil
 		},
 	)
 	if err := server.RegisterSkill(mcplib.NewSkill("consume-skill").

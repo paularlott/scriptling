@@ -134,7 +134,11 @@ conn = sqlite.connect("`+outside+`")
 func TestInProcessFileURIDSN(t *testing.T) {
 	dir := t.TempDir()
 	inside := filepath.Join(dir, "uri.db")
-	outside := filepath.Join(dir, "outside", "uri.db")
+	// A genuinely separate directory, not a not-yet-created subdirectory of
+	// dir: dir/outside/uri.db is legitimately inside the allowed path (a
+	// fresh nested directory the policy must permit creating), so it is not
+	// a usable negative case for "outside the allowed paths".
+	outside := filepath.Join(t.TempDir(), "outside", "uri.db")
 
 	result, err := evalInProcess(t, &plugin.Policy{AllowedPaths: []string{dir}}, `
 import scriptling.sqlite as sqlite

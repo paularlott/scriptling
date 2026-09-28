@@ -281,8 +281,8 @@ func (m *Manager) NewScope(opts ...ScopeOption) *Manager {
 		maxParallelPluginLoads: m.parallelLoadLimit(),
 		httpTransport:          m.httpTransport,         // shared — connections pooled with parent
 		httpInsecureTransport:  m.httpInsecureTransport, // shared — connections pooled with parent
-		transportMode:          m.transportMode,          // inherited — see doc comment above
-		execPaths:              m.execPaths,               // inherited — see doc comment above
+		transportMode:          m.transportMode,         // inherited — see doc comment above
+		execPaths:              m.execPaths,             // inherited — see doc comment above
 		loadsDone:              closedSignal(),
 		closeDone:              make(chan struct{}),
 	}
@@ -1047,6 +1047,35 @@ func (m *Manager) SetLogger(log logger.Logger) {
 func (m *Manager) SetPolicy(policy *Policy) {
 	m.mu.Lock()
 	m.policy = policy
+	m.mu.Unlock()
+}
+
+// SetHTTPTransport routes every HTTP(S) plugin load and call through
+// transport, so an operator-configured network policy is enforced on plugin
+// connections (hosts build one from Policy.Guard). A nil transport leaves the
+// manager's default pooled transport in place — the documented unrestricted
+// behavior. Like WithHTTPTransport it also replaces the insecure-skip-verify
+// transport, so the restriction cannot be dropped by asking to skip TLS
+// verification. Call it before Load/LoadURL, alongside SetPolicy.
+func (m *Manager) SetHTTPTransport(transport http.RoundTripper) {
+	if transport == nil {
+		return
+	}
+	m.mu.Lock()
+	m.httpTransport = transport
+	m.httpInsecureTransport = transport
+	m.mu.Unlock()
+}
+
+// SetExecPaths installs an exec-path restriction on this manager after
+// construction, so a host that builds the manager (and pre-loads trusted
+// plugins) before the operator's --allowed-paths is known can still enforce
+// it on later, script-driven plugin.load calls. A nil cfg leaves exec loading
+// unrestricted — the documented default — while a non-nil cfg with an empty
+// AllowedPaths denies every executable path, matching fssecurity.Config.
+func (m *Manager) SetExecPaths(cfg *fssecurity.Config) {
+	m.mu.Lock()
+	m.execPaths = cfg
 	m.mu.Unlock()
 }
 

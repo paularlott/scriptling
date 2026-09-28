@@ -62,6 +62,12 @@ func RegisterLibraries(registrar Registrar, manager *Manager, policy ...*Policy)
 	if r, ok := registrar.(LibraryUnregistrar); ok {
 		unregistrar = r
 	}
+	// Script-driven plugin.load is intentionally not restricted by policy
+	// here: a caller running scripts through this package already has
+	// whatever access the manager itself has (the CLI's own trust model —
+	// see NewExecPaths/SetHTTPTransport/WithExecPaths for a caller, such as a
+	// multi-tenant embedder, that wants a genuinely lower-trust script
+	// principal instead).
 	registrar.RegisterLibrary(NewControlLibrary(manager, registrar, scriptRegistrar, unregistrar))
 	for _, metadata := range manager.List() {
 		client, ok := manager.Get(metadata.Name)

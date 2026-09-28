@@ -47,31 +47,16 @@ func (c *Config) IsPathAllowed(path string) bool {
 	// This prevents symlink attacks where a symlink inside allowed dirs
 	// points to a location outside allowed dirs.
 	// Note: EvalSymlinks also cleans the path and makes it absolute
-	realPath, err := filepath.EvalSymlinks(absPath)
-	if err != nil {
-		// If the path doesn't exist yet (for write operations), we can't eval symlinks.
-		// In this case, we check the parent directory exists and is allowed,
-		// and that the final path (after cleaning) is still within allowed dirs.
-		parentDir := filepath.Dir(absPath)
-		realParent, parentErr := filepath.EvalSymlinks(parentDir)
-		if parentErr != nil {
-			// Parent doesn't exist either - check if path is within allowed dirs
-			// using the cleaned absolute path
-			realPath = absPath
-		} else {
-			// Parent exists, reconstruct the full path with real parent
-			realPath = filepath.Join(realParent, filepath.Base(absPath))
-		}
-	}
+	realPath := resolveExistingPrefix(absPath)
 
 	// Check if the real path starts with any of the allowed paths
 	for _, allowedPath := range c.AllowedPaths {
-		// Get real path of allowed directory too (in case it's a symlink)
-		realAllowed, err := filepath.EvalSymlinks(allowedPath)
-		if err != nil {
-			// If allowed path doesn't exist, use it as-is (cleaned)
-			realAllowed = filepath.Clean(allowedPath)
-		}
+		// Resolve the allowed directory the same way as the query path
+		// (including a possibly-non-existent allowed directory, e.g. before
+		// it has been created): otherwise the two sides can disagree about
+		// how far a shared prefix like /tmp -> /private/tmp on macOS has
+		// been resolved, and an entirely legitimate path is denied.
+		realAllowed := resolveExistingPrefix(filepath.Clean(allowedPath))
 
 		// Ensure allowed path ends with separator for proper prefix matching
 		// This prevents /allowed matching /allowed-other
@@ -87,4 +72,44 @@ func (c *Config) IsPathAllowed(path string) bool {
 	}
 
 	return false
+}
+
+// resolveExistingPrefix resolves symlinks in path for a write-style check
+// where path itself (and possibly several trailing components) may not
+// exist yet. It walks up from path until it finds the nearest ancestor that
+// does exist, resolves that ancestor's symlinks, and rejoins the
+// not-yet-existing suffix onto the resolved ancestor.
+//
+// A single level of "check the immediate parent" is not enough: creating a
+// new file several directories deep in one call (a fresh extraction
+// directory, a multi-level config path) means neither the file nor its
+// immediate parent exist yet, so stopping at one level silently falls back
+// to the unresolved, uncleaned path — which can either wrongly deny a
+// legitimate nested path (e.g. on a host where an allowed directory itself
+// sits under a symlink, such as macOS's /tmp -> /private/tmp) or, more
+// importantly, wrongly ALLOW a path where an intermediate, not-yet-visible
+// component is actually a symlink that escapes the allowed directories.
+// Walking to the nearest existing ancestor closes both gaps at every depth,
+// not just one level.
+func resolveExistingPrefix(absPath string) string {
+	if real, err := filepath.EvalSymlinks(absPath); err == nil {
+		return real
+	}
+
+	suffix := ""
+	dir := absPath
+	for {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Reached the filesystem root without finding an existing
+			// ancestor; nothing left to resolve against.
+			return absPath
+		}
+		suffix = filepath.Join(filepath.Base(dir), suffix)
+		dir = parent
+
+		if realDir, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(realDir, suffix)
+		}
+	}
 }

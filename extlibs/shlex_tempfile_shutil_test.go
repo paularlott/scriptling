@@ -304,6 +304,71 @@ shutil.rmtree("` + denied + `")`)
 	}
 }
 
+// A symlink planted inside an allowed directory must not let copytree
+// dereference it to read a file outside the jail: copyDir must re-validate
+// every entry it recurses into, not just the top-level src/dst.
+func TestShutilCopyTreeDeniesSymlinkReadEscape(t *testing.T) {
+	allowed := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("outside-jail-secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(allowed, "d")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(src, "pw")); err != nil {
+		t.Fatal(err)
+	}
+
+	p := scriptling.New()
+	RegisterShutilLibrary(p, []string{allowed})
+
+	dst := filepath.Join(allowed, "esc")
+	_, err := p.Eval(`import shutil
+shutil.copytree("` + src + `", "` + dst + `")`)
+	if err == nil {
+		t.Fatal("expected permission error copying a directory containing a symlink to an out-of-jail file")
+	}
+	if _, statErr := os.Stat(filepath.Join(dst, "pw")); statErr == nil {
+		t.Error("out-of-jail file content must not have been copied into the jail")
+	}
+}
+
+// A symlinked destination component inside an allowed directory must not
+// let copytree write through it to a location outside the jail.
+func TestShutilCopyTreeDeniesSymlinkWriteEscape(t *testing.T) {
+	allowed := t.TempDir()
+	outside := t.TempDir()
+	src := filepath.Join(allowed, "src", "sub")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "pwn.txt"), []byte("PAYLOAD"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(allowed, "dst")
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dst, "sub")); err != nil {
+		t.Fatal(err)
+	}
+
+	p := scriptling.New()
+	RegisterShutilLibrary(p, []string{allowed})
+
+	_, err := p.Eval(`import shutil
+shutil.copytree("` + filepath.Join(allowed, "src") + `", "` + dst + `")`)
+	if err == nil {
+		t.Fatal("expected permission error copying through a symlinked destination component")
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, "pwn.txt")); statErr == nil {
+		t.Error("file must not have been written outside the jail")
+	}
+}
+
 // evalBool is a test helper that coerces an Object to bool.
 func evalBool(obj object.Object) bool {
 	b, _ := obj.AsBool()
