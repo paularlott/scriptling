@@ -1145,6 +1145,24 @@ func loadPluginManager(ctx context.Context, dirs []string, plugins []string, plu
 		_ = manager.Close()
 		return nil, err
 	}
+	if len(policy) > 0 {
+		// The --plugin/--plugin-dir preloads just above are host-trusted and
+		// loaded unrestricted. Script-driven plugin.load, however, must obey
+		// the operator's filesystem and network policies, so the restrictions
+		// are installed *after* preloading — they gate only later,
+		// script-initiated loads and their connections. The script-facing
+		// control library, registered from this manager after this function
+		// returns, inherits both restrictions.
+		manager.SetExecPaths(policy[0].ExecPaths())
+		if policy[0].NetworkEnabled() {
+			if guard, gerr := policy[0].Guard(); gerr != nil {
+				_ = manager.Close()
+				return nil, gerr
+			} else if guard != nil {
+				manager.SetHTTPTransport(guard.HTTPClient().Transport)
+			}
+		}
+	}
 	for _, warning := range manager.Warnings() {
 		if globalLogger != nil {
 			globalLogger.Warn("Plugin load warning", "warning", warning)

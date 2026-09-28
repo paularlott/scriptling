@@ -62,13 +62,19 @@ func RegisterLibraries(registrar Registrar, manager *Manager, policy ...*Policy)
 	if r, ok := registrar.(LibraryUnregistrar); ok {
 		unregistrar = r
 	}
-	// Script-driven plugin.load is intentionally not restricted by policy
-	// here: a caller running scripts through this package already has
-	// whatever access the manager itself has (the CLI's own trust model —
-	// see NewExecPaths/SetHTTPTransport/WithExecPaths for a caller, such as a
-	// multi-tenant embedder, that wants a genuinely lower-trust script
-	// principal instead).
-	registrar.RegisterLibrary(NewControlLibrary(manager, registrar, scriptRegistrar, unregistrar))
+	// Script-driven plugin.load must obey the same restrictions the host
+	// applies to the rest of the interpreter: when a policy is configured the
+	// control library loads through a restricted scope, so a script cannot
+	// spawn an executable outside the allowed paths or open a plugin
+	// connection the network policy denies. The manager itself stays
+	// unrestricted — the host's boot-time --plugin/--plugin-dir preloads are
+	// trusted — and those already-loaded plugins remain visible through the
+	// scope's parent chain.
+	controlManager := manager
+	if pol != nil {
+		controlManager = manager.NewScope(WithExecPaths(pol.ExecPaths()))
+	}
+	registrar.RegisterLibrary(NewControlLibrary(controlManager, registrar, scriptRegistrar, unregistrar))
 	for _, metadata := range manager.List() {
 		client, ok := manager.Get(metadata.Name)
 		if !ok {

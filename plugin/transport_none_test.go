@@ -779,32 +779,63 @@ scriptling.plugin.load("evil", ` + strconv.Quote(outsideHelper) + `, scriptling=
 	})
 }
 
-// TestRegisterLibrariesDoesNotRestrictScriptLoadsFromPolicy locks in the
-// opposite of an earlier, reverted design: RegisterLibraries's policy
-// argument does not gate scriptling.plugin.load. A caller running scripts
-// through this package already has whatever access the manager itself has —
-// the CLI's trust model, where CLI/script access implies full access — so
-// script-driven loads are exactly as permissive as boot-time preloads. A
-// caller that wants a genuinely lower-trust script principal (e.g. a
-// multi-tenant embedder) builds its own restricted scope with WithExecPaths/
-// WithHTTPTransport and registers libraries against that instead.
-func TestRegisterLibrariesDoesNotRestrictScriptLoadsFromPolicy(t *testing.T) {
+// TestRegisterLibrariesRestrictsScriptLoadsFromPolicy locks in the trust
+// split: boot-time preloads (the CLI's --plugin/--plugin-dir, loaded before
+// restrictions are known) are trusted and stay fully usable from scripts,
+// while script-driven scriptling.plugin.load goes through the policy's
+// exec-path restriction — a script cannot spawn an executable outside the
+// allowed paths even though the host could.
+func TestRegisterLibrariesRestrictsScriptLoadsFromPolicy(t *testing.T) {
+	allowedDir := t.TempDir()
+	allowedHelper := filepath.Join(allowedDir, "loader")
+	writeScriptlingHelper(t, allowedHelper)
+
 	outsideDir := t.TempDir()
 	outsideHelper := filepath.Join(outsideDir, "loader")
 	writeScriptlingHelper(t, outsideHelper)
 
+	// The manager is boot-time: preload a plugin from outside the allowlist
+	// (host-trusted), exactly as the CLI does before restrictions are known.
 	manager := NewManager(nil)
 	defer manager.Close()
+	if _, err := manager.LoadPlugin(context.Background(), outsideHelper, nil); err != nil {
+		t.Fatalf("unrestricted startup LoadPlugin: %v", err)
+	}
 
-	policy := &Policy{AllowedPaths: []string{t.TempDir()}} // does not include outsideDir
+	policy := &Policy{AllowedPaths: []string{allowedDir}}
 	p := scriptling.New()
 	RegisterLibraries(p, manager, policy)
 
-	_, err := p.Eval(`
+	// A boot-time preloaded plugin (outside the allowlist) stays fully usable
+	// from the script — the restriction only gates new, script-initiated loads.
+	result, err := p.Eval(`
+import scriptling.plugin
+scriptling.plugin.call_function("declared", "add", 18, 24)
+`)
+	if err != nil {
+		t.Fatalf("calling the preloaded plugin: %v", err)
+	}
+	if i, ok := result.(*object.Integer); !ok || i.IntValue() != 42 {
+		t.Fatalf("expected int 42 from the preloaded plugin, got %#v", result)
+	}
+
+	t.Run("load_from_allowed_dir_succeeds", func(t *testing.T) {
+		_, err := p.Eval(`
+import scriptling.plugin
+scriptling.plugin.load("extra", ` + strconv.Quote(allowedHelper) + `, scriptling=True)
+`)
+		if err != nil {
+			t.Fatalf("Eval: %v", err)
+		}
+	})
+
+	t.Run("load_from_outside_allowed_dir_fails", func(t *testing.T) {
+		_, err := p.Eval(`
 import scriptling.plugin
 scriptling.plugin.load("evil", ` + strconv.Quote(outsideHelper) + `, scriptling=True)
 `)
-	if err != nil {
-		t.Fatalf("expected scriptling.plugin.load to ignore the policy's AllowedPaths, got: %v", err)
-	}
+		if err == nil || !strings.Contains(err.Error(), "not in the allowed paths") {
+			t.Fatalf("expected a not-in-the-allowed-paths error, got: %v", err)
+		}
+	})
 }
