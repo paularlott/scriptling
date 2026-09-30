@@ -1,0 +1,56 @@
+# Advanced CodeQL setup, replacing default setup.
+#
+# Default setup repeatedly failed on Go and eventually auto-removed the
+# language: the go/allocation-size-overflow query (CWE-190) exceeds CodeQL's
+# 2 GiB per-query result-set limit on this codebase (exit code 34), which
+# fails the whole analysis. That query can't be excluded under default
+# setup, so it is excluded here instead. Categories match the ones default
+# setup used (/language:<name>) to keep alert history continuous.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '34 5 * * 1'
+
+permissions:
+  security-events: write
+  contents: read
+  actions: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: go
+            build-mode: autobuild
+          - language: python
+            build-mode: none
+          - language: actions
+            build-mode: none
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config: |
+            queries:
+              - exclude:
+                  id: go/allocation-size-overflow
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'
