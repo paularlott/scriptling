@@ -169,10 +169,15 @@ func compileNode(node ast.Node) object.EvalFn {
 // only reads the immutable AST, so two goroutines racing on first use build
 // equivalent closures and one store wins.
 func cachedExpr(slot *ast.CompiledSlot, e ast.Expression) object.EvalFn {
+	return cachedNode(slot, e)
+}
+
+// cachedNode is cachedExpr for any node.
+func cachedNode(slot *ast.CompiledSlot, n ast.Node) object.EvalFn {
 	if fn, ok := slot.Load().(object.EvalFn); ok && fn != nil {
 		return fn
 	}
-	fn := compileExpr(e)
+	fn := compileNode(n)
 	slot.Store(fn)
 	return fn
 }
@@ -1870,117 +1875,226 @@ func compileAugmentedAssign(n *ast.AugmentedAssignStatement) object.EvalFn {
 			return errObj
 		}
 	}
-	targetFn := compileExpr(target)
 	valueFn := compileExpr(n.Value)
 	op := n.Operator
-	isAddEq := op == ast.OpAddEq
-	isBitOrEq := op == ast.OpBitOrEq
-	baseOp := op.BaseOp()
-	opValid := baseOp != op
 
+	// Subscript and attribute targets evaluate their container and key once,
+	// then read, operate and write through those operands, as Python does:
+	// `d[k()] += v` calls k() a single time.
+	if idx, ok := target.(*ast.IndexExpression); ok {
+		return func(ctx context.Context, env *object.Environment) object.Object {
+			ops, errObj := evalAugIndexOperands(ctx, idx, env)
+			if errObj != nil {
+				return errObj
+			}
+			currentVal := ops.read(ctx, idx.IsDotAccess)
+			if object.IsError(currentVal) || isRaised(currentVal) {
+				return currentVal
+			}
+			newVal := valueFn(ctx, env)
+			if object.IsError(newVal) || isRaised(newVal) {
+				return newVal
+			}
+			result, done, errObj := applyAugmentedOp(ctx, op, currentVal, newVal, env)
+			if errObj != nil {
+				return errObj
+			}
+			if done {
+				return NULL
+			}
+			if err := ops.write(ctx, idx.IsDotAccess, result); err != nil {
+				return assignErrorToObject(err)
+			}
+			return NULL
+		}
+	}
+
+	targetFn := compileExpr(target)
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		currentVal := targetFn(ctx, env)
 		if object.IsError(currentVal) || isRaised(currentVal) {
 			return currentVal
 		}
-
 		newVal := valueFn(ctx, env)
 		if object.IsError(newVal) || isRaised(newVal) {
 			return newVal
 		}
-
-		// Fast path: string += string, int += int
-		if isAddEq {
-			if cur, ok := currentVal.(*object.String); ok {
-				if r, ok := newVal.(*object.String); ok {
-					if err := assignToExpression(ctx, target, object.NewString(cur.StringValue()+r.StringValue()), env); err != nil {
-						return assignErrorToObject(err)
-					}
-					return NULL
-				}
-			}
-			if cur, ok := currentVal.(*object.Integer); ok {
-				if r, ok := newVal.(*object.Integer); ok {
-					if err := assignToExpression(ctx, target, object.NewInteger(cur.IntValue()+r.IntValue()), env); err != nil {
-						return assignErrorToObject(err)
-					}
-					return NULL
-				}
-			}
+		result, done, errObj := applyAugmentedOp(ctx, op, currentVal, newVal, env)
+		if errObj != nil {
+			return errObj
 		}
-
-		// Fast path: dict |= dict merges into the left dict in place (PEP 584), so
-		// other references to the same dict observe the update, matching Python.
-		if isBitOrEq {
-			if cur, ok := currentVal.(*object.Dict); ok {
-				if r, ok := newVal.(*object.Dict); ok {
-					if cur.Pairs == nil {
-						cur.Pairs = make(map[string]object.DictPair, len(r.Pairs))
-					}
-					for k, v := range r.Pairs {
-						cur.Pairs[k] = v
-					}
-					return NULL
-				}
-			}
+		if done {
+			return NULL
 		}
-
-		// Fast path: list += list extends and list *= n repeats in place, since
-		// Python's list iadd/imul mutate and aliases observe the update.
-		if cur, ok := currentVal.(*object.List); ok {
-			switch op {
-			case ast.OpAddEq:
-				if r, ok := newVal.(*object.List); ok {
-					cur.Elements = append(cur.Elements, r.Elements...)
-					return NULL
-				}
-			case ast.OpMulEq:
-				if r, ok := newVal.(*object.Integer); ok {
-					elements, errObj := repeatElements(cur.Elements, r.IntValue())
-					if errObj != nil {
-						return errObj
-					}
-					cur.Elements = elements
-					return NULL
-				}
-			}
-		}
-
-		// Fast path: set augmented operators mutate in place, matching Python
-		// (set __ior__ and friends are in-place updates).
-		if cur, ok := currentVal.(*object.Set); ok {
-			if r, ok := newVal.(*object.Set); ok {
-				switch op {
-				case ast.OpBitOrEq:
-					cur.InPlaceUnion(r)
-					return NULL
-				case ast.OpBitAndEq:
-					cur.InPlaceIntersection(r)
-					return NULL
-				case ast.OpSubEq:
-					cur.InPlaceDifference(r)
-					return NULL
-				case ast.OpBitXorEq:
-					cur.InPlaceSymmetricDifference(r)
-					return NULL
-				}
-			}
-		}
-
-		if !opValid {
-			return errors.NewError("unknown augmented assignment operator: %s", op)
-		}
-
-		result := evalInfixExpression(ctx, baseOp, currentVal, newVal, env)
-		if object.IsError(result) {
-			return result
-		}
-
 		if err := assignToExpression(ctx, target, result, env); err != nil {
 			return assignErrorToObject(err)
 		}
 		return NULL
 	}
+}
+
+// applyAugmentedOp computes current op= value. done reports that the
+// operation mutated current in place (list +=, dict |=, set ops), so the
+// caller has nothing to store; otherwise result is the value to assign.
+func applyAugmentedOp(ctx context.Context, op ast.Op, currentVal, newVal object.Object, env *object.Environment) (result object.Object, done bool, errObj object.Object) {
+	// Fast path: string += string, int += int
+	if op == ast.OpAddEq {
+		if cur, ok := currentVal.(*object.String); ok {
+			if r, ok := newVal.(*object.String); ok {
+				return object.NewString(cur.StringValue() + r.StringValue()), false, nil
+			}
+		}
+		if cur, ok := currentVal.(*object.Integer); ok {
+			if r, ok := newVal.(*object.Integer); ok {
+				return object.NewInteger(cur.IntValue() + r.IntValue()), false, nil
+			}
+		}
+	}
+
+	// Fast path: dict |= dict merges into the left dict in place (PEP 584), so
+	// other references to the same dict observe the update, matching Python.
+	if op == ast.OpBitOrEq {
+		if cur, ok := currentVal.(*object.Dict); ok {
+			if r, ok := newVal.(*object.Dict); ok {
+				if cur.Pairs == nil {
+					cur.Pairs = make(map[string]object.DictPair, len(r.Pairs))
+				}
+				for k, v := range r.Pairs {
+					cur.Pairs[k] = v
+				}
+				return nil, true, nil
+			}
+		}
+	}
+
+	// Fast path: list += list extends and list *= n repeats in place, since
+	// Python's list iadd/imul mutate and aliases observe the update.
+	if cur, ok := currentVal.(*object.List); ok {
+		switch op {
+		case ast.OpAddEq:
+			if r, ok := newVal.(*object.List); ok {
+				cur.Elements = append(cur.Elements, r.Elements...)
+				return nil, true, nil
+			}
+		case ast.OpMulEq:
+			if r, ok := newVal.(*object.Integer); ok {
+				elements, errObj := repeatElements(cur.Elements, r.IntValue())
+				if errObj != nil {
+					return nil, false, errObj
+				}
+				cur.Elements = elements
+				return nil, true, nil
+			}
+		}
+	}
+
+	// Fast path: set augmented operators mutate in place, matching Python
+	// (set __ior__ and friends are in-place updates).
+	if cur, ok := currentVal.(*object.Set); ok {
+		if r, ok := newVal.(*object.Set); ok {
+			switch op {
+			case ast.OpBitOrEq:
+				cur.InPlaceUnion(r)
+				return nil, true, nil
+			case ast.OpBitAndEq:
+				cur.InPlaceIntersection(r)
+				return nil, true, nil
+			case ast.OpSubEq:
+				cur.InPlaceDifference(r)
+				return nil, true, nil
+			case ast.OpBitXorEq:
+				cur.InPlaceSymmetricDifference(r)
+				return nil, true, nil
+			}
+		}
+	}
+
+	baseOp := op.BaseOp()
+	if baseOp == op {
+		return nil, false, errors.NewError("unknown augmented assignment operator: %s", op)
+	}
+	result = evalInfixExpression(ctx, baseOp, currentVal, newVal, env)
+	if object.IsError(result) {
+		return nil, false, result
+	}
+	return result, false, nil
+}
+
+// augIndexOperands are the operands of a subscript or attribute target,
+// evaluated once per augmented assignment.
+type augIndexOperands struct {
+	obj, index object.Object
+	// A 2-D float array element (`fa[i][j] += v`) is addressed directly:
+	// reading fa[i] yields a copy of the row, so a write through it would be
+	// lost. fa is nil for every other target.
+	fa       *object.FloatArray
+	row, col *object.Integer
+}
+
+// evalAugIndexOperands evaluates the target's sub-expressions exactly once.
+// For a nested subscript it evaluates the base and inner key, then resolves
+// the inner subscript itself unless the base is a 2-D float array.
+func evalAugIndexOperands(ctx context.Context, t *ast.IndexExpression, env *object.Environment) (augIndexOperands, object.Object) {
+	var ops augIndexOperands
+	if inner, ok := t.Left.(*ast.IndexExpression); ok {
+		base := fixErrorPos(ctx, cachedExpr(&inner.LeftCompiled, inner.Left)(ctx, env), inner.Left.Line())
+		if object.IsError(base) || isRaised(base) {
+			return ops, base
+		}
+		innerKey := cachedExpr(&inner.IndexCompiled, inner.Index)(ctx, env)
+		if object.IsError(innerKey) || isRaised(innerKey) {
+			return ops, innerKey
+		}
+		key := cachedExpr(&t.IndexCompiled, t.Index)(ctx, env)
+		if object.IsError(key) || isRaised(key) {
+			return ops, key
+		}
+		if fa, ok := base.(*object.FloatArray); ok && fa.Is2D() {
+			row, rowOK := innerKey.(*object.Integer)
+			col, colOK := key.(*object.Integer)
+			if !rowOK || !colOK {
+				return ops, errors.NewError("float_array index must be integer")
+			}
+			ops.fa, ops.row, ops.col = fa, row, col
+			return ops, nil
+		}
+		obj := evalIndexExpression(ctx, base, innerKey, inner.IsDotAccess)
+		if object.IsError(obj) || isRaised(obj) {
+			return ops, obj
+		}
+		ops.obj, ops.index = obj, key
+		return ops, nil
+	}
+	obj := fixErrorPos(ctx, cachedExpr(&t.LeftCompiled, t.Left)(ctx, env), t.Left.Line())
+	if object.IsError(obj) || isRaised(obj) {
+		return ops, obj
+	}
+	key := cachedExpr(&t.IndexCompiled, t.Index)(ctx, env)
+	if object.IsError(key) || isRaised(key) {
+		return ops, key
+	}
+	ops.obj, ops.index = obj, key
+	return ops, nil
+}
+
+// read returns the target's current value.
+func (ops *augIndexOperands) read(ctx context.Context, isDotAccess bool) object.Object {
+	if ops.fa != nil {
+		rowObj := evalIndexExpression(ctx, ops.fa, ops.row, false)
+		if object.IsError(rowObj) || isRaised(rowObj) {
+			return rowObj
+		}
+		return evalIndexExpression(ctx, rowObj, ops.col, false)
+	}
+	return evalIndexExpression(ctx, ops.obj, ops.index, isDotAccess)
+}
+
+// write stores the result in the target.
+func (ops *augIndexOperands) write(ctx context.Context, isDotAccess bool, value object.Object) error {
+	if ops.fa != nil {
+		return assignNestedFloatArrayValue(ops.fa, ops.row, ops.col, value)
+	}
+	return assignIndexValue(ctx, isDotAccess, ops.obj, ops.index, value)
 }
 
 func compileMultipleAssign(n *ast.MultipleAssignStatement) object.EvalFn {

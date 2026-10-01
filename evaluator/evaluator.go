@@ -1559,6 +1559,133 @@ func resolveCallee(node *ast.CallExpression, name string, env *object.Environmen
 	return val, true
 }
 
+// assignIndexValue stores value at obj[index] (or obj.attr for dot access)
+// given operands that have already been evaluated. assignToExpression and
+// augmented assignment share it so each evaluates the operands exactly once.
+func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value object.Object) error {
+	switch o := obj.(type) {
+	case *object.List:
+		if idx, ok := index.(*object.Integer); ok {
+			i := idx.IntValue()
+			length := int64(len(o.Elements))
+			// Handle negative indices
+			if i < 0 {
+				i += length
+			}
+			if i < 0 || i >= length {
+				return raisedAssignmentError(object.ExceptionTypeIndexError, "list assignment index out of range")
+			}
+			o.Elements[i] = value
+			return nil
+		}
+	case *object.Dict:
+		key, rerr := evalHashKeyChecked(ctx, index)
+		if rerr != nil {
+			return hashKeyAssignError(rerr)
+		}
+		o.Pairs[key] = object.DictPair{Key: index, Value: value}
+		return nil
+	case *object.Instance:
+		// For explicit bracket access (not dot), call __setitem__ if defined
+		if !isDotAccess {
+			if setitem, ok := o.Class.Methods["__setitem__"]; ok {
+				result := applyFunctionWithContext(ctx, setitem, []object.Object{obj, index, value}, nil, nil)
+				if object.IsError(result) {
+					return fmt.Errorf("%s", result.(*object.Error).Message)
+				}
+				if isRaised(result) {
+					return &assignmentExceptionError{ex: result.(*object.Exception)}
+				}
+				return nil
+			}
+		}
+		if key, ok := index.(*object.String); ok {
+			// Check class hierarchy for a property descriptor before writing to Fields
+			if p := findPropertyInClass(key.StringValue(), o.Class); p != nil {
+				if p.Setter == nil {
+					return fmt.Errorf("can't set attribute '%s': property is read-only", key.StringValue())
+				}
+				result := applyFunctionWithContext(ctx, p.Setter, []object.Object{o, value}, nil, nil)
+				if object.IsError(result) {
+					return fmt.Errorf("%s", result.(*object.Error).Message)
+				}
+				if isRaised(result) {
+					return &assignmentExceptionError{ex: result.(*object.Exception)}
+				}
+				return nil
+			}
+			o.SetField(key.StringValue(), value)
+			o.InvalidateBoundMethod(key.StringValue())
+			return nil
+		}
+		return fmt.Errorf("instance attribute must be string")
+	case *object.Class:
+		if key, ok := index.(*object.String); ok {
+			o.Methods[key.StringValue()] = value
+			o.InvalidateLookupCache()
+			return nil
+		}
+		return fmt.Errorf("class attribute must be string")
+	case *object.FloatArray:
+		idx, ok := index.(*object.Integer)
+		if !ok {
+			return fmt.Errorf("float_array index must be integer")
+		}
+		i := idx.IntValue()
+		if o.Is2D() {
+			rows := int64(o.Rows())
+			if i < 0 {
+				i += rows
+			}
+			if i < 0 || i >= rows {
+				return fmt.Errorf("index out of range")
+			}
+			switch v := value.(type) {
+			case *object.List:
+				cols := o.Cols()
+				if len(v.Elements) != cols {
+					return fmt.Errorf("row length mismatch: expected %d, got %d", cols, len(v.Elements))
+				}
+				off := int(i) * cols
+				for j, el := range v.Elements {
+					f, err := el.AsFloat()
+					if err != nil {
+						return fmt.Errorf("row element must be a number")
+					}
+					o.Data[off+j] = f
+				}
+			case *object.FloatArray:
+				cols := o.Cols()
+				if v.Is2D() {
+					return fmt.Errorf("float_array row assignment requires a 1D FloatArray")
+				}
+				if len(v.Data) != cols {
+					return fmt.Errorf("row length mismatch: expected %d, got %d", cols, len(v.Data))
+				}
+				off := int(i) * cols
+				copy(o.Data[off:off+cols], v.Data)
+			default:
+				return fmt.Errorf("float_array row assignment requires a list or FloatArray")
+			}
+			return nil
+		}
+		length := int64(len(o.Data))
+		if i < 0 {
+			i += length
+		}
+		if i < 0 || i >= length {
+			return fmt.Errorf("index out of range")
+		}
+		f, err := value.AsFloat()
+		if err != nil {
+			return fmt.Errorf("float_array element must be a number")
+		}
+		o.Data[i] = f
+		return nil
+	}
+	return fmt.Errorf("cannot assign to index")
+}
+
 // tryEvalFastBuiltinCall handles fast-path builtin calls (len, type, str, etc.).
 // Returns (result, envFn, ok):
 //   - ok=true:   result is the builtin's return value, envFn is nil.
@@ -1658,10 +1785,7 @@ func applyUserFunctionDirect(ctx context.Context, fn *object.Function, arg objec
 		extendedEnv.Set(fn.Parameters[0].Value(), arg)
 	}
 
-	if fn.CompiledBody == nil {
-		fn.CompiledBody = compileStmt(fn.Body) // see applyUserFunction
-	}
-	evaluated := fn.CompiledBody(ctx, extendedEnv)
+	evaluated := functionBody(fn)(ctx, extendedEnv)
 	if err, ok := evaluated.(*object.Error); ok {
 		if err.Function == "" {
 			err.Function = fn.Name
@@ -1696,10 +1820,7 @@ func applyUserFunction2(ctx context.Context, fn *object.Function, a0, a1 object.
 		extendedEnv.Set(fn.Parameters[1].Value(), a1)
 	}
 
-	if fn.CompiledBody == nil {
-		fn.CompiledBody = compileStmt(fn.Body) // see applyUserFunction
-	}
-	evaluated := fn.CompiledBody(ctx, extendedEnv)
+	evaluated := functionBody(fn)(ctx, extendedEnv)
 	if err, ok := evaluated.(*object.Error); ok {
 		if err.Function == "" {
 			err.Function = fn.Name
@@ -1736,16 +1857,25 @@ func applyUserFunctionN(ctx context.Context, fn *object.Function, args ...object
 		}
 	}
 
-	if fn.CompiledBody == nil {
-		fn.CompiledBody = compileStmt(fn.Body) // see applyUserFunction
-	}
-	evaluated := fn.CompiledBody(ctx, extendedEnv)
+	evaluated := functionBody(fn)(ctx, extendedEnv)
 	if err, ok := evaluated.(*object.Error); ok {
 		if err.Function == "" {
 			err.Function = fn.Name
 		}
 	}
 	return unwrapReturnValue(evaluated)
+}
+
+// functionBody returns the compiled body of fn. Functions the compiler
+// creates carry it in CompiledBody. Functions assembled elsewhere (a host
+// building object.Function by hand) get the body compiled once and cached on
+// the body's AST node, never written back to the function object, so a
+// function shared between independent interpreter trees is never mutated.
+func functionBody(fn *object.Function) object.EvalFn {
+	if fn.CompiledBody != nil {
+		return fn.CompiledBody
+	}
+	return cachedNode(&fn.Body.Compiled, fn.Body)
 }
 
 func applyUserFunction(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
@@ -1763,13 +1893,7 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 	}
 	defer object.ReleaseCallEnvironment(extendedEnv)
 
-	if fn.CompiledBody == nil {
-		// Only functions assembled outside the compiler lack a body closure;
-		// script execution is serialised by the interpreter lock, so caching
-		// it here is safe.
-		fn.CompiledBody = compileStmt(fn.Body)
-	}
-	evaluated := fixErrorPos(ctx, fn.CompiledBody(ctx, extendedEnv), fn.Body.Line())
+	evaluated := fixErrorPos(ctx, functionBody(fn)(ctx, extendedEnv), fn.Body.Line())
 	if err, ok := evaluated.(*object.Error); ok {
 		if err.Function == "" {
 			err.Function = fn.Name
@@ -1877,10 +2001,14 @@ func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFuncti
 	}
 	defer object.ReleaseCallEnvironment(extendedEnv)
 
-	if fn.CompiledBody == nil {
-		fn.CompiledBody = compileExpr(fn.Body) // see applyUserFunction
+	body := fn.CompiledBody
+	if body == nil {
+		// Only lambdas assembled outside the compiler lack a body closure. The
+		// expression node has no cache slot, so compile it for this call
+		// rather than write to a function object that may be shared.
+		body = compileExpr(fn.Body)
 	}
-	return fixErrorPos(ctx, fn.CompiledBody(ctx, extendedEnv), fn.Body.Line()) // No unwrapping needed for lambda expressions
+	return fixErrorPos(ctx, body(ctx, extendedEnv), fn.Body.Line()) // No unwrapping needed for lambda expressions
 }
 
 // evalDefault evaluates a parameter default in the defining scope, through the
@@ -3594,127 +3722,7 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 		if object.IsError(index) {
 			return fmt.Errorf("assignment error")
 		}
-		switch o := obj.(type) {
-		case *object.List:
-			if idx, ok := index.(*object.Integer); ok {
-				i := idx.IntValue()
-				length := int64(len(o.Elements))
-				// Handle negative indices
-				if i < 0 {
-					i += length
-				}
-				if i < 0 || i >= length {
-					return raisedAssignmentError(object.ExceptionTypeIndexError, "list assignment index out of range")
-				}
-				o.Elements[i] = value
-				return nil
-			}
-		case *object.Dict:
-			key, rerr := evalHashKeyChecked(ctx, index)
-			if rerr != nil {
-				return hashKeyAssignError(rerr)
-			}
-			o.Pairs[key] = object.DictPair{Key: index, Value: value}
-			return nil
-		case *object.Instance:
-			// For explicit bracket access (not dot), call __setitem__ if defined
-			if !left.IsDotAccess {
-				if setitem, ok := o.Class.Methods["__setitem__"]; ok {
-					result := applyFunctionWithContext(ctx, setitem, []object.Object{obj, index, value}, nil, nil)
-					if object.IsError(result) {
-						return fmt.Errorf("%s", result.(*object.Error).Message)
-					}
-					if isRaised(result) {
-						return &assignmentExceptionError{ex: result.(*object.Exception)}
-					}
-					return nil
-				}
-			}
-			if key, ok := index.(*object.String); ok {
-				// Check class hierarchy for a property descriptor before writing to Fields
-				if p := findPropertyInClass(key.StringValue(), o.Class); p != nil {
-					if p.Setter == nil {
-						return fmt.Errorf("can't set attribute '%s': property is read-only", key.StringValue())
-					}
-					result := applyFunctionWithContext(ctx, p.Setter, []object.Object{o, value}, nil, nil)
-					if object.IsError(result) {
-						return fmt.Errorf("%s", result.(*object.Error).Message)
-					}
-					if isRaised(result) {
-						return &assignmentExceptionError{ex: result.(*object.Exception)}
-					}
-					return nil
-				}
-				o.SetField(key.StringValue(), value)
-				o.InvalidateBoundMethod(key.StringValue())
-				return nil
-			}
-			return fmt.Errorf("instance attribute must be string")
-		case *object.Class:
-			if key, ok := index.(*object.String); ok {
-				o.Methods[key.StringValue()] = value
-				o.InvalidateLookupCache()
-				return nil
-			}
-			return fmt.Errorf("class attribute must be string")
-		case *object.FloatArray:
-			idx, ok := index.(*object.Integer)
-			if !ok {
-				return fmt.Errorf("float_array index must be integer")
-			}
-			i := idx.IntValue()
-			if o.Is2D() {
-				rows := int64(o.Rows())
-				if i < 0 {
-					i += rows
-				}
-				if i < 0 || i >= rows {
-					return fmt.Errorf("index out of range")
-				}
-				switch v := value.(type) {
-				case *object.List:
-					cols := o.Cols()
-					if len(v.Elements) != cols {
-						return fmt.Errorf("row length mismatch: expected %d, got %d", cols, len(v.Elements))
-					}
-					off := int(i) * cols
-					for j, el := range v.Elements {
-						f, err := el.AsFloat()
-						if err != nil {
-							return fmt.Errorf("row element must be a number")
-						}
-						o.Data[off+j] = f
-					}
-				case *object.FloatArray:
-					cols := o.Cols()
-					if v.Is2D() {
-						return fmt.Errorf("float_array row assignment requires a 1D FloatArray")
-					}
-					if len(v.Data) != cols {
-						return fmt.Errorf("row length mismatch: expected %d, got %d", cols, len(v.Data))
-					}
-					off := int(i) * cols
-					copy(o.Data[off:off+cols], v.Data)
-				default:
-					return fmt.Errorf("float_array row assignment requires a list or FloatArray")
-				}
-				return nil
-			}
-			length := int64(len(o.Data))
-			if i < 0 {
-				i += length
-			}
-			if i < 0 || i >= length {
-				return fmt.Errorf("index out of range")
-			}
-			f, err := value.AsFloat()
-			if err != nil {
-				return fmt.Errorf("float_array element must be a number")
-			}
-			o.Data[i] = f
-			return nil
-		}
-		return fmt.Errorf("cannot assign to index")
+		return assignIndexValue(ctx, left.IsDotAccess, obj, index, value)
 	case *ast.SliceExpression:
 		return assignToSliceExpression(ctx, left, value, env)
 	default:
@@ -3757,6 +3765,12 @@ func assignToNestedFloatArrayIndex(ctx context.Context, expr *ast.IndexExpressio
 		return fmt.Errorf("float_array index must be integer")
 	}
 
+	return assignNestedFloatArrayValue(fa, rowIndex, colIndex, value)
+}
+
+// assignNestedFloatArrayValue stores value at fa[row][col] of a 2-D float
+// array from already-evaluated indices.
+func assignNestedFloatArrayValue(fa *object.FloatArray, rowIndex, colIndex *object.Integer, value object.Object) error {
 	row := rowIndex.IntValue()
 	rows := int64(fa.Rows())
 	if row < 0 {

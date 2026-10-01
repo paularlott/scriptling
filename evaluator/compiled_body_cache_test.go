@@ -11,9 +11,8 @@ import (
 )
 
 // A function body must be compiled once per AST node, not once per time the
-// def statement runs. Class bodies still define their methods through the
-// fallback evalFunctionStatement, so a class defined inside a loop or a
-// function would otherwise recompile every method body on every definition.
+// def statement runs, so a class or def inside a loop or a function does not
+// recompile its body on every definition.
 func TestCompiledFunctionBodyCachedOnNode(t *testing.T) {
 	l := lexer.New("def f(x):\n    return x + 1\n")
 	program := parser.New(l).ParseProgram()

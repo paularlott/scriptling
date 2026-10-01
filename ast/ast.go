@@ -728,6 +728,10 @@ func (es *ExpressionStatement) Line() int { return int(es.Token.Line) }
 type BlockStatement struct {
 	Token      LineInfo
 	Statements []Statement
+
+	// Compiled caches the evaluator's compiled form of this block for
+	// function objects assembled without one (see evaluator.functionBody).
+	Compiled CompiledSlot
 }
 
 func (bs *BlockStatement) statementNode() {}
