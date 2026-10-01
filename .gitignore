@@ -1,5 +1,6 @@
 .DS_Store
 /.codegraph/
+/.task/
 /bin/
 !/bin/.gitignore
 /scriptling
