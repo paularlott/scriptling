@@ -788,19 +788,7 @@ type FunctionLiteral struct {
 	LocalSlots       map[string]int
 	LocalSlotNames   []string
 	ParamSlotIndexes []int
-
-	// compiled caches the evaluator's compiled form of Body so that every
-	// function object this literal produces, however many times the def runs,
-	// shares one closure. Opaque for the same reason as Program.compiled.
-	compiled atomic.Value
 }
-
-// Compiled returns the evaluator's compiled form of this function's body, or
-// nil if it has not been compiled yet.
-func (fl *FunctionLiteral) Compiled() any { return fl.compiled.Load() }
-
-// SetCompiled stores the evaluator's compiled form of this function's body.
-func (fl *FunctionLiteral) SetCompiled(v any) { fl.compiled.Store(v) }
 
 func (fl *FunctionLiteral) GetDefaultValues() map[string]Expression {
 	if fl.overflow == nil {

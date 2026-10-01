@@ -10,43 +10,56 @@ import (
 	"github.com/paularlott/scriptling/parser"
 )
 
-// A function body must be compiled once per AST node, not once per time the
-// def statement runs, so a class or def inside a loop or a function does not
-// recompile its body on every definition.
-func TestCompiledFunctionBodyCachedOnNode(t *testing.T) {
-	l := lexer.New("def f(x):\n    return x + 1\n")
-	program := parser.New(l).ParseProgram()
-	fs, ok := program.Statements[0].(*ast.FunctionStatement)
-	if !ok {
-		t.Fatalf("expected FunctionStatement, got %T", program.Statements[0])
+func parseDefs(t *testing.T, src string) []*ast.FunctionStatement {
+	t.Helper()
+	p := parser.New(lexer.New(src))
+	program := p.ParseProgram()
+	if errs := p.Errors(); len(errs) != 0 {
+		t.Fatal(errs)
 	}
-	if fs.Function.Compiled() != nil {
-		t.Fatal("body should not be compiled before first use")
+	var defs []*ast.FunctionStatement
+	for _, s := range program.Statements {
+		if fs, ok := s.(*ast.FunctionStatement); ok {
+			defs = append(defs, fs)
+		}
 	}
-	if compiledFunctionBody(fs.Function) == nil {
-		t.Fatal("compiledFunctionBody returned nil")
+	return defs
+}
+
+// Function bodies are compiled on the first call, not when the def runs, and
+// the closure is cached on the body's AST node: a library that defines many
+// functions retains closures only for the ones that are called, and a def
+// that runs repeatedly (a class defined in a loop) never recompiles.
+func TestFunctionBodyCompiledOnFirstCallAndCached(t *testing.T) {
+	defs := parseDefs(t, "def used(x):\n    return x + 1\n\ndef unused(x):\n    return x - 1\n")
+	env := object.NewEnvironment()
+	ctx := context.Background()
+
+	define := compileFunctionStatement(defs[0])
+	fn := define(ctx, env).(*object.Function)
+	if defs[0].Function.Body.Compiled.Load() != nil || fn.CompiledBody != nil {
+		t.Fatal("defining a function must not compile its body")
 	}
-	if fs.Function.Compiled() == nil {
-		t.Fatal("first use should cache the compiled body on the node")
+	if got := applyUserFunction(ctx, fn, []object.Object{object.NewInteger(1)}, nil, env); got.Inspect() != "2" {
+		t.Fatalf("used(1) = %s", got.Inspect())
 	}
-	if allocs := testing.AllocsPerRun(100, func() { compiledFunctionBody(fs.Function) }); allocs != 0 {
-		t.Fatalf("compiledFunctionBody allocated %.0f times once cached, want 0", allocs)
+	if defs[0].Function.Body.Compiled.Load() == nil {
+		t.Fatal("the first call must cache the compiled body on the block node")
+	}
+	if fn.CompiledBody == nil {
+		t.Fatal("a compiler-created function memoises the body after the first call")
 	}
 
-	// The compiled def closure must hand the cached body to every function it
-	// creates: defining the function repeatedly must not compile again.
-	env := object.NewEnvironment()
-	define := compileFunctionStatement(fs)
-	first := define(context.Background(), env).(*object.Function)
-	if first.CompiledBody == nil {
-		t.Fatal("compiled def should attach a compiled body")
+	compileFunctionStatement(defs[1])(ctx, env)
+	if defs[1].Function.Body.Compiled.Load() != nil {
+		t.Fatal("a function that is never called must not be compiled")
 	}
-	allocs := testing.AllocsPerRun(50, func() {
-		define(context.Background(), env)
-	})
-	// One Function object per definition is expected; compiling the body
-	// again would add many more.
-	if allocs > 2 {
-		t.Fatalf("defining a function allocated %.0f times, want at most 2", allocs)
+
+	// Repeated definitions and repeated calls allocate no compiled bodies.
+	if allocs := testing.AllocsPerRun(50, func() { define(ctx, env) }); allocs > 2 {
+		t.Fatalf("defining allocated %.0f times per run, want at most the function object", allocs)
+	}
+	if allocs := testing.AllocsPerRun(100, func() { functionBody(fn) }); allocs != 0 {
+		t.Fatalf("functionBody allocated %.0f times once cached, want 0", allocs)
 	}
 }

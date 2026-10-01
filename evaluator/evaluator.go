@@ -1866,16 +1866,21 @@ func applyUserFunctionN(ctx context.Context, fn *object.Function, args ...object
 	return unwrapReturnValue(evaluated)
 }
 
-// functionBody returns the compiled body of fn. Functions the compiler
-// creates carry it in CompiledBody. Functions assembled elsewhere (a host
-// building object.Function by hand) get the body compiled once and cached on
-// the body's AST node, never written back to the function object, so a
-// function shared between independent interpreter trees is never mutated.
+// functionBody returns the compiled body of fn, compiling it on the first
+// call and caching the closure on the body's AST node, so closures exist only
+// for functions that actually run. Function objects the compiler created also
+// memoise the closure in CompiledBody, keeping the per-call cost to a field
+// read; objects assembled elsewhere may be shared between independent
+// interpreter trees, so they are read from the node cache and never written.
 func functionBody(fn *object.Function) object.EvalFn {
 	if fn.CompiledBody != nil {
 		return fn.CompiledBody
 	}
-	return cachedNode(&fn.Body.Compiled, fn.Body)
+	body := cachedNode(&fn.Body.Compiled, fn.Body)
+	if fn.CompilerOwned {
+		fn.CompiledBody = body
+	}
+	return body
 }
 
 func applyUserFunction(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {

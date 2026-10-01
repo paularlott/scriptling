@@ -27,8 +27,8 @@ func TestHandBuiltFunctionSharedAcrossTreesIsRaceFree(t *testing.T) {
 		LocalSlots:       fs.Function.LocalSlots,
 		LocalSlotNames:   fs.Function.LocalSlotNames,
 		ParamSlotIndexes: fs.Function.ParamSlotIndexes,
-		// No CompiledBody, no shared frame pool: every call allocates its own
-		// environment from the tree it is called in.
+		// No shared frame pool: every call allocates its own environment from
+		// the tree it is called in.
 		ReuseCallEnv: false,
 	}
 
@@ -52,7 +52,7 @@ func TestHandBuiltFunctionSharedAcrossTreesIsRaceFree(t *testing.T) {
 	}
 	wg.Wait()
 	if fn.CompiledBody != nil {
-		t.Fatal("the shared function object must not be written")
+		t.Fatal("a function object the compiler did not create must never be written")
 	}
 	if fs.Function.Body.Compiled.Load() == nil {
 		t.Fatal("the body closure should be cached on the block node")

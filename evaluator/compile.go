@@ -1594,14 +1594,12 @@ func tryEvalInstanceMethodFastCompiled(ctx context.Context, inst *object.Instanc
 	}
 }
 
-// compileFunctionStatement converts a def statement. The body is compiled once
-// here and stored on every object.Function the statement creates at run time
-// (including methods, which evalClassStatement creates through the same
-// helper). Functions a decorator returns in place of the original keep the
-// body they carry: the rename below only fixes the name, so a wrapper with a
-// different body keeps CompiledBody as its own body's closure.
+// compileFunctionStatement converts a def statement. The body is not
+// compiled here: functionBody compiles it on the first call and caches the
+// closure on the body's AST node, so a library that defines a hundred
+// functions and has two of them called retains closures for two. Decorators
+// and parameter defaults are compiled now, since they run at definition.
 func compileFunctionStatement(n *ast.FunctionStatement) object.EvalFn {
-	body := compiledFunctionBody(n.Function)
 	defaults := compileDefaults(n.Function.GetDefaultValues())
 	decorators := make([]object.EvalFn, len(n.GetDecorators()))
 	for i, d := range n.GetDecorators() {
@@ -1623,8 +1621,8 @@ func compileFunctionStatement(n *ast.FunctionStatement) object.EvalFn {
 			LocalSlotNames:   localSlotNames,
 			ParamSlotIndexes: n.Function.ParamSlotIndexes,
 			ReuseCallEnv:     !n.Function.HasNestedFunc,
-			CompiledBody:     body,
 			CompiledDefaults: defaults,
+			CompilerOwned:    true,
 		}
 		var result object.Object = fn
 		for i := len(decorators) - 1; i >= 0; i-- {
@@ -1645,21 +1643,6 @@ func compileFunctionStatement(n *ast.FunctionStatement) object.EvalFn {
 		env.Set(name, result)
 		return result
 	}
-}
-
-// compiledFunctionBody returns the compiled body of a function literal,
-// compiling it on first use and caching it on the node, so a def that runs
-// many times, such as a method inside a class defined in a loop, compiles its
-// body exactly once rather than on every definition. Two goroutines racing on
-// the first use build equivalent closures and one wins the store, which is
-// harmless.
-func compiledFunctionBody(fl *ast.FunctionLiteral) object.EvalFn {
-	if body, ok := fl.Compiled().(object.EvalFn); ok && body != nil {
-		return body
-	}
-	body := compileStmt(fl.Body)
-	fl.SetCompiled(body)
-	return body
 }
 
 // compileLambda converts a lambda. Its expression body is compiled once and

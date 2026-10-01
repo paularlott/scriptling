@@ -716,14 +716,19 @@ type Function struct {
 	ParamSlotIndexes []int
 	ReuseCallEnv     bool
 
-	// CompiledBody is the compiled form of Body, set when the def statement is
-	// compiled. The evaluator compiles and stores it on first call for
-	// functions assembled elsewhere.
-	CompiledBody EvalFn
 	// CompiledDefaults holds the compiled form of each DefaultValues entry,
 	// built once at definition time so calls that fill in a default do not
 	// walk the AST.
 	CompiledDefaults map[string]EvalFn
+	// CompiledBody memoises the body closure, which is compiled on the first
+	// call and cached on Body, the AST node. The evaluator fills it in only
+	// when CompilerOwned is set.
+	CompiledBody EvalFn
+	// CompilerOwned marks function objects the evaluator's compiler created.
+	// Each belongs to one interpreter tree, whose execution is serialised, so
+	// the evaluator may memoise into CompiledBody. Objects assembled elsewhere
+	// may be shared between trees and are never written after construction.
+	CompilerOwned bool
 }
 
 func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
@@ -1926,8 +1931,9 @@ func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
 			LocalSlotNames:   v.LocalSlotNames,
 			ParamSlotIndexes: v.ParamSlotIndexes,
 			ReuseCallEnv:     v.ReuseCallEnv,
-			CompiledBody:     v.CompiledBody,
 			CompiledDefaults: v.CompiledDefaults,
+			CompiledBody:     v.CompiledBody,
+			CompilerOwned:    v.CompilerOwned, // the copy belongs to the target tree alone
 		}
 	}
 	for name, v := range s.lambdas {
