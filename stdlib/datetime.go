@@ -92,14 +92,6 @@ func createDateInstance(t time.Time) *object.Instance {
 	})
 }
 
-// isDatetimeInstance checks if an object is a datetime or date instance
-func isDatetimeInstance(obj object.Object) bool {
-	if inst, ok := obj.(*object.Instance); ok {
-		return inst.Class == DatetimeClass || inst.Class == DateClass
-	}
-	return false
-}
-
 // GetTimeFromObject extracts time.Time from a datetime/date instance
 func GetTimeFromObject(obj object.Object) (time.Time, object.Object) {
 	if inst, ok := obj.(*object.Instance); ok {

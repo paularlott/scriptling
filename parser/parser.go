@@ -222,10 +222,6 @@ func (p *Parser) expectPeek(t token.TokenType) bool {
 	return false
 }
 
-func (p *Parser) peekPrecedence() int {
-	return precedenceFor(p.peekToken.Type)
-}
-
 func (p *Parser) curPrecedence() int {
 	return precedenceFor(p.curToken.Type)
 }

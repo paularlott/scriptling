@@ -164,3 +164,17 @@ evens = [x for x in squares if x % 2 == 0]
 lookup = {str(i): i for i in range(2000)}
 `)
 }
+
+// A loop wrapped in try/except, the most common shape of a real script's
+// main body. It must run as fast as the bare loop in LoopArith: a compound
+// statement must never push its body onto a slower evaluation path.
+func BenchmarkInterp_TryWrapped(b *testing.B) {
+	benchScript(b, `
+total = 0
+try:
+    for i in range(20000):
+        total = total + i * 2 - 1
+except ValueError:
+    total = -1
+`)
+}

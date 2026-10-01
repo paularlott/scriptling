@@ -10,11 +10,11 @@ import (
 	"math"
 	"os"
 	"reflect"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/paularlott/scriptling/ast"
 )
@@ -697,6 +697,11 @@ func (c *Continue) CoerceString() (string, Object) { return c.Inspect(), nil }
 func (c *Continue) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
 func (c *Continue) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
+// EvalFn is a compiled AST node: a closure that evaluates the node in env.
+// Compiled closures are immutable after construction and safe to share
+// between goroutines, exactly like the AST they are built from.
+type EvalFn func(ctx context.Context, env *Environment) Object
+
 type Function struct {
 	Name             string
 	Parameters       []*ast.Identifier
@@ -710,6 +715,15 @@ type Function struct {
 	LocalSlotNames   []string
 	ParamSlotIndexes []int
 	ReuseCallEnv     bool
+
+	// CompiledBody is the compiled form of Body, set when the def statement is
+	// compiled. The evaluator compiles and stores it on first call for
+	// functions assembled elsewhere.
+	CompiledBody EvalFn
+	// CompiledDefaults holds the compiled form of each DefaultValues entry,
+	// built once at definition time so calls that fill in a default do not
+	// walk the AST.
+	CompiledDefaults map[string]EvalFn
 }
 
 func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
@@ -737,6 +751,15 @@ type LambdaFunction struct {
 	LocalSlots       map[string]int
 	LocalSlotNames   []string
 	ParamSlotIndexes []int
+
+	// CompiledBody is the compiled form of Body, set when the lambda is
+	// compiled. The evaluator compiles and stores it on first call for
+	// lambdas assembled elsewhere.
+	CompiledBody EvalFn
+	// CompiledDefaults holds the compiled form of each DefaultValues entry,
+	// built once at definition time so calls that fill in a default do not
+	// walk the AST.
+	CompiledDefaults map[string]EvalFn
 }
 
 func (lf *LambdaFunction) Type() ObjectType { return LAMBDA_OBJ }
@@ -1050,23 +1073,6 @@ func (g *gilLock) waitChan() chan struct{} {
 		g.notify = make(chan struct{})
 	}
 	return g.notify
-}
-
-// goid returns the current goroutine's id by parsing the runtime stack header.
-// Used only on lock boundaries and blocking operations, never on the hot
-// internal call path.
-func goid() int64 {
-	var buf [32]byte
-	n := runtime.Stack(buf[:], false)
-	b := buf[len("goroutine "):n]
-	var id int64
-	for _, c := range b {
-		if c < '0' || c > '9' {
-			break
-		}
-		id = id*10 + int64(c-'0')
-	}
-	return id
 }
 
 const maxPooledCallEnvSlots = 16
@@ -1595,7 +1601,7 @@ func (e *Environment) SetSlotByIndex(idx int, val Object) bool {
 // that the slot name matches. This prevents stale cached indices (from
 // shared AST via the parse cache) from reading the wrong variable.
 func (e *Environment) GetCachedSlot(idx int, name string) (Object, bool) {
-	if idx >= 0 && idx < len(e.slots) && idx < len(e.slotNames) && e.slotNames[idx] == name {
+	if idx >= 0 && idx < len(e.slots) && idx < len(e.slotNames) && sameName(e.slotNames[idx], name) {
 		if e.slots[idx] != nil {
 			return e.slots[idx], true
 		}
@@ -1607,12 +1613,22 @@ func (e *Environment) GetCachedSlot(idx int, name string) (Object, bool) {
 // that the slot name matches. Returns false if the cache is stale,
 // falling through to the full Set path.
 func (e *Environment) SetCachedSlot(idx int, name string, val Object) bool {
-	if idx >= 0 && idx < len(e.slots) && idx < len(e.slotNames) && e.slotNames[idx] == name {
+	if idx >= 0 && idx < len(e.slots) && idx < len(e.slotNames) && sameName(e.slotNames[idx], name) {
 		e.slots[idx] = val
 		e.clearImportedBinding(name)
 		return true
 	}
 	return false
+}
+
+// sameName reports whether two slot names are equal. Slot names and the
+// identifier names the evaluator validates them against almost always share
+// the same backing bytes, because both come from the parser's interned symbol
+// table, so the pointer comparison settles the common case without the call
+// into the runtime's string comparison; the full comparison remains as the
+// fallback so semantics are unchanged.
+func sameName(a, b string) bool {
+	return len(a) == len(b) && (unsafe.StringData(a) == unsafe.StringData(b) || a == b)
 }
 
 // clearImportedBinding drops any import marker for name. The nil check matters:
@@ -1910,6 +1926,8 @@ func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
 			LocalSlotNames:   v.LocalSlotNames,
 			ParamSlotIndexes: v.ParamSlotIndexes,
 			ReuseCallEnv:     v.ReuseCallEnv,
+			CompiledBody:     v.CompiledBody,
+			CompiledDefaults: v.CompiledDefaults,
 		}
 	}
 	for name, v := range s.lambdas {
@@ -1924,6 +1942,8 @@ func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
 			LocalSlots:       v.LocalSlots,
 			LocalSlotNames:   v.LocalSlotNames,
 			ParamSlotIndexes: v.ParamSlotIndexes,
+			CompiledBody:     v.CompiledBody,
+			CompiledDefaults: v.CompiledDefaults,
 		}
 	}
 	for name, v := range s.dicts {

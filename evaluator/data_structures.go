@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
@@ -67,70 +66,63 @@ func evalSetAdd(ctx context.Context, s *object.Set, obj object.Object) object.Ob
 	return nil
 }
 
-func evalDictLiteralWithContext(ctx context.Context, node *ast.DictLiteral, env *object.Environment) object.Object {
-	if len(node.Pairs) == 0 {
-		return &object.Dict{Pairs: make(map[string]object.DictPair)}
-	}
-	pairs := make(map[string]object.DictPair, len(node.Pairs))
-
-	for _, pairNode := range node.Pairs {
-		key := evalNode(ctx, pairNode.Key, env)
-		if object.IsError(key) || isRaised(key) {
-			return key
-		}
-
-		value := evalNode(ctx, pairNode.Value, env)
-		if object.IsError(value) || isRaised(value) {
-			return value
-		}
-
-		hk, raised := evalHashKeyChecked(ctx, key)
-		if raised != nil {
-			return raised
-		}
-		pairs[hk] = object.DictPair{Key: key, Value: value}
-	}
-
-	return &object.Dict{Pairs: pairs}
-}
-
 func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAccess bool) object.Object {
-	switch {
-	case left.Type() == object.LIST_OBJ && index.Type() == object.INTEGER_OBJ:
-		return evalListIndexExpression(left, index)
-	case left.Type() == object.LIST_OBJ && index.Type() == object.SLICE_OBJ:
-		return evalListSliceExpression(left, index)
-	case left.Type() == object.FLOAT_ARRAY_OBJ && index.Type() == object.INTEGER_OBJ:
-		return evalFloatArrayIndexExpression(left, index)
-	case left.Type() == object.FLOAT_ARRAY_OBJ && index.Type() == object.SLICE_OBJ:
-		return evalFloatArraySliceExpression(left, index)
-	case left.Type() == object.TUPLE_OBJ && index.Type() == object.INTEGER_OBJ:
-		return evalTupleIndexExpression(left, index)
-	case left.Type() == object.TUPLE_OBJ && index.Type() == object.SLICE_OBJ:
-		return evalTupleSliceExpression(left, index)
-	case left.Type() == object.DICT_OBJ:
+	// Resolve each operand's type once. Type() is a dynamic interface call,
+	// and attribute access on instances is hot enough that a chain of
+	// per-case comparisons, each calling Type() again, is a measurable share
+	// of method-call cost.
+	leftType := left.Type()
+	switch leftType {
+	case object.LIST_OBJ:
+		switch index.Type() {
+		case object.INTEGER_OBJ:
+			return evalListIndexExpression(left, index)
+		case object.SLICE_OBJ:
+			return evalListSliceExpression(left, index)
+		}
+	case object.FLOAT_ARRAY_OBJ:
+		switch index.Type() {
+		case object.INTEGER_OBJ:
+			return evalFloatArrayIndexExpression(left, index)
+		case object.SLICE_OBJ:
+			return evalFloatArraySliceExpression(left, index)
+		}
+	case object.TUPLE_OBJ:
+		switch index.Type() {
+		case object.INTEGER_OBJ:
+			return evalTupleIndexExpression(left, index)
+		case object.SLICE_OBJ:
+			return evalTupleSliceExpression(left, index)
+		}
+	case object.DICT_OBJ:
 		return evalDictIndexExpression(ctx, left, index)
-	case left.Type() == object.STRING_OBJ && index.Type() == object.INTEGER_OBJ:
-		return evalStringIndexExpression(left, index)
-	case left.Type() == object.STRING_OBJ && index.Type() == object.SLICE_OBJ:
-		return evalStringSliceExpression(left, index)
-	case left.Type() == object.BYTES_OBJ && index.Type() == object.INTEGER_OBJ:
-		return evalBytesIndexExpression(left, index)
-	case left.Type() == object.BYTES_OBJ && index.Type() == object.SLICE_OBJ:
-		return evalBytesSliceExpression(left, index)
-	case left.Type() == object.INSTANCE_OBJ:
+	case object.STRING_OBJ:
+		switch index.Type() {
+		case object.INTEGER_OBJ:
+			return evalStringIndexExpression(left, index)
+		case object.SLICE_OBJ:
+			return evalStringSliceExpression(left, index)
+		}
+	case object.BYTES_OBJ:
+		switch index.Type() {
+		case object.INTEGER_OBJ:
+			return evalBytesIndexExpression(left, index)
+		case object.SLICE_OBJ:
+			return evalBytesSliceExpression(left, index)
+		}
+	case object.INSTANCE_OBJ:
 		return evalInstanceIndexExpression(ctx, left, index, isDotAccess)
-	case left.Type() == object.CLASS_OBJ:
+	case object.CLASS_OBJ:
 		return evalClassIndexExpression(left, index)
-	case left.Type() == object.BUILTIN_OBJ:
+	case object.BUILTIN_OBJ:
 		return evalBuiltinIndexExpression(left, index)
-	case left.Type() == object.PROPERTY_OBJ:
+	case object.PROPERTY_OBJ:
 		return evalPropertyIndexExpression(left, index)
-	case left.Type() == object.SUPER_OBJ:
+	case object.SUPER_OBJ:
 		return evalSuperIndexExpression(left, index)
-	case left.Type() == object.FUNCTION_OBJ:
+	case object.FUNCTION_OBJ:
 		if !isDotAccess {
-			return errors.NewError("index operator not supported: %s", left.Type())
+			return errors.NewError("index operator not supported: %s", leftType)
 		}
 		attr, _ := index.AsString()
 		fn := left.(*object.Function)
@@ -139,9 +131,9 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 			return object.NewString(fn.Name)
 		}
 		return errors.NewError("function has no attribute '%s'", attr)
-	case left.Type() == object.LAMBDA_OBJ:
+	case object.LAMBDA_OBJ:
 		if !isDotAccess {
-			return errors.NewError("index operator not supported: %s", left.Type())
+			return errors.NewError("index operator not supported: %s", leftType)
 		}
 		attr, _ := index.AsString()
 		switch attr {
@@ -149,9 +141,8 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 			return object.NewString("<lambda>")
 		}
 		return errors.NewError("lambda has no attribute '%s'", attr)
-	default:
-		return errors.NewError("index operator not supported: %s", left.Type())
 	}
+	return errors.NewError("index operator not supported: %s", leftType)
 }
 
 func evalSuperIndexExpression(superObj, index object.Object) object.Object {
@@ -508,79 +499,6 @@ func evalBuiltinIndexExpression(builtin, index object.Object) object.Object {
 		}
 	}
 	return NULL
-}
-
-func evalSliceExpressionWithContext(ctx context.Context, node *ast.SliceExpression, env *object.Environment) object.Object {
-	left := evalNode(ctx, node.Left, env)
-	if object.IsError(left) || isRaised(left) {
-		return left
-	}
-
-	var start, end, step int64
-	var hasStart, hasEnd, hasStep bool
-	step = 1 // default step
-
-	if node.Start != nil {
-		startObj := evalNode(ctx, node.Start, env)
-		if object.IsError(startObj) || isRaised(startObj) {
-			return startObj
-		}
-		s, err := startObj.AsInt()
-		if err != nil {
-			return err
-		}
-		start = s
-		hasStart = true
-	}
-
-	if node.End != nil {
-		endObj := evalNode(ctx, node.End, env)
-		if object.IsError(endObj) || isRaised(endObj) {
-			return endObj
-		}
-		e, err := endObj.AsInt()
-		if err != nil {
-			return err
-		}
-		end = e
-		hasEnd = true
-	}
-
-	if node.GetStep() != nil {
-		stepObj := evalNode(ctx, node.GetStep(), env)
-		if object.IsError(stepObj) || isRaised(stepObj) {
-			return stepObj
-		}
-		s, err := stepObj.AsInt()
-		if err != nil {
-			return err
-		}
-		step = s
-		hasStep = true
-		if step == 0 {
-			return errors.NewError("slice step cannot be zero")
-		}
-	}
-
-	switch obj := left.(type) {
-	case *object.List:
-		return sliceList(obj.Elements, start, end, step, hasStart, hasEnd, hasStep)
-	case *object.Tuple:
-		result := sliceList(obj.Elements, start, end, step, hasStart, hasEnd, hasStep)
-		if list, ok := result.(*object.List); ok {
-			return &object.Tuple{Elements: list.Elements}
-		}
-		return result
-	case *object.String:
-		elements := sliceString(obj.StringValue(), start, end, step, hasStart, hasEnd, hasStep)
-		return object.NewString(elements)
-	case *object.Bytes:
-		return sliceBytes(obj, start, end, step, hasStart, hasEnd, hasStep)
-	case *object.FloatArray:
-		return sliceFloatArray(obj, start, end, step, hasStart, hasEnd, hasStep)
-	default:
-		return errors.NewError("slice operator not supported: %s", left.Type())
-	}
 }
 
 func sliceList(elements []object.Object, start, end, step int64, hasStart, hasEnd, hasStep bool) object.Object {

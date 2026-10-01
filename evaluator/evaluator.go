@@ -170,7 +170,21 @@ func EvalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 	if gilEnv := enterScript(env); gilEnv != nil {
 		defer gilEnv.ExitGIL()
 	}
-	return evalWithContext(ctx, node, env)
+	// Programs run through their compiled closure tree, built once per
+	// *ast.Program and shared like the cached parse itself. A racing goroutine
+	// may store an equivalent closure; the extra store is harmless.
+	if program, ok := node.(*ast.Program); ok {
+		fn, _ := program.Compiled().(object.EvalFn)
+		if fn == nil {
+			fn = compileProgram(program)
+			program.SetCompiled(fn)
+		}
+		return fn(ctx, env)
+	}
+	// Any other node (hosts and tests may evaluate a bare statement or
+	// expression) is compiled on the spot; this path is not performance
+	// sensitive.
+	return fixErrorPos(ctx, compileNode(node)(ctx, env), node.Line())
 }
 
 // checkContext checks for cancellation and returns error if cancelled
@@ -186,344 +200,60 @@ func checkContext(ctx context.Context) object.Object {
 	}
 }
 
-// contextChecker helps batch context checks in loops to reduce overhead
+// contextCheckBatch is how many loop iterations or statements run between
+// cancellation checks.
+const contextCheckBatch = 10
+
+// contextChecker helps batch context checks in loops to reduce overhead.
+//
+// The context's Done channel is resolved lazily on the first real check and
+// then cached: ctx.Done() walks the whole chain of value/cancel wrappers on
+// every call, and for a context that can never be cancelled (the common case
+// for embedded use) it returns nil, so once resolved a check is a counter
+// compare and, at most, a nil test. Resolving lazily rather than in
+// newContextChecker keeps short blocks, which never reach the batch size,
+// free of the Done() walk entirely.
 type contextChecker struct {
-	ctx       context.Context
-	counter   int
-	batchSize int
+	ctx      context.Context
+	done     <-chan struct{}
+	counter  int
+	resolved bool
 }
 
 func newContextChecker(ctx context.Context) contextChecker {
-	return contextChecker{
-		ctx:       ctx,
-		batchSize: 10, // Check context every 10 operations in loops
-	}
+	return contextChecker{ctx: ctx}
 }
 
 func (cc *contextChecker) check() object.Object {
 	cc.counter++
-	if cc.counter >= cc.batchSize {
-		cc.counter = 0
-		return checkContext(cc.ctx)
+	if cc.counter < contextCheckBatch {
+		return nil
 	}
-	return nil
+	return cc.checkBatch()
+}
+
+// checkBatch runs once per batch. It is kept out of check so that check stays
+// small enough to inline at every statement and loop iteration.
+func (cc *contextChecker) checkBatch() object.Object {
+	cc.counter = 0
+	if !cc.resolved {
+		cc.done = cc.ctx.Done()
+		cc.resolved = true
+	}
+	if cc.done == nil {
+		return nil
+	}
+	select {
+	case <-cc.done:
+		return checkContext(cc.ctx)
+	default:
+		return nil
+	}
 }
 
 // checkAlways checks context every time (for critical sections)
 func (cc *contextChecker) checkAlways() object.Object {
 	return checkContext(cc.ctx)
-}
-
-func evalWithContext(ctx context.Context, node ast.Node, env *object.Environment) object.Object {
-	obj := evalNode(ctx, node, env)
-	if err, ok := obj.(*object.Error); ok {
-		if err.Line == 0 {
-			err.Line = node.Line()
-		}
-		if err.File == "" {
-			err.File = GetSourceFileFromContext(ctx)
-		}
-	}
-	return obj
-}
-
-func evalNode(ctx context.Context, node ast.Node, env *object.Environment) object.Object {
-	// Check for cancellation - batched via context checker in the top-level EvalWithContext
-	// For leaf nodes, we skip the check to reduce overhead
-	switch node := node.(type) {
-	case *ast.ExpressionStatement:
-		return evalWithContext(ctx, node.Expression, env)
-	case *ast.InfixExpression:
-		if node.Operator == ast.OpAnd || node.Operator == ast.OpOr {
-			return evalShortCircuitInfixExpression(ctx, node, env)
-		}
-		// Unboxed integer fast path: evaluates side-effect-free integer
-		// arithmetic and comparison subtrees without boxing intermediates.
-		// See intfast.go. This is tried before the string-concatenation chain
-		// below because that helper always claims the node once it matches
-		// shape, so an integer chain like `a + b + c` would otherwise never
-		// reach this path.
-		if node.IntFast != ast.IntFastNone {
-			if result, ok := tryEvalIntInfix(node, env); ok {
-				return result
-			}
-		}
-		if node.Operator == ast.OpAdd {
-			if left, ok := node.Left.(*ast.InfixExpression); ok && left.Operator == ast.OpAdd {
-				if result, ok := tryEvalStringConcatChain(ctx, node, env); ok {
-					return result
-				}
-			}
-		}
-		// General path: evaluate both sides
-		left := evalNode(ctx, node.Left, env)
-		if object.IsError(left) || isRaised(left) {
-			return left
-		}
-		right := evalNode(ctx, node.Right, env)
-		if object.IsError(right) || isRaised(right) {
-			return right
-		}
-		return evalInfixExpression(ctx, node.Operator, left, right, env)
-	case *ast.WalrusExpression:
-		return evalWalrusExpressionWithContext(ctx, node, env)
-	case *ast.ReturnStatement:
-		val := object.Object(NULL)
-		if node.ReturnValue != nil {
-			val = evalNode(ctx, node.ReturnValue, env)
-			if object.IsError(val) || isRaised(val) {
-				return val
-			}
-		}
-		return acquireReturnValue(env, val)
-	case *ast.CallExpression:
-		return evalCallExpression(ctx, node, env)
-	case *ast.MethodCallExpression:
-		return evalMethodCallExpression(ctx, node, env)
-	case *ast.Identifier:
-		return evalIdentifier(node, env)
-	case *ast.IntegerLiteral:
-		return object.NewInteger(node.Value)
-	case *ast.IfStatement:
-		return evalIfStatementWithContext(ctx, node, env)
-	case *ast.BlockStatement:
-		return evalBlockStatementWithContext(ctx, node, env)
-	case *ast.Program:
-		return evalProgram(ctx, node, env)
-	case *ast.FloatLiteral:
-		return object.NewFloat(node.Value)
-	case *ast.BytesLiteral:
-		return object.NewBytes(node.Value)
-	case *ast.StringLiteral:
-		return evalStringLiteral(node)
-	case *ast.FStringLiteral:
-		return evalFStringLiteral(ctx, node, env)
-	case *ast.Boolean:
-		return nativeBoolToBooleanObject(node.Value)
-	case *ast.None:
-		return NULL
-	case *ast.PrefixExpression:
-		right := evalNode(ctx, node.Right, env)
-		if object.IsError(right) || isRaised(right) {
-			return right
-		}
-		return evalPrefixExpression(ctx, node.Operator, right, env)
-	case *ast.ConditionalExpression:
-		return evalConditionalExpression(ctx, node, env)
-	case *ast.MatchStatement:
-		return evalMatchStatementWithContext(ctx, node, env)
-	case *ast.WhileStatement:
-		return evalWhileStatementWithContext(ctx, node, env)
-	case *ast.BreakStatement:
-		return object.BREAK
-	case *ast.ContinueStatement:
-		return object.CONTINUE
-	case *ast.PassStatement:
-		return NULL
-	case *ast.DelStatement:
-		if err := deleteFromExpression(ctx, node.Target, env); err != nil {
-			return assignErrorToObject(err)
-		}
-		for _, target := range node.ExtraTargets {
-			if err := deleteFromExpression(ctx, target, env); err != nil {
-				return assignErrorToObject(err)
-			}
-		}
-		return NULL
-	case *ast.ImportStatement:
-		return evalImportStatement(ctx, node, env)
-	case *ast.FromImportStatement:
-		return evalFromImportStatement(ctx, node, env)
-	case *ast.AssignStatement:
-		val := evalNode(ctx, node.Value, env)
-		if object.IsError(val) || isRaised(val) {
-			return val
-		}
-		// Execute chained assignments first (a = b = 5: assign 5 to b, then to a)
-		if node.Chained != nil {
-			if err := assignToExpression(ctx, node.Chained.Left, val, env); err != nil {
-				return assignErrorToObject(err)
-			}
-			for c := node.Chained.Chained; c != nil; c = c.Chained {
-				if err := assignToExpression(ctx, c.Left, val, env); err != nil {
-					return assignErrorToObject(err)
-				}
-			}
-		}
-		if err := assignToExpression(ctx, node.Left, val, env); err != nil {
-			return assignErrorToObject(err)
-		}
-		return NULL
-	case *ast.AugmentedAssignStatement:
-		return evalAugmentedAssignStatementWithContext(ctx, node, env)
-	case *ast.MultipleAssignStatement:
-		return evalMultipleAssignStatementWithContext(ctx, node, env)
-	case *ast.FunctionStatement:
-		return evalFunctionStatement(ctx, node, env)
-	case *ast.ClassStatement:
-		return evalClassStatement(ctx, node, env)
-	case *ast.ListLiteral:
-		elements := evalExpressionsWithContext(ctx, node.Elements, env)
-		if isPropagatedError(elements) {
-			return elements[0]
-		}
-		return &object.List{Elements: elements}
-	case *ast.DictLiteral:
-		return evalDictLiteralWithContext(ctx, node, env)
-	case *ast.SetLiteral:
-		elements := evalExpressionsWithContext(ctx, node.Elements, env)
-		if isPropagatedError(elements) {
-			return elements[0]
-		}
-		s := object.NewSet()
-		for _, elem := range elements {
-			if err := evalSetAdd(ctx, s, elem); err != nil {
-				return err
-			}
-		}
-		return s
-	case *ast.IndexExpression:
-		left := evalNode(ctx, node.Left, env)
-		if object.IsError(left) || isRaised(left) {
-			return left
-		}
-		index := evalNode(ctx, node.Index, env)
-		if object.IsError(index) || isRaised(index) {
-			return index
-		}
-		return evalIndexExpression(ctx, left, index, node.IsDotAccess)
-	case *ast.SliceExpression:
-		return evalSliceExpressionWithContext(ctx, node, env)
-	case *ast.ForStatement:
-		return evalForStatementWithContext(ctx, node, env)
-	case *ast.TryStatement:
-		return evalTryStatementWithContext(ctx, node, env)
-	case *ast.RaiseStatement:
-		return evalRaiseStatementWithContext(ctx, node, env)
-	case *ast.GlobalStatement:
-		return evalGlobalStatement(node, env)
-	case *ast.NonlocalStatement:
-		return evalNonlocalStatement(node, env)
-	case *ast.AssertStatement:
-		return evalAssertStatementWithContext(ctx, node, env)
-	case *ast.WithStatement:
-		return evalWithStatementWithContext(ctx, node, env)
-	case *ast.ListComprehension:
-		return evalListComprehension(ctx, node, env)
-	case *ast.DictComprehension:
-		return evalDictComprehension(ctx, node, env)
-	case *ast.SetComprehension:
-		return evalSetComprehension(ctx, node, env)
-	case *ast.Lambda:
-		return evalLambda(node, env)
-	case *ast.TupleLiteral:
-		elements := evalExpressionsWithContext(ctx, node.Elements, env)
-		if isPropagatedError(elements) {
-			return elements[0]
-		}
-		return &object.Tuple{Elements: elements}
-	}
-	return NULL
-}
-
-func evalProgram(ctx context.Context, program *ast.Program, env *object.Environment) object.Object {
-	// Set up slots for top-level variables to enable fast slot-based access.
-	if slotIndex, slotNames := analyzeTopLevelLocals(program); slotIndex != nil {
-		if !env.HasSlots() {
-			env.SetupSlots(slotIndex, slotNames)
-		} else {
-			env.ExtendSlots(slotIndex, slotNames)
-		}
-	}
-
-	var result object.Object = NULL
-	cc := newContextChecker(ctx)
-
-	for _, statement := range program.Statements {
-		if err := cc.check(); err != nil {
-			return err
-		}
-
-		result = evalNode(ctx, statement, env)
-
-		switch result := result.(type) {
-		case *object.ReturnValue:
-			val := result.Value
-			releaseReturnValue(result)
-			return val
-		case *object.Error:
-			if result.Line == 0 {
-				result.Line = statement.Line()
-			}
-			if result.File == "" {
-				result.File = GetSourceFileFromContext(ctx)
-			}
-			return result
-		case *object.Exception:
-			// A genuinely raised, uncaught exception propagates out of the
-			// program as the Exception itself so callers (handleResult, the
-			// module-import path) keep its type and can re-raise or report it
-			// faithfully. A bare exception *value* (e.g. a final expression
-			// `ValueError("x")`) is an ordinary result and flows through
-			// unchanged.
-			if result.ExceptionType == object.ExceptionTypeSystemExit || result.Raised {
-				return result
-			}
-		}
-	}
-
-	return result
-}
-
-func evalBlockStatementWithContext(ctx context.Context, block *ast.BlockStatement, env *object.Environment) object.Object {
-	var result object.Object = NULL
-	cc := newContextChecker(ctx)
-
-	for _, statement := range block.Statements {
-		if err := cc.check(); err != nil {
-			return err
-		}
-
-		result = evalNode(ctx, statement, env)
-
-		// Fast path: most statements return NULL, a value, or a simple type.
-		// Avoid the type switch overhead for the common case.
-		switch r := result.(type) {
-		case *object.Null:
-			// Most common: statement returns NULL, continue
-		case *object.Integer, *object.String, *object.Float, *object.Boolean,
-			*object.List, *object.Dict, *object.Tuple, *object.Set,
-			*object.Function, *object.LambdaFunction, *object.Builtin,
-			*object.Instance, *object.Class, *object.BoundMethod,
-			*object.FloatArray:
-			// Normal value, continue
-		case *object.ReturnValue:
-			return result
-		case *object.Error:
-			if r.Line == 0 {
-				r.Line = statement.Line()
-			}
-			if r.File == "" {
-				r.File = GetSourceFileFromContext(ctx)
-			}
-			return r
-		case nil:
-			// nil result, continue
-		default:
-			// Handle control-flow signals and raised exceptions. A raised
-			// exception unwinds the block; a bare exception *value* produced as
-			// a statement result is an ordinary value and does not.
-			rt := r.Type()
-			if rt == object.RETURN_OBJ || rt == object.BREAK_OBJ || rt == object.CONTINUE_OBJ {
-				return result
-			}
-			if rt == object.EXCEPTION_OBJ && isRaised(r) {
-				return result
-			}
-		}
-	}
-
-	return result
 }
 
 // assignErrorToObject converts an assignment or deletion error into the object
@@ -741,33 +471,6 @@ func evalBitwiseNotOperatorExpression(right object.Object) object.Object {
 		return object.NewInteger(^right.IntValue())
 	default:
 		return errors.NewError("%s: ~%s", errors.ErrUnknownOperator, right.Type())
-	}
-}
-
-// evalShortCircuitInfixExpression handles and/or operators with proper short-circuit evaluation
-func evalShortCircuitInfixExpression(ctx context.Context, node *ast.InfixExpression, env *object.Environment) object.Object {
-	left := evalNode(ctx, node.Left, env)
-	if object.IsError(left) || isRaised(left) {
-		return left
-	}
-
-	leftTruthy, errObj := evalTruthy(ctx, left, env)
-	if errObj != nil {
-		return errObj
-	}
-	switch node.Operator {
-	case ast.OpAnd:
-		if !leftTruthy {
-			return left
-		}
-		return evalNode(ctx, node.Right, env)
-	case ast.OpOr:
-		if leftTruthy {
-			return left
-		}
-		return evalNode(ctx, node.Right, env)
-	default:
-		return errors.NewError("unknown operator: %s", node.Operator)
 	}
 }
 
@@ -1088,36 +791,6 @@ func newUnsupportedOperandError(operator ast.Op, left, right object.Object) obje
 	return err
 }
 
-func evalWalrusExpressionWithContext(ctx context.Context, node *ast.WalrusExpression, env *object.Environment) object.Object {
-	val := evalNode(ctx, node.Value, env)
-	if object.IsError(val) || isRaised(val) {
-		return val
-	}
-	// Bind through the same path as assignment statements so slot caching,
-	// global/nonlocal directives, and store fallbacks all behave identically.
-	if err := assignToExpression(ctx, node.Target, val, env); err != nil {
-		return assignErrorToObject(err)
-	}
-	return val
-}
-
-func evalConditionalExpression(ctx context.Context, node *ast.ConditionalExpression, env *object.Environment) object.Object {
-	condition := evalNode(ctx, node.Condition, env)
-	if object.IsError(condition) || isRaised(condition) {
-		return condition
-	}
-
-	truthy, errObj := evalTruthy(ctx, condition, env)
-	if errObj != nil {
-		return errObj
-	}
-	if truthy {
-		return evalNode(ctx, node.TrueExpr, env)
-	} else {
-		return evalNode(ctx, node.FalseExpr, env)
-	}
-}
-
 func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object.Object {
 	switch operator {
 	case ast.OpAdd:
@@ -1278,88 +951,6 @@ func numericFloatValue(obj object.Object) (float64, bool) {
 	default:
 		return 0, false
 	}
-}
-
-// tryEvalStringConcatChain evaluates an `a + b + c ...` chain of three or more
-// operands, joining a leading run of strings through a single buffer instead of
-// building an intermediate string per operator.
-//
-// It folds operands as they are evaluated rather than first collecting the chain
-// into slices. The chain shape is only a hint — whether the operands are actually
-// strings is not known until they are evaluated — and this path is taken for
-// every long `+` chain, so a chain that turns out to be numbers or lists used to
-// pay for two slices it never needed.
-func tryEvalStringConcatChain(ctx context.Context, expr *ast.InfixExpression, env *object.Environment) (object.Object, bool) {
-	f := concatFolder{ctx: ctx, env: env}
-	if !f.walk(expr) {
-		return f.failed, true
-	}
-	return f.result(), true
-}
-
-// concatFolder folds the operands of a `+` chain in evaluation order.
-//
-// While every operand so far has been a string they are appended to buf, so a
-// run of strings costs one result allocation rather than one per operator. On the
-// first non-string operand the run is materialised and folding continues through
-// evalInfixExpression, which keeps the semantics identical to evaluating the
-// chain one operator at a time (string concatenation is associative, so grouping
-// the leading run changes nothing about the result).
-type concatFolder struct {
-	ctx    context.Context
-	env    *object.Environment
-	buf    strings.Builder
-	buffed bool          // buf holds at least one operand
-	acc    object.Object // folded result, once a non-string operand has appeared
-	failed object.Object // first error, if any
-}
-
-// walk evaluates the chain's operands left to right, flattening nested `+` nodes.
-func (f *concatFolder) walk(expr ast.Expression) bool {
-	if infix, ok := expr.(*ast.InfixExpression); ok && infix.Operator == ast.OpAdd {
-		return f.walk(infix.Left) && f.walk(infix.Right)
-	}
-	return f.add(evalNode(f.ctx, expr, f.env))
-}
-
-func (f *concatFolder) add(val object.Object) bool {
-	if object.IsError(val) {
-		f.failed = val
-		return false
-	}
-	if f.acc != nil {
-		return f.fold(val)
-	}
-	if s, ok := val.(*object.String); ok {
-		f.buf.WriteString(s.StringValue())
-		f.buffed = true
-		return true
-	}
-	// First non-string operand: close off the string run, then fold normally.
-	if f.buffed {
-		f.acc = object.NewString(f.buf.String())
-		f.buf.Reset()
-		f.buffed = false
-		return f.fold(val)
-	}
-	f.acc = val
-	return true
-}
-
-func (f *concatFolder) fold(val object.Object) bool {
-	f.acc = evalInfixExpression(f.ctx, ast.OpAdd, f.acc, val, f.env)
-	if object.IsError(f.acc) {
-		f.failed = f.acc
-		return false
-	}
-	return true
-}
-
-func (f *concatFolder) result() object.Object {
-	if f.acc != nil {
-		return f.acc
-	}
-	return object.NewString(f.buf.String())
 }
 
 func evalStringInfixExpression(operator ast.Op, leftVal, rightVal string) object.Object {
@@ -1841,87 +1432,6 @@ func evalInstanceInfixExpression(ctx context.Context, operator ast.Op, left *obj
 	return applyFunctionWithContext(ctx, method, args, nil, env)
 }
 
-func evalIfStatementWithContext(ctx context.Context, ie *ast.IfStatement, env *object.Environment) object.Object {
-	condition := evalNode(ctx, ie.Condition, env)
-	if object.IsError(condition) || isRaised(condition) {
-		return condition
-	}
-
-	truthy, errObj := evalTruthy(ctx, condition, env)
-	if errObj != nil {
-		return errObj
-	}
-	if truthy {
-		return evalBlockStatementWithContext(ctx, ie.Consequence, env)
-	}
-
-	// Check elif clauses
-	for _, elifClause := range ie.ElifClauses {
-		condition := evalNode(ctx, elifClause.Condition, env)
-		if object.IsError(condition) || isRaised(condition) {
-			return condition
-		}
-		elifTruthy, errObj := evalTruthy(ctx, condition, env)
-		if errObj != nil {
-			return errObj
-		}
-		if elifTruthy {
-			return evalBlockStatementWithContext(ctx, elifClause.Consequence, env)
-		}
-	}
-
-	// Check else clause
-	if ie.Alternative != nil {
-		return evalBlockStatementWithContext(ctx, ie.Alternative, env)
-	}
-
-	return NULL
-}
-
-func evalWhileStatementWithContext(ctx context.Context, ws *ast.WhileStatement, env *object.Environment) object.Object {
-	var result object.Object = NULL
-	cc := newContextChecker(ctx)
-	broke := false
-
-	for {
-		if err := cc.check(); err != nil {
-			return err
-		}
-
-		condition := evalNode(ctx, ws.Condition, env)
-		if object.IsError(condition) || isRaised(condition) {
-			return condition
-		}
-
-		truthy, errObj := evalTruthy(ctx, condition, env)
-		if errObj != nil {
-			return errObj
-		}
-		if !truthy {
-			break
-		}
-
-		result = evalWithContext(ctx, ws.Body, env)
-		if result != nil {
-			switch result.Type() {
-			case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-				return result
-			case object.BREAK_OBJ:
-				broke = true
-				return NULL
-			case object.CONTINUE_OBJ:
-				result = NULL
-				continue
-			}
-		}
-	}
-
-	if !broke && ws.Else != nil {
-		return evalWithContext(ctx, ws.Else, env)
-	}
-	return result
-}
-
 func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object {
 	// Fast path: use cached slot index to skip the slotIndex map lookup.
 	// SlotCache encoding: 0=uncached, -1=not a local slot, >0=slot index+1.
@@ -1948,138 +1458,6 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 		return builtin
 	}
 	return errors.NewIdentifierError(node.Value())
-}
-
-func evalFunctionStatement(ctx context.Context, stmt *ast.FunctionStatement, env *object.Environment) object.Object {
-	localSlots, localSlotNames := analyzeFunctionLocals(stmt)
-	fn := &object.Function{
-		Name:             stmt.Name.Value(),
-		Parameters:       stmt.Function.Parameters,
-		DefaultValues:    stmt.Function.GetDefaultValues(),
-		Variadic:         stmt.Function.GetVariadic(),
-		Kwargs:           stmt.Function.GetKwargs(),
-		KeywordOnlyStart: stmt.Function.GetKeywordOnlyStart() + 1,
-		Body:             stmt.Function.Body,
-		Env:              env,
-		LocalSlots:       localSlots,
-		LocalSlotNames:   localSlotNames,
-		ParamSlotIndexes: stmt.Function.ParamSlotIndexes,
-		ReuseCallEnv:     !stmt.Function.HasNestedFunc,
-	}
-	var result object.Object = fn
-	for i := len(stmt.GetDecorators()) - 1; i >= 0; i-- {
-		dec := evalNode(ctx, stmt.GetDecorators()[i], env)
-		if object.IsError(dec) || isRaised(dec) {
-			return dec
-		}
-		result = applyFunctionWithContext(ctx, dec, []object.Object{result}, nil, env)
-		if object.IsError(result) || isRaised(result) {
-			return result
-		}
-		// If the decorator returned a Function with a different name, rename it
-		// so class method lookup (which keys by Function.Name) still works.
-		if wrapped, ok := result.(*object.Function); ok && wrapped.Name != fn.Name {
-			wrapped.Name = fn.Name
-		}
-	}
-	env.Set(stmt.Name.Value(), result)
-	return result
-}
-
-func evalClassStatement(ctx context.Context, stmt *ast.ClassStatement, env *object.Environment) object.Object {
-	class := &object.Class{
-		Name:    stmt.Name.Value(),
-		Methods: make(map[string]object.Object),
-		Env:     env,
-	}
-
-	// Handle base class inheritance
-	if stmt.BaseClass != nil {
-		// Evaluate the base class expression (can be dotted like html.parser.HTMLParser)
-		baseClassObj := evalNode(ctx, stmt.BaseClass, env)
-		if object.IsError(baseClassObj) || isRaised(baseClassObj) {
-			return baseClassObj
-		}
-		baseClass, ok := baseClassObj.(*object.Class)
-		if !ok {
-			return errors.NewError("base class is not a class type, got %s", baseClassObj.Type())
-		}
-		class.BaseClass = baseClass
-
-		// Copy methods from base class
-		for name, method := range baseClass.Methods {
-			class.Methods[name] = method
-		}
-	}
-
-	// Create a new environment for the class body
-	classEnv := object.NewEnclosedEnvironment(env)
-	classEnv.Set("__class__", class)
-
-	// Execute the entire class body in the class environment. Method
-	// definitions are collected into class.Methods (overriding inherited ones);
-	// every other statement runs for its effect, and any error or raised
-	// exception it produces propagates out of the class definition (so a
-	// failing attribute expression or a security violation in the body is not
-	// silently swallowed). After the body runs, the names it bound in the class
-	// environment become class attributes.
-	for _, s := range stmt.Body.Statements {
-		if fnStmt, ok := s.(*ast.FunctionStatement); ok {
-			obj := evalFunctionStatement(ctx, fnStmt, classEnv)
-			if object.IsError(obj) || isRaised(obj) {
-				return obj
-			}
-			switch m := obj.(type) {
-			case *object.Function:
-				class.Methods[m.Name] = m
-			case *object.Property:
-				class.Methods[fnStmt.Name.Value()] = m
-			case *object.StaticMethod:
-				class.Methods[fnStmt.Name.Value()] = m
-			case *object.ClassMethod:
-				class.Methods[fnStmt.Name.Value()] = m
-			default:
-				// Decorator returned something other than a bare Function
-				// (e.g. a wrapper closure). Store under the original method name.
-				if obj != nil {
-					class.Methods[fnStmt.Name.Value()] = obj
-				}
-			}
-			continue
-		}
-		if res := evalNode(ctx, s, classEnv); object.IsError(res) || isRaised(res) {
-			return res
-		}
-	}
-
-	// Promote class-body bindings (e.g. `x = 5`) to class attributes. Skip the
-	// synthetic __class__ marker and anything already registered as a method.
-	classEnv.EachLocal(func(name string, val object.Object) {
-		if name == "__class__" {
-			return
-		}
-		if _, isMethod := class.Methods[name]; isMethod {
-			return
-		}
-		class.Methods[name] = val
-	})
-
-	env.Set(stmt.Name.Value(), class)
-	var result object.Object = class
-	for i := len(stmt.GetDecorators()) - 1; i >= 0; i-- {
-		dec := evalNode(ctx, stmt.GetDecorators()[i], env)
-		if object.IsError(dec) || isRaised(dec) {
-			return dec
-		}
-		result = applyFunctionWithContext(ctx, dec, []object.Object{result}, nil, env)
-		if object.IsError(result) || isRaised(result) {
-			return result
-		}
-	}
-	if result != class {
-		env.Set(stmt.Name.Value(), result)
-	}
-	return result
 }
 
 // unpackArgsFromIterable unpacks an iterable object into a slice of arguments
@@ -2181,182 +1559,6 @@ func resolveCallee(node *ast.CallExpression, name string, env *object.Environmen
 	return val, true
 }
 
-func evalCallExpression(ctx context.Context, node *ast.CallExpression, env *object.Environment) object.Object {
-	if !node.HasOverflow() {
-		if ident, ok := node.Function.(*ast.Identifier); ok {
-			name := ident.Value()
-			if val, found := resolveCallee(node, name, env); found {
-				switch fn := val.(type) {
-				case *object.Function:
-					// Fast paths for common arg counts: avoid slice allocation
-					nargs := len(node.Arguments)
-					nparams := len(fn.Parameters)
-					if fn.Variadic == nil && fn.Kwargs == nil && len(fn.DefaultValues) == 0 && nargs == nparams && nargs <= 3 {
-						switch nargs {
-						case 1:
-							a0 := evalNode(ctx, node.Arguments[0], env)
-							if object.IsError(a0) {
-								return a0
-							}
-							return applyUserFunctionDirect(ctx, fn, a0)
-						case 2:
-							a0 := evalNode(ctx, node.Arguments[0], env)
-							if object.IsError(a0) {
-								return a0
-							}
-							a1 := evalNode(ctx, node.Arguments[1], env)
-							if object.IsError(a1) {
-								return a1
-							}
-							return applyUserFunction2(ctx, fn, a0, a1)
-						case 3:
-							a0 := evalNode(ctx, node.Arguments[0], env)
-							if object.IsError(a0) {
-								return a0
-							}
-							a1 := evalNode(ctx, node.Arguments[1], env)
-							if object.IsError(a1) {
-								return a1
-							}
-							a2 := evalNode(ctx, node.Arguments[2], env)
-							if object.IsError(a2) {
-								return a2
-							}
-							return applyUserFunctionN(ctx, fn, a0, a1, a2)
-						}
-					}
-					args := evalCallArgs(ctx, node.Arguments, env)
-					if isPropagatedError(args) {
-						return args[0]
-					}
-					res := applyUserFunction(ctx, fn, args, nil, env)
-					object.ReleaseArgs(env, args)
-					return res
-				case *object.Builtin:
-					// Use the existing fast builtin path
-					return applyBuiltinFast(ctx, node, env, fn)
-				case *object.LambdaFunction:
-					args := evalCallArgs(ctx, node.Arguments, env)
-					if isPropagatedError(args) {
-						return args[0]
-					}
-					res := applyLambdaFunctionWithContext(ctx, fn, args, nil, env)
-					object.ReleaseArgs(env, args)
-					return res
-				}
-				// Class or other callable - fall through to general path
-				args := evalCallArgs(ctx, node.Arguments, env)
-				if isPropagatedError(args) {
-					return args[0]
-				}
-				res := applyFunctionWithContext(ctx, val, args, nil, env)
-				object.ReleaseArgs(env, args)
-				return res
-			}
-			// Not in env - try fast builtins by name
-			if builtin, ok := builtins[name]; ok {
-				return applyBuiltinFast(ctx, node, env, builtin)
-			}
-		}
-	}
-
-	// General path for complex call expressions
-	function := evalNode(ctx, node.Function, env)
-	if object.IsError(function) || isRaised(function) {
-		return function
-	}
-
-	args := evalCallArgs(ctx, node.Arguments, env)
-	if isPropagatedError(args) {
-		return args[0]
-	}
-	// args is borrowed from the per-root arg-buffer free-list; release it on
-	// every return path from here. (If *unpack append below grows args into a
-	// fresh backing, the original pooled buffer is still released correctly; the
-	// grown backing is simply not pooled — a rare case.)
-	defer object.ReleaseArgs(env, args)
-
-	var keywords map[string]object.Object
-	keywordsMap := node.GetKeywords()
-	if len(keywordsMap) > 0 {
-		keywords = make(map[string]object.Object, len(keywordsMap))
-		for k, v := range keywordsMap {
-			val := evalNode(ctx, v, env)
-			if object.IsError(val) || isRaised(val) {
-				return val
-			}
-			keywords[k] = val
-		}
-	}
-
-	for _, argsUnpackExpr := range node.GetArgsUnpack() {
-		argsVal := evalNode(ctx, argsUnpackExpr, env)
-		if object.IsError(argsVal) || isRaised(argsVal) {
-			return argsVal
-		}
-		unpacked, err := unpackArgsFromIterable(argsVal)
-		if err != nil {
-			return err
-		}
-		args = append(args, unpacked...)
-	}
-
-	kwargsUnpack := node.GetKwargsUnpack()
-	if kwargsUnpack != nil {
-		kwargsVal := evalNode(ctx, kwargsUnpack, env)
-		if object.IsError(kwargsVal) || isRaised(kwargsVal) {
-			return kwargsVal
-		}
-		if dict, ok := kwargsVal.(*object.Dict); ok {
-			if keywords == nil {
-				keywords = make(map[string]object.Object, len(dict.Pairs))
-			}
-			for _, pair := range dict.Pairs {
-				keywords[pair.StringKey()] = pair.Value
-			}
-		} else {
-			return errors.NewError("argument after ** must be a dictionary, not %s", kwargsVal.Type())
-		}
-	}
-
-	return applyFunctionWithContext(ctx, function, args, keywords, env)
-}
-
-// evalCallArgs evaluates the arguments of a call expression into a pooled
-// buffer (object.AcquireArgs). The returned slice is BORROWED: the caller must
-// call object.ReleaseArgs(env, args) once the callee has returned. On
-// evaluation error the pooled buffer is released here and a fresh (non-pooled)
-// one-element slice is returned, so the caller skips release via the usual
-// `len(args)==1 && IsError` early-return.
-func evalCallArgs(ctx context.Context, exps []ast.Expression, env *object.Environment) []object.Object {
-	n := len(exps)
-	if n == 0 {
-		return nil
-	}
-	result := object.AcquireArgs(env, n)
-	for i, e := range exps {
-		evaluated := evalNode(ctx, e, env)
-		if object.IsError(evaluated) || isRaised(evaluated) {
-			object.ReleaseArgs(env, result)
-			return []object.Object{evaluated}
-		}
-		result[i] = evaluated
-	}
-	return result
-}
-
-// applyBuiltinFast dispatches builtin calls, matching the fast builtin path.
-func applyBuiltinFast(ctx context.Context, node *ast.CallExpression, env *object.Environment, fn *object.Builtin) object.Object {
-	args := evalCallArgs(ctx, node.Arguments, env)
-	if isPropagatedError(args) {
-		return args[0]
-	}
-	ctxWithEnv := SetEnvInContext(ctx, env)
-	res := fn.Fn(ctxWithEnv, object.Kwargs{}, args...)
-	object.ReleaseArgs(env, args)
-	return res
-}
-
 // tryEvalFastBuiltinCall handles fast-path builtin calls (len, type, str, etc.).
 // Returns (result, envFn, ok):
 //   - ok=true:   result is the builtin's return value, envFn is nil.
@@ -2431,23 +1633,6 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 	return instance
 }
 
-func evalExpressionsWithContext(ctx context.Context, exps []ast.Expression, env *object.Environment) []object.Object {
-	if len(exps) == 0 {
-		return nil
-	}
-	result := make([]object.Object, len(exps))
-
-	for i, e := range exps {
-		evaluated := evalNode(ctx, e, env)
-		if object.IsError(evaluated) || isRaised(evaluated) {
-			return []object.Object{evaluated}
-		}
-		result[i] = evaluated
-	}
-
-	return result
-}
-
 // applyUserFunctionDirect is a fast path for calling a 1-parameter function with
 // a single argument, bypassing slice allocation and the generic params path.
 func applyUserFunctionDirect(ctx context.Context, fn *object.Function, arg object.Object) object.Object {
@@ -2473,9 +1658,10 @@ func applyUserFunctionDirect(ctx context.Context, fn *object.Function, arg objec
 		extendedEnv.Set(fn.Parameters[0].Value(), arg)
 	}
 
-	// Call evalBlockStatementWithContext directly, skipping evalWithContext/evalNode overhead
-	// since fn.Body is always a *ast.BlockStatement and block already handles errors.
-	evaluated := evalBlockStatementWithContext(ctx, fn.Body, extendedEnv)
+	if fn.CompiledBody == nil {
+		fn.CompiledBody = compileStmt(fn.Body) // see applyUserFunction
+	}
+	evaluated := fn.CompiledBody(ctx, extendedEnv)
 	if err, ok := evaluated.(*object.Error); ok {
 		if err.Function == "" {
 			err.Function = fn.Name
@@ -2510,7 +1696,10 @@ func applyUserFunction2(ctx context.Context, fn *object.Function, a0, a1 object.
 		extendedEnv.Set(fn.Parameters[1].Value(), a1)
 	}
 
-	evaluated := evalBlockStatementWithContext(ctx, fn.Body, extendedEnv)
+	if fn.CompiledBody == nil {
+		fn.CompiledBody = compileStmt(fn.Body) // see applyUserFunction
+	}
+	evaluated := fn.CompiledBody(ctx, extendedEnv)
 	if err, ok := evaluated.(*object.Error); ok {
 		if err.Function == "" {
 			err.Function = fn.Name
@@ -2547,7 +1736,10 @@ func applyUserFunctionN(ctx context.Context, fn *object.Function, args ...object
 		}
 	}
 
-	evaluated := evalBlockStatementWithContext(ctx, fn.Body, extendedEnv)
+	if fn.CompiledBody == nil {
+		fn.CompiledBody = compileStmt(fn.Body) // see applyUserFunction
+	}
+	evaluated := fn.CompiledBody(ctx, extendedEnv)
 	if err, ok := evaluated.(*object.Error); ok {
 		if err.Function == "" {
 			err.Function = fn.Name
@@ -2571,7 +1763,13 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 	}
 	defer object.ReleaseCallEnvironment(extendedEnv)
 
-	evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
+	if fn.CompiledBody == nil {
+		// Only functions assembled outside the compiler lack a body closure;
+		// script execution is serialised by the interpreter lock, so caching
+		// it here is safe.
+		fn.CompiledBody = compileStmt(fn.Body)
+	}
+	evaluated := fixErrorPos(ctx, fn.CompiledBody(ctx, extendedEnv), fn.Body.Line())
 	if err, ok := evaluated.(*object.Error); ok {
 		if err.Function == "" {
 			err.Function = fn.Name
@@ -2679,14 +1877,28 @@ func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFuncti
 	}
 	defer object.ReleaseCallEnvironment(extendedEnv)
 
-	evaluated := evalWithContext(ctx, fn.Body, extendedEnv)
-	return evaluated // No unwrapping needed for lambda expressions
+	if fn.CompiledBody == nil {
+		fn.CompiledBody = compileExpr(fn.Body) // see applyUserFunction
+	}
+	return fixErrorPos(ctx, fn.CompiledBody(ctx, extendedEnv), fn.Body.Line()) // No unwrapping needed for lambda expressions
+}
+
+// evalDefault evaluates a parameter default in the defining scope, through the
+// closure compiled at definition time when the function carries one.
+// Functions assembled without compiled defaults (none in the evaluator today)
+// compile the expression on the spot.
+func (fp *funcParams) evalDefault(ctx context.Context, name string, defaultExpr ast.Expression) object.Object {
+	if fn, ok := fp.compiledDefaults[name]; ok {
+		return fn(ctx, fp.parentEnv)
+	}
+	return compileExpr(defaultExpr)(ctx, fp.parentEnv)
 }
 
 // funcParams abstracts the common parts of Function and LambdaFunction for parameter handling
 type funcParams struct {
 	parameters       []*ast.Identifier
 	defaultValues    map[string]ast.Expression
+	compiledDefaults map[string]object.EvalFn
 	variadic         *ast.Identifier
 	kwargs           *ast.Identifier
 	keywordOnlyStart int
@@ -2832,7 +2044,7 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 		for pi, param := range fp.parameters {
 			if !isParamSet(pi, param.Value()) {
 				if defaultExpr, ok := fp.defaultValues[param.Value()]; ok {
-					defaultVal := evalNode(ctx, defaultExpr, fp.parentEnv)
+					defaultVal := fp.evalDefault(ctx, param.Value(), defaultExpr)
 					env.Set(param.Value(), defaultVal)
 				} else {
 					minArgs := numParams - len(fp.defaultValues)
@@ -2851,7 +2063,7 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 			for i := numArgs; i < numParams; i++ {
 				param := fp.parameters[i]
 				if defaultExpr, ok := fp.defaultValues[param.Value()]; ok {
-					defaultVal := evalNode(ctx, defaultExpr, fp.parentEnv)
+					defaultVal := fp.evalDefault(ctx, param.Value(), defaultExpr)
 					env.Set(param.Value(), defaultVal)
 				} else {
 					minArgs := numParams - len(fp.defaultValues)
@@ -2868,6 +2080,7 @@ func extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.O
 	return extendEnvWithParams(ctx, funcParams{
 		parameters:       fn.Parameters,
 		defaultValues:    fn.DefaultValues,
+		compiledDefaults: fn.CompiledDefaults,
 		variadic:         fn.Variadic,
 		kwargs:           fn.Kwargs,
 		keywordOnlyStart: fn.KeywordOnlyStart,
@@ -2883,6 +2096,7 @@ func extendLambdaEnv(ctx context.Context, fn *object.LambdaFunction, args []obje
 	return extendEnvWithParams(ctx, funcParams{
 		parameters:       fn.Parameters,
 		defaultValues:    fn.DefaultValues,
+		compiledDefaults: fn.CompiledDefaults,
 		variadic:         fn.Variadic,
 		kwargs:           fn.Kwargs,
 		keywordOnlyStart: fn.KeywordOnlyStart,
@@ -3145,119 +2359,6 @@ func init() {
 // evalDictIndexExpression is in data_structures.go
 // evalStringIndexExpression is in data_structures.go
 // evalRegexIndexExpression is in data_structures.go
-
-func evalAugmentedAssignStatementWithContext(ctx context.Context, node *ast.AugmentedAssignStatement, env *object.Environment) object.Object {
-	left := node.Left
-	if left == nil {
-		left = node.Name
-	}
-	if left == nil {
-		return errors.NewError("invalid augmented assignment target")
-	}
-
-	currentVal := evalNode(ctx, left, env)
-	if object.IsError(currentVal) || isRaised(currentVal) {
-		return currentVal
-	}
-
-	newVal := evalNode(ctx, node.Value, env)
-	if object.IsError(newVal) || isRaised(newVal) {
-		return newVal
-	}
-
-	// Fast path: string += string, int += int
-	if node.Operator == ast.OpAddEq {
-		if cur, ok := currentVal.(*object.String); ok {
-			if r, ok := newVal.(*object.String); ok {
-				if err := assignToExpression(ctx, left, object.NewString(cur.StringValue()+r.StringValue()), env); err != nil {
-					return assignErrorToObject(err)
-				}
-				return NULL
-			}
-		}
-		if cur, ok := currentVal.(*object.Integer); ok {
-			if r, ok := newVal.(*object.Integer); ok {
-				if err := assignToExpression(ctx, left, object.NewInteger(cur.IntValue()+r.IntValue()), env); err != nil {
-					return assignErrorToObject(err)
-				}
-				return NULL
-			}
-		}
-	}
-
-	// Fast path: dict |= dict merges into the left dict in place (PEP 584), so
-	// other references to the same dict observe the update, matching Python.
-	if node.Operator == ast.OpBitOrEq {
-		if cur, ok := currentVal.(*object.Dict); ok {
-			if r, ok := newVal.(*object.Dict); ok {
-				if cur.Pairs == nil {
-					cur.Pairs = make(map[string]object.DictPair, len(r.Pairs))
-				}
-				for k, v := range r.Pairs {
-					cur.Pairs[k] = v
-				}
-				return NULL
-			}
-		}
-	}
-
-	// Fast path: list += list extends and list *= n repeats in place, since
-	// Python's list iadd/imul mutate and aliases observe the update.
-	if cur, ok := currentVal.(*object.List); ok {
-		switch node.Operator {
-		case ast.OpAddEq:
-			if r, ok := newVal.(*object.List); ok {
-				cur.Elements = append(cur.Elements, r.Elements...)
-				return NULL
-			}
-		case ast.OpMulEq:
-			if r, ok := newVal.(*object.Integer); ok {
-				elements, errObj := repeatElements(cur.Elements, r.IntValue())
-				if errObj != nil {
-					return errObj
-				}
-				cur.Elements = elements
-				return NULL
-			}
-		}
-	}
-
-	// Fast path: set augmented operators mutate in place, matching Python
-	// (set __ior__ and friends are in-place updates).
-	if cur, ok := currentVal.(*object.Set); ok {
-		if r, ok := newVal.(*object.Set); ok {
-			switch node.Operator {
-			case ast.OpBitOrEq:
-				cur.InPlaceUnion(r)
-				return NULL
-			case ast.OpBitAndEq:
-				cur.InPlaceIntersection(r)
-				return NULL
-			case ast.OpSubEq:
-				cur.InPlaceDifference(r)
-				return NULL
-			case ast.OpBitXorEq:
-				cur.InPlaceSymmetricDifference(r)
-				return NULL
-			}
-		}
-	}
-
-	operator := node.Operator.BaseOp()
-	if operator == node.Operator {
-		return errors.NewError("unknown augmented assignment operator: %s", node.Operator)
-	}
-
-	result := evalInfixExpression(ctx, operator, currentVal, newVal, env)
-	if object.IsError(result) {
-		return result
-	}
-
-	if err := assignToExpression(ctx, left, result, env); err != nil {
-		return assignErrorToObject(err)
-	}
-	return NULL
-}
 
 // evalSliceExpressionWithContext is in data_structures.go
 // sliceList is in data_structures.go
@@ -3798,193 +2899,6 @@ func evalIsOperator(left, right object.Object) object.Object {
 	return nativeBoolToBooleanObject(left == right)
 }
 
-func evalMultipleAssignStatementWithContext(ctx context.Context, node *ast.MultipleAssignStatement, env *object.Environment) object.Object {
-	val := evalNode(ctx, node.Value, env)
-	if object.IsError(val) || isRaised(val) {
-		return val
-	}
-
-	var elements []object.Object
-
-	// Value can be a list or tuple; any other iterable (including class
-	// instances with __iter__) is materialized, with a raise from the
-	// iterator protocol propagating — Python unpacks any iterable.
-	switch v := val.(type) {
-	case *object.List:
-		elements = v.Elements
-	case *object.Tuple:
-		elements = v.Elements
-	default:
-		elems, ok, rerr := iterableToSliceChecked(ctx, val, env)
-		if rerr != nil {
-			return rerr
-		}
-		if !ok {
-			return errors.NewTypeError("list or tuple", val.Type().String())
-		}
-		elements = elems
-	}
-
-	// Handle starred unpacking
-	if node.StarredIndex >= 0 {
-		// With starred unpacking: a, *b, c = [1, 2, 3, 4, 5]
-		// Need at least (len(names) - 1) elements
-		minElements := len(node.Names) - 1
-		if len(elements) < minElements {
-			return errors.NewError("not enough values to unpack (expected at least %d, got %d)", minElements, len(elements))
-		}
-
-		// Assign elements before the starred variable
-		for i := 0; i < node.StarredIndex; i++ {
-			env.Set(node.Names[i].Value(), elements[i])
-		}
-
-		// Calculate how many elements go to the starred variable
-		elementsAfterStar := len(node.Names) - node.StarredIndex - 1
-		starStart := node.StarredIndex
-		starEnd := len(elements) - elementsAfterStar
-
-		// Assign starred variable (as a list)
-		starredElements := elements[starStart:starEnd]
-		env.Set(node.Names[node.StarredIndex].Value(), &object.List{Elements: starredElements})
-
-		// Assign elements after the starred variable
-		for i := 0; i < elementsAfterStar; i++ {
-			nameIdx := node.StarredIndex + 1 + i
-			elemIdx := starEnd + i
-			env.Set(node.Names[nameIdx].Value(), elements[elemIdx])
-		}
-	} else {
-		// No starred unpacking - exact length match required
-		if len(elements) != len(node.Names) {
-			return errors.NewError("cannot unpack %d values to %d variables", len(elements), len(node.Names))
-		}
-
-		// Assign each value
-		for i, name := range node.Names {
-			env.Set(name.Value(), elements[i])
-		}
-	}
-
-	return NULL
-}
-
-func evalTryStatementWithContext(ctx context.Context, ts *ast.TryStatement, env *object.Environment) object.Object {
-	// Execute try block
-	result := evalWithContext(ctx, ts.Body, env)
-
-	exceptionCaught := false
-
-	// Check if a raised exception or an internal error occurred. A bare
-	// exception *value* (Raised == false) is not a raise and must not be
-	// caught here — only genuinely propagating exceptions are.
-	if isRaised(result) || object.IsError(result) {
-		// SystemExit exceptions should NOT be caught by except blocks
-		// sys.exit() always exits the program, regardless of try/except
-		// PermissionError exceptions also bypass try/except — security violations
-		// must not be silently swallowed by scripts.
-		if exc, ok := result.(*object.Exception); ok && (exc.IsSystemExit() || exc.IsPermissionError()) {
-			// Execute finally block before propagating. The protected
-			// exception wins over whatever the finally block does.
-			if ts.Finally != nil {
-				result = applyProtectedFinallyResult(result, evalWithContext(ctx, ts.Finally, env))
-			}
-			return result // always propagates
-		}
-
-		// Convert Error to Exception for consistent handling (do this once, before matching)
-		var exceptionObj object.Object = result
-		if err, ok := result.(*object.Error); ok {
-			exceptionObj = &object.Exception{
-				Message:       err.Message,
-				ExceptionType: errorExceptionType(err),
-				Raised:        true,
-			}
-		}
-
-		// Try each except clause in order
-		for _, exceptClause := range ts.ExceptClauses {
-			// Check if exception type matches (if specified)
-			if exceptClause.ExceptType != nil {
-				// Python evaluates the except-type expression. Names and dotted
-				// names are matched structurally, but any other sub-expression
-				// (e.g. a call `except (boom(), ValueError):`) must be evaluated
-				// so its raise propagates rather than being silently ignored.
-				if raised := evalExceptTypeSideEffects(ctx, exceptClause.ExceptType, env); raised != nil {
-					return raised
-				}
-				if !matchesExceptionType(exceptionObj, exceptClause.ExceptType, env) {
-					// Exception type doesn't match, try next except clause
-					continue
-				}
-			}
-
-			// This except clause matches - execute it
-			exceptionCaught = true
-			// The exception is now caught: it becomes an ordinary value that the
-			// handler can inspect (str(e), e.args, re-raise via `raise`). Clear
-			// the Raised flag so using it as a value inside the except body does
-			// not spuriously unwind the stack. A bare `raise` re-marks it.
-			if exc, ok := exceptionObj.(*object.Exception); ok {
-				exc.Raised = false
-			}
-			// Store the current exception for bare raise support
-			env.Set("__current_exception__", exceptionObj)
-
-			// Bind exception to variable if specified
-			if exceptClause.ExceptVar != nil {
-				env.Set(exceptClause.ExceptVar.Value(), exceptionObj)
-			}
-
-			// Execute except block in the same environment so variables are accessible
-			result = evalWithContext(ctx, exceptClause.Body, env)
-
-			// Clear the current exception after except block
-			env.Delete("__current_exception__")
-
-			// If except block didn't re-raise, the exception was handled.
-			// Preserve control-flow signals (return, break, continue) so they
-			// propagate correctly out of the try/except.
-			if !isRaised(result) && !object.IsError(result) {
-				switch result.(type) {
-				case *object.ReturnValue, *object.Break, *object.Continue:
-					// keep result as-is
-				default:
-					result = NULL
-				}
-			}
-
-			// Exception was handled (or re-raised), don't try other except clauses
-			break
-		}
-	}
-
-	// Execute else block only if no exception was raised (and not re-raised)
-	if ts.Else != nil && !exceptionCaught && !isRaised(result) && !object.IsError(result) {
-		switch result.(type) {
-		case *object.ReturnValue, *object.Break, *object.Continue:
-			// don't run else on control flow
-		default:
-			result = evalWithContext(ctx, ts.Else, env)
-		}
-	}
-
-	// Always execute finally block if present
-	// Per Python semantics, return in finally overrides the result, and an
-	// exception raised in finally replaces whatever was in flight — unless
-	// the in-flight result is a protected exception (SystemExit,
-	// PermissionError), which nothing may replace, whichever block raised it.
-	if ts.Finally != nil {
-		if exc, ok := result.(*object.Exception); ok && (exc.IsSystemExit() || exc.IsPermissionError()) {
-			result = applyProtectedFinallyResult(result, evalWithContext(ctx, ts.Finally, env))
-		} else {
-			result = applyFinallyResult(result, evalWithContext(ctx, ts.Finally, env))
-		}
-	}
-
-	return result
-}
-
 // applyFinallyResult folds a finally block's outcome into the try statement's
 // pending result. A return still overrides (kept as a ReturnValue marker so a
 // later statement cannot replace it); an exception raised in finally replaces
@@ -4029,149 +2943,6 @@ func isExceptionConstructorName(name string) bool {
 		}
 	}
 	return false
-}
-
-func evalRaiseStatementWithContext(ctx context.Context, rs *ast.RaiseStatement, env *object.Environment) object.Object {
-	if rs.Message != nil {
-		msg := evalNode(ctx, rs.Message, env)
-		if object.IsError(msg) {
-			return msg
-		}
-		// If it's already an Exception, mark it as actively propagating and
-		// return it. This is the point where a constructed exception value
-		// becomes a raise.
-		if exc, ok := msg.(*object.Exception); ok {
-			exc.Raised = true
-			return exc
-		}
-		// Python allows `raise ValueError` — the class without a call: the
-		// exception is instantiated with no arguments. Recognized by the raise
-		// operand being an identifier naming a builtin exception constructor
-		// (a shadowed name evaluates to the user's object above, so this only
-		// fires when the builtin itself was raised).
-		if _, isBuiltin := msg.(*object.Builtin); isBuiltin {
-			if ident, ok := rs.Message.(*ast.Identifier); ok {
-				if name := ident.Value(); isExceptionConstructorName(name) {
-					if entry, ok := builtins[name]; ok {
-						res := entry.Fn(SetEnvInContext(ctx, env), object.NewKwargs(nil))
-						if exc, ok := res.(*object.Exception); ok {
-							exc.Raised = true
-							return exc
-						}
-					}
-				}
-			}
-		}
-		// Python 3 doesn't support raise "string", only raise Exception("string")
-		return errors.NewError("exceptions must derive from BaseException")
-	}
-
-	// Bare raise - re-raise the current exception if one exists
-	if currentExc, ok := env.Get("__current_exception__"); ok {
-		return markRaised(currentExc)
-	}
-
-	// No current exception - error
-	return errors.NewError("No active exception to re-raise")
-}
-
-func evalAssertStatementWithContext(ctx context.Context, as *ast.AssertStatement, env *object.Environment) object.Object {
-	condition := evalNode(ctx, as.Condition, env)
-	if object.IsError(condition) || isRaised(condition) {
-		return condition
-	}
-
-	condTruthy, errObj := evalTruthy(ctx, condition, env)
-	if errObj != nil {
-		return errObj
-	}
-	if !condTruthy {
-		var message string
-		if as.Message != nil {
-			msg := evalNode(ctx, as.Message, env)
-			if object.IsError(msg) || isRaised(msg) {
-				return msg
-			}
-			message = msg.Inspect()
-		} else {
-			message = "AssertionError"
-		}
-		return &object.Error{Message: fmt.Sprintf("AssertionError at line %d: %s", as.Token.Line, message)}
-	}
-
-	return NULL
-}
-
-func evalWithStatementWithContext(ctx context.Context, ws *ast.WithStatement, env *object.Environment) object.Object {
-	// Evaluate the context expression
-	ctxObj := evalNode(ctx, ws.ContextExpr, env)
-	if object.IsError(ctxObj) || isRaised(ctxObj) {
-		return ctxObj
-	}
-
-	// Call __enter__
-	var enterResult object.Object
-	if inst, ok := ctxObj.(*object.Instance); ok {
-		enterResult = callDunderMethod(ctx, inst, "__enter__", nil, env)
-		if enterResult == nil {
-			enterResult = NULL
-		}
-		if object.IsError(enterResult) || isRaised(enterResult) {
-			return enterResult
-		}
-	} else {
-		return errors.NewError("with statement requires an object with __enter__ and __exit__ methods")
-	}
-
-	// Bind 'as' target if present
-	if ws.Target != nil {
-		env.Set(ws.Target.Value(), enterResult)
-	}
-
-	// Execute body
-	result := evalWithContext(ctx, ws.Body, env)
-
-	// Call __exit__ — always, even on exception
-	// __exit__(exc_type, exc_val, exc_tb) — pass None, None, None on success
-	// or exception info on error. If __exit__ returns truthy, suppress the exception.
-	inst := ctxObj.(*object.Instance)
-	var excType object.Object = NULL
-	var excVal object.Object = NULL
-	if isRaised(result) || object.IsError(result) {
-		if exc, ok := result.(*object.Exception); ok {
-			excType = object.NewString(exc.ExceptionType)
-			excVal = object.NewString(exc.Message)
-		} else if err, ok := result.(*object.Error); ok {
-			excType = object.NewString("Exception")
-			excVal = object.NewString(err.Message)
-		}
-	}
-	exitArgs := []object.Object{excType, excVal, NULL}
-
-	exitResult := callDunderMethod(ctx, inst, "__exit__", exitArgs, env)
-	// A raise (or internal error) from __exit__ itself always propagates and
-	// wins over the body's in-flight exception, matching Python (where the
-	// __exit__ exception replaces/chains the original). This must be checked
-	// before the truthy-suppression test below, since a raised exception is
-	// itself truthy and would otherwise be mistaken for "suppress".
-	if exitResult != nil && (object.IsError(exitResult) || isRaised(exitResult)) {
-		return exitResult
-	}
-
-	// If the body raised and __exit__ returned a truthy value, suppress the
-	// exception (Python's __exit__ contract). A raise from the __exit__
-	// result's own __bool__ propagates rather than being coerced.
-	if (isRaised(result) || object.IsError(result)) && exitResult != nil {
-		suppress, serr := evalTruthy(ctx, exitResult, env)
-		if serr != nil {
-			return serr
-		}
-		if suppress {
-			return NULL
-		}
-	}
-
-	return result
 }
 
 // isRaised reports whether obj is an exception that is actively propagating and
@@ -4280,8 +3051,9 @@ func evalExceptTypeSideEffects(ctx context.Context, expr ast.Expression, env *ob
 		return nil
 	default:
 		// Any other expression (a call, operator, etc.) is evaluated for its
-		// side effects; only a raise or internal error is propagated.
-		result := evalNode(ctx, expr, env)
+		// side effects; only a raise or internal error is propagated. Such
+		// except types are rare, so the expression is compiled on the spot.
+		result := compileExpr(expr)(ctx, env)
 		if object.IsError(result) || isRaised(result) {
 			return result
 		}
@@ -4383,7 +3155,7 @@ func evalSliceObjectWithContext(ctx context.Context, node *ast.SliceExpression, 
 	sliceObj := &object.Slice{}
 
 	if node.Start != nil {
-		startObj := evalNode(ctx, node.Start, env)
+		startObj := cachedExpr(&node.StartCompiled, node.Start)(ctx, env)
 		if object.IsError(startObj) || isRaised(startObj) {
 			return nil, startObj
 		}
@@ -4395,7 +3167,7 @@ func evalSliceObjectWithContext(ctx context.Context, node *ast.SliceExpression, 
 	}
 
 	if node.End != nil {
-		endObj := evalNode(ctx, node.End, env)
+		endObj := cachedExpr(&node.EndCompiled, node.End)(ctx, env)
 		if object.IsError(endObj) || isRaised(endObj) {
 			return nil, endObj
 		}
@@ -4407,7 +3179,7 @@ func evalSliceObjectWithContext(ctx context.Context, node *ast.SliceExpression, 
 	}
 
 	if node.GetStep() != nil {
-		stepObj := evalNode(ctx, node.GetStep(), env)
+		stepObj := cachedExpr(&node.StepCompiled, node.GetStep())(ctx, env)
 		if object.IsError(stepObj) || isRaised(stepObj) {
 			return nil, stepObj
 		}
@@ -4524,7 +3296,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 		env.Delete(target.Value())
 		return nil
 	case *ast.IndexExpression:
-		obj := evalNode(ctx, target.Left, env)
+		obj := cachedExpr(&target.LeftCompiled, target.Left)(ctx, env)
 		if object.IsError(obj) {
 			return fmt.Errorf("deletion error")
 		}
@@ -4532,7 +3304,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			return &assignmentExceptionError{ex: obj.(*object.Exception)}
 		}
 
-		index := evalNode(ctx, target.Index, env)
+		index := cachedExpr(&target.IndexCompiled, target.Index)(ctx, env)
 		if object.IsError(index) {
 			return fmt.Errorf("deletion error")
 		}
@@ -4608,7 +3380,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			return fmt.Errorf("cannot delete index")
 		}
 	case *ast.SliceExpression:
-		obj := evalNode(ctx, target.Left, env)
+		obj := cachedExpr(&target.LeftCompiled, target.Left)(ctx, env)
 		if object.IsError(obj) {
 			return fmt.Errorf("deletion error")
 		}
@@ -4668,7 +3440,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 // values splices the list (length may change), and stepped slices replace
 // element-by-element with a length match required, as in Python.
 func assignToSliceExpression(ctx context.Context, target *ast.SliceExpression, value object.Object, env *object.Environment) error {
-	obj := evalWithContext(ctx, target.Left, env)
+	obj := fixErrorPos(ctx, cachedExpr(&target.LeftCompiled, target.Left)(ctx, env), target.Left.Line())
 	if object.IsError(obj) {
 		return fmt.Errorf("assignment error")
 	}
@@ -4808,14 +3580,14 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 		} else {
 			return nil
 		}
-		obj := evalWithContext(ctx, left.Left, env)
+		obj := fixErrorPos(ctx, cachedExpr(&left.LeftCompiled, left.Left)(ctx, env), left.Left.Line())
 		if isRaised(obj) {
 			return &assignmentExceptionError{ex: obj.(*object.Exception)}
 		}
 		if object.IsError(obj) {
 			return fmt.Errorf("assignment error")
 		}
-		index := evalNode(ctx, left.Index, env)
+		index := cachedExpr(&left.IndexCompiled, left.Index)(ctx, env)
 		if isRaised(index) {
 			return &assignmentExceptionError{ex: index.(*object.Exception)}
 		}
@@ -4958,7 +3730,7 @@ func assignToNestedFloatArrayIndex(ctx context.Context, expr *ast.IndexExpressio
 		return errNotNestedFloatArrayAssignment
 	}
 
-	baseObj := evalWithContext(ctx, rowExpr.Left, env)
+	baseObj := fixErrorPos(ctx, cachedExpr(&rowExpr.LeftCompiled, rowExpr.Left)(ctx, env), rowExpr.Left.Line())
 	if object.IsError(baseObj) {
 		return fmt.Errorf("assignment error")
 	}
@@ -4967,7 +3739,7 @@ func assignToNestedFloatArrayIndex(ctx context.Context, expr *ast.IndexExpressio
 		return errNotNestedFloatArrayAssignment
 	}
 
-	rowIndexObj := evalWithContext(ctx, rowExpr.Index, env)
+	rowIndexObj := fixErrorPos(ctx, cachedExpr(&rowExpr.IndexCompiled, rowExpr.Index)(ctx, env), rowExpr.Index.Line())
 	if object.IsError(rowIndexObj) {
 		return fmt.Errorf("assignment error")
 	}
@@ -4976,7 +3748,7 @@ func assignToNestedFloatArrayIndex(ctx context.Context, expr *ast.IndexExpressio
 		return fmt.Errorf("float_array index must be integer")
 	}
 
-	colIndexObj := evalWithContext(ctx, expr.Index, env)
+	colIndexObj := fixErrorPos(ctx, cachedExpr(&expr.IndexCompiled, expr.Index)(ctx, env), expr.Index.Line())
 	if object.IsError(colIndexObj) {
 		return fmt.Errorf("assignment error")
 	}
@@ -5211,428 +3983,8 @@ func instanceToIterator(ctx context.Context, inst *object.Instance, env *object.
 	})
 }
 
-func evalForStatementWithContext(ctx context.Context, fs *ast.ForStatement, env *object.Environment) object.Object {
-	if result, ok := evalFastRangeForStatement(ctx, fs, env); ok {
-		return result
-	}
-
-	iterable := evalNode(ctx, fs.Iterable, env)
-	if object.IsError(iterable) || isRaised(iterable) {
-		return iterable
-	}
-
-	var result object.Object = NULL
-	broke := false
-
-	// Fast path: for k, v in d.items() — bind each pair's key/value straight
-	// into the two loop variables, skipping the per-iteration Tuple that
-	// DictItems.CreateIterator would allocate only for setForVariables to
-	// unpack and discard. Only the 2-variable form qualifies; everything else
-	// (1 var, 3+ vars, non-DictItems) falls through to the generic path.
-	if di, ok := iterable.(*object.DictItems); ok && len(fs.Variables) == 2 {
-		// Snapshot keys so body mutations (e.g. del d[k]) can't corrupt the
-		// range, matching DictItems.CreateIterator's view semantics.
-		keys := make([]string, 0, len(di.Dict.Pairs))
-		for k := range di.Dict.Pairs {
-			keys = append(keys, k)
-		}
-		cc := newContextChecker(ctx)
-		for _, key := range keys {
-			pair, ok := di.Dict.Pairs[key]
-			if !ok {
-				continue // key deleted during iteration — view skips it
-			}
-			if err := cc.check(); err != nil {
-				return err
-			}
-			if err := setForVariable(fs.Variables[0], pair.Key, env); err != nil {
-				return errors.NewError("%s", err.Error())
-			}
-			if err := setForVariable(fs.Variables[1], pair.Value, env); err != nil {
-				return errors.NewError("%s", err.Error())
-			}
-			result = evalBlockStatementWithContext(ctx, fs.Body, env)
-			if result != nil {
-				switch result.Type() {
-				case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-					return result
-				case object.BREAK_OBJ:
-					return NULL // broke=True: skip else, return NULL
-				case object.CONTINUE_OBJ:
-					result = NULL
-					continue
-				}
-			}
-		}
-		if fs.Else != nil {
-			return evalBlockStatementWithContext(ctx, fs.Else, env)
-		}
-		return result
-	}
-
-	// Handle Iterator objects and Views
-	var iter *object.Iterator
-	switch o := iterable.(type) {
-	case *object.Iterator:
-		iter = o
-	case *object.Dict:
-		iter = o.CreateIterator()
-	case *object.DictKeys:
-		iter = o.CreateIterator()
-	case *object.DictValues:
-		iter = o.CreateIterator()
-	case *object.DictItems:
-		iter = o.CreateIterator()
-	case *object.Set:
-		iter = o.CreateIterator()
-	case *object.Instance:
-		if fn, ok := findDunderMethod(o, "__iter__"); ok {
-			iterObj := applyFunctionWithContext(ctx, fn, prependSelf(o, nil), nil, env)
-			if object.IsError(iterObj) || isRaised(iterObj) {
-				return iterObj
-			}
-			if iterInst, ok := iterObj.(*object.Instance); ok {
-				iter = instanceToIterator(ctx, iterInst, env)
-			} else if iterIter, ok := iterObj.(*object.Iterator); ok {
-				iter = iterIter
-			} else {
-				return errors.NewError("__iter__ must return an iterator")
-			}
-		} else {
-			return errors.NewTypeError("iterable", iterable.Type().String())
-		}
-	}
-
-	if iter != nil {
-		cc := newContextChecker(ctx)
-		for {
-			// Check context periodically in loops for responsiveness
-			if err := cc.check(); err != nil {
-				return err
-			}
-
-			element, hasNext := iter.Next()
-			if !hasNext {
-				break
-			}
-
-			// A raised exception or internal error yielded by the iterator
-			// (e.g. a user __next__ that raised something other than
-			// StopIteration) propagates out of the for-loop as in Python.
-			if object.IsError(element) || isRaised(element) {
-				return element
-			}
-
-			if err := setForVariables(fs.Variables, element, env); err != nil {
-				return errors.NewError("%s", err.Error())
-			}
-
-			result = evalBlockStatementWithContext(ctx, fs.Body, env)
-			if result != nil {
-				switch result.Type() {
-				case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-					return result
-				case object.BREAK_OBJ:
-					broke = true
-					result = NULL
-					goto forDone
-				case object.CONTINUE_OBJ:
-					result = NULL
-					continue
-				}
-			}
-		}
-		goto forDone
-	}
-
-	// Get elements to iterate over based on type
-	{
-		var elements []object.Object
-		switch o := iterable.(type) {
-		case *object.List:
-			elements = o.Elements
-		case *object.Tuple:
-			elements = o.Elements
-		case *object.FloatArray:
-			if o.Is2D() {
-				rows := o.Rows()
-				cols := o.Cols()
-				cc := newContextChecker(ctx)
-				for i := 0; i < rows; i++ {
-					if err := cc.check(); err != nil {
-						return err
-					}
-					off := i * cols
-					rowData := make([]float64, cols)
-					copy(rowData, o.Data[off:off+cols])
-					element := object.NewFloatArray1D(rowData)
-					if err := setForVariables(fs.Variables, element, env); err != nil {
-						return errors.NewError("%s", err.Error())
-					}
-					result = evalBlockStatementWithContext(ctx, fs.Body, env)
-					if result != nil {
-						switch result.Type() {
-						case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-							return result
-						case object.BREAK_OBJ:
-							broke = true
-							result = NULL
-							goto forDone
-						case object.CONTINUE_OBJ:
-							result = NULL
-							continue
-						}
-					}
-				}
-				goto forDone
-			}
-			cc := newContextChecker(ctx)
-			for _, v := range o.Data {
-				if err := cc.check(); err != nil {
-					return err
-				}
-				element := object.NewFloat(v)
-				if err := setForVariables(fs.Variables, element, env); err != nil {
-					return errors.NewError("%s", err.Error())
-				}
-				result = evalBlockStatementWithContext(ctx, fs.Body, env)
-				if result != nil {
-					switch result.Type() {
-					case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-						return result
-					case object.BREAK_OBJ:
-						broke = true
-						result = NULL
-						goto forDone
-					case object.CONTINUE_OBJ:
-						result = NULL
-						continue
-					}
-				}
-			}
-			goto forDone
-		case *object.String:
-			// Iterate over string runes lazily to avoid pre-allocating all characters
-			cc := newContextChecker(ctx)
-			for _, char := range o.StringValue() {
-				if err := cc.check(); err != nil {
-					return err
-				}
-
-				element := object.NewString(string(char))
-				if err := setForVariables(fs.Variables, element, env); err != nil {
-					return errors.NewError("%s", err.Error())
-				}
-
-				result = evalBlockStatementWithContext(ctx, fs.Body, env)
-				if result != nil {
-					switch result.Type() {
-					case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-						return result
-					case object.BREAK_OBJ:
-						broke = true
-						result = NULL
-						goto forDone
-					case object.CONTINUE_OBJ:
-						result = NULL
-						continue
-					}
-				}
-			}
-			goto forDone
-		case *object.Bytes:
-			// Iterate as integer byte values 0-255, matching Python's bytes iteration.
-			cc := newContextChecker(ctx)
-			for _, b := range o.BytesValue() {
-				if err := cc.check(); err != nil {
-					return err
-				}
-
-				element := object.NewInteger(int64(b))
-				if err := setForVariables(fs.Variables, element, env); err != nil {
-					return errors.NewError("%s", err.Error())
-				}
-
-				result = evalBlockStatementWithContext(ctx, fs.Body, env)
-				if result != nil {
-					switch result.Type() {
-					case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-						return result
-					case object.BREAK_OBJ:
-						broke = true
-						result = NULL
-						goto forDone
-					case object.CONTINUE_OBJ:
-						result = NULL
-						continue
-					}
-				}
-			}
-			goto forDone
-		default:
-			return errors.NewTypeError("iterable", iterable.Type().String())
-		}
-
-		// Single loop for all iterable types
-		cc := newContextChecker(ctx)
-		for _, element := range elements {
-			if err := cc.check(); err != nil {
-				return err
-			}
-
-			if err := setForVariables(fs.Variables, element, env); err != nil {
-				return errors.NewError("%s", err.Error())
-			}
-
-			result = evalBlockStatementWithContext(ctx, fs.Body, env)
-			if result != nil {
-				switch result.Type() {
-				case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-					return result
-				case object.BREAK_OBJ:
-					broke = true
-					result = NULL
-					goto forDone
-				case object.CONTINUE_OBJ:
-					result = NULL
-					continue
-				}
-			}
-		}
-	}
-
-forDone:
-	if !broke && fs.Else != nil {
-		return evalBlockStatementWithContext(ctx, fs.Else, env)
-	}
-	return result
-}
-
-func evalFastRangeForStatement(ctx context.Context, fs *ast.ForStatement, env *object.Environment) (object.Object, bool) {
-	if len(fs.Variables) != 1 || fs.Else != nil {
-		return nil, false
-	}
-	target, ok := fs.Variables[0].(*ast.Identifier)
-	if !ok {
-		return nil, false
-	}
-	call, ok := fs.Iterable.(*ast.CallExpression)
-	if !ok || call.HasOverflow() {
-		return nil, false
-	}
-	fnIdent, ok := call.Function.(*ast.Identifier)
-	if !ok || fnIdent.Value() != "range" {
-		return nil, false
-	}
-	// If range is shadowed in the environment, preserve the normal call path.
-	if _, shadowed := env.Get("range"); shadowed {
-		return nil, false
-	}
-
-	start, stop, step, errObj, ok := evalRangeArgs(ctx, call.Arguments, env)
-	if !ok {
-		return nil, false
-	}
-	if errObj != nil {
-		return errObj, true
-	}
-
-	var result object.Object = NULL
-	cc := newContextChecker(ctx)
-	for i := start; ; i += step {
-		if step > 0 {
-			if i >= stop {
-				break
-			}
-		} else if i <= stop {
-			break
-		}
-
-		if err := cc.check(); err != nil {
-			return err, true
-		}
-
-		setIdentifierFast(target, object.NewInteger(i), env)
-		result = evalBlockStatementWithContext(ctx, fs.Body, env)
-		if result != nil {
-			switch result.Type() {
-			case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-				return result, true
-			case object.BREAK_OBJ:
-				return NULL, true
-			case object.CONTINUE_OBJ:
-				result = NULL
-				continue
-			}
-		}
-	}
-	return result, true
-}
-
-func evalRangeArgs(ctx context.Context, args []ast.Expression, env *object.Environment) (start, stop, step int64, errObj object.Object, ok bool) {
-	if len(args) < 1 || len(args) > 3 {
-		return 0, 0, 0, nil, false
-	}
-
-	values := [3]int64{}
-	for i, arg := range args {
-		evaluated := evalNode(ctx, arg, env)
-		if object.IsError(evaluated) || isRaised(evaluated) {
-			return 0, 0, 0, evaluated, true
-		}
-		intObj, isInt := evaluated.(*object.Integer)
-		if !isInt {
-			return 0, 0, 0, nil, false
-		}
-		values[i] = intObj.IntValue()
-	}
-
-	switch len(args) {
-	case 1:
-		start, stop, step = 0, values[0], 1
-	case 2:
-		start, stop, step = values[0], values[1], 1
-	case 3:
-		start, stop, step = values[0], values[1], values[2]
-		if step == 0 {
-			return 0, 0, 0, errors.NewError("range step cannot be zero"), true
-		}
-	}
-	return start, stop, step, nil, true
-}
-
 // evalMethodCallExpression is in methods.go
 // callStringMethodWithKeywords is in methods.go
-
-func evalAdditionalClauses(ctx context.Context, clauses []ast.ComprehensionClause, idx int, env *object.Environment, action func() object.Object) object.Object {
-	if idx >= len(clauses) {
-		return action()
-	}
-	c := clauses[idx]
-	iterable := evalNode(ctx, c.Iterable, env)
-	if object.IsError(iterable) || isRaised(iterable) {
-		return iterable
-	}
-	return iterateObject(ctx, iterable, func(element object.Object) object.Object {
-		if err := setForVariables(c.Variables, element, env); err != nil {
-			return errors.NewError("%s", err.Error())
-		}
-		if c.Condition != nil {
-			cond := evalNode(ctx, c.Condition, env)
-			if object.IsError(cond) || isRaised(cond) {
-				return cond
-			}
-			truthy, errObj := evalTruthy(ctx, cond, env)
-			if errObj != nil {
-				return errObj
-			}
-			if !truthy {
-				return nil
-			}
-		}
-		return evalAdditionalClauses(ctx, clauses, idx+1, env, action)
-	})
-}
 
 func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object) object.Object) object.Object {
 	switch o := obj.(type) {
@@ -5785,344 +4137,6 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 		return errors.NewTypeError("iterable", obj.Type().String())
 	}
 	return nil
-}
-
-func evalListComprehension(ctx context.Context, lc *ast.ListComprehension, env *object.Environment) object.Object {
-	iterable := evalNode(ctx, lc.Iterable, env)
-	if object.IsError(iterable) || isRaised(iterable) {
-		return iterable
-	}
-	if result, ok := tryEvalFastListComprehension(ctx, lc, iterable, env); ok {
-		return result
-	}
-	result := []object.Object{}
-	compEnv := object.NewEnclosedEnvironment(env)
-	emit := func() object.Object {
-		v := evalNode(ctx, lc.Expression, compEnv)
-		if object.IsError(v) || isRaised(v) {
-			return v
-		}
-		result = append(result, v)
-		return nil
-	}
-	runBody := func(element object.Object) object.Object {
-		if err := setForVariables(lc.Variables, element, compEnv); err != nil {
-			return errors.NewError("%s", err.Error())
-		}
-		if lc.Condition != nil {
-			cond := evalNode(ctx, lc.Condition, compEnv)
-			if object.IsError(cond) || isRaised(cond) {
-				return cond
-			}
-			truthy, errObj := evalTruthy(ctx, cond, compEnv)
-			if errObj != nil {
-				return errObj
-			}
-			if !truthy {
-				return nil
-			}
-		}
-		if len(lc.AdditionalClauses) > 0 {
-			return evalAdditionalClauses(ctx, lc.AdditionalClauses, 0, compEnv, emit)
-		}
-		return emit()
-	}
-	if err := iterateObject(ctx, iterable, runBody); err != nil {
-		return err
-	}
-	return &object.List{Elements: result}
-}
-
-func tryEvalFastListComprehension(ctx context.Context, lc *ast.ListComprehension, iterable object.Object, env *object.Environment) (object.Object, bool) {
-	if len(lc.AdditionalClauses) > 0 || len(lc.Variables) != 1 {
-		return nil, false
-	}
-	ident, ok := lc.Variables[0].(*ast.Identifier)
-	if !ok {
-		return nil, false
-	}
-
-	compEnv := object.NewEnclosedEnvironment(env)
-	result := make([]object.Object, 0)
-	runElement := func(element object.Object) object.Object {
-		compEnv.Set(ident.Value(), element)
-		if lc.Condition != nil {
-			cond := evalNode(ctx, lc.Condition, compEnv)
-			if object.IsError(cond) || isRaised(cond) {
-				return cond
-			}
-			truthy, errObj := evalTruthy(ctx, cond, compEnv)
-			if errObj != nil {
-				return errObj
-			}
-			if !truthy {
-				return nil
-			}
-		}
-		value := evalNode(ctx, lc.Expression, compEnv)
-		if object.IsError(value) || isRaised(value) {
-			return value
-		}
-		result = append(result, value)
-		return nil
-	}
-
-	switch it := iterable.(type) {
-	case *object.List:
-		result = make([]object.Object, 0, len(it.Elements))
-		for _, element := range it.Elements {
-			if out := runElement(element); out != nil {
-				return out, true
-			}
-		}
-	case *object.Tuple:
-		result = make([]object.Object, 0, len(it.Elements))
-		for _, element := range it.Elements {
-			if out := runElement(element); out != nil {
-				return out, true
-			}
-		}
-	case *object.Set:
-		result = make([]object.Object, 0, len(it.Elements))
-		for _, element := range it.Elements {
-			if out := runElement(element); out != nil {
-				return out, true
-			}
-		}
-	case *object.Iterator:
-		for {
-			element, ok := it.Next()
-			if !ok {
-				break
-			}
-			if out := runElement(element); out != nil {
-				return out, true
-			}
-		}
-	case *object.FloatArray:
-		if it.Is2D() {
-			rows := it.Rows()
-			cols := it.Cols()
-			result = make([]object.Object, 0, rows)
-			for i := 0; i < rows; i++ {
-				off := i * cols
-				rowData := make([]float64, cols)
-				copy(rowData, it.Data[off:off+cols])
-				row := object.NewFloatArray1D(rowData)
-				if out := runElement(row); out != nil {
-					return out, true
-				}
-			}
-		} else {
-			result = make([]object.Object, 0, len(it.Data))
-			for _, v := range it.Data {
-				if out := runElement(object.NewFloat(v)); out != nil {
-					return out, true
-				}
-			}
-		}
-	default:
-		return nil, false
-	}
-
-	return &object.List{Elements: result}, true
-}
-
-func evalDictComprehension(ctx context.Context, dc *ast.DictComprehension, env *object.Environment) object.Object {
-	iterable := evalNode(ctx, dc.Iterable, env)
-	if object.IsError(iterable) || isRaised(iterable) {
-		return iterable
-	}
-	result := &object.Dict{Pairs: make(map[string]object.DictPair)}
-	compEnv := object.NewEnclosedEnvironment(env)
-	emit := func() object.Object {
-		k := evalNode(ctx, dc.Key, compEnv)
-		if object.IsError(k) || isRaised(k) {
-			return k
-		}
-		v := evalNode(ctx, dc.Value, compEnv)
-		if object.IsError(v) || isRaised(v) {
-			return v
-		}
-		hk, rerr := evalHashKeyChecked(ctx, k)
-		if rerr != nil {
-			return rerr
-		}
-		result.Pairs[hk] = object.DictPair{Key: k, Value: v}
-		return nil
-	}
-	runBody := func(element object.Object) object.Object {
-		if err := setForVariables(dc.Variables, element, compEnv); err != nil {
-			return errors.NewError("%s", err.Error())
-		}
-		if dc.Condition != nil {
-			cond := evalNode(ctx, dc.Condition, compEnv)
-			if object.IsError(cond) || isRaised(cond) {
-				return cond
-			}
-			truthy, errObj := evalTruthy(ctx, cond, compEnv)
-			if errObj != nil {
-				return errObj
-			}
-			if !truthy {
-				return nil
-			}
-		}
-		if len(dc.AdditionalClauses) > 0 {
-			return evalAdditionalClauses(ctx, dc.AdditionalClauses, 0, compEnv, emit)
-		}
-		return emit()
-	}
-	if err := iterateObject(ctx, iterable, runBody); err != nil {
-		return err
-	}
-	return result
-}
-
-func evalSetComprehension(ctx context.Context, sc *ast.SetComprehension, env *object.Environment) object.Object {
-	iterable := evalNode(ctx, sc.Iterable, env)
-	if object.IsError(iterable) || isRaised(iterable) {
-		return iterable
-	}
-	result := object.NewSet()
-	compEnv := object.NewEnclosedEnvironment(env)
-	emit := func() object.Object {
-		v := evalNode(ctx, sc.Expression, compEnv)
-		if object.IsError(v) || isRaised(v) {
-			return v
-		}
-		return evalSetAdd(ctx, result, v)
-	}
-	runBody := func(element object.Object) object.Object {
-		if err := setForVariables(sc.Variables, element, compEnv); err != nil {
-			return errors.NewError("%s", err.Error())
-		}
-		if sc.Condition != nil {
-			cond := evalNode(ctx, sc.Condition, compEnv)
-			if object.IsError(cond) || isRaised(cond) {
-				return cond
-			}
-			truthy, errObj := evalTruthy(ctx, cond, compEnv)
-			if errObj != nil {
-				return errObj
-			}
-			if !truthy {
-				return nil
-			}
-		}
-		if len(sc.AdditionalClauses) > 0 {
-			return evalAdditionalClauses(ctx, sc.AdditionalClauses, 0, compEnv, emit)
-		}
-		return emit()
-	}
-	if err := iterateObject(ctx, iterable, runBody); err != nil {
-		return err
-	}
-	return result
-}
-
-func evalLambda(lambda *ast.Lambda, env *object.Environment) object.Object {
-	localSlots, localSlotNames := analyzeLambdaLocals(lambda)
-	return &object.LambdaFunction{
-		Parameters:       lambda.Parameters,
-		DefaultValues:    lambda.GetDefaultValues(),
-		Variadic:         lambda.GetVariadic(),
-		Kwargs:           lambda.GetKwargs(),
-		KeywordOnlyStart: lambda.GetKeywordOnlyStart() + 1,
-		Body:             lambda.Body,
-		Env:              env,
-		LocalSlots:       localSlots,
-		LocalSlotNames:   localSlotNames,
-		ParamSlotIndexes: lambda.ParamSlotIndexes,
-	}
-}
-
-func evalFStringLiteral(ctx context.Context, fstr *ast.FStringLiteral, env *object.Environment) object.Object {
-	var builder strings.Builder
-
-	// Pre-allocate capacity to reduce reallocations
-	// Estimate base size from static parts plus some buffer for expressions
-	estimatedSize := 0
-	for _, part := range fstr.Parts {
-		estimatedSize += len(part)
-	}
-	// Add buffer for formatted expressions (rough estimate)
-	estimatedSize += len(fstr.Expressions) * 16
-	builder.Grow(estimatedSize)
-
-	conversions := fstr.GetConversions()
-	specs := fstr.GetFormatSpecs()
-	debugTexts := fstr.GetDebugTexts()
-	for i, part := range fstr.Parts {
-		builder.WriteString(part)
-		if i < len(fstr.Expressions) {
-			exprResult := evalNode(ctx, fstr.Expressions[i], env)
-			if object.IsError(exprResult) || isRaised(exprResult) {
-				return exprResult
-			}
-			spec := ""
-			if specs != nil && i < len(specs) {
-				spec = specs[i]
-			}
-			conv := ""
-			if conversions != nil && i < len(conversions) {
-				conv = conversions[i]
-			}
-			debugText := ""
-			if debugTexts != nil && i < len(debugTexts) {
-				debugText = debugTexts[i]
-			}
-			// Nested spec fields ({x:>{w}}) resolve against the enclosing
-			// scope before formatting.
-			if strings.Contains(spec, "{") {
-				expanded, serr := expandNestedSpecFields(ctx, spec, env)
-				if serr != nil {
-					return serr
-				}
-				spec = expanded
-			}
-			if debugText != "" && conv == "" {
-				// f"{x=}" debug: repr-style rendering by default, spec still
-				// applies to the value, and the prefix is prepended verbatim.
-				rendered, rerr := renderConvertedValue(ctx, exprResult, "r", env)
-				if rerr != nil {
-					return rerr
-				}
-				builder.WriteString(debugText)
-				builder.WriteString(formatWithSpec(object.NewString(rendered), spec))
-				continue
-			}
-			var formatted string
-			if conv != "" {
-				// Explicit !r/!s/!a conversion: render to its string form,
-				// then apply the spec. Raises from dunders propagate.
-				rendered, rerr := renderConvertedValue(ctx, exprResult, conv, env)
-				if rerr != nil {
-					return rerr
-				}
-				formatted = formatWithSpec(object.NewString(rendered), spec)
-			} else if exc, ok := exprResult.(*object.Exception); ok {
-				// Exceptions format as their message (str(e)), like Python.
-				formatted = formatWithSpec(object.NewString(exc.Message), spec)
-			} else if inst, ok := exprResult.(*object.Instance); ok {
-				// Instances convert with str() semantics (__str__ then
-				// __repr__); a raise propagates. The spec applies to the
-				// converted string, as in Python.
-				rendered, rerr := strInstanceChecked(ctx, inst, env)
-				if rerr != nil {
-					return rerr
-				}
-				formatted = formatWithSpec(object.NewString(rendered), spec)
-			} else {
-				// Other types keep their typed value so numeric specs
-				// (.2f, >6d) apply directly.
-				formatted = formatWithSpec(exprResult, spec)
-			}
-			builder.WriteString(formatted)
-		}
-	}
-
-	return object.NewString(builder.String())
 }
 
 func formatWithSpec(obj object.Object, spec string) string {
@@ -6494,56 +4508,6 @@ func formatBaseInt(n int64, base int, upper bool, width int, zero bool) string {
 	return strings.Repeat("0", width-len(formatted)) + formatted
 }
 
-func evalMatchStatementWithContext(ctx context.Context, ms *ast.MatchStatement, env *object.Environment) object.Object {
-	subject := evalNode(ctx, ms.Subject, env)
-	if object.IsError(subject) || isRaised(subject) {
-		return subject
-	}
-
-	for _, caseClause := range ms.Cases {
-		// Track captured variables for this case
-		capturedVars := make(map[string]object.Object)
-
-		matched, capturedValue := matchPattern(ctx, subject, caseClause.Pattern, capturedVars, env)
-		if object.IsError(matched) || isRaised(matched) {
-			return matched
-		}
-
-		if matched == TRUE {
-			// Temporarily add captured variables to environment for guard evaluation
-			for name, val := range capturedVars {
-				env.Set(name, val)
-			}
-
-			// Check guard condition if present
-			if caseClause.Guard != nil {
-				guardResult := evalNode(ctx, caseClause.Guard, env)
-				if object.IsError(guardResult) || isRaised(guardResult) {
-					return guardResult
-				}
-				guardTruthy, gErr := evalTruthy(ctx, guardResult, env)
-				if gErr != nil {
-					return gErr
-				}
-				if !guardTruthy {
-					// Guard failed - try next case
-					continue
-				}
-			}
-
-			// Bind explicit capture variable if present
-			if caseClause.CaptureAs != nil {
-				env.Set(caseClause.CaptureAs.Value(), capturedValue)
-			}
-
-			// Execute body in the environment (with captures)
-			return evalWithContext(ctx, caseClause.Body, env)
-		}
-	}
-
-	return NULL
-}
-
 func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expression, capturedVars map[string]object.Object, env *object.Environment) (object.Object, object.Object) {
 	switch p := pattern.(type) {
 	case *ast.OrPattern:
@@ -6633,7 +4597,9 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 		for _, patternPair := range p.Pairs {
 			// Mapping-pattern keys are value expressions evaluated at match
 			// time in the enclosing scope (PEP 634), so variables are visible.
-			keyObj := evalNode(ctx, patternPair.Key, env)
+			// Mapping patterns are rare, so the key expression is compiled
+			// on the spot rather than cached on the pattern node.
+			keyObj := compileExpr(patternPair.Key)(ctx, env)
 			if object.IsError(keyObj) || isRaised(keyObj) {
 				return keyObj, NULL
 			}

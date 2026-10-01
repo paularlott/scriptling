@@ -24,7 +24,16 @@ tasks:
     desc: Build for current platform (database plugins compiled in)
     dir: scriptling-cli
     cmds:
+      # go build applies profile-guided optimisation automatically from
+      # scriptling-cli/default.pgo (see pgo-profile).
       - go build {{.LDFLAGS}} -tags '{{.PLUGIN_TAGS}}' -o ../{{.BIN_DIR}}/scriptling .
+
+  pgo-profile:
+    desc: Regenerate scriptling-cli/default.pgo from the interpreter benchmarks (profile-guided optimisation for CLI builds)
+    cmds:
+      - go test -run '^$' -bench 'BenchmarkInterp_|BenchmarkRuntime_|BenchmarkAIRouter$|BenchmarkItemsUnpack$|BenchmarkFunctionCall' -benchtime=1s -cpuprofile {{.CLI_DIR}}/default.pgo .
+      # -cpuprofile keeps the test binary next to the profile; it is not wanted.
+      - rm -f scriptling.test
 
   build-platforms:
     desc: Build for all platforms (Linux, macOS, Windows; database plugins compiled in)

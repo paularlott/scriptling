@@ -481,7 +481,7 @@ func BenchmarkContextCheckingHotPath(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		p.Eval(`
-# Many small operations to exercise evalNode context checking
+# Many small operations to exercise the evaluator context checking
 x = 0
 x = x + 1
 x = x + 2

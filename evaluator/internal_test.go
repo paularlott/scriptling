@@ -3,7 +3,9 @@ package evaluator
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -220,20 +222,54 @@ func TestContextChecker(t *testing.T) {
 		t.Error("contextChecker.ctx is not the same as the passed context")
 	}
 
-	if checker.batchSize != 10 {
-		t.Errorf("contextChecker.batchSize = %d, want 10", checker.batchSize)
+	// Test check method - should return nil when context is not done,
+	// including once the batch fills and the Done channel is resolved.
+	for i := 0; i < contextCheckBatch*2; i++ {
+		if result := checker.check(); result != nil {
+			t.Fatalf("contextChecker.check() = %v, want nil", result)
+		}
 	}
-
-	// Test check method - should return nil when context is not done
-	result := checker.check()
-	if result != nil {
-		t.Errorf("contextChecker.check() = %v, want nil", result)
+	if !checker.resolved || checker.done != nil {
+		t.Errorf("background context should resolve to a nil Done channel")
 	}
 
 	// Test checkAlways method - should return nil when context is not done
-	result = checker.checkAlways()
-	if result != nil {
+	if result := checker.checkAlways(); result != nil {
 		t.Errorf("contextChecker.checkAlways() = %v, want nil", result)
+	}
+
+	// A cancelled context is reported once the batch fills, not before.
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	checker = newContextChecker(cancelCtx)
+	for i := 1; i < contextCheckBatch; i++ {
+		if result := checker.check(); result != nil {
+			t.Fatalf("check %d returned %v before the batch filled", i, result)
+		}
+	}
+	result := checker.check()
+	errObj, ok := result.(*object.Error)
+	if !ok || errObj.Message != errors.ErrCancelled {
+		t.Fatalf("check() after cancel = %v, want cancellation error", result)
+	}
+	// Every subsequent batch reports it again.
+	for i := 0; i < contextCheckBatch; i++ {
+		result = checker.check()
+	}
+	if _, ok := result.(*object.Error); !ok {
+		t.Fatalf("check() after cancel (second batch) = %v, want error", result)
+	}
+
+	// An expired deadline is reported as a timeout.
+	deadlineCtx, cancelDeadline := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancelDeadline()
+	checker = newContextChecker(deadlineCtx)
+	for i := 0; i < contextCheckBatch; i++ {
+		result = checker.check()
+	}
+	errObj, ok = result.(*object.Error)
+	if !ok || errObj.Message != errors.ErrTimeout {
+		t.Fatalf("check() after deadline = %v, want timeout error", result)
 	}
 }
 

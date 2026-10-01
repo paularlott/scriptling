@@ -261,7 +261,32 @@ type Program struct {
 
 	LocalSlots     map[string]int
 	LocalSlotNames []string
+
+	// compiled caches the evaluator's compiled form of this program. It is an
+	// atomic.Value holding an opaque value because ast cannot import the
+	// evaluator's types; the evaluator stores and asserts the concrete type.
+	compiled atomic.Value
 }
+
+// CompiledSlot caches the evaluator's compiled form of one expression on the
+// node that owns it. It holds an opaque value because ast cannot import the
+// evaluator's types; the evaluator stores and asserts the concrete type. The
+// zero value is ready to use, and a slot is written at most once per process
+// (two racing writers store equivalent closures).
+type CompiledSlot struct{ v atomic.Value }
+
+// Load returns the cached compiled form, or nil if none has been stored.
+func (s *CompiledSlot) Load() any { return s.v.Load() }
+
+// Store caches the compiled form.
+func (s *CompiledSlot) Store(v any) { s.v.Store(v) }
+
+// Compiled returns the evaluator's compiled form of this program, or nil if it
+// has not been compiled yet.
+func (p *Program) Compiled() any { return p.compiled.Load() }
+
+// SetCompiled stores the evaluator's compiled form of this program.
+func (p *Program) SetCompiled(v any) { p.compiled.Store(v) }
 
 func (p *Program) TokenLiteral() string {
 	if len(p.Statements) > 0 {
@@ -275,13 +300,6 @@ func (p *Program) Line() int {
 		return p.Statements[0].Line()
 	}
 	return 0
-}
-
-func lineOfNode(node Node) int {
-	if node == nil {
-		return 0
-	}
-	return node.Line()
 }
 
 func lineOfExpr(expr Expression) int {
@@ -766,7 +784,19 @@ type FunctionLiteral struct {
 	LocalSlots       map[string]int
 	LocalSlotNames   []string
 	ParamSlotIndexes []int
+
+	// compiled caches the evaluator's compiled form of Body so that every
+	// function object this literal produces, however many times the def runs,
+	// shares one closure. Opaque for the same reason as Program.compiled.
+	compiled atomic.Value
 }
+
+// Compiled returns the evaluator's compiled form of this function's body, or
+// nil if it has not been compiled yet.
+func (fl *FunctionLiteral) Compiled() any { return fl.compiled.Load() }
+
+// SetCompiled stores the evaluator's compiled form of this function's body.
+func (fl *FunctionLiteral) SetCompiled(v any) { fl.compiled.Store(v) }
 
 func (fl *FunctionLiteral) GetDefaultValues() map[string]Expression {
 	if fl.overflow == nil {
@@ -1230,6 +1260,12 @@ type IndexExpression struct {
 	Left        Expression
 	Index       Expression
 	IsDotAccess bool // true when desugared from dot notation (obj.attr)
+
+	// LeftCompiled and IndexCompiled cache the evaluator's compiled forms of
+	// Left and Index for the paths that use this node as an assignment or
+	// deletion target rather than as a value (d[k] = v, del d[k]).
+	LeftCompiled  CompiledSlot
+	IndexCompiled CompiledSlot
 }
 
 func (ie *IndexExpression) expressionNode() {}
@@ -1250,6 +1286,13 @@ type SliceExpression struct {
 	Start    Expression
 	End      Expression
 	overflow *SliceOverflow
+
+	// Compiled forms of the parts, used when this node is an assignment or
+	// deletion target (a[1:3] = xs, del a[1:3]). See IndexExpression.
+	LeftCompiled  CompiledSlot
+	StartCompiled CompiledSlot
+	EndCompiled   CompiledSlot
+	StepCompiled  CompiledSlot
 }
 
 func (se *SliceExpression) GetStep() Expression {
