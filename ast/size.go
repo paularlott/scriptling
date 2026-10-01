@@ -72,9 +72,59 @@ type stringRef struct {
 	len int
 }
 
-// EstimateRetainedBytes approximates the retained heap size of a parsed AST.
-// The source script is counted separately by callers, so strings that alias the
-// source backing bytes are not charged again here.
+// compiledNodeBytes is the retained cost of the evaluator's compiled form of
+// one node: the closure tree the evaluator builds once per program and caches
+// on it. Measured at 44 to 48 bytes per node across scripts of different
+// shapes (October 2026), so one constant per node is accurate to a few
+// percent.
+const compiledNodeBytes = 48
+
+// sizeClasses are the Go runtime's small-object allocation size classes. A
+// node struct or string is allocated in the smallest class that fits it, so
+// the retained size is the class size, not the struct size.
+var sizeClasses = [...]int{8, 16, 24, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 256, 288, 320, 352, 384, 416, 448, 480, 512, 576, 640, 704, 768, 896, 1024, 1152, 1280, 1408, 1536, 1792, 2048, 2304, 2688, 3072, 3200, 3456, 4096, 4864, 5376, 6144, 6528, 6784, 6912, 8192, 9472, 9728, 10240, 10880, 12288, 13568, 14336, 16384, 18432, 19072, 20480, 21760, 24576, 27264, 28672, 32768}
+
+// smallAllocClass maps (n+7)/8 to the size class for n <= smallAllocMax, so
+// the common case is one table lookup rather than a scan; the estimator runs
+// once per node on every cache miss.
+const smallAllocMax = 1024
+
+var smallAllocClass [smallAllocMax/8 + 1]int
+
+func init() {
+	for n := 1; n <= smallAllocMax; n += 8 {
+		for _, c := range sizeClasses {
+			if n <= c {
+				smallAllocClass[(n+7)/8] = c
+				break
+			}
+		}
+	}
+}
+
+// allocSize rounds n up to the size class the runtime would allocate it in.
+// Larger objects are page-rounded.
+func allocSize(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	if n <= smallAllocMax {
+		return smallAllocClass[(n+7)/8]
+	}
+	for _, c := range sizeClasses {
+		if n <= c {
+			return c
+		}
+	}
+	const page = 8192
+	return (n + page - 1) / page * page
+}
+
+// EstimateRetainedBytes approximates the retained heap size of a parsed AST
+// together with the evaluator's compiled form of it, which is built once per
+// program and retained alongside it. The source script is counted separately
+// by callers, so strings that alias the source backing bytes are not charged
+// again here.
 func EstimateRetainedBytes(program *Program, source string) int {
 	if program == nil {
 		return 0
@@ -108,6 +158,7 @@ func (e *estimator) mark(ptr uintptr, size int) bool {
 	if ptr == 0 {
 		return false
 	}
+	size = allocSize(size) + compiledNodeBytes
 	if e.skipDedup {
 		e.total += size
 		return true
@@ -132,7 +183,7 @@ func (e *estimator) addString(s string) {
 		return
 	}
 	if e.skipDedup {
-		e.total += len(s)
+		e.total += allocSize(len(s))
 		return
 	}
 	ref := stringRef{ptr: ptr, len: len(s)}
@@ -140,7 +191,7 @@ func (e *estimator) addString(s string) {
 		return
 	}
 	e.seenStrings[ref] = struct{}{}
-	e.total += len(s)
+	e.total += allocSize(len(s))
 }
 
 func (e *estimator) addToken(tok any) {

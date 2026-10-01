@@ -215,6 +215,9 @@ func hashScript(script string) cacheKey {
 	return cacheKey{length: len(script), h1: h1.Sum64(), h2: h2.Sum64()}
 }
 
+// estimateCacheEntrySize is the retained cost of one cache entry: the AST
+// plus the evaluator's compiled closure tree, which EstimateRetainedBytes
+// includes, plus the entry bookkeeping.
 func estimateCacheEntrySize(script string, program *ast.Program) int {
 	_ = script
 	const entryOverhead = 128
