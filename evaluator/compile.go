@@ -360,7 +360,7 @@ func compileAssign(n *ast.AssignStatement) object.EvalFn {
 	value := compileExpr(n.Value)
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		val := value(ctx, env)
-		if object.IsError(val) || isRaised(val) {
+		if propagates(val) {
 			return val
 		}
 		// Execute chained assignments first (a = b = 5: assign 5 to b, then to a)
@@ -390,7 +390,7 @@ func compileReturn(n *ast.ReturnStatement) object.EvalFn {
 		val := object.Object(NULL)
 		if value != nil {
 			val = value(ctx, env)
-			if object.IsError(val) || isRaised(val) {
+			if propagates(val) {
 				return val
 			}
 		}
@@ -413,7 +413,7 @@ func compileIf(n *ast.IfStatement) object.EvalFn {
 	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		condition := cond(ctx, env)
-		if object.IsError(condition) || isRaised(condition) {
+		if propagates(condition) {
 			return condition
 		}
 
@@ -428,7 +428,7 @@ func compileIf(n *ast.IfStatement) object.EvalFn {
 		// Check elif clauses
 		for i := range elifConds {
 			condition := elifConds[i](ctx, env)
-			if object.IsError(condition) || isRaised(condition) {
+			if propagates(condition) {
 				return condition
 			}
 			elifTruthy, errObj := evalTruthy(ctx, condition, env)
@@ -447,6 +447,36 @@ func compileIf(n *ast.IfStatement) object.EvalFn {
 
 		return NULL
 	}
+}
+
+// loopAction classifies what a loop does after one run of its body.
+type loopAction uint8
+
+const (
+	loopNext  loopAction = iota // run the next iteration
+	loopBreak                   // leave the loop, skipping any else clause
+	loopExit                    // return the result from the loop at once
+)
+
+// loopResult classifies a loop body's result and returns the value the loop
+// should carry forward: errors, return values and exceptions exit the loop
+// with that value; break leaves it with NULL; continue and ordinary values
+// run the next iteration, with continue normalised to NULL.
+//
+// It switches on the concrete type rather than calling Type() so that it
+// stays within the inliner's budget: it runs once per loop iteration.
+func loopResult(result object.Object) (loopAction, object.Object) {
+	switch result.(type) {
+	case nil:
+		return loopNext, result
+	case *object.Error, *object.ReturnValue, *object.Exception:
+		return loopExit, result
+	case *object.Break:
+		return loopBreak, NULL
+	case *object.Continue:
+		return loopNext, NULL
+	}
+	return loopNext, result
 }
 
 func compileWhile(n *ast.WhileStatement) object.EvalFn {
@@ -471,7 +501,7 @@ func compileWhile(n *ast.WhileStatement) object.EvalFn {
 			}
 
 			condition := cond(ctx, env)
-			if object.IsError(condition) || isRaised(condition) {
+			if propagates(condition) {
 				return condition
 			}
 
@@ -483,18 +513,14 @@ func compileWhile(n *ast.WhileStatement) object.EvalFn {
 				break
 			}
 
-			result = fixErrorPos(ctx, body(ctx, env), bodyLine)
-			if result != nil {
-				switch result.Type() {
-				case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-					return result
-				case object.BREAK_OBJ:
-					broke = true
-					return NULL
-				case object.CONTINUE_OBJ:
-					result = NULL
-					continue
-				}
+			var act loopAction
+			act, result = loopResult(fixErrorPos(ctx, body(ctx, env), bodyLine))
+			switch act {
+			case loopExit:
+				return result
+			case loopBreak:
+				broke = true
+				return NULL
 			}
 		}
 
@@ -546,7 +572,7 @@ func compileRangeArgs(args []object.EvalFn) func(ctx context.Context, env *objec
 		values := [3]int64{}
 		for i := range args {
 			evaluated := args[i](ctx, env)
-			if object.IsError(evaluated) || isRaised(evaluated) {
+			if propagates(evaluated) {
 				return 0, 0, 0, evaluated, true
 			}
 			intObj, isInt := evaluated.(*object.Integer)
@@ -609,17 +635,13 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 						}
 
 						setIdentifierFast(rangeTarget, object.NewInteger(i), env)
-						result = body(ctx, env)
-						if result != nil {
-							switch result.Type() {
-							case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-								return result
-							case object.BREAK_OBJ:
-								return NULL // broke: skip else, return NULL
-							case object.CONTINUE_OBJ:
-								result = NULL
-								continue
-							}
+						var act loopAction
+						act, result = loopResult(body(ctx, env))
+						switch act {
+						case loopExit:
+							return result
+						case loopBreak:
+							return NULL // broke: skip else, return NULL
 						}
 					}
 					return result
@@ -628,7 +650,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 		}
 
 		iterableVal := iterable(ctx, env)
-		if object.IsError(iterableVal) || isRaised(iterableVal) {
+		if propagates(iterableVal) {
 			return iterableVal
 		}
 
@@ -662,17 +684,13 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 				if err := setForVariable(n.Variables[1], pair.Value, env); err != nil {
 					return errors.NewError("%s", err.Error())
 				}
-				result = body(ctx, env)
-				if result != nil {
-					switch result.Type() {
-					case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-						return result
-					case object.BREAK_OBJ:
-						return NULL // broke=True: skip else, return NULL
-					case object.CONTINUE_OBJ:
-						result = NULL
-						continue
-					}
+				var act loopAction
+				act, result = loopResult(body(ctx, env))
+				switch act {
+				case loopExit:
+					return result
+				case loopBreak:
+					return NULL // broke=True: skip else, return NULL
 				}
 			}
 			if els != nil {
@@ -699,7 +717,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 		case *object.Instance:
 			if fn, ok := findDunderMethod(o, "__iter__"); ok {
 				iterObj := applyFunctionWithContext(ctx, fn, prependSelf(o, nil), nil, env)
-				if object.IsError(iterObj) || isRaised(iterObj) {
+				if propagates(iterObj) {
 					return iterObj
 				}
 				if iterInst, ok := iterObj.(*object.Instance); ok {
@@ -730,7 +748,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 				// A raised exception or internal error yielded by the iterator
 				// (e.g. a user __next__ that raised something other than
 				// StopIteration) propagates out of the for-loop as in Python.
-				if object.IsError(element) || isRaised(element) {
+				if propagates(element) {
 					return element
 				}
 
@@ -738,19 +756,14 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 					return errors.NewError("%s", err.Error())
 				}
 
-				result = body(ctx, env)
-				if result != nil {
-					switch result.Type() {
-					case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-						return result
-					case object.BREAK_OBJ:
-						broke = true
-						result = NULL
-						goto forDone
-					case object.CONTINUE_OBJ:
-						result = NULL
-						continue
-					}
+				var act loopAction
+				act, result = loopResult(body(ctx, env))
+				switch act {
+				case loopExit:
+					return result
+				case loopBreak:
+					broke = true
+					goto forDone
 				}
 			}
 			goto forDone
@@ -780,19 +793,14 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 						if err := setForVariables(n.Variables, element, env); err != nil {
 							return errors.NewError("%s", err.Error())
 						}
-						result = body(ctx, env)
-						if result != nil {
-							switch result.Type() {
-							case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-								return result
-							case object.BREAK_OBJ:
-								broke = true
-								result = NULL
-								goto forDone
-							case object.CONTINUE_OBJ:
-								result = NULL
-								continue
-							}
+						var act loopAction
+						act, result = loopResult(body(ctx, env))
+						switch act {
+						case loopExit:
+							return result
+						case loopBreak:
+							broke = true
+							goto forDone
 						}
 					}
 					goto forDone
@@ -806,19 +814,14 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 					if err := setForVariables(n.Variables, element, env); err != nil {
 						return errors.NewError("%s", err.Error())
 					}
-					result = body(ctx, env)
-					if result != nil {
-						switch result.Type() {
-						case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-							return result
-						case object.BREAK_OBJ:
-							broke = true
-							result = NULL
-							goto forDone
-						case object.CONTINUE_OBJ:
-							result = NULL
-							continue
-						}
+					var act loopAction
+					act, result = loopResult(body(ctx, env))
+					switch act {
+					case loopExit:
+						return result
+					case loopBreak:
+						broke = true
+						goto forDone
 					}
 				}
 				goto forDone
@@ -835,19 +838,14 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 						return errors.NewError("%s", err.Error())
 					}
 
-					result = body(ctx, env)
-					if result != nil {
-						switch result.Type() {
-						case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-							return result
-						case object.BREAK_OBJ:
-							broke = true
-							result = NULL
-							goto forDone
-						case object.CONTINUE_OBJ:
-							result = NULL
-							continue
-						}
+					var act loopAction
+					act, result = loopResult(body(ctx, env))
+					switch act {
+					case loopExit:
+						return result
+					case loopBreak:
+						broke = true
+						goto forDone
 					}
 				}
 				goto forDone
@@ -864,19 +862,14 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 						return errors.NewError("%s", err.Error())
 					}
 
-					result = body(ctx, env)
-					if result != nil {
-						switch result.Type() {
-						case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-							return result
-						case object.BREAK_OBJ:
-							broke = true
-							result = NULL
-							goto forDone
-						case object.CONTINUE_OBJ:
-							result = NULL
-							continue
-						}
+					var act loopAction
+					act, result = loopResult(body(ctx, env))
+					switch act {
+					case loopExit:
+						return result
+					case loopBreak:
+						broke = true
+						goto forDone
 					}
 				}
 				goto forDone
@@ -895,19 +888,14 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 					return errors.NewError("%s", err.Error())
 				}
 
-				result = body(ctx, env)
-				if result != nil {
-					switch result.Type() {
-					case object.ERROR_OBJ, object.RETURN_OBJ, object.EXCEPTION_OBJ:
-						return result
-					case object.BREAK_OBJ:
-						broke = true
-						result = NULL
-						goto forDone
-					case object.CONTINUE_OBJ:
-						result = NULL
-						continue
-					}
+				var act loopAction
+				act, result = loopResult(body(ctx, env))
+				switch act {
+				case loopExit:
+					return result
+				case loopBreak:
+					broke = true
+					goto forDone
 				}
 			}
 		}
@@ -934,7 +922,7 @@ func compileInfix(n *ast.InfixExpression) object.EvalFn {
 		isAnd := op == ast.OpAnd
 		return func(ctx context.Context, env *object.Environment) object.Object {
 			l := left(ctx, env)
-			if object.IsError(l) || isRaised(l) {
+			if propagates(l) {
 				return l
 			}
 
@@ -977,11 +965,11 @@ func compileInfix(n *ast.InfixExpression) object.EvalFn {
 		}
 		// General path: evaluate both sides
 		l := left(ctx, env)
-		if object.IsError(l) || isRaised(l) {
+		if propagates(l) {
 			return l
 		}
 		r := right(ctx, env)
-		if object.IsError(r) || isRaised(r) {
+		if propagates(r) {
 			return r
 		}
 		return evalInfixExpression(ctx, op, l, r, env)
@@ -1058,7 +1046,7 @@ func compilePrefix(n *ast.PrefixExpression) object.EvalFn {
 	right := compileExpr(n.Right)
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		r := right(ctx, env)
-		if object.IsError(r) || isRaised(r) {
+		if propagates(r) {
 			return r
 		}
 		return evalPrefixExpression(ctx, op, r, env)
@@ -1071,7 +1059,7 @@ func compileConditional(n *ast.ConditionalExpression) object.EvalFn {
 	falseExpr := compileExpr(n.FalseExpr)
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		condition := cond(ctx, env)
-		if object.IsError(condition) || isRaised(condition) {
+		if propagates(condition) {
 			return condition
 		}
 
@@ -1101,7 +1089,7 @@ func compileIndex(n *ast.IndexExpression) object.EvalFn {
 	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		leftVal := left(ctx, env)
-		if object.IsError(leftVal) || isRaised(leftVal) {
+		if propagates(leftVal) {
 			return leftVal
 		}
 		// Fast path for obj.attr on an instance whose field exists: this is
@@ -1118,7 +1106,7 @@ func compileIndex(n *ast.IndexExpression) object.EvalFn {
 			}
 		}
 		indexVal := index(ctx, env)
-		if object.IsError(indexVal) || isRaised(indexVal) {
+		if propagates(indexVal) {
 			return indexVal
 		}
 		return evalIndexExpression(ctx, leftVal, indexVal, isDot)
@@ -1162,7 +1150,7 @@ func evalCompiledCallArgs(ctx context.Context, env *object.Environment, argFns [
 	result := object.AcquireArgs(env, n)
 	for i := range argFns {
 		evaluated := argFns[i](ctx, env)
-		if object.IsError(evaluated) || isRaised(evaluated) {
+		if propagates(evaluated) {
 			object.ReleaseArgs(env, result)
 			return []object.Object{evaluated}
 		}
@@ -1205,7 +1193,7 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 	general := func(ctx context.Context, env *object.Environment, function object.Object, fnFn object.EvalFn) object.Object {
 		if fnFn != nil {
 			function = fnFn(ctx, env)
-			if object.IsError(function) || isRaised(function) {
+			if propagates(function) {
 				return function
 			}
 		}
@@ -1225,7 +1213,7 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 			keywords = make(map[string]object.Object, len(kwFns))
 			for k, vfn := range kwFns {
 				val := vfn(ctx, env)
-				if object.IsError(val) || isRaised(val) {
+				if propagates(val) {
 					return val
 				}
 				keywords[k] = val
@@ -1234,7 +1222,7 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 
 		for _, unpackFn := range unpackFns {
 			argsVal := unpackFn(ctx, env)
-			if object.IsError(argsVal) || isRaised(argsVal) {
+			if propagates(argsVal) {
 				return argsVal
 			}
 			unpacked, err := unpackArgsFromIterable(argsVal)
@@ -1246,7 +1234,7 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 
 		if kwargsUnpackFn != nil {
 			kwargsVal := kwargsUnpackFn(ctx, env)
-			if object.IsError(kwargsVal) || isRaised(kwargsVal) {
+			if propagates(kwargsVal) {
 				return kwargsVal
 			}
 			if dict, ok := kwargsVal.(*object.Dict); ok {
@@ -1367,7 +1355,7 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		obj := receiver(ctx, env)
-		if object.IsError(obj) || isRaised(obj) {
+		if propagates(obj) {
 			return obj
 		}
 
@@ -1419,7 +1407,7 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 			keywords = make(map[string]object.Object, len(kwFns))
 			for k, vfn := range kwFns {
 				val := vfn(ctx, env)
-				if object.IsError(val) || isRaised(val) {
+				if propagates(val) {
 					return val
 				}
 				keywords[k] = val
@@ -1429,7 +1417,7 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 		// Handle *args unpacking (supports multiple)
 		for _, unpackFn := range unpackFns {
 			argsVal := unpackFn(ctx, env)
-			if object.IsError(argsVal) || isRaised(argsVal) {
+			if propagates(argsVal) {
 				return argsVal
 			}
 			unpacked, err := unpackArgsFromIterable(argsVal)
@@ -1442,7 +1430,7 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 		// Handle **kwargs unpacking
 		if kwargsUnpackFn != nil {
 			kwargsVal := kwargsUnpackFn(ctx, env)
-			if object.IsError(kwargsVal) || isRaised(kwargsVal) {
+			if propagates(kwargsVal) {
 				return kwargsVal
 			}
 			if dict, ok := kwargsVal.(*object.Dict); ok {
@@ -1468,14 +1456,14 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 // evalFastDictGetCompiled is evalFastDictGet over pre-compiled arguments.
 func evalFastDictGetCompiled(ctx context.Context, dict *object.Dict, argFns []object.EvalFn, env *object.Environment) object.Object {
 	keyObj := argFns[0](ctx, env)
-	if object.IsError(keyObj) || isRaised(keyObj) {
+	if propagates(keyObj) {
 		return keyObj
 	}
 
 	var defaultObj object.Object = NULL
 	if len(argFns) == 2 {
 		defaultObj = argFns[1](ctx, env)
-		if object.IsError(defaultObj) || isRaised(defaultObj) {
+		if propagates(defaultObj) {
 			return defaultObj
 		}
 	}
@@ -1627,11 +1615,11 @@ func compileFunctionStatement(n *ast.FunctionStatement) object.EvalFn {
 		var result object.Object = fn
 		for i := len(decorators) - 1; i >= 0; i-- {
 			dec := decorators[i](ctx, env)
-			if object.IsError(dec) || isRaised(dec) {
+			if propagates(dec) {
 				return dec
 			}
 			result = applyFunctionWithContext(ctx, dec, []object.Object{result}, nil, env)
-			if object.IsError(result) || isRaised(result) {
+			if propagates(result) {
 				return result
 			}
 			// If the decorator returned a Function with a different name, rename it
@@ -1679,7 +1667,7 @@ func evalCompiledExpressions(ctx context.Context, env *object.Environment, fns [
 	result := make([]object.Object, len(fns))
 	for i := range fns {
 		evaluated := fns[i](ctx, env)
-		if object.IsError(evaluated) || isRaised(evaluated) {
+		if propagates(evaluated) {
 			return []object.Object{evaluated}
 		}
 		result[i] = evaluated
@@ -1741,12 +1729,12 @@ func compileDictLiteral(n *ast.DictLiteral) object.EvalFn {
 
 		for i := range pairKeys {
 			key := pairKeys[i](ctx, env)
-			if object.IsError(key) || isRaised(key) {
+			if propagates(key) {
 				return key
 			}
 
 			value := pairValues[i](ctx, env)
-			if object.IsError(value) || isRaised(value) {
+			if propagates(value) {
 				return value
 			}
 
@@ -1775,7 +1763,7 @@ func compileSlice(n *ast.SliceExpression) object.EvalFn {
 	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		leftVal := left(ctx, env)
-		if object.IsError(leftVal) || isRaised(leftVal) {
+		if propagates(leftVal) {
 			return leftVal
 		}
 
@@ -1785,7 +1773,7 @@ func compileSlice(n *ast.SliceExpression) object.EvalFn {
 
 		if startFn != nil {
 			startObj := startFn(ctx, env)
-			if object.IsError(startObj) || isRaised(startObj) {
+			if propagates(startObj) {
 				return startObj
 			}
 			s, err := startObj.AsInt()
@@ -1798,7 +1786,7 @@ func compileSlice(n *ast.SliceExpression) object.EvalFn {
 
 		if endFn != nil {
 			endObj := endFn(ctx, env)
-			if object.IsError(endObj) || isRaised(endObj) {
+			if propagates(endObj) {
 				return endObj
 			}
 			e, err := endObj.AsInt()
@@ -1811,7 +1799,7 @@ func compileSlice(n *ast.SliceExpression) object.EvalFn {
 
 		if stepFn != nil {
 			stepObj := stepFn(ctx, env)
-			if object.IsError(stepObj) || isRaised(stepObj) {
+			if propagates(stepObj) {
 				return stepObj
 			}
 			s, err := stepObj.AsInt()
@@ -1871,11 +1859,11 @@ func compileAugmentedAssign(n *ast.AugmentedAssignStatement) object.EvalFn {
 				return errObj
 			}
 			currentVal := ops.read(ctx, idx.IsDotAccess)
-			if object.IsError(currentVal) || isRaised(currentVal) {
+			if propagates(currentVal) {
 				return currentVal
 			}
 			newVal := valueFn(ctx, env)
-			if object.IsError(newVal) || isRaised(newVal) {
+			if propagates(newVal) {
 				return newVal
 			}
 			result, done, errObj := applyAugmentedOp(ctx, op, currentVal, newVal, env)
@@ -1895,11 +1883,11 @@ func compileAugmentedAssign(n *ast.AugmentedAssignStatement) object.EvalFn {
 	targetFn := compileExpr(target)
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		currentVal := targetFn(ctx, env)
-		if object.IsError(currentVal) || isRaised(currentVal) {
+		if propagates(currentVal) {
 			return currentVal
 		}
 		newVal := valueFn(ctx, env)
-		if object.IsError(newVal) || isRaised(newVal) {
+		if propagates(newVal) {
 			return newVal
 		}
 		result, done, errObj := applyAugmentedOp(ctx, op, currentVal, newVal, env)
@@ -2020,16 +2008,16 @@ type augIndexOperands struct {
 func evalAugIndexOperands(ctx context.Context, t *ast.IndexExpression, env *object.Environment) (augIndexOperands, object.Object) {
 	var ops augIndexOperands
 	if inner, ok := t.Left.(*ast.IndexExpression); ok {
-		base := fixErrorPos(ctx, cachedExpr(&inner.LeftCompiled, inner.Left)(ctx, env), inner.Left.Line())
-		if object.IsError(base) || isRaised(base) {
+		base := fixErrorPos(ctx, cachedExpr(&inner.TargetSlots().Left, inner.Left)(ctx, env), inner.Left.Line())
+		if propagates(base) {
 			return ops, base
 		}
-		innerKey := cachedExpr(&inner.IndexCompiled, inner.Index)(ctx, env)
-		if object.IsError(innerKey) || isRaised(innerKey) {
+		innerKey := cachedExpr(&inner.TargetSlots().Index, inner.Index)(ctx, env)
+		if propagates(innerKey) {
 			return ops, innerKey
 		}
-		key := cachedExpr(&t.IndexCompiled, t.Index)(ctx, env)
-		if object.IsError(key) || isRaised(key) {
+		key := cachedExpr(&t.TargetSlots().Index, t.Index)(ctx, env)
+		if propagates(key) {
 			return ops, key
 		}
 		if fa, ok := base.(*object.FloatArray); ok && fa.Is2D() {
@@ -2042,18 +2030,18 @@ func evalAugIndexOperands(ctx context.Context, t *ast.IndexExpression, env *obje
 			return ops, nil
 		}
 		obj := evalIndexExpression(ctx, base, innerKey, inner.IsDotAccess)
-		if object.IsError(obj) || isRaised(obj) {
+		if propagates(obj) {
 			return ops, obj
 		}
 		ops.obj, ops.index = obj, key
 		return ops, nil
 	}
-	obj := fixErrorPos(ctx, cachedExpr(&t.LeftCompiled, t.Left)(ctx, env), t.Left.Line())
-	if object.IsError(obj) || isRaised(obj) {
+	obj := fixErrorPos(ctx, cachedExpr(&t.TargetSlots().Left, t.Left)(ctx, env), t.Left.Line())
+	if propagates(obj) {
 		return ops, obj
 	}
-	key := cachedExpr(&t.IndexCompiled, t.Index)(ctx, env)
-	if object.IsError(key) || isRaised(key) {
+	key := cachedExpr(&t.TargetSlots().Index, t.Index)(ctx, env)
+	if propagates(key) {
 		return ops, key
 	}
 	ops.obj, ops.index = obj, key
@@ -2064,7 +2052,7 @@ func evalAugIndexOperands(ctx context.Context, t *ast.IndexExpression, env *obje
 func (ops *augIndexOperands) read(ctx context.Context, isDotAccess bool) object.Object {
 	if ops.fa != nil {
 		rowObj := evalIndexExpression(ctx, ops.fa, ops.row, false)
-		if object.IsError(rowObj) || isRaised(rowObj) {
+		if propagates(rowObj) {
 			return rowObj
 		}
 		return evalIndexExpression(ctx, rowObj, ops.col, false)
@@ -2084,7 +2072,7 @@ func compileMultipleAssign(n *ast.MultipleAssignStatement) object.EvalFn {
 	valueFn := compileExpr(n.Value)
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		val := valueFn(ctx, env)
-		if object.IsError(val) || isRaised(val) {
+		if propagates(val) {
 			return val
 		}
 
@@ -2176,7 +2164,7 @@ func compileFString(n *ast.FStringLiteral) object.EvalFn {
 			builder.WriteString(part)
 			if i < len(exprFns) {
 				exprResult := exprFns[i](ctx, env)
-				if object.IsError(exprResult) || isRaised(exprResult) {
+				if propagates(exprResult) {
 					return exprResult
 				}
 				spec := ""
@@ -2276,7 +2264,7 @@ func evalCompiledAdditionalClauses(ctx context.Context, clauses []compiledClause
 	}
 	c := clauses[idx]
 	iterable := c.iterable(ctx, env)
-	if object.IsError(iterable) || isRaised(iterable) {
+	if propagates(iterable) {
 		return iterable
 	}
 	return iterateObject(ctx, iterable, func(element object.Object) object.Object {
@@ -2285,7 +2273,7 @@ func evalCompiledAdditionalClauses(ctx context.Context, clauses []compiledClause
 		}
 		if c.condition != nil {
 			cond := c.condition(ctx, env)
-			if object.IsError(cond) || isRaised(cond) {
+			if propagates(cond) {
 				return cond
 			}
 			truthy, errObj := evalTruthy(ctx, cond, env)
@@ -2311,45 +2299,132 @@ func comprehensionFastVar(variables []ast.Expression, additional int) *ast.Ident
 	return ident
 }
 
+// compSource is a comprehension's iteration, prepared once at compile time
+// and shared by list, dict and set comprehensions.
+type compSource struct {
+	iterable  object.EvalFn
+	variables []ast.Expression
+	// fastIdent is set when the comprehension binds one plain name. The
+	// comprehension environment then gives that name a slot, so the element
+	// and condition expressions read it through the slot cache instead of a
+	// map lookup per element.
+	fastIdent *ast.Identifier
+	slotIndex map[string]int
+	slotNames []string
+	// rangeArgs is set when the iterable is a literal range(...) call, so the
+	// integers are produced directly rather than through a range iterator.
+	rangeArgs func(ctx context.Context, env *object.Environment) (start, stop, step int64, errObj object.Object, ok bool)
+}
+
+func newCompSource(iterable ast.Expression, variables []ast.Expression, additional int) compSource {
+	src := compSource{iterable: compileExpr(iterable), variables: variables}
+	if ident := comprehensionFastVar(variables, additional); ident != nil {
+		src.fastIdent = ident
+		src.slotIndex = map[string]int{ident.Value(): 0}
+		src.slotNames = []string{ident.Value()}
+	}
+	if call, ok := iterable.(*ast.CallExpression); ok && !call.HasOverflow() && len(call.Arguments) >= 1 && len(call.Arguments) <= 3 {
+		if fn, ok := call.Function.(*ast.Identifier); ok && fn.Value() == "range" {
+			args := make([]object.EvalFn, len(call.Arguments))
+			for i, arg := range call.Arguments {
+				args[i] = compileExpr(arg)
+			}
+			src.rangeArgs = compileRangeArgs(args)
+		}
+	}
+	return src
+}
+
+// run iterates the source. sized, when not nil, receives the element count
+// as soon as it is known so the caller can pre-size its result. body runs
+// once per element with the comprehension environment bound; a non-nil
+// body result (an error or raised exception) stops the iteration and is
+// returned.
+func (s *compSource) run(ctx context.Context, env *object.Environment, sized func(int), body func(compEnv *object.Environment) object.Object) object.Object {
+	var compEnv *object.Environment
+	var step func(element object.Object) object.Object
+	if s.fastIdent != nil {
+		compEnv = object.NewEnclosedEnvironmentWithSlots(env, s.slotIndex, s.slotNames)
+		step = func(element object.Object) object.Object {
+			compEnv.SetSlotByIndex(0, element)
+			return body(compEnv)
+		}
+	} else {
+		compEnv = object.NewEnclosedEnvironment(env)
+		step = func(element object.Object) object.Object {
+			if err := setForVariables(s.variables, element, compEnv); err != nil {
+				return errors.NewError("%s", err.Error())
+			}
+			return body(compEnv)
+		}
+	}
+
+	if s.rangeArgs != nil {
+		// A script may rebind range; the fast path applies only to the builtin.
+		if _, shadowed := env.Get("range"); !shadowed {
+			start, stop, inc, errObj, ok := s.rangeArgs(ctx, env)
+			if errObj != nil {
+				return errObj
+			}
+			if ok {
+				if sized != nil {
+					if n := rangeLen(start, stop, inc); n > 0 {
+						sized(n)
+					}
+				}
+				for i := start; (inc > 0 && i < stop) || (inc < 0 && i > stop); i += inc {
+					if out := step(object.NewInteger(i)); out != nil {
+						return out
+					}
+				}
+				return nil
+			}
+		}
+	}
+
+	iterableVal := s.iterable(ctx, env)
+	if propagates(iterableVal) {
+		return iterableVal
+	}
+	if sized != nil {
+		switch it := iterableVal.(type) {
+		case *object.List:
+			sized(len(it.Elements))
+		case *object.Tuple:
+			sized(len(it.Elements))
+		case *object.Set:
+			sized(len(it.Elements))
+		}
+	}
+	return iterateObject(ctx, iterableVal, step)
+}
+
+// rangeLen is the number of integers range(start, stop, step) produces.
+func rangeLen(start, stop, step int64) int {
+	if step > 0 && stop > start {
+		return int((stop - start + step - 1) / step)
+	}
+	if step < 0 && start > stop {
+		return int((start - stop - step - 1) / (-step))
+	}
+	return 0
+}
+
 func compileListComprehension(n *ast.ListComprehension) object.EvalFn {
 	expr := compileExpr(n.Expression)
-	iterable := compileExpr(n.Iterable)
 	var cond object.EvalFn
 	if n.Condition != nil {
 		cond = compileExpr(n.Condition)
 	}
 	clauses := compiledClauses(n.AdditionalClauses)
-	fastIdent := comprehensionFastVar(n.Variables, len(n.AdditionalClauses))
+	src := newCompSource(n.Iterable, n.Variables, len(n.AdditionalClauses))
 
 	return func(ctx context.Context, env *object.Environment) object.Object {
-		iterableVal := iterable(ctx, env)
-		if object.IsError(iterableVal) || isRaised(iterableVal) {
-			return iterableVal
-		}
-
-		if fastIdent != nil {
-			if result, ok := fastListComprehensionCompiled(ctx, fastIdent, cond, expr, iterableVal, env); ok {
-				return result
-			}
-		}
-
 		result := []object.Object{}
-		compEnv := object.NewEnclosedEnvironment(env)
-		emit := func() object.Object {
-			v := expr(ctx, compEnv)
-			if object.IsError(v) || isRaised(v) {
-				return v
-			}
-			result = append(result, v)
-			return nil
-		}
-		runBody := func(element object.Object) object.Object {
-			if err := setForVariables(n.Variables, element, compEnv); err != nil {
-				return errors.NewError("%s", err.Error())
-			}
+		runBody := func(compEnv *object.Environment) object.Object {
 			if cond != nil {
 				c := cond(ctx, compEnv)
-				if object.IsError(c) || isRaised(c) {
+				if propagates(c) {
 					return c
 				}
 				truthy, errObj := evalTruthy(ctx, c, compEnv)
@@ -2360,148 +2435,42 @@ func compileListComprehension(n *ast.ListComprehension) object.EvalFn {
 					return nil
 				}
 			}
+			emit := func() object.Object {
+				v := expr(ctx, compEnv)
+				if propagates(v) {
+					return v
+				}
+				result = append(result, v)
+				return nil
+			}
 			if len(clauses) > 0 {
 				return evalCompiledAdditionalClauses(ctx, clauses, 0, compEnv, emit)
 			}
 			return emit()
 		}
-		if err := iterateObject(ctx, iterableVal, runBody); err != nil {
+		if err := src.run(ctx, env, func(size int) { result = make([]object.Object, 0, size) }, runBody); err != nil {
 			return err
 		}
 		return &object.List{Elements: result}
 	}
 }
 
-// fastListComprehensionCompiled is tryEvalFastListComprehension's per-element
-// body over pre-compiled condition and element expressions, for the iterable
-// types the original fast path handles.
-func fastListComprehensionCompiled(ctx context.Context, ident *ast.Identifier, cond object.EvalFn, expr object.EvalFn, iterable object.Object, env *object.Environment) (object.Object, bool) {
-	compEnv := object.NewEnclosedEnvironment(env)
-	result := make([]object.Object, 0)
-	runElement := func(element object.Object) object.Object {
-		compEnv.Set(ident.Value(), element)
-		if cond != nil {
-			c := cond(ctx, compEnv)
-			if object.IsError(c) || isRaised(c) {
-				return c
-			}
-			truthy, errObj := evalTruthy(ctx, c, compEnv)
-			if errObj != nil {
-				return errObj
-			}
-			if !truthy {
-				return nil
-			}
-		}
-		value := expr(ctx, compEnv)
-		if object.IsError(value) || isRaised(value) {
-			return value
-		}
-		result = append(result, value)
-		return nil
-	}
-
-	switch it := iterable.(type) {
-	case *object.List:
-		result = make([]object.Object, 0, len(it.Elements))
-		for _, element := range it.Elements {
-			if out := runElement(element); out != nil {
-				return out, true
-			}
-		}
-	case *object.Tuple:
-		result = make([]object.Object, 0, len(it.Elements))
-		for _, element := range it.Elements {
-			if out := runElement(element); out != nil {
-				return out, true
-			}
-		}
-	case *object.Set:
-		result = make([]object.Object, 0, len(it.Elements))
-		for _, element := range it.Elements {
-			if out := runElement(element); out != nil {
-				return out, true
-			}
-		}
-	case *object.Iterator:
-		for {
-			element, ok := it.Next()
-			if !ok {
-				break
-			}
-			if out := runElement(element); out != nil {
-				return out, true
-			}
-		}
-	case *object.FloatArray:
-		if it.Is2D() {
-			rows := it.Rows()
-			cols := it.Cols()
-			result = make([]object.Object, 0, rows)
-			for i := 0; i < rows; i++ {
-				off := i * cols
-				rowData := make([]float64, cols)
-				copy(rowData, it.Data[off:off+cols])
-				row := object.NewFloatArray1D(rowData)
-				if out := runElement(row); out != nil {
-					return out, true
-				}
-			}
-		} else {
-			result = make([]object.Object, 0, len(it.Data))
-			for _, v := range it.Data {
-				if out := runElement(object.NewFloat(v)); out != nil {
-					return out, true
-				}
-			}
-		}
-	default:
-		return nil, false
-	}
-
-	return &object.List{Elements: result}, true
-}
-
 func compileDictComprehension(n *ast.DictComprehension) object.EvalFn {
 	keyFn := compileExpr(n.Key)
 	valueFn := compileExpr(n.Value)
-	iterable := compileExpr(n.Iterable)
 	var cond object.EvalFn
 	if n.Condition != nil {
 		cond = compileExpr(n.Condition)
 	}
 	clauses := compiledClauses(n.AdditionalClauses)
+	src := newCompSource(n.Iterable, n.Variables, len(n.AdditionalClauses))
 
 	return func(ctx context.Context, env *object.Environment) object.Object {
-		iterableVal := iterable(ctx, env)
-		if object.IsError(iterableVal) || isRaised(iterableVal) {
-			return iterableVal
-		}
 		result := &object.Dict{Pairs: make(map[string]object.DictPair)}
-		compEnv := object.NewEnclosedEnvironment(env)
-		emit := func() object.Object {
-			k := keyFn(ctx, compEnv)
-			if object.IsError(k) || isRaised(k) {
-				return k
-			}
-			v := valueFn(ctx, compEnv)
-			if object.IsError(v) || isRaised(v) {
-				return v
-			}
-			hk, rerr := evalHashKeyChecked(ctx, k)
-			if rerr != nil {
-				return rerr
-			}
-			result.Pairs[hk] = object.DictPair{Key: k, Value: v}
-			return nil
-		}
-		runBody := func(element object.Object) object.Object {
-			if err := setForVariables(n.Variables, element, compEnv); err != nil {
-				return errors.NewError("%s", err.Error())
-			}
+		runBody := func(compEnv *object.Environment) object.Object {
 			if cond != nil {
 				c := cond(ctx, compEnv)
-				if object.IsError(c) || isRaised(c) {
+				if propagates(c) {
 					return c
 				}
 				truthy, errObj := evalTruthy(ctx, c, compEnv)
@@ -2512,12 +2481,28 @@ func compileDictComprehension(n *ast.DictComprehension) object.EvalFn {
 					return nil
 				}
 			}
+			emit := func() object.Object {
+				k := keyFn(ctx, compEnv)
+				if propagates(k) {
+					return k
+				}
+				v := valueFn(ctx, compEnv)
+				if propagates(v) {
+					return v
+				}
+				hk, rerr := evalHashKeyChecked(ctx, k)
+				if rerr != nil {
+					return rerr
+				}
+				result.Pairs[hk] = object.DictPair{Key: k, Value: v}
+				return nil
+			}
 			if len(clauses) > 0 {
 				return evalCompiledAdditionalClauses(ctx, clauses, 0, compEnv, emit)
 			}
 			return emit()
 		}
-		if err := iterateObject(ctx, iterableVal, runBody); err != nil {
+		if err := src.run(ctx, env, func(size int) { result.Pairs = make(map[string]object.DictPair, size) }, runBody); err != nil {
 			return err
 		}
 		return result
@@ -2526,34 +2511,19 @@ func compileDictComprehension(n *ast.DictComprehension) object.EvalFn {
 
 func compileSetComprehension(n *ast.SetComprehension) object.EvalFn {
 	expr := compileExpr(n.Expression)
-	iterable := compileExpr(n.Iterable)
 	var cond object.EvalFn
 	if n.Condition != nil {
 		cond = compileExpr(n.Condition)
 	}
 	clauses := compiledClauses(n.AdditionalClauses)
+	src := newCompSource(n.Iterable, n.Variables, len(n.AdditionalClauses))
 
 	return func(ctx context.Context, env *object.Environment) object.Object {
-		iterableVal := iterable(ctx, env)
-		if object.IsError(iterableVal) || isRaised(iterableVal) {
-			return iterableVal
-		}
 		result := object.NewSet()
-		compEnv := object.NewEnclosedEnvironment(env)
-		emit := func() object.Object {
-			v := expr(ctx, compEnv)
-			if object.IsError(v) || isRaised(v) {
-				return v
-			}
-			return evalSetAdd(ctx, result, v)
-		}
-		runBody := func(element object.Object) object.Object {
-			if err := setForVariables(n.Variables, element, compEnv); err != nil {
-				return errors.NewError("%s", err.Error())
-			}
+		runBody := func(compEnv *object.Environment) object.Object {
 			if cond != nil {
 				c := cond(ctx, compEnv)
-				if object.IsError(c) || isRaised(c) {
+				if propagates(c) {
 					return c
 				}
 				truthy, errObj := evalTruthy(ctx, c, compEnv)
@@ -2564,12 +2534,19 @@ func compileSetComprehension(n *ast.SetComprehension) object.EvalFn {
 					return nil
 				}
 			}
+			emit := func() object.Object {
+				v := expr(ctx, compEnv)
+				if propagates(v) {
+					return v
+				}
+				return evalSetAdd(ctx, result, v)
+			}
 			if len(clauses) > 0 {
 				return evalCompiledAdditionalClauses(ctx, clauses, 0, compEnv, emit)
 			}
 			return emit()
 		}
-		if err := iterateObject(ctx, iterableVal, runBody); err != nil {
+		if err := src.run(ctx, env, nil, runBody); err != nil {
 			return err
 		}
 		return result
@@ -2580,7 +2557,7 @@ func compileWalrus(n *ast.WalrusExpression) object.EvalFn {
 	value := compileExpr(n.Value)
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		val := value(ctx, env)
-		if object.IsError(val) || isRaised(val) {
+		if propagates(val) {
 			return val
 		}
 		// Bind through the same path as assignment statements so slot caching,
@@ -2614,7 +2591,7 @@ func compileAssert(n *ast.AssertStatement) object.EvalFn {
 	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		conditionVal := condition(ctx, env)
-		if object.IsError(conditionVal) || isRaised(conditionVal) {
+		if propagates(conditionVal) {
 			return conditionVal
 		}
 
@@ -2626,7 +2603,7 @@ func compileAssert(n *ast.AssertStatement) object.EvalFn {
 			var msg string
 			if message != nil {
 				msgVal := message(ctx, env)
-				if object.IsError(msgVal) || isRaised(msgVal) {
+				if propagates(msgVal) {
 					return msgVal
 				}
 				msg = msgVal.Inspect()
@@ -2697,7 +2674,7 @@ func compileWith(n *ast.WithStatement) object.EvalFn {
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		// Evaluate the context expression
 		ctxObj := contextExpr(ctx, env)
-		if object.IsError(ctxObj) || isRaised(ctxObj) {
+		if propagates(ctxObj) {
 			return ctxObj
 		}
 
@@ -2708,7 +2685,7 @@ func compileWith(n *ast.WithStatement) object.EvalFn {
 			if enterResult == nil {
 				enterResult = NULL
 			}
-			if object.IsError(enterResult) || isRaised(enterResult) {
+			if propagates(enterResult) {
 				return enterResult
 			}
 		} else {
@@ -2746,7 +2723,7 @@ func compileWith(n *ast.WithStatement) object.EvalFn {
 		// __exit__ exception replaces/chains the original). This must be checked
 		// before the truthy-suppression test below, since a raised exception is
 		// itself truthy and would otherwise be mistaken for "suppress".
-		if exitResult != nil && (object.IsError(exitResult) || isRaised(exitResult)) {
+		if exitResult != nil && (propagates(exitResult)) {
 			return exitResult
 		}
 
@@ -2927,7 +2904,7 @@ func compileMatch(n *ast.MatchStatement) object.EvalFn {
 
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		subjectVal := subject(ctx, env)
-		if object.IsError(subjectVal) || isRaised(subjectVal) {
+		if propagates(subjectVal) {
 			return subjectVal
 		}
 
@@ -2936,7 +2913,7 @@ func compileMatch(n *ast.MatchStatement) object.EvalFn {
 			capturedVars := make(map[string]object.Object)
 
 			matched, capturedValue := matchPattern(ctx, subjectVal, caseClause.Pattern, capturedVars, env)
-			if object.IsError(matched) || isRaised(matched) {
+			if propagates(matched) {
 				return matched
 			}
 
@@ -2949,7 +2926,7 @@ func compileMatch(n *ast.MatchStatement) object.EvalFn {
 				// Check guard condition if present
 				if guards[i] != nil {
 					guardResult := guards[i](ctx, env)
-					if object.IsError(guardResult) || isRaised(guardResult) {
+					if propagates(guardResult) {
 						return guardResult
 					}
 					guardTruthy, gErr := evalTruthy(ctx, guardResult, env)
@@ -3005,7 +2982,7 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 		if baseClassFn != nil {
 			// Evaluate the base class expression (can be dotted like html.parser.HTMLParser)
 			baseClassObj := baseClassFn(ctx, env)
-			if object.IsError(baseClassObj) || isRaised(baseClassObj) {
+			if propagates(baseClassObj) {
 				return baseClassObj
 			}
 			baseClass, ok := baseClassObj.(*object.Class)
@@ -3037,7 +3014,7 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 				// decorators and binds the name in classEnv, then returns the
 				// result so it can be registered as a method.
 				obj := bodyStmts[i](ctx, classEnv)
-				if object.IsError(obj) || isRaised(obj) {
+				if propagates(obj) {
 					return obj
 				}
 				switch m := obj.(type) {
@@ -3058,7 +3035,7 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 				}
 				continue
 			}
-			if res := bodyStmts[i](ctx, classEnv); object.IsError(res) || isRaised(res) {
+			if res := bodyStmts[i](ctx, classEnv); propagates(res) {
 				return res
 			}
 		}
@@ -3079,11 +3056,11 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 		var result object.Object = class
 		for i := len(decorators) - 1; i >= 0; i-- {
 			dec := decorators[i](ctx, env)
-			if object.IsError(dec) || isRaised(dec) {
+			if propagates(dec) {
 				return dec
 			}
 			result = applyFunctionWithContext(ctx, dec, []object.Object{result}, nil, env)
-			if object.IsError(result) || isRaised(result) {
+			if propagates(result) {
 				return result
 			}
 		}

@@ -2515,7 +2515,7 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 				case *object.Function, *object.LambdaFunction:
 					key = applyFunctionWithContext(ctx, fn, []object.Object{elem}, nil, env)
 				}
-				if object.IsError(key) || isRaised(key) {
+				if propagates(key) {
 					return key
 				}
 				keys[i] = key
@@ -2596,7 +2596,7 @@ func mapFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 		res := applyFunctionWithContext(ctx, fn, callArgs, nil, env)
 		// A raised exception from the mapped function must propagate at the
 		// first raising element, not be stored as a result element.
-		if object.IsError(res) || isRaised(res) {
+		if propagates(res) {
 			return res
 		}
 		results[i] = res
@@ -2644,7 +2644,7 @@ func filterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 			res := applyFunctionWithContext(ctx, fn, []object.Object{elem}, nil, env)
 			// A raised exception from the predicate must propagate, not be
 			// coerced to "keep" via truthiness.
-			if object.IsError(res) || isRaised(res) {
+			if propagates(res) {
 				return res
 			}
 			truthy, errObj := evalTruthyFn(ctx, res, env)
@@ -3277,7 +3277,7 @@ func minMaxFunctionImpl(ctx context.Context, kwargs object.Kwargs, wantMax bool,
 		case *object.Function, *object.LambdaFunction:
 			key = applyFunctionWithContext(ctx, fn, []object.Object{elem}, nil, env)
 		}
-		if object.IsError(key) || isRaised(key) {
+		if propagates(key) {
 			return nil, key
 		}
 		return key, nil

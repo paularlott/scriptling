@@ -9,11 +9,11 @@ import (
 	"github.com/paularlott/scriptling/ast"
 )
 
-// helper to create a small cache for testing
-func newTestCache(maxSize int) *programCache {
-	c := newProgramCache(maxSize)
-	c.maxSizeCap = maxSize
-	return c
+// newTestCache returns a cache whose byte budget holds exactly n dummy
+// programs, so tests can reason in entry counts while the cache itself is
+// bounded only by bytes.
+func newTestCache(n int) *programCache {
+	return newProgramCache(n * estimateCacheEntrySize("", dummyProgram("x")))
 }
 
 // helper to create a dummy program distinguishable by a label
@@ -263,7 +263,7 @@ func TestCache_MaxSizeOne(t *testing.T) {
 
 	c.set("b", dummyProgram("b"))
 	if _, ok := c.get("a"); ok {
-		t.Fatal("expected 'a' evicted with maxSize=1")
+		t.Fatal("expected 'a' evicted with a budget for one entry")
 	}
 	if _, ok := c.get("b"); !ok {
 		t.Fatal("expected 'b' in cache")
@@ -447,8 +447,8 @@ func TestCache_ConcurrentAccess(t *testing.T) {
 	if c.lru.Len() != len(c.entries) {
 		t.Fatalf("after concurrent ops: lru len (%d) != map len (%d)", c.lru.Len(), len(c.entries))
 	}
-	if len(c.entries) > c.maxSize {
-		t.Fatalf("cache exceeded maxSize: %d > %d", len(c.entries), c.maxSize)
+	if c.usedBytes > c.maxBytes {
+		t.Fatalf("cache exceeded its byte budget: %d > %d", c.usedBytes, c.maxBytes)
 	}
 }
 
@@ -474,8 +474,8 @@ func TestCache_ConcurrentEviction(t *testing.T) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if len(c.entries) > c.maxSize {
-		t.Fatalf("cache exceeded maxSize after concurrent eviction: %d > %d", len(c.entries), c.maxSize)
+	if c.usedBytes > c.maxBytes {
+		t.Fatalf("cache exceeded its byte budget after concurrent eviction: %d > %d", c.usedBytes, c.maxBytes)
 	}
 	if c.lru.Len() != len(c.entries) {
 		t.Fatalf("lru/map mismatch: %d vs %d", c.lru.Len(), len(c.entries))
@@ -518,8 +518,8 @@ func TestCache_StressHighVolume(t *testing.T) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if len(c.entries) > c.maxSize {
-		t.Fatalf("cache exceeded maxSize: %d > %d", len(c.entries), c.maxSize)
+	if c.usedBytes > c.maxBytes {
+		t.Fatalf("cache exceeded its byte budget: %d > %d", c.usedBytes, c.maxBytes)
 	}
 	if c.lru.Len() != len(c.entries) {
 		t.Fatalf("lru/map desync: list=%d map=%d", c.lru.Len(), len(c.entries))
@@ -571,8 +571,8 @@ func TestCache_StressConcurrentReadWrite(t *testing.T) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if len(c.entries) > c.maxSize {
-		t.Fatalf("exceeded maxSize: %d > %d", len(c.entries), c.maxSize)
+	if c.usedBytes > c.maxBytes {
+		t.Fatalf("exceeded its byte budget: %d > %d", c.usedBytes, c.maxBytes)
 	}
 	if c.lru.Len() != len(c.entries) {
 		t.Fatalf("desync after stress: list=%d map=%d", c.lru.Len(), len(c.entries))
@@ -605,8 +605,8 @@ func TestCache_StressUpdateSameKeys(t *testing.T) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if len(c.entries) > c.maxSize {
-		t.Fatalf("exceeded maxSize: %d > %d", len(c.entries), c.maxSize)
+	if c.usedBytes > c.maxBytes {
+		t.Fatalf("exceeded its byte budget: %d > %d", c.usedBytes, c.maxBytes)
 	}
 	if c.lru.Len() != len(c.entries) {
 		t.Fatalf("desync: list=%d map=%d", c.lru.Len(), len(c.entries))
@@ -642,7 +642,7 @@ func TestCache_StressRapidEviction(t *testing.T) {
 	defer c.mu.RUnlock()
 
 	if len(c.entries) != 1 {
-		t.Fatalf("maxSize=1 cache should have exactly 1 entry, got %d", len(c.entries))
+		t.Fatalf("single-entry budget cache should have exactly 1 entry, got %d", len(c.entries))
 	}
 	if c.lru.Len() != 1 {
 		t.Fatalf("LRU list should have exactly 1 element, got %d", c.lru.Len())
@@ -699,8 +699,8 @@ func TestCache_StressInterleavedOps(t *testing.T) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if len(c.entries) > c.maxSize {
-		t.Fatalf("exceeded maxSize: %d > %d", len(c.entries), c.maxSize)
+	if c.usedBytes > c.maxBytes {
+		t.Fatalf("exceeded its byte budget: %d > %d", c.usedBytes, c.maxBytes)
 	}
 	if c.lru.Len() != len(c.entries) {
 		t.Fatalf("desync: list=%d map=%d", c.lru.Len(), len(c.entries))
@@ -775,8 +775,8 @@ func TestProgramCache_StatsCountHitsAndMisses(t *testing.T) {
 	if s.Entries != 1 || s.UsedBytes == 0 {
 		t.Fatalf("entries=%d used=%d", s.Entries, s.UsedBytes)
 	}
-	if s.MaxBytes != DefaultProgramCacheMaxBytes {
-		t.Fatalf("MaxBytes=%d, want the default %d", s.MaxBytes, DefaultProgramCacheMaxBytes)
+	if s.MaxBytes != c.maxBytes {
+		t.Fatalf("MaxBytes=%d, want the configured budget %d", s.MaxBytes, c.maxBytes)
 	}
 }
 

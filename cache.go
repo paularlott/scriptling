@@ -26,7 +26,6 @@ type cacheEntry struct {
 
 type cacheStats struct {
 	evictions atomic.Uint64
-	grows     atomic.Uint64
 	hits      atomic.Uint64
 	misses    atomic.Uint64
 }
@@ -48,11 +47,10 @@ type ProgramCacheStats struct {
 // SetProgramCacheMaxBytes sets the memory budget, in bytes, of the
 // process-wide cache that holds every parsed and compiled script so repeated
 // evaluations skip parsing. The default is DefaultProgramCacheMaxBytes
-// (64 MiB). A budget of 0 removes the byte limit, leaving only the entry
-// count limit; negative values are treated as 0. Lowering the budget evicts
-// the least recently used programs immediately. A program that no longer fits
-// is simply parsed again on its next use, so an undersized budget costs time,
-// never correctness.
+// (64 MiB). A budget of 0 makes the cache unbounded; negative values are
+// treated as 0. Lowering the budget evicts the least recently used programs
+// immediately. A program that no longer fits is simply parsed again on its
+// next use, so an undersized budget costs time, never correctness.
 func SetProgramCacheMaxBytes(maxBytes int) {
 	globalCache.setMaxBytes(maxBytes)
 }
@@ -70,47 +68,31 @@ func GetProgramCacheStats() ProgramCacheStats {
 	return globalCache.snapshot()
 }
 
+// programCache is an LRU of parsed and compiled programs bounded by one
+// number: the estimated bytes they retain (see estimateCacheEntrySize).
 type programCache struct {
-	mu         sync.RWMutex
-	entries    map[cacheKey]*list.Element
-	lru        *list.List
-	maxSize    int
-	maxSizeCap int
-	maxBytes   int
-	usedBytes  int
-	stats      cacheStats
+	mu        sync.RWMutex
+	entries   map[cacheKey]*list.Element
+	lru       *list.List
+	maxBytes  int // 0 means unbounded
+	usedBytes int
+	stats     cacheStats
 }
 
-const (
-	defaultCacheMaxEntries = 1000
-	defaultCacheMaxCap     = 4000
-	defaultCacheMaxBytes   = 64 << 20
-)
+const defaultCacheMaxBytes = 64 << 20
 
-func newProgramCache(maxSize int) *programCache {
-	if maxSize < 1 {
-		maxSize = 1
-	}
-	maxCap := maxSize * 4
-	if maxCap < maxSize {
-		maxCap = maxSize
-	}
-	if maxCap > defaultCacheMaxCap {
-		maxCap = defaultCacheMaxCap
-	}
-	if maxCap < maxSize {
-		maxCap = maxSize
+func newProgramCache(maxBytes int) *programCache {
+	if maxBytes < 0 {
+		maxBytes = 0
 	}
 	return &programCache{
-		entries:    make(map[cacheKey]*list.Element),
-		lru:        list.New(),
-		maxSize:    maxSize,
-		maxSizeCap: maxCap,
-		maxBytes:   defaultCacheMaxBytes,
+		entries:  make(map[cacheKey]*list.Element),
+		lru:      list.New(),
+		maxBytes: maxBytes,
 	}
 }
 
-var globalCache = newProgramCache(defaultCacheMaxEntries)
+var globalCache = newProgramCache(defaultCacheMaxBytes)
 
 // Get retrieves a cached program by script content.
 func Get(script string) (*ast.Program, bool) {
@@ -183,7 +165,6 @@ func (c *programCache) set(script string, program *ast.Program) {
 		program:   program,
 		sizeBytes: estimateCacheEntrySize(script, program),
 	}
-	c.maybeGrowLocked(entry.sizeBytes)
 	elem := c.lru.PushFront(entry)
 	c.entries[key] = elem
 	c.usedBytes += entry.sizeBytes
@@ -210,33 +191,14 @@ func (c *programCache) setWithKey(key cacheKey, script string, program *ast.Prog
 		program:   program,
 		sizeBytes: estimateCacheEntrySize(script, program),
 	}
-	c.maybeGrowLocked(entry.sizeBytes)
 	elem := c.lru.PushFront(entry)
 	c.entries[key] = elem
 	c.usedBytes += entry.sizeBytes
 	c.evictIfNeededLocked()
 }
 
-func (c *programCache) maybeGrowLocked(nextSize int) {
-	if len(c.entries) < c.maxSize || c.maxSize >= c.maxSizeCap {
-		return
-	}
-	if c.maxBytes > 0 && c.usedBytes+nextSize > c.maxBytes {
-		return
-	}
-	growBy := c.maxSize / 4
-	if growBy < 64 {
-		growBy = 64
-	}
-	c.maxSize += growBy
-	if c.maxSize > c.maxSizeCap {
-		c.maxSize = c.maxSizeCap
-	}
-	c.stats.grows.Add(1)
-}
-
 func (c *programCache) evictIfNeededLocked() {
-	for len(c.entries) > c.maxSize || (c.maxBytes > 0 && c.usedBytes > c.maxBytes) {
+	for c.maxBytes > 0 && c.usedBytes > c.maxBytes {
 		if !c.evictOldestLocked() {
 			return
 		}

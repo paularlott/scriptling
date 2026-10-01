@@ -69,7 +69,7 @@ func BenchmarkParseUncached_AdjacentStrings(b *testing.B) {
 
 func BenchmarkParseCached_Hit(b *testing.B) {
 	script := "def add(a, b):\n    return a + b\nresult = add(5, 3)"
-	globalCache = newProgramCache(1000)
+	globalCache = newProgramCache(defaultCacheMaxBytes)
 	if _, err := parseProgramCached(script); err != nil {
 		b.Fatalf("warmup parse failed: %v", err)
 	}
@@ -88,7 +88,7 @@ func BenchmarkParseCached_Hit(b *testing.B) {
 
 func BenchmarkParseCached_TinyHit(b *testing.B) {
 	script := "x = 5"
-	globalCache = newProgramCache(1000)
+	globalCache = newProgramCache(defaultCacheMaxBytes)
 	if _, err := parseProgramCached(script); err != nil {
 		b.Fatalf("warmup parse failed: %v", err)
 	}
@@ -106,7 +106,7 @@ func BenchmarkParseCached_TinyHit(b *testing.B) {
 }
 
 func BenchmarkParseCached_Miss(b *testing.B) {
-	globalCache = newProgramCache(1000)
+	globalCache = newProgramCache(defaultCacheMaxBytes)
 
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -127,7 +127,7 @@ func BenchmarkParseCached_WorkingSet(b *testing.B) {
 	for i := range scripts {
 		scripts[i] = fmt.Sprintf("def f%d(x):\n    return x + %d\nresult = f%d(10)", i, i, i)
 	}
-	globalCache = newProgramCache(1000)
+	globalCache = newProgramCache(defaultCacheMaxBytes)
 	for _, script := range scripts {
 		if _, err := parseProgramCached(script); err != nil {
 			b.Fatalf("warmup parse failed: %v", err)

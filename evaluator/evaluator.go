@@ -326,7 +326,7 @@ func evalObjectsEqualChecked(ctx context.Context, a, b object.Object, env *objec
 	if aInst, ok := a.(*object.Instance); ok {
 		if method, has := aInst.Class.Methods["__eq__"]; has {
 			result := applyFunctionWithContext(ctx, method, []object.Object{a, b}, nil, env)
-			if object.IsError(result) || isRaised(result) {
+			if propagates(result) {
 				return false, result
 			}
 			if bl, ok := result.(*object.Boolean); ok {
@@ -338,7 +338,7 @@ func evalObjectsEqualChecked(ctx context.Context, a, b object.Object, env *objec
 	if bInst, ok := b.(*object.Instance); ok {
 		if method, has := bInst.Class.Methods["__eq__"]; has {
 			result := applyFunctionWithContext(ctx, method, []object.Object{b, a}, nil, env)
-			if object.IsError(result) || isRaised(result) {
+			if propagates(result) {
 				return false, result
 			}
 			if bl, ok := result.(*object.Boolean); ok {
@@ -481,7 +481,7 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 		return evalInOperator(ctx, left, right, env)
 	case ast.OpNotIn:
 		result := evalInOperator(ctx, left, right, env)
-		if object.IsError(result) || isRaised(result) {
+		if propagates(result) {
 			return result
 		}
 		if result == TRUE {
@@ -1138,7 +1138,7 @@ func formatPercentValue(ctx context.Context, spec string, conversion byte, val o
 		}
 		if inst, ok := val.(*object.Instance); ok {
 			result := callDunderMethodFn(ctx, inst, "__str__", nil, env)
-			if object.IsError(result) || isRaised(result) {
+			if propagates(result) {
 				return "", result
 			}
 			if s, ok := result.(*object.String); ok {
@@ -1151,7 +1151,7 @@ func formatPercentValue(ctx context.Context, spec string, conversion byte, val o
 		// (a raise propagates); other types keep the default representation.
 		if inst, ok := val.(*object.Instance); ok {
 			if result := callDunderMethodFn(ctx, inst, "__repr__", nil, env); result != nil {
-				if object.IsError(result) || isRaised(result) {
+				if propagates(result) {
 					return "", result
 				}
 				if s, ok := result.(*object.String); ok {
@@ -1159,7 +1159,7 @@ func formatPercentValue(ctx context.Context, spec string, conversion byte, val o
 				}
 			}
 			if result := callDunderMethodFn(ctx, inst, "__str__", nil, env); result != nil {
-				if object.IsError(result) || isRaised(result) {
+				if propagates(result) {
 					return "", result
 				}
 				if s, ok := result.(*object.String); ok {
@@ -1722,7 +1722,7 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 		// A raised exception (including an uncatchable security violation such as
 		// PermissionError) from __init__ must propagate out of instantiation, not
 		// be swallowed so the object constructs cleanly.
-		if object.IsError(result) || isRaised(result) {
+		if propagates(result) {
 			return result
 		}
 	}
@@ -2334,7 +2334,7 @@ func renderConvertedValue(ctx context.Context, val object.Object, conv string, e
 	case "r", "a":
 		if inst, ok := val.(*object.Instance); ok {
 			if result := callDunderMethodFn(ctx, inst, "__repr__", nil, env); result != nil {
-				if object.IsError(result) || isRaised(result) {
+				if propagates(result) {
 					return "", result
 				}
 				if s, ok := result.(*object.String); ok {
@@ -2342,7 +2342,7 @@ func renderConvertedValue(ctx context.Context, val object.Object, conv string, e
 				}
 			}
 			if result := callDunderMethodFn(ctx, inst, "__str__", nil, env); result != nil {
-				if object.IsError(result) || isRaised(result) {
+				if propagates(result) {
 					return "", result
 				}
 				if s, ok := result.(*object.String); ok {
@@ -2374,7 +2374,7 @@ func renderConvertedValue(ctx context.Context, val object.Object, conv string, e
 func strInstanceChecked(ctx context.Context, inst *object.Instance, env *object.Environment) (string, object.Object) {
 	for _, name := range []string{"__str__", "__repr__"} {
 		if result := callDunderMethodFn(ctx, inst, name, nil, env); result != nil {
-			if object.IsError(result) || isRaised(result) {
+			if propagates(result) {
 				return "", result
 			}
 			if s, ok := result.(*object.String); ok {
@@ -2439,7 +2439,7 @@ func evalTruthy(ctx context.Context, obj object.Object, env *object.Environment)
 	}
 	if fn, ok := findDunderMethod(inst, "__bool__"); ok {
 		result := applyFunctionWithContext(ctx, fn, prependSelf(inst, nil), nil, inst.Class.Env)
-		if object.IsError(result) || isRaised(result) {
+		if propagates(result) {
 			return false, result
 		}
 		if b, ok := result.(*object.Boolean); ok {
@@ -2448,7 +2448,7 @@ func evalTruthy(ctx context.Context, obj object.Object, env *object.Environment)
 	}
 	if fn, ok := findDunderMethod(inst, "__len__"); ok {
 		result := applyFunctionWithContext(ctx, fn, prependSelf(inst, nil), nil, inst.Class.Env)
-		if object.IsError(result) || isRaised(result) {
+		if propagates(result) {
 			return false, result
 		}
 		if i, ok := result.(*object.Integer); ok {
@@ -2967,7 +2967,7 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 	case *object.Instance:
 		if fn, ok := findDunderMethod(container, "__contains__"); ok {
 			result := applyFunctionWithContext(ctx, fn, prependSelf(container, []object.Object{left}), nil, container.Class.Env)
-			if object.IsError(result) || isRaised(result) {
+			if propagates(result) {
 				return result
 			}
 			return nativeBoolToBooleanObject(isTruthy(result))
@@ -3090,6 +3090,12 @@ func isRaised(obj object.Object) bool {
 	return ok && ex.Raised
 }
 
+// propagates reports whether obj must be handed straight back to the caller:
+// an internal error or a raised exception.
+func propagates(obj object.Object) bool {
+	return object.IsError(obj) || isRaised(obj)
+}
+
 // markRaised flags an exception as actively propagating and returns it. Safe to
 // call on any object; non-exceptions are returned unchanged.
 func markRaised(obj object.Object) object.Object {
@@ -3187,7 +3193,7 @@ func evalExceptTypeSideEffects(ctx context.Context, expr ast.Expression, env *ob
 		// side effects; only a raise or internal error is propagated. Such
 		// except types are rare, so the expression is compiled on the spot.
 		result := compileExpr(expr)(ctx, env)
-		if object.IsError(result) || isRaised(result) {
+		if propagates(result) {
 			return result
 		}
 		return nil
@@ -3288,8 +3294,8 @@ func evalSliceObjectWithContext(ctx context.Context, node *ast.SliceExpression, 
 	sliceObj := &object.Slice{}
 
 	if node.Start != nil {
-		startObj := cachedExpr(&node.StartCompiled, node.Start)(ctx, env)
-		if object.IsError(startObj) || isRaised(startObj) {
+		startObj := cachedExpr(&node.TargetSlots().Start, node.Start)(ctx, env)
+		if propagates(startObj) {
 			return nil, startObj
 		}
 		start, err := startObj.AsInt()
@@ -3300,8 +3306,8 @@ func evalSliceObjectWithContext(ctx context.Context, node *ast.SliceExpression, 
 	}
 
 	if node.End != nil {
-		endObj := cachedExpr(&node.EndCompiled, node.End)(ctx, env)
-		if object.IsError(endObj) || isRaised(endObj) {
+		endObj := cachedExpr(&node.TargetSlots().End, node.End)(ctx, env)
+		if propagates(endObj) {
 			return nil, endObj
 		}
 		end, err := endObj.AsInt()
@@ -3312,8 +3318,8 @@ func evalSliceObjectWithContext(ctx context.Context, node *ast.SliceExpression, 
 	}
 
 	if node.GetStep() != nil {
-		stepObj := cachedExpr(&node.StepCompiled, node.GetStep())(ctx, env)
-		if object.IsError(stepObj) || isRaised(stepObj) {
+		stepObj := cachedExpr(&node.TargetSlots().Step, node.GetStep())(ctx, env)
+		if propagates(stepObj) {
 			return nil, stepObj
 		}
 		step, err := stepObj.AsInt()
@@ -3429,7 +3435,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 		env.Delete(target.Value())
 		return nil
 	case *ast.IndexExpression:
-		obj := cachedExpr(&target.LeftCompiled, target.Left)(ctx, env)
+		obj := cachedExpr(&target.TargetSlots().Left, target.Left)(ctx, env)
 		if object.IsError(obj) {
 			return fmt.Errorf("deletion error")
 		}
@@ -3437,7 +3443,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			return &assignmentExceptionError{ex: obj.(*object.Exception)}
 		}
 
-		index := cachedExpr(&target.IndexCompiled, target.Index)(ctx, env)
+		index := cachedExpr(&target.TargetSlots().Index, target.Index)(ctx, env)
 		if object.IsError(index) {
 			return fmt.Errorf("deletion error")
 		}
@@ -3513,7 +3519,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			return fmt.Errorf("cannot delete index")
 		}
 	case *ast.SliceExpression:
-		obj := cachedExpr(&target.LeftCompiled, target.Left)(ctx, env)
+		obj := cachedExpr(&target.TargetSlots().Left, target.Left)(ctx, env)
 		if object.IsError(obj) {
 			return fmt.Errorf("deletion error")
 		}
@@ -3573,7 +3579,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 // values splices the list (length may change), and stepped slices replace
 // element-by-element with a length match required, as in Python.
 func assignToSliceExpression(ctx context.Context, target *ast.SliceExpression, value object.Object, env *object.Environment) error {
-	obj := fixErrorPos(ctx, cachedExpr(&target.LeftCompiled, target.Left)(ctx, env), target.Left.Line())
+	obj := fixErrorPos(ctx, cachedExpr(&target.TargetSlots().Left, target.Left)(ctx, env), target.Left.Line())
 	if object.IsError(obj) {
 		return fmt.Errorf("assignment error")
 	}
@@ -3713,14 +3719,14 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 		} else {
 			return nil
 		}
-		obj := fixErrorPos(ctx, cachedExpr(&left.LeftCompiled, left.Left)(ctx, env), left.Left.Line())
+		obj := fixErrorPos(ctx, cachedExpr(&left.TargetSlots().Left, left.Left)(ctx, env), left.Left.Line())
 		if isRaised(obj) {
 			return &assignmentExceptionError{ex: obj.(*object.Exception)}
 		}
 		if object.IsError(obj) {
 			return fmt.Errorf("assignment error")
 		}
-		index := cachedExpr(&left.IndexCompiled, left.Index)(ctx, env)
+		index := cachedExpr(&left.TargetSlots().Index, left.Index)(ctx, env)
 		if isRaised(index) {
 			return &assignmentExceptionError{ex: index.(*object.Exception)}
 		}
@@ -3743,7 +3749,7 @@ func assignToNestedFloatArrayIndex(ctx context.Context, expr *ast.IndexExpressio
 		return errNotNestedFloatArrayAssignment
 	}
 
-	baseObj := fixErrorPos(ctx, cachedExpr(&rowExpr.LeftCompiled, rowExpr.Left)(ctx, env), rowExpr.Left.Line())
+	baseObj := fixErrorPos(ctx, cachedExpr(&rowExpr.TargetSlots().Left, rowExpr.Left)(ctx, env), rowExpr.Left.Line())
 	if object.IsError(baseObj) {
 		return fmt.Errorf("assignment error")
 	}
@@ -3752,7 +3758,7 @@ func assignToNestedFloatArrayIndex(ctx context.Context, expr *ast.IndexExpressio
 		return errNotNestedFloatArrayAssignment
 	}
 
-	rowIndexObj := fixErrorPos(ctx, cachedExpr(&rowExpr.IndexCompiled, rowExpr.Index)(ctx, env), rowExpr.Index.Line())
+	rowIndexObj := fixErrorPos(ctx, cachedExpr(&rowExpr.TargetSlots().Index, rowExpr.Index)(ctx, env), rowExpr.Index.Line())
 	if object.IsError(rowIndexObj) {
 		return fmt.Errorf("assignment error")
 	}
@@ -3761,7 +3767,7 @@ func assignToNestedFloatArrayIndex(ctx context.Context, expr *ast.IndexExpressio
 		return fmt.Errorf("float_array index must be integer")
 	}
 
-	colIndexObj := fixErrorPos(ctx, cachedExpr(&expr.IndexCompiled, expr.Index)(ctx, env), expr.Index.Line())
+	colIndexObj := fixErrorPos(ctx, cachedExpr(&expr.TargetSlots().Index, expr.Index)(ctx, env), expr.Index.Line())
 	if object.IsError(colIndexObj) {
 		return fmt.Errorf("assignment error")
 	}
@@ -3928,7 +3934,7 @@ func iterableToSliceChecked(ctx context.Context, obj object.Object, env *object.
 			if !hasNext {
 				break
 			}
-			if object.IsError(val) || isRaised(val) {
+			if propagates(val) {
 				return nil, false, val
 			}
 			elements = append(elements, val)
@@ -3945,7 +3951,7 @@ func iterableToSliceChecked(ctx context.Context, obj object.Object, env *object.
 		return nil, false, nil
 	}
 	iterObj := applyFunctionWithContext(ctx, fn, prependSelf(inst, nil), nil, env)
-	if object.IsError(iterObj) || isRaised(iterObj) {
+	if propagates(iterObj) {
 		return nil, false, iterObj
 	}
 	var iter *object.Iterator
@@ -3966,7 +3972,7 @@ func iterableToSliceChecked(ctx context.Context, obj object.Object, env *object.
 		if !hasNext {
 			break
 		}
-		if object.IsError(val) || isRaised(val) {
+		if propagates(val) {
 			return nil, false, val
 		}
 		elements = append(elements, val)
@@ -3995,7 +4001,7 @@ func instanceToIterator(ctx context.Context, inst *object.Instance, env *object.
 		}
 		// A raised exception or an internal error propagates: yield it so the
 		// loop driver can detect and return it.
-		if object.IsError(result) || isRaised(result) {
+		if propagates(result) {
 			return result, true
 		}
 		return result, true
@@ -4027,7 +4033,7 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 			}
 			// A user __next__ that raised (or errored) yields the exception as
 			// the element; propagate it instead of feeding it to the body.
-			if object.IsError(el) || isRaised(el) {
+			if propagates(el) {
 				return el
 			}
 			if err := fn(el); err != nil {
@@ -4124,7 +4130,7 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 	case *object.Instance:
 		if iterFn, ok := findDunderMethod(o, "__iter__"); ok {
 			iterObj := applyFunctionWithContext(ctx, iterFn, prependSelf(o, nil), nil, nil)
-			if object.IsError(iterObj) || isRaised(iterObj) {
+			if propagates(iterObj) {
 				return iterObj
 			}
 			var iter *object.Iterator
@@ -4142,7 +4148,7 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 				}
 				// Propagate a raised exception / internal error yielded by a
 				// user __next__ instead of feeding it to the body.
-				if object.IsError(el) || isRaised(el) {
+				if propagates(el) {
 					return el
 				}
 				if err := fn(el); err != nil {
@@ -4532,7 +4538,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 	case *ast.OrPattern:
 		for _, alt := range p.Patterns {
 			matched, val := matchPattern(ctx, subject, alt, capturedVars, env)
-			if object.IsError(matched) || isRaised(matched) {
+			if propagates(matched) {
 				return matched, NULL
 			}
 			if matched == TRUE {
@@ -4619,7 +4625,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 			// Mapping patterns are rare, so the key expression is compiled
 			// on the spot rather than cached on the pattern node.
 			keyObj := compileExpr(patternPair.Key)(ctx, env)
-			if object.IsError(keyObj) || isRaised(keyObj) {
+			if propagates(keyObj) {
 				return keyObj, NULL
 			}
 
@@ -4639,7 +4645,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 			} else {
 				// Otherwise, it must match exactly
 				matched, _ := matchPattern(ctx, dictPair.Value, patternPair.Value, capturedVars, env)
-				if object.IsError(matched) || isRaised(matched) {
+				if propagates(matched) {
 					return matched, NULL
 				}
 				if matched == FALSE {
@@ -4663,7 +4669,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 
 		for i, elemExpr := range p.Elements {
 			matched, _ := matchPattern(ctx, listObj.Elements[i], elemExpr, capturedVars, env)
-			if object.IsError(matched) || isRaised(matched) {
+			if propagates(matched) {
 				return matched, NULL
 			}
 			if matched == FALSE {

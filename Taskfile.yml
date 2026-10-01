@@ -22,6 +22,7 @@ tasks:
 
   build:
     desc: Build for current platform (database plugins compiled in)
+    deps: [pgo-profile]
     dir: scriptling-cli
     cmds:
       # go build applies profile-guided optimisation automatically from
@@ -30,8 +31,15 @@ tasks:
 
   pgo-profile:
     desc: Regenerate scriptling-cli/default.pgo from the interpreter benchmarks (profile-guided optimisation for CLI builds)
+    # Skipped when no Go source changed since the profile was last written,
+    # so routine builds pay nothing; a code change costs one benchmark run.
+    sources:
+      - "**/*.go"
+      - go.mod
+    generates:
+      - "{{.CLI_DIR}}/default.pgo"
     cmds:
-      - go test -run '^$' -bench 'BenchmarkInterp_|BenchmarkRuntime_|BenchmarkAIRouter$|BenchmarkItemsUnpack$|BenchmarkFunctionCall' -benchtime=1s -cpuprofile {{.CLI_DIR}}/default.pgo .
+      - go test -run '^$' -bench 'BenchmarkInterp_|BenchmarkRuntime_|BenchmarkAIRouter$|BenchmarkItemsUnpack$|BenchmarkFunctionCall' -benchtime=0.5s -cpuprofile {{.CLI_DIR}}/default.pgo .
       # -cpuprofile keeps the test binary next to the profile; it is not wanted.
       - rm -f scriptling.test
 
@@ -52,6 +60,9 @@ tasks:
     deps: [clean]
     cmds:
       - mkdir -p {{.BIN_DIR}}
+      # Refresh the PGO profile before any platform build so every binary
+      # (release included, via build-all) is optimised against current code.
+      - task: pgo-profile
       - task: build-platforms
       - task: build-slim-platforms
       - task: build-plugins-platforms

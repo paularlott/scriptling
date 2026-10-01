@@ -1253,11 +1253,26 @@ type IndexExpression struct {
 	Index       Expression
 	IsDotAccess bool // true when desugared from dot notation (obj.attr)
 
-	// LeftCompiled and IndexCompiled cache the evaluator's compiled forms of
-	// Left and Index for the paths that use this node as an assignment or
-	// deletion target rather than as a value (d[k] = v, del d[k]).
-	LeftCompiled  CompiledSlot
-	IndexCompiled CompiledSlot
+	// targetSlots caches the evaluator's compiled forms of Left and Index for
+	// the paths that use this node as an assignment or deletion target rather
+	// than as a value (d[k] = v, del d[k]). Allocated on first such use, so
+	// the far more common value nodes pay one pointer.
+	targetSlots atomic.Pointer[IndexTargetSlots]
+}
+
+// IndexTargetSlots holds the compiled sub-expressions of an IndexExpression
+// used as an assignment or deletion target.
+type IndexTargetSlots struct {
+	Left, Index CompiledSlot
+}
+
+// TargetSlots returns the node's target slots, allocating them on first use.
+func (ie *IndexExpression) TargetSlots() *IndexTargetSlots {
+	if p := ie.targetSlots.Load(); p != nil {
+		return p
+	}
+	ie.targetSlots.CompareAndSwap(nil, &IndexTargetSlots{})
+	return ie.targetSlots.Load()
 }
 
 func (ie *IndexExpression) expressionNode() {}
@@ -1279,12 +1294,24 @@ type SliceExpression struct {
 	End      Expression
 	overflow *SliceOverflow
 
-	// Compiled forms of the parts, used when this node is an assignment or
-	// deletion target (a[1:3] = xs, del a[1:3]). See IndexExpression.
-	LeftCompiled  CompiledSlot
-	StartCompiled CompiledSlot
-	EndCompiled   CompiledSlot
-	StepCompiled  CompiledSlot
+	// targetSlots caches the compiled parts when this node is an assignment
+	// or deletion target (a[1:3] = xs, del a[1:3]). See IndexExpression.
+	targetSlots atomic.Pointer[SliceTargetSlots]
+}
+
+// SliceTargetSlots holds the compiled parts of a SliceExpression used as an
+// assignment or deletion target.
+type SliceTargetSlots struct {
+	Left, Start, End, Step CompiledSlot
+}
+
+// TargetSlots returns the node's target slots, allocating them on first use.
+func (se *SliceExpression) TargetSlots() *SliceTargetSlots {
+	if p := se.targetSlots.Load(); p != nil {
+		return p
+	}
+	se.targetSlots.CompareAndSwap(nil, &SliceTargetSlots{})
+	return se.targetSlots.Load()
 }
 
 func (se *SliceExpression) GetStep() Expression {
