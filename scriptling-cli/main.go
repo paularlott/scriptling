@@ -128,6 +128,14 @@ func buildRootCommand() *cli.Command {
 				EnvVars:    []string{"SCRIPTLING_CACHE_DIR"},
 				ConfigPath: []string{"cache.dir"},
 			},
+			&cli.Int64Flag{
+				Name:         "program-cache-max-bytes",
+				Usage:        "Memory budget in bytes for parsed scripts kept in memory between runs (0 = 64MiB default, negative = unlimited)",
+				DefaultValue: 0,
+				Global:       true,
+				EnvVars:      []string{"SCRIPTLING_PROGRAM_CACHE_MAX_BYTES"},
+				ConfigPath:   []string{"cache.program_max_bytes"},
+			},
 			&cli.StringFlag{
 				Name:    "code",
 				Usage:   "Execute inline code string",
@@ -379,6 +387,8 @@ func buildRootCommand() *cli.Command {
 			},
 		},
 		PreRun: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
+			scriptling.SetProgramCacheMaxBytes(programCacheBudget(cmd.GetInt64("program-cache-max-bytes")))
+
 			// JSON-RPC stdio mode uses stdout as the protocol stream, so logs
 			// must go to stderr to avoid corrupting responses.
 			// Stdio protocol modes (JSON-RPC, or MCP without --server) use stdout
@@ -443,6 +453,20 @@ func buildRootCommand() *cli.Command {
 	}
 
 	return cmd
+}
+
+// programCacheBudget maps the --program-cache-max-bytes flag value to the
+// budget handed to scriptling.SetProgramCacheMaxBytes: 0 keeps the library
+// default and a negative value removes the byte limit.
+func programCacheBudget(flag int64) int {
+	switch {
+	case flag == 0:
+		return scriptling.DefaultProgramCacheMaxBytes
+	case flag < 0:
+		return 0
+	default:
+		return int(flag)
+	}
 }
 
 // pendingApp and pendingLibs hold the --package sources opened in PreRun,

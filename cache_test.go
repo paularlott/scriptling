@@ -718,3 +718,81 @@ func TestCache_StressInterleavedOps(t *testing.T) {
 		}
 	}
 }
+
+func TestProgramCache_SetMaxBytesEvictsToBudget(t *testing.T) {
+	c := newTestCache(100)
+	for _, key := range []string{"a", "b", "c", "d"} {
+		c.set(key, dummyProgram(key))
+	}
+	used := c.usedBytes
+	if used == 0 || len(c.entries) != 4 {
+		t.Fatalf("setup: %d entries, %d bytes", len(c.entries), used)
+	}
+
+	// A budget that holds roughly half the entries evicts the oldest ones
+	// immediately and keeps the most recent.
+	c.setMaxBytes(used / 2)
+	if c.usedBytes > used/2 {
+		t.Fatalf("used %d bytes after lowering the budget to %d", c.usedBytes, used/2)
+	}
+	if _, ok := c.get("d"); !ok {
+		t.Fatal("most recently added entry should survive")
+	}
+	if _, ok := c.get("a"); ok {
+		t.Fatal("oldest entry should have been evicted")
+	}
+	if c.stats.evictions.Load() == 0 {
+		t.Fatal("evictions should be counted")
+	}
+
+	// Zero removes the byte limit: everything fits again.
+	c.setMaxBytes(0)
+	for _, key := range []string{"e", "f", "g", "h", "i"} {
+		c.set(key, dummyProgram(key))
+	}
+	if c.maxBytesLimit() != 0 || c.usedBytes <= used {
+		t.Fatalf("limit %d, used %d: byte limit should be off", c.maxBytesLimit(), c.usedBytes)
+	}
+	// Negative is treated as zero.
+	c.setMaxBytes(-1)
+	if c.maxBytesLimit() != 0 {
+		t.Fatalf("negative budget should mean unlimited, got %d", c.maxBytesLimit())
+	}
+}
+
+func TestProgramCache_StatsCountHitsAndMisses(t *testing.T) {
+	c := newTestCache(10)
+	c.get("missing")
+	c.set("a", dummyProgram("a"))
+	c.get("a")
+	c.get("a")
+	c.get("other")
+
+	s := c.snapshot()
+	if s.Hits != 2 || s.Misses != 2 {
+		t.Fatalf("hits=%d misses=%d, want 2 and 2", s.Hits, s.Misses)
+	}
+	if s.Entries != 1 || s.UsedBytes == 0 {
+		t.Fatalf("entries=%d used=%d", s.Entries, s.UsedBytes)
+	}
+	if s.MaxBytes != DefaultProgramCacheMaxBytes {
+		t.Fatalf("MaxBytes=%d, want the default %d", s.MaxBytes, DefaultProgramCacheMaxBytes)
+	}
+}
+
+func TestProgramCache_PublicAPIUsesGlobalCache(t *testing.T) {
+	original := ProgramCacheMaxBytes()
+	t.Cleanup(func() { SetProgramCacheMaxBytes(original) })
+
+	SetProgramCacheMaxBytes(1 << 20)
+	if got := ProgramCacheMaxBytes(); got != 1<<20 {
+		t.Fatalf("ProgramCacheMaxBytes() = %d, want %d", got, 1<<20)
+	}
+	if got := GetProgramCacheStats().MaxBytes; got != 1<<20 {
+		t.Fatalf("stats MaxBytes = %d, want %d", got, 1<<20)
+	}
+	SetProgramCacheMaxBytes(0)
+	if got := ProgramCacheMaxBytes(); got != 0 {
+		t.Fatalf("ProgramCacheMaxBytes() = %d, want 0 (unlimited)", got)
+	}
+}

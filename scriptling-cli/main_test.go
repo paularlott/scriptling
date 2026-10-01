@@ -15,6 +15,7 @@ import (
 
 	"github.com/paularlott/cli"
 	"github.com/paularlott/logger"
+	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/lint"
 	"github.com/paularlott/scriptling/object"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
@@ -1002,5 +1003,20 @@ func TestLoadPluginManagerInsecurePerURL(t *testing.T) {
 		[]string{secureSrv.URL}, nil, nil, nil, []string{insecureSrv.URL}); err == nil ||
 		!strings.Contains(err.Error(), "matches no --plugin") {
 		t.Fatalf("expected a matches-no-plugin error, got: %v", err)
+	}
+}
+
+func TestProgramCacheBudget(t *testing.T) {
+	cases := map[int64]int{
+		0:         scriptling.DefaultProgramCacheMaxBytes,
+		-1:        0,
+		-500:      0,
+		1 << 20:   1 << 20,
+		256 << 20: 256 << 20,
+	}
+	for flag, want := range cases {
+		if got := programCacheBudget(flag); got != want {
+			t.Errorf("programCacheBudget(%d) = %d, want %d", flag, got, want)
+		}
 	}
 }
