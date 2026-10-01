@@ -54,7 +54,6 @@ func measureWakeLatency(t *testing.T, env *Environment, trials int) (mean, worst
 
 func TestGILWakeLatencyProbe(t *testing.T) {
 	env := NewEnvironment()
-	mean, worst := measureWakeLatency(t, env, 300)
 
 	// The old implementation polled TryLock on a 1ms ticker, so a waiter that
 	// missed the unlock instant paid up to a full period (its worst case here
@@ -64,8 +63,20 @@ func TestGILWakeLatencyProbe(t *testing.T) {
 	// waiter's tick timer coalesce into the same timer batch, so the old
 	// MEAN also looked microseconds-fast even while its worst exposed the
 	// polling.
-	if !raceEnabled && worst > 900*time.Microsecond {
-		t.Fatalf("worst wake latency %v (mean %v): a waiter waited a poll period — broadcast wakeup is not working", worst, mean)
+	//
+	// Scheduler latency can also exceed the bound when the machine is busy
+	// (go test ./... runs packages in parallel), so the probe is repeated: a
+	// polling implementation shows the long wait on every attempt, a loaded
+	// scheduler does not. The test fails only when every attempt does.
+	const attempts = 3
+	var mean, worst time.Duration
+	for attempt := 1; attempt <= attempts; attempt++ {
+		mean, worst = measureWakeLatency(t, env, 300)
+		if raceEnabled || worst <= 900*time.Microsecond {
+			t.Logf("wake latency: mean=%v worst=%v (race=%v, attempt %d)", mean, worst, raceEnabled, attempt)
+			return
+		}
+		t.Logf("attempt %d: worst wake latency %v exceeds the bound, retrying", attempt, worst)
 	}
-	t.Logf("wake latency: mean=%v worst=%v (race=%v)", mean, worst, raceEnabled)
+	t.Fatalf("worst wake latency %v (mean %v) on all %d attempts: a waiter waited a poll period — broadcast wakeup is not working", worst, mean, attempts)
 }
