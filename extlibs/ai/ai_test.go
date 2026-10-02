@@ -3160,3 +3160,56 @@ assert results[2]["content"] == "ok", "good call after failures still runs: " + 
 		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
 	}
 }
+
+// The host's max_parallel ceiling applies to Pipeline, completion_parallel
+// and ask_parallel alike; requests under it are untouched and 0 removes it.
+func TestMaxParallelLimitClampsPipelines(t *testing.T) {
+	SetMaxParallelLimit(3)
+	defer SetMaxParallelLimit(0)
+	if MaxParallelLimit() != 3 {
+		t.Fatalf("MaxParallelLimit = %d, want 3", MaxParallelLimit())
+	}
+
+	inst := newPipelineClientInstance(echoMockClient{})
+	ctx := context.Background()
+
+	over := object.NewKwargs(map[string]object.Object{"max_parallel": object.NewInteger(50)})
+	pipe := pipelineMethod(inst, ctx, over, "gpt-4").(*object.Instance)
+	p, perr := getPipelineInstance(pipe)
+	if perr != nil {
+		t.Fatalf("getPipelineInstance: %v", perr.Message)
+	}
+	if p.limiter.max != 3 {
+		t.Fatalf("Pipeline max_parallel=50 under a ceiling of 3 gave %d", p.limiter.max)
+	}
+	completeMethod(pipe, ctx)
+
+	under := object.NewKwargs(map[string]object.Object{"max_parallel": object.NewInteger(2)})
+	pipe = pipelineMethod(inst, ctx, under, "gpt-4").(*object.Instance)
+	p, _ = getPipelineInstance(pipe)
+	if p.limiter.max != 2 {
+		t.Fatalf("Pipeline max_parallel=2 under a ceiling of 3 gave %d", p.limiter.max)
+	}
+	completeMethod(pipe, ctx)
+
+	// The parallel helpers share the clamp and still return every result.
+	items := &object.List{Elements: []object.Object{object.NewString("a"), object.NewString("b"), object.NewString("c"), object.NewString("d")}}
+	res := askParallelMethod(inst, ctx, over, "gpt-4", items)
+	list, ok := res.(*object.List)
+	if !ok || len(list.Elements) != 4 {
+		t.Fatalf("ask_parallel under a ceiling returned %v", res)
+	}
+
+	SetMaxParallelLimit(0)
+	pipe = pipelineMethod(inst, ctx, over, "gpt-4").(*object.Instance)
+	p, _ = getPipelineInstance(pipe)
+	if p.limiter.max != 50 {
+		t.Fatalf("with the ceiling removed, max_parallel=50 gave %d", p.limiter.max)
+	}
+	completeMethod(pipe, ctx)
+
+	SetMaxParallelLimit(-1)
+	if MaxParallelLimit() != 0 {
+		t.Fatalf("negative ceiling stored as %d", MaxParallelLimit())
+	}
+}

@@ -308,7 +308,7 @@ order as the input messages_list. Each element of messages_list is passed to com
 Parameters:
   model (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
   messages_list (list): List of messages, where each element is a string or list of message dicts
-  max_parallel (int, optional): Maximum number of concurrent requests. Default: 1
+  max_parallel (int, optional): Maximum number of concurrent requests. Default: 1. The host may cap this; a larger request is reduced to the cap.
   system_prompt (str, optional): System prompt to use when messages is a string
   tools (list, optional): List of tool schema dicts from ToolRegistry.build()
   temperature (float, optional): Sampling temperature (0.0-2.0)
@@ -333,7 +333,7 @@ same order as the input messages_list. Thinking blocks are automatically removed
 Parameters:
   model (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
   messages_list (list): List of messages, where each element is a string or list of message dicts
-  max_parallel (int, optional): Maximum number of concurrent requests. Default: 1
+  max_parallel (int, optional): Maximum number of concurrent requests. Default: 1. The host may cap this; a larger request is reduced to the cap.
   system_prompt (str, optional): System prompt to use when messages is a string
   tools (list, optional): List of tool schema dicts from ToolRegistry.build()
   temperature (float, optional): Sampling temperature (0.0-2.0)
@@ -356,7 +356,7 @@ wait for all results. This allows prompt generation and inference to overlap.
 
 Parameters:
   model (str): Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
-  max_parallel (int, optional): Maximum concurrent requests. Default: 1
+  max_parallel (int, optional): Maximum concurrent requests. Default: 1. The host may cap this; a larger request is reduced to the cap.
   ask (bool, optional): If True, return plain text strings instead of response dicts. Default: False
   system_prompt (str, optional): System prompt applied to each string message
   tools (list, optional): List of tool schema dicts from ToolRegistry.build()
@@ -1017,7 +1017,7 @@ func extractTextFromResponse(resp object.Object) object.Object {
 }
 
 func completionParallelMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, model string, messagesList any) object.Object {
-	maxParallel := max(1, int(kwargs.MustGetInt("max_parallel", 1)))
+	maxParallel := clampMaxParallel(int(kwargs.MustGetInt("max_parallel", 1)))
 
 	items, err := toSlice(messagesList)
 	if err != nil {
@@ -1035,7 +1035,7 @@ func completionParallelMethod(self *object.Instance, ctx context.Context, kwargs
 }
 
 func askParallelMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, model string, messagesList any) object.Object {
-	maxParallel := max(1, int(kwargs.MustGetInt("max_parallel", 1)))
+	maxParallel := clampMaxParallel(int(kwargs.MustGetInt("max_parallel", 1)))
 
 	items, err := toSlice(messagesList)
 	if err != nil {
@@ -1054,7 +1054,7 @@ func askParallelMethod(self *object.Instance, ctx context.Context, kwargs object
 
 // pipelineMethod implements client.Pipeline(model, **kwargs) for scripts.
 func pipelineMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, model string) object.Object {
-	maxParallel := max(1, int(kwargs.MustGetInt("max_parallel", 1)))
+	maxParallel := clampMaxParallel(int(kwargs.MustGetInt("max_parallel", 1)))
 	ask := kwargs.MustGetBool("ask", false)
 	pi := newPipelineInstance(self, ctx, filterPipelineKwargs(kwargs), model, ask, maxParallel)
 	return createPipelineInstance(pi)

@@ -696,3 +696,33 @@ outcome
 		t.Fatalf("outcome = %q, want %q", got, "ok")
 	}
 }
+
+// The host's ceiling on requests.parallel's max_parallel: larger requests are
+// reduced, smaller ones untouched, below 1 becomes 1, and 0 removes the cap.
+func TestRequestsMaxParallelLimit(t *testing.T) {
+	defer SetRequestsMaxParallelLimit(0)
+
+	SetRequestsMaxParallelLimit(0)
+	if got := clampRequestsMaxParallel(64); got != 64 {
+		t.Fatalf("no ceiling: clamp(64) = %d", got)
+	}
+	if got := clampRequestsMaxParallel(0); got != 1 {
+		t.Fatalf("clamp(0) = %d, want 1", got)
+	}
+
+	SetRequestsMaxParallelLimit(4)
+	if RequestsMaxParallelLimit() != 4 {
+		t.Fatalf("RequestsMaxParallelLimit = %d", RequestsMaxParallelLimit())
+	}
+	if got := clampRequestsMaxParallel(64); got != 4 {
+		t.Fatalf("ceiling 4: clamp(64) = %d", got)
+	}
+	if got := clampRequestsMaxParallel(2); got != 2 {
+		t.Fatalf("ceiling 4: clamp(2) = %d", got)
+	}
+
+	SetRequestsMaxParallelLimit(-3)
+	if RequestsMaxParallelLimit() != 0 {
+		t.Fatalf("negative ceiling stored as %d", RequestsMaxParallelLimit())
+	}
+}

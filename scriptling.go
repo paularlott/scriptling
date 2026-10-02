@@ -2,6 +2,7 @@ package scriptling
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"os"
@@ -470,7 +471,16 @@ func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (result 
 		ctx = evaluator.ContextWithSourceFile(ctx, p.sourceFile)
 	}
 
+	// Register with the process-wide memory guard (see SetMemoryLimit). With
+	// no limit set this is a single atomic load and ctx is returned unchanged.
+	ctx, releaseGuard := memGuard.track(ctx)
+	defer releaseGuard()
+
 	result = evaluator.EvalWithContext(ctx, program, p.env)
+	if stderrors.Is(context.Cause(ctx), ErrMemoryLimitExceeded) {
+		// The evaluator only sees a cancelled context; name the real reason.
+		result = errors.NewError("%s: script cancelled because the process heap exceeded the configured limit (%d bytes)", ErrMemoryLimitExceeded.Error(), MemoryLimit())
+	}
 	return p.handleResult(result, "")
 }
 

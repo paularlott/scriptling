@@ -439,9 +439,7 @@ Returns:
 				if mp, mpErr := kwargs.GetInt("max_parallel", 4); mpErr == nil {
 					maxParallel = mp
 				}
-				if maxParallel < 1 {
-					maxParallel = 1
-				}
+				maxParallel = clampRequestsMaxParallel(maxParallel)
 
 				results := make([]object.Object, len(requestList))
 				sem := make(chan struct{}, maxParallel)
@@ -491,7 +489,7 @@ Parameters:
     - params (dict, optional): Query parameters
     - auth (list/tuple, optional): [username, password] for basic auth
     - timeout (int, optional): Timeout in seconds (default: 30)
-  max_parallel (int): Maximum concurrent requests (default: 4)
+  max_parallel (int): Maximum concurrent requests (default: 4). The host may cap this; a larger request is reduced to the cap.
 
 Returns:
   list: List of Response objects in the same order as input requests.
