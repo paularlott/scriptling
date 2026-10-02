@@ -440,3 +440,50 @@ func TestLineNumbers(t *testing.T) {
 		})
 	}
 }
+
+// A backslash at the end of a line joins it to the next: no NEWLINE token,
+// the continuation line's indentation is ignored, and line numbers still
+// advance. CRLF line endings work too. A backslash followed by anything else
+// is still ILLEGAL.
+func TestLineContinuation(t *testing.T) {
+	input := "x = 1 + \\\n        2\nif x and \\\r\n    y:\n    pass\nz = 3 \\ 4"
+	tests := []struct {
+		expectedType    token.TokenType
+		expectedLiteral string
+		expectedLine    int
+	}{
+		{token.IDENT, "x", 1},
+		{token.ASSIGN, "=", 1},
+		{token.INT, "1", 1},
+		{token.PLUS, "+", 1},
+		{token.INT, "2", 2},
+		{token.NEWLINE, "\\n", 2},
+		{token.IF, "if", 3},
+		{token.IDENT, "x", 3},
+		{token.AND, "and", 3},
+		{token.IDENT, "y", 4},
+		{token.COLON, ":", 4},
+		{token.INDENT, "", 5},
+		{token.PASS, "pass", 5},
+		{token.DEDENT, "", 6},
+		{token.IDENT, "z", 6},
+		{token.ASSIGN, "=", 6},
+		{token.INT, "3", 6},
+		{token.ILLEGAL, "\\", 6},
+		{token.INT, "4", 6},
+		{token.EOF, "", 6},
+	}
+	l := New(input)
+	for i, tt := range tests {
+		tok := l.NextToken()
+		if tok.Type != tt.expectedType {
+			t.Fatalf("tests[%d] - tokentype wrong. expected=%q, got=%q (%q)", i, tt.expectedType, tok.Type, tok.Literal)
+		}
+		if tok.Literal != tt.expectedLiteral {
+			t.Fatalf("tests[%d] - literal wrong. expected=%q, got=%q", i, tt.expectedLiteral, tok.Literal)
+		}
+		if tok.Line != tt.expectedLine {
+			t.Fatalf("tests[%d] - line wrong for %q. expected=%d, got=%d", i, tok.Literal, tt.expectedLine, tok.Line)
+		}
+	}
+}

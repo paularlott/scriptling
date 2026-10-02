@@ -469,10 +469,41 @@ func (l *Lexer) NextToken() token.Token {
 	return tok
 }
 
+// skipWhitespaceExceptNewline skips spaces, tabs and carriage returns. It
+// also consumes an explicit line continuation: a backslash immediately
+// followed by the end of the line joins that line to the next, as in Python,
+// so no NEWLINE token is emitted and the continuation line's indentation is
+// not significant. A backslash followed by anything else is left for
+// NextToken to report as ILLEGAL.
 func (l *Lexer) skipWhitespaceExceptNewline() {
-	for l.ch == ' ' || l.ch == '\t' || l.ch == '\r' {
-		l.readChar()
+	for {
+		switch l.ch {
+		case ' ', '\t', '\r':
+			l.readChar()
+		case '\\':
+			if !l.atLineContinuation() {
+				return
+			}
+			l.readChar() // the backslash
+			if l.ch == '\r' {
+				l.readChar()
+			}
+			l.readChar() // the newline
+			l.line++
+		default:
+			return
+		}
 	}
+}
+
+// atLineContinuation reports whether the current backslash is directly
+// followed by a line ending (optionally CRLF).
+func (l *Lexer) atLineContinuation() bool {
+	next := l.peekChar()
+	if next == '\n' {
+		return true
+	}
+	return next == '\r' && l.peekN(2) == '\n'
 }
 
 func (l *Lexer) skipComment() {
