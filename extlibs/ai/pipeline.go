@@ -14,10 +14,141 @@ type pipelineItem struct {
 	message any
 }
 
-// pipelineBackoff represents an active backoff period.  The done channel is
-// closed when the backoff expires, waking all waiting workers at once.
-type pipelineBackoff struct {
-	done chan struct{}
+// pipelineRateLimitPause is how long every worker waits before starting new
+// work after a completion reports a rate limit.
+const pipelineRateLimitPause = time.Second
+
+// pipelineLimiter is the adaptive concurrency controller shared by a
+// pipeline's workers. It is additive-increase / multiplicative-decrease:
+//
+//   - a completion that hit a rate limit halves the limit (never below 1) and
+//     pauses all workers for pipelineRateLimitPause;
+//   - every run of `limit` consecutive completions without a rate limit raises
+//     the limit by one, back up to the configured max_parallel.
+//
+// Without the recovery step a single 429 early in a long run would leave the
+// pipeline crawling at reduced concurrency for the rest of the job.
+type pipelineLimiter struct {
+	mu         sync.Mutex
+	max        int       // configured max_parallel
+	limit      int       // current concurrency limit, 1 <= limit <= max
+	active     int       // completions in flight
+	successes  int       // consecutive non-rate-limited completions since the last limit change
+	pauseUntil time.Time // no new work starts before this instant
+
+	// wake is signalled (non-blocking, capacity 1) whenever a slot may have
+	// become free: a release or a limit increase. Waiters re-check the state
+	// under mu after waking, and a waiter that acquires while slots remain
+	// re-signals so the wake-up cascades to the next waiter.
+	wake chan struct{}
+}
+
+func newPipelineLimiter(maxParallel int) *pipelineLimiter {
+	if maxParallel < 1 {
+		maxParallel = 1
+	}
+	return &pipelineLimiter{
+		max:   maxParallel,
+		limit: maxParallel,
+		wake:  make(chan struct{}, 1),
+	}
+}
+
+// signal wakes one waiter if any is blocked in acquire. Never blocks.
+func (l *pipelineLimiter) signal() {
+	select {
+	case l.wake <- struct{}{}:
+	default:
+	}
+}
+
+// acquire blocks until a slot is free and no rate-limit pause is active, or
+// ctx is done. Returns false when the context was cancelled.
+func (l *pipelineLimiter) acquire(ctx context.Context) bool {
+	for {
+		if ctx.Err() != nil {
+			return false
+		}
+
+		l.mu.Lock()
+		pause := time.Until(l.pauseUntil)
+		if pause <= 0 && l.active < l.limit {
+			l.active++
+			more := l.active < l.limit
+			l.mu.Unlock()
+			if more {
+				l.signal()
+			}
+			return true
+		}
+		l.mu.Unlock()
+
+		if pause > 0 {
+			timer := time.NewTimer(pause)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return false
+			}
+			continue
+		}
+
+		select {
+		case <-l.wake:
+		case <-ctx.Done():
+			return false
+		}
+	}
+}
+
+// release frees the slot held by a completion and feeds its outcome back into
+// the controller. rateLimited reports whether the completion was rate limited
+// (even if it eventually succeeded after retries); ok reports whether it
+// produced a usable response rather than an error. Errors neither shrink nor
+// grow the limit.
+func (l *pipelineLimiter) release(rateLimited, ok bool) {
+	l.mu.Lock()
+	l.active--
+	switch {
+	case rateLimited:
+		l.limit /= 2
+		if l.limit < 1 {
+			l.limit = 1
+		}
+		l.successes = 0
+		l.pauseUntil = time.Now().Add(pipelineRateLimitPause)
+	case ok && l.limit < l.max:
+		l.successes++
+		if l.successes >= l.limit {
+			l.limit++
+			l.successes = 0
+		}
+	}
+	l.mu.Unlock()
+	l.signal()
+}
+
+// snapshot returns the current limit and in-flight count (for tests).
+func (l *pipelineLimiter) snapshot() (limit, active int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.limit, l.active
+}
+
+// responseRateLimited reports whether a completion result carries retry
+// metadata saying a rate limit was hit along the way.
+func responseRateLimited(res object.Object) bool {
+	respMap, ok := resultAsMap(res)
+	if !ok {
+		return false
+	}
+	retry, ok := respMap["retry"].(map[string]any)
+	if !ok {
+		return false
+	}
+	hit, _ := retry["rate_limit_hit"].(bool)
+	return hit
 }
 
 // PipelineInstance holds the state for a running pipeline.  Workers are
@@ -42,12 +173,8 @@ type PipelineInstance struct {
 	// wg tracks in-flight items: Add(1) in enqueue(), Done() in worker.
 	wg sync.WaitGroup
 
-	// Adaptive concurrency semaphore (same design as runParallel).
-	slots   chan struct{}
-	slotsMu sync.Mutex
-
-	backoffMu  sync.Mutex
-	curBackoff *pipelineBackoff
+	// limiter is the adaptive concurrency controller shared by the workers.
+	limiter *pipelineLimiter
 }
 
 var (
@@ -79,10 +206,10 @@ func newPipelineInstance(
 		kwargs:     kwargs,
 		ask:        ask,
 		queue:      make(chan pipelineItem, 65536),
-		slots:      make(chan struct{}, maxParallel),
+		limiter:    newPipelineLimiter(maxParallel),
 	}
 
-	for i := 0; i < maxParallel; i++ {
+	for i := 0; i < p.limiter.max; i++ {
 		go p.worker()
 	}
 	return p
@@ -91,7 +218,7 @@ func newPipelineInstance(
 // worker drains the queue until it is closed.
 func (p *PipelineInstance) worker() {
 	for item := range p.queue {
-		if !p.acquireSlot() {
+		if !p.limiter.acquire(p.ctx) {
 			// Context was cancelled; store an error for this slot.
 			p.mu.Lock()
 			p.results[item.index] = &object.Error{Message: "context cancelled"}
@@ -102,22 +229,15 @@ func (p *PipelineInstance) worker() {
 
 		// Always run completion so rate-limit retry metadata is preserved.
 		res := completionMethod(p.aiInstance, p.ctx, p.kwargs, p.model, item.message)
-		p.releaseSlot()
+		_, isErr := res.(*object.Error)
 
-		// Adaptive rate-limit: halve concurrency and pause workers on 429.
-		if respMap, ok := resultAsMap(res); ok {
-			if retry, ok := respMap["retry"].(map[string]any); ok {
-				if hit, _ := retry["rate_limit_hit"].(bool); hit {
-					p.applyRateLimit()
-				}
-			}
-		}
+		// Adaptive rate limit: a 429 halves concurrency and pauses the
+		// workers; a run of clean completions grows it back.
+		p.limiter.release(responseRateLimited(res), !isErr)
 
 		// For ask mode, convert the completion response to plain text.
-		if p.ask {
-			if _, isErr := res.(*object.Error); !isErr {
-				res = extractTextFromResponse(res)
-			}
+		if p.ask && !isErr {
+			res = extractTextFromResponse(res)
 		}
 
 		p.mu.Lock()
@@ -125,81 +245,6 @@ func (p *PipelineInstance) worker() {
 		p.mu.Unlock()
 		p.wg.Done()
 	}
-}
-
-// acquireSlot blocks until a concurrency slot is available or ctx is done.
-// Returns false if the context was cancelled.
-func (p *PipelineInstance) acquireSlot() bool {
-	for {
-		// Honour any active backoff before competing for a slot.
-		p.backoffMu.Lock()
-		bs := p.curBackoff
-		p.backoffMu.Unlock()
-
-		if bs != nil {
-			select {
-			case <-bs.done:
-				// backoff elapsed, retry
-			case <-p.ctx.Done():
-				return false
-			}
-			continue
-		}
-
-		p.slotsMu.Lock()
-		s := p.slots
-		p.slotsMu.Unlock()
-
-		select {
-		case s <- struct{}{}:
-			return true
-		case <-p.ctx.Done():
-			return false
-		}
-	}
-}
-
-// releaseSlot frees one concurrency slot.
-func (p *PipelineInstance) releaseSlot() {
-	p.slotsMu.Lock()
-	s := p.slots
-	p.slotsMu.Unlock()
-	select {
-	case <-s:
-	default:
-	}
-}
-
-// applyRateLimit halves the concurrency limit and imposes a 1-second pause.
-func (p *PipelineInstance) applyRateLimit() {
-	p.slotsMu.Lock()
-	cur := cap(p.slots)
-	next := cur / 2
-	if next < 1 {
-		next = 1
-	}
-	if next < cur {
-		p.slots = make(chan struct{}, next)
-	}
-	p.slotsMu.Unlock()
-
-	bs := &pipelineBackoff{done: make(chan struct{})}
-	p.backoffMu.Lock()
-	p.curBackoff = bs
-	p.backoffMu.Unlock()
-
-	go func() {
-		select {
-		case <-time.After(time.Second):
-		case <-p.ctx.Done():
-		}
-		p.backoffMu.Lock()
-		if p.curBackoff == bs {
-			p.curBackoff = nil
-		}
-		p.backoffMu.Unlock()
-		close(bs.done)
-	}()
 }
 
 // enqueue is the internal (Go-side) add used by completion_parallel / ask_parallel.

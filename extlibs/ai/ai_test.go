@@ -2903,6 +2903,113 @@ func TestPipelineRateLimitAdaptive(t *testing.T) {
 	}
 }
 
+// The limiter is AIMD: a rate limit halves the limit and a run of `limit`
+// clean completions grows it back by one, up to max_parallel. Errors do
+// neither.
+func TestPipelineLimiterAIMD(t *testing.T) {
+	l := newPipelineLimiter(4)
+	ctx := context.Background()
+	for i := 0; i < 4; i++ {
+		if !l.acquire(ctx) {
+			t.Fatalf("acquire %d returned false", i)
+		}
+	}
+	if limit, active := l.snapshot(); limit != 4 || active != 4 {
+		t.Fatalf("after 4 acquires: limit=%d active=%d", limit, active)
+	}
+
+	// One rate-limited completion: 4 -> 2, and a pause begins.
+	l.release(true, true)
+	if limit, active := l.snapshot(); limit != 2 || active != 3 {
+		t.Fatalf("after rate limit: limit=%d active=%d", limit, active)
+	}
+	if time.Until(l.pauseUntil) <= 0 {
+		t.Fatal("rate limit did not start a pause")
+	}
+
+	// An error neither shrinks nor grows the limit.
+	l.release(false, false)
+	if limit, _ := l.snapshot(); limit != 2 {
+		t.Fatalf("error changed the limit to %d", limit)
+	}
+
+	// Two clean completions at limit 2 -> 3; three more at limit 3 -> 4.
+	l.release(false, true)
+	l.release(false, true)
+	if limit, _ := l.snapshot(); limit != 3 {
+		t.Fatalf("after 2 clean completions: limit=%d, want 3", limit)
+	}
+	for i := 0; i < 3; i++ {
+		l.release(false, true)
+	}
+	// (active goes negative here because this test releases more than it
+	// acquired; only the limit matters.)
+	if limit, _ := l.snapshot(); limit != 4 {
+		t.Fatalf("after recovery: limit=%d, want 4", limit)
+	}
+
+	// Never above max_parallel.
+	for i := 0; i < 10; i++ {
+		l.release(false, true)
+	}
+	if limit, _ := l.snapshot(); limit != 4 {
+		t.Fatalf("limit exceeded max: %d", limit)
+	}
+
+	// Below 1 is impossible, and a cancelled context is honoured during a pause.
+	l.release(true, true)
+	l.release(true, true)
+	if limit, _ := l.snapshot(); limit != 1 {
+		t.Fatalf("limit fell below 1: %d", limit)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if l.acquire(cancelled) {
+		t.Fatal("acquire succeeded with a cancelled context during a pause")
+	}
+}
+
+// A rate limit early in a long Pipeline run must not leave it at reduced
+// concurrency: once the backlog completes cleanly the limit is back at
+// max_parallel.
+func TestPipelineRateLimitRecovers(t *testing.T) {
+	rl := &rateLimitMockClient{}
+	inst := newPipelineClientInstance(rl)
+	ctx := context.Background()
+	kwargs := object.NewKwargs(map[string]object.Object{"max_parallel": object.NewInteger(4)})
+
+	pipe := pipelineMethod(inst, ctx, kwargs, "gpt-4").(*object.Instance)
+	n := 12
+	for i := 0; i < n; i++ {
+		addMethod(pipe, ctx, fmt.Sprintf("item%d", i))
+	}
+	result := completeMethod(pipe, ctx)
+	list, ok := result.(*object.List)
+	if !ok {
+		t.Fatalf("expected List, got %T", result)
+	}
+	if len(list.Elements) != n {
+		t.Fatalf("expected %d results, got %d", n, len(list.Elements))
+	}
+	for i, elem := range list.Elements {
+		if elem == nil || elem.Type() == object.ERROR_OBJ {
+			t.Errorf("[%d] unexpected nil or error result", i)
+		}
+	}
+
+	p, perr := getPipelineInstance(pipe)
+	if perr != nil {
+		t.Fatalf("getPipelineInstance: %v", perr.Message)
+	}
+	limit, active := p.limiter.snapshot()
+	if active != 0 {
+		t.Errorf("in-flight count after complete() = %d, want 0", active)
+	}
+	if limit != 4 {
+		t.Errorf("limit after a clean backlog = %d, want 4 (max_parallel)", limit)
+	}
+}
+
 func TestCosineSimilarity(t *testing.T) {
 	lib := buildLibrary(nil)
 	fn, ok := lib.Functions()["cosine_similarity"]
