@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,17 +29,24 @@ const (
 
 // clusterEntry tracks a live cluster for teardown.
 type clusterEntry struct {
-	cluster    *gossip.Cluster
-	httpServer *http.Server // serves the "http" transport; nil for sockets
+	cluster     *gossip.Cluster
+	httpServer  *http.Server       // serves the "http" transport; nil for sockets
+	stopStreams context.CancelFunc // ends streams opened by this node
 }
 
-// stop stops the cluster and the HTTP server carrying its transport.
+// stop aborts the node's open streams, then stops the cluster and the HTTP
+// server carrying its transport. It blocks, so call it without the
+// interpreter lock held.
 func (e clusterEntry) stop() {
+	e.stopStreams()
 	e.cluster.Stop()
 	if e.httpServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = e.httpServer.Shutdown(ctx)
+		if e.httpServer.Shutdown(ctx) != nil {
+			// Requests still running after the grace period are cut off.
+			_ = e.httpServer.Close()
+		}
 	}
 }
 
@@ -379,9 +387,9 @@ Parameters:
 // election) fire on gossip's internal goroutines and run under the
 // per-environment interpreter lock via dispatchAsync/dispatchSync, so a script
 // never needs to pump events — it just stays alive for handlers to fire.
-func buildClusterObject(c *gossip.Cluster, clusterID string, eval evaliface.Evaluator, env *object.Environment) *object.Builtin {
+func buildClusterObject(c *gossip.Cluster, clusterID string, clusterCtx context.Context, eval evaliface.Evaluator, env *object.Environment) *object.Builtin {
 	obj := buildClusterBaseObject(c, clusterID, eval, env)
-	for name, method := range streamClusterMethods(c, eval, env) {
+	for name, method := range streamClusterMethods(c, clusterCtx, eval, env) {
 		obj.Attributes[name] = method
 	}
 	return obj
@@ -441,11 +449,13 @@ Parameters:
 					entry, ok := clusters.m[clusterID]
 					delete(clusters.m, clusterID)
 					clusters.Unlock()
-					if ok {
-						entry.stop()
-					} else {
-						c.Stop()
-					}
+					object.RunBlocking(ctx, func() {
+						if ok {
+							entry.stop()
+						} else {
+							c.Stop()
+						}
+					})
 					return &object.Null{}
 				},
 				HelpText: `stop() - Stop the cluster and clean up resources`,
@@ -1239,13 +1249,25 @@ func buildLibrary() *object.Library {
 				// The http transport is carried by an HTTP server on bind_addr
 				// (started below); peers reach it by URL. gossip expects the
 				// request path as BindAddr and a URL to advertise.
-				httpListenAddr := ""
+				var httpListener net.Listener
 				if transport == "http" {
-					httpListenAddr = bindAddr
-					bindAddr = "/"
-					if advertiseAddr == "" {
-						advertiseAddr = "http://" + httpListenAddr
+					// The http transport carries no encryption of its own;
+					// it relies on HTTPS in front of it.
+					if encryptionKey != "" {
+						return errors.NewError("encryption_key is not supported with the http transport; serve it over HTTPS instead")
 					}
+					var listenErr error
+					httpListener, listenErr = net.Listen("tcp", bindAddr)
+					if listenErr != nil {
+						return errors.NewError("failed to listen on %s: %s", bindAddr, listenErr.Error())
+					}
+					var urlErr error
+					advertiseAddr, urlErr = httpAdvertiseURL(advertiseAddr, httpListener.Addr())
+					if urlErr != nil {
+						_ = httpListener.Close()
+						return errors.NewError("%s", urlErr.Error())
+					}
+					bindAddr = "/"
 				}
 				config.BindAddr = bindAddr
 				config.AdvertiseAddr = advertiseAddr
@@ -1390,14 +1412,10 @@ func buildLibrary() *object.Library {
 				case "http":
 					httpTransport := gossip.NewHTTPTransport(config)
 					config.Transport = httpTransport
-					listener, listenErr := net.Listen("tcp", httpListenAddr)
-					if listenErr != nil {
-						return errors.NewError("failed to listen on %s: %s", httpListenAddr, listenErr.Error())
-					}
 					mux := http.NewServeMux()
 					mux.HandleFunc("/", httpTransport.HandleGossipRequest)
 					httpServer = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-					go func() { _ = httpServer.Serve(listener) }()
+					go func() { _ = httpServer.Serve(httpListener) }()
 				case "socket":
 					config.Transport = gossip.NewSocketTransport(config)
 				default:
@@ -1413,24 +1431,25 @@ func buildLibrary() *object.Library {
 				}
 
 				clusterID := cluster.LocalNode().ID.String()
+				clusterCtx, stopStreams := context.WithCancel(context.Background())
 				clusters.Lock()
-				clusters.m[clusterID] = clusterEntry{cluster: cluster, httpServer: httpServer}
+				clusters.m[clusterID] = clusterEntry{cluster: cluster, httpServer: httpServer, stopStreams: stopStreams}
 				clusters.Unlock()
 
-				return buildClusterObject(cluster, clusterID, eval, env)
+				return buildClusterObject(cluster, clusterID, clusterCtx, eval, env)
 			},
 			HelpText: `create(bind_addr="127.0.0.1:8000", node_id="", advertise_addr="", encryption_key="", tags=[], compression=False, bearer_token="", app_version="", transport="socket", ...) - Create a gossip cluster node
 
 Parameters:
   bind_addr (string): Address to bind to (default: "127.0.0.1:8000")
   node_id (string): Unique node ID (auto-generated if empty)
-  advertise_addr (string): Address to advertise to peers (default: same as bind_addr)
-  encryption_key (string): Encryption key (16, 24, or 32 bytes for AES)
+  advertise_addr (string): Address to advertise to peers (default: same as bind_addr); a URL for the http transport, http:// assumed
+  encryption_key (string): Encryption key (16, 24, or 32 bytes for AES); socket transport only
   tags (list): Tags for tag-based message routing
   compression (bool): Enable Snappy compression (default: False)
   bearer_token (string): Authentication bearer token
   app_version (string): Application version for compatibility checks
-  transport (string): Transport type: "socket" or "http" (default: "socket")
+  transport (string): Transport type: "socket" or "http" (default: "socket"); http serves gossip on bind_addr and relies on HTTPS for encryption
 
 Advanced configuration:
   compress_min_size (int): Min message size for compression (default: 256)
@@ -1466,6 +1485,23 @@ func getEnvFromContext(ctx context.Context) *object.Environment {
 		return env
 	}
 	return object.NewEnvironment()
+}
+
+// httpAdvertiseURL returns the URL peers use to reach an http transport node
+// listening on addr. An advertise_addr without a scheme gets http://; with
+// none at all the listener's address is used, which must be a specific host
+// because peers cannot connect to a wildcard such as 0.0.0.0.
+func httpAdvertiseURL(advertise string, addr net.Addr) (string, error) {
+	if advertise != "" {
+		if !strings.Contains(advertise, "://") {
+			advertise = "http://" + advertise
+		}
+		return advertise, nil
+	}
+	if tcp, ok := addr.(*net.TCPAddr); ok && tcp.IP.IsUnspecified() {
+		return "", fmt.Errorf("bind_addr %s listens on all interfaces; set advertise_addr to the URL peers should use", addr)
+	}
+	return "http://" + addr.String(), nil
 }
 
 func Register(registrar interface{ RegisterLibrary(*object.Library) }, loggerInstance logger.Logger) {

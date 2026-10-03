@@ -2204,7 +2204,7 @@ func renderFormatArg(ctx context.Context, val object.Object, spec string, conv s
 		if spec == "" {
 			return rendered, nil
 		}
-		return formatWithSpec(object.NewString(rendered), spec), nil
+		return formatWithSpec(object.NewString(rendered), spec)
 	}
 	return formatValueChecked(ctx, val, spec, env)
 }

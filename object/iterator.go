@@ -1,5 +1,7 @@
 package object
 
+import "fmt"
+
 // Iterator represents a Python-style iterator
 type Iterator struct {
 	next     func() (Object, bool) // Returns (value, hasNext)
@@ -8,6 +10,41 @@ type Iterator struct {
 	// otherwise. len() reports it, matching Python where only range among
 	// the lazy iterators has a length.
 	length int64
+	// infinite marks an iterator that never ends (itertools count, cycle,
+	// repeat and lazy wrappers of them), so collecting it into a list
+	// fails fast instead of allocating until memory runs out.
+	infinite bool
+	// rangeState, for range iterators, reports the next value, the stop
+	// and the step, so the values left can be indexed without iterating.
+	rangeState func() (next, stop, step int64)
+}
+
+// RangeRemaining reports, for a range iterator, the values it has yet to
+// produce: next, next+step, ... (n of them). ok is false for other iterators.
+func (it *Iterator) RangeRemaining() (next, step, n int64, ok bool) {
+	if it.rangeState == nil || it.consumed {
+		return 0, 0, 0, false
+	}
+	next, stop, step := it.rangeState()
+	if step > 0 && stop > next {
+		n = (stop - next + step - 1) / step
+	} else if step < 0 && stop < next {
+		n = (next - stop - step - 1) / -step
+	}
+	return next, step, n, true
+}
+
+// InfiniteIteratorMessage is the error for collecting an infinite iterator.
+const InfiniteIteratorMessage = "cannot collect an infinite iterator (itertools count, cycle or repeat); bound it with itertools.islice() or zip(), or break out of a for loop"
+
+// Infinite reports whether the iterator never ends.
+func (it *Iterator) Infinite() bool {
+	return it.infinite
+}
+
+// NewInfiniteIterator creates an iterator that never ends.
+func NewInfiniteIterator(nextFn func() (Object, bool)) *Iterator {
+	return &Iterator{next: nextFn, length: -1, infinite: true}
 }
 
 // Len returns the iterator's length when statically known (range iterators).
@@ -42,6 +79,9 @@ func IterableToSlice(obj Object) ([]Object, bool) {
 		}
 		return elements, true
 	case *Iterator:
+		if iter.infinite {
+			return nil, false
+		}
 		elements := make([]Object, 0)
 		for {
 			val, hasNext := iter.Next()
@@ -154,7 +194,8 @@ func NewRangeIterator(start, stop, step int64) *Iterator {
 	}
 
 	return &Iterator{
-		length: length,
+		length:     length,
+		rangeState: func() (int64, int64, int64) { return current, stop, step },
 		next: func() (Object, bool) {
 			if step > 0 {
 				if current >= stop {
@@ -205,6 +246,12 @@ func IterSource(iterable Object) (func() (Object, bool), bool) {
 	}, true
 }
 
+// isInfinite reports whether obj is an iterator that never ends.
+func isInfinite(obj Object) bool {
+	it, ok := obj.(*Iterator)
+	return ok && it.infinite
+}
+
 // emptyIterator returns an already-exhausted iterator.
 func emptyIterator() *Iterator {
 	return &Iterator{
@@ -221,6 +268,34 @@ func emptyIterator() *Iterator {
 // exhausted input (Python semantics). An error or raised exception yielded
 // by an input is passed through unwrapped so the consumer propagates it.
 func NewZipIterator(iterables []Object) *Iterator {
+	return newZipIterator(iterables, false)
+}
+
+// NewStrictZipIterator is zip(..., strict=True): inputs of different lengths
+// raise ValueError when the shortest one runs out.
+func NewStrictZipIterator(iterables []Object) *Iterator {
+	return newZipIterator(iterables, true)
+}
+
+// zipLengthError is Python's strict zip() error for argument j (0-based)
+// ending before (shorter) or after (longer) the arguments before it.
+func zipLengthError(j int, shorter bool) Object {
+	which := "longer"
+	if shorter {
+		which = "shorter"
+	}
+	others := "argument 1"
+	if j > 1 {
+		others = fmt.Sprintf("arguments 1-%d", j)
+	}
+	return &Exception{
+		Message:       fmt.Sprintf("zip() argument %d is %s than %s", j+1, which, others),
+		ExceptionType: ExceptionTypeValueError,
+		Raised:        true,
+	}
+}
+
+func newZipIterator(iterables []Object, strict bool) *Iterator {
 	sources := make([]func() (Object, bool), len(iterables))
 	for i, iterable := range iterables {
 		src, ok := IterSource(iterable)
@@ -233,7 +308,11 @@ func NewZipIterator(iterables []Object) *Iterator {
 		return emptyIterator()
 	}
 	done := false
-	return NewIterator(func() (Object, bool) {
+	allInfinite := true
+	for _, iterable := range iterables {
+		allInfinite = allInfinite && isInfinite(iterable)
+	}
+	it := NewIterator(func() (Object, bool) {
 		if done {
 			return nil, false
 		}
@@ -242,6 +321,18 @@ func NewZipIterator(iterables []Object) *Iterator {
 			v, ok := src()
 			if !ok {
 				done = true
+				if !strict {
+					return nil, false
+				}
+				if j > 0 {
+					return zipLengthError(j, true), true
+				}
+				// The first input ended: every other one must end too.
+				for k := 1; k < len(sources); k++ {
+					if _, more := sources[k](); more {
+						return zipLengthError(k, false), true
+					}
+				}
 				return nil, false
 			}
 			if isPropagatingValue(v) {
@@ -252,6 +343,8 @@ func NewZipIterator(iterables []Object) *Iterator {
 		}
 		return &Tuple{Elements: tuple}, true
 	})
+	it.infinite = allInfinite
+	return it
 }
 
 // EnumerateIterator creates an iterator of (index, value) tuples. Iterator
@@ -262,7 +355,7 @@ func NewEnumerateIterator(iterable Object, start int64) *Iterator {
 		return emptyIterator()
 	}
 	index := start
-	return NewIterator(func() (Object, bool) {
+	it := NewIterator(func() (Object, bool) {
 		v, ok := src()
 		if !ok {
 			return nil, false
@@ -274,6 +367,8 @@ func NewEnumerateIterator(iterable Object, start int64) *Iterator {
 		index++
 		return tuple, true
 	})
+	it.infinite = isInfinite(iterable)
+	return it
 }
 
 // ReversedIterator creates an iterator that returns elements in reverse order

@@ -1,8 +1,6 @@
 package lexer
 
 import (
-	"strings"
-
 	"github.com/paularlott/scriptling/token"
 )
 
@@ -343,16 +341,28 @@ func (l *Lexer) NextToken() token.Token {
 		// Triple-quote?
 		if l.peekChar() == quote && l.peekN(2) == quote {
 			tok.Type = token.STRING
-			tok.Literal = l.readTripleString(quote)
+			tok.Literal = UnescapeString(l.readTripleString(quote), false)
 		} else {
 			tok.Type = token.STRING
-			tok.Literal = l.readString(quote)
+			tok.Literal = l.readString(quote, false)
 		}
 	case 'b', 'B':
 		if l.peekChar() == '"' || l.peekChar() == '\'' {
+			quote := l.peekChar()
 			l.readChar() // consume 'b', l.ch == quote
 			tok.Type = token.BYTES
-			tok.Literal = l.readString(l.ch)
+			if l.peekChar() == quote && l.peekN(2) == quote {
+				tok.Literal = UnescapeString(l.readTripleString(quote), true)
+			} else {
+				tok.Literal = l.readString(quote, true)
+			}
+			return tok
+		}
+		if (l.peekChar() == 'r' || l.peekChar() == 'R') && (l.peekN(2) == '"' || l.peekN(2) == '\'') {
+			// Raw bytes: br"..." or br"""..."""
+			l.readChar() // consume 'b'
+			tok.Type = token.BYTES
+			tok.Literal = l.readRawBytes()
 			return tok
 		}
 		tok.Literal = l.readIdentifier()
@@ -404,6 +414,12 @@ func (l *Lexer) NextToken() token.Token {
 				tok.Type = token.STRING
 				tok.Literal = l.readRawString(quote)
 			}
+		} else if (l.peekChar() == 'b' || l.peekChar() == 'B') && (l.peekN(2) == '"' || l.peekN(2) == '\'') {
+			// Raw bytes: rb"..." or rb"""..."""
+			l.readChar() // consume 'r'
+			tok.Type = token.BYTES
+			tok.Literal = l.readRawBytes()
+			return tok
 		} else if (l.peekChar() == 'f' || l.peekChar() == 'F') && (l.peekN(2) == '"' || l.peekN(2) == '\'') {
 			// Raw f-string: rf"..." or rf"""..."""
 			quote := l.peekN(2)
@@ -596,40 +612,26 @@ func (l *Lexer) readNumber() (string, bool) {
 	return l.input[position:l.position], isFloat
 }
 
-func (l *Lexer) readString(quote byte) string {
+// readString reads a quoted literal and decodes its escape sequences;
+// bytesMode decodes them as a bytes literal does.
+func (l *Lexer) readString(quote byte, bytesMode bool) string {
 	// l.ch is opening quote
 	l.readChar() // move to first content char
-	var result strings.Builder
+	position := l.position
 	for l.ch != quote && l.ch != 0 {
 		if l.ch == '\\' {
-			l.readChar() // consume backslash
-			switch l.ch {
-			case 'n':
-				result.WriteByte('\n')
-			case 't':
-				result.WriteByte('\t')
-			case 'r':
-				result.WriteByte('\r')
-			case '\\':
-				result.WriteByte('\\')
-			case '\'':
-				result.WriteByte('\'')
-			case '"':
-				result.WriteByte('"')
-			case '0':
-				result.WriteByte(0)
-			default:
-				// Keep backslash and the character as-is
-				result.WriteByte('\\')
-				result.WriteByte(l.ch)
+			l.readChar() // the escaped character, which may be a quote
+			if l.ch == '\n' {
+				l.line++ // backslash-newline continues the literal
 			}
-		} else {
-			result.WriteByte(l.ch)
 		}
-		l.readChar()
+		if l.ch != 0 {
+			l.readChar()
+		}
 	}
+	raw := l.input[position:l.position]
 	l.readChar() // consume closing quote
-	return result.String()
+	return UnescapeString(raw, bytesMode)
 }
 
 // readRawString reads a raw string but allows quoted characters preceded by a backslash
@@ -675,6 +677,18 @@ func (l *Lexer) readRawString(quote byte) string {
 	l.readPosition = inputLen
 	l.ch = 0
 	return str
+}
+
+// readRawBytes reads the rest of a raw bytes literal once one prefix letter
+// has been consumed: l.ch is the second prefix letter and a quote follows.
+func (l *Lexer) readRawBytes() string {
+	quote := l.peekChar()
+	if l.peekN(2) == quote && l.peekN(3) == quote {
+		l.readChar() // l.ch == quote
+		return l.readRawTripleString(quote)
+	}
+	l.readChar() // l.ch == quote
+	return l.readRawString(quote)
 }
 
 // readTripleString reads a triple-quoted string (”'...”' or """...""").

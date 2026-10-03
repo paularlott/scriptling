@@ -319,9 +319,14 @@ func TestRandomChoicesEmpty(t *testing.T) {
 	fn := randomFn("choices")
 	ctx := context.Background()
 
+	// Python: IndexError for an empty population, unless k is 0.
 	result := fn.Fn(ctx, object.NewKwargs(nil), &object.List{Elements: []object.Object{}})
-	if _, ok := result.(*object.Error); !ok {
-		t.Errorf("choices() with empty population should return error, got %T", result)
+	if ex, ok := result.(*object.Exception); !ok || ex.ExceptionType != object.ExceptionTypeIndexError {
+		t.Errorf("choices() with empty population should raise IndexError, got %v", result)
+	}
+	result = fn.Fn(ctx, object.NewKwargs(map[string]object.Object{"k": object.NewInteger(0)}), &object.List{Elements: []object.Object{}})
+	if list, ok := result.(*object.List); !ok || len(list.Elements) != 0 {
+		t.Errorf("choices([], k=0) should be [], got %v", result)
 	}
 }
 

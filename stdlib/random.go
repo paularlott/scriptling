@@ -227,34 +227,47 @@ Returns a random floating-point number N such that a <= N <= b.`,
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
-			// Python accepts any sequence (list, tuple, str, range, ...).
-			list, ok := object.IterableToSlice(args[0])
-			if !ok {
-				return errors.NewTypeError("sequence", args[0].Type().String())
-			}
 			k, ok := args[1].(*object.Integer)
 			if !ok {
 				return errors.NewTypeError("INTEGER", args[1].Type().String())
 			}
-			n := len(list)
-			if k.IntValue() < 0 || k.IntValue() > int64(n) {
-				return errors.NewError("sample larger than population or is negative")
+			// Python accepts any sequence (list, tuple, str, range, ...). A
+			// range is indexed rather than expanded, so sampling from
+			// range(10**9) costs only k picks.
+			var n int64
+			var at func(i int64) object.Object
+			if it, isIter := args[0].(*object.Iterator); isIter {
+				if start, step, count, isRange := it.RangeRemaining(); isRange {
+					n = count
+					at = func(i int64) object.Object { return object.NewInteger(start + i*step) }
+				}
 			}
-			// Fisher-Yates shuffle for sampling
-			// Create a copy of indices
-			indices := make([]int, n)
-			for i := range indices {
-				indices[i] = i
+			if at == nil {
+				list, ok := object.IterableToSlice(args[0])
+				if !ok {
+					return errors.NewTypeError("sequence", args[0].Type().String())
+				}
+				n = int64(len(list))
+				at = func(i int64) object.Object { return list[i] }
 			}
-			// Shuffle first k elements
-			for i := 0; i < int(k.IntValue()); i++ {
-				j := i + rng.Intn(n-i)
-				indices[i], indices[j] = indices[j], indices[i]
+			if k.IntValue() < 0 || k.IntValue() > n {
+				return errors.NewValueError("Sample larger than population or is negative")
 			}
-			// Build result
+			// Partial Fisher-Yates over a sparse index map: O(k) time and
+			// memory whatever the population size.
+			swapped := map[int64]int64{}
+			index := func(i int64) int64 {
+				if v, ok := swapped[i]; ok {
+					return v
+				}
+				return i
+			}
 			result := make([]object.Object, k.IntValue())
-			for i := 0; i < int(k.IntValue()); i++ {
-				result[i] = list[indices[i]]
+			for i := int64(0); i < k.IntValue(); i++ {
+				j := i + rng.Int63n(n-i)
+				vi, vj := index(i), index(j)
+				swapped[j] = vi
+				result[i] = at(vj)
 			}
 			return &object.List{Elements: result}
 		},
@@ -381,9 +394,6 @@ lambd is 1.0 divided by the desired mean.`,
 				return errors.NewTypeError("sequence", args[0].Type().String())
 			}
 			n := len(population)
-			if n == 0 {
-				return errors.NewError("choices: population cannot be empty")
-			}
 
 			// weightList converts a weights/cum_weights argument (None is nil).
 			weightList := func(name string, obj object.Object) ([]float64, object.Object) {
@@ -403,7 +413,7 @@ lambd is 1.0 divided by the desired mean.`,
 					return nil, errors.NewTypeError("LIST", obj.Type().String())
 				}
 				if len(elems) != n {
-					return nil, errors.NewError("choices: the number of %s does not match the population", name)
+					return nil, errors.NewValueError("The number of %s does not match the population", name)
 				}
 				out := make([]float64, n)
 				for i, w := range elems {
@@ -437,6 +447,31 @@ lambd is 1.0 divided by the desired mean.`,
 			if weights != nil && cumWeights != nil {
 				return newArgTypeError("Cannot specify both weights and cumulative weights")
 			}
+			k := 1
+			kObj := kwargs.Get("k")
+			if len(args) >= 3 {
+				if kwargs.Has("k") {
+					return errors.NewError("choices: k specified both positionally and by keyword")
+				}
+				kObj = args[2]
+			}
+			if kObj != nil {
+				kVal, err := kObj.AsInt()
+				if err != nil {
+					return err
+				}
+				if kVal < 0 {
+					return errors.NewError("choices: k must be non-negative")
+				}
+				k = int(kVal)
+			}
+			if k == 0 {
+				return &object.List{Elements: []object.Object{}}
+			}
+			if n == 0 {
+				return &object.Exception{Message: "Cannot choose from an empty sequence", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
+			}
+
 			if cumWeights == nil {
 				if weights == nil {
 					weights = make([]float64, n)
@@ -456,27 +491,11 @@ lambd is 1.0 divided by the desired mean.`,
 				}
 			}
 			total := cumWeights[n-1]
-			if total <= 0 || math.IsInf(total, 0) || math.IsNaN(total) {
-				return errors.NewError("choices: total of weights must be positive and finite")
+			if math.IsInf(total, 0) || math.IsNaN(total) {
+				return errors.NewValueError("Total of weights must be finite")
 			}
-
-			k := 1
-			kObj := kwargs.Get("k")
-			if len(args) >= 3 {
-				if kwargs.Has("k") {
-					return errors.NewError("choices: k specified both positionally and by keyword")
-				}
-				kObj = args[2]
-			}
-			if kObj != nil {
-				kVal, err := kObj.AsInt()
-				if err != nil {
-					return err
-				}
-				if kVal < 0 {
-					return errors.NewError("choices: k must be non-negative")
-				}
-				k = int(kVal)
+			if total <= 0 {
+				return errors.NewValueError("Total of weights must be greater than zero")
 			}
 
 			result := make([]object.Object, k)
@@ -552,8 +571,12 @@ alpha (shape) and beta (scale) must be positive.`,
 			if kerr != nil {
 				return kerr
 			}
-			if err := errors.RangeArgs(args, 2, 3); err != nil {
+			if err := errors.MaxArgs(args, 3); err != nil {
 				return err
+			}
+			// low and high default to 0 and 1, as in Python.
+			for len(args) < 2 {
+				args = append(args, object.NewFloat(float64(len(args))))
 			}
 			low, err := args[0].AsFloat()
 			if err != nil {

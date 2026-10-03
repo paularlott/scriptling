@@ -11,9 +11,12 @@ import (
 
 // isCallable reports whether obj can be called as a function/predicate.
 func isCallable(obj object.Object) bool {
-	switch obj.(type) {
+	switch o := obj.(type) {
 	case *object.Builtin, *object.Function, *object.LambdaFunction, *object.BoundMethod, *object.Class:
 		return true
+	case *object.Instance:
+		_, ok := o.Class.Methods["__call__"]
+		return ok
 	default:
 		return false
 	}
@@ -127,7 +130,7 @@ var ItertoolsLibrary = object.NewLibrary(ItertoolsLibraryName, map[string]*objec
 						result = append(result, elems...)
 						break
 					}
-					return errors.NewTypeError("iterable", arg.Type().String())
+					return notIterableError(arg)
 				}
 			}
 			return &object.List{Elements: result}
@@ -156,7 +159,7 @@ Example:
 				return terr
 			}
 			if timesObj == nil {
-				return object.NewIterator(func() (object.Object, bool) {
+				return object.NewInfiniteIterator(func() (object.Object, bool) {
 					return elem, true
 				})
 			}
@@ -164,25 +167,24 @@ Example:
 			if !ok {
 				return errors.NewTypeError("INTEGER", timesObj.Type().String())
 			}
-			times := n.IntValue()
-			if times < 0 {
-				times = 0
-			}
-			result := make([]object.Object, times)
-			for i := int64(0); i < times; i++ {
-				result[i] = elem
-			}
-			return &object.List{Elements: result}
+			left := n.IntValue()
+			return object.NewIterator(func() (object.Object, bool) {
+				if left <= 0 {
+					return nil, false
+				}
+				left--
+				return elem, true
+			})
 		},
 		HelpText: `repeat(elem[, times]) - Repeat element times times
 
-Returns a list with the element repeated times times. Without times it
-returns an infinite iterator, like Python's itertools.repeat; consume it with
-next(), zip() or itertools.islice.
+Returns an iterator giving elem times times, or forever when times is
+omitted, like Python's itertools.repeat. Use list() for a list, or consume an
+endless one with next(), zip() or itertools.islice.
 
 Example:
-  itertools.repeat("x", 3) -> ["x", "x", "x"]
-  itertools.repeat(0, 5) -> [0, 0, 0, 0, 0]`,
+  list(itertools.repeat("x", 3)) -> ["x", "x", "x"]
+  list(zip(range(3), itertools.repeat(0))) -> [(0, 0), (1, 0), (2, 0)]`,
 	},
 	"cycle": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -200,7 +202,9 @@ Example:
 				var saved []object.Object
 				exhausted := false
 				i := 0
-				return object.NewIterator(func() (object.Object, bool) {
+				// Endless unless the source is empty, which is not worth
+				// consuming the source up front to find out.
+				return object.NewInfiniteIterator(func() (object.Object, bool) {
 					if !exhausted {
 						if v, ok := src.Next(); ok {
 							if !object.IsError(v) && v.Type() != object.EXCEPTION_OBJ {
@@ -233,7 +237,7 @@ Example:
 					elements = elems
 					break
 				}
-				return errors.NewTypeError("iterable", args[0].Type().String())
+				return notIterableError(args[0])
 			}
 			if len(args) == 2 {
 				n, ok := args[1].(*object.Integer)
@@ -254,7 +258,7 @@ Example:
 				return object.NewIterator(func() (object.Object, bool) { return nil, false })
 			}
 			i := 0
-			return object.NewIterator(func() (object.Object, bool) {
+			return object.NewInfiniteIterator(func() (object.Object, bool) {
 				elem := elements[i%len(elements)]
 				i++
 				return elem, true
@@ -309,7 +313,7 @@ materialized list of n repetitions.`,
 				ti, tInt := stepObj.(*object.Integer)
 				if sInt && tInt {
 					cur, step := si.IntValue(), ti.IntValue()
-					return object.NewIterator(func() (object.Object, bool) {
+					return object.NewInfiniteIterator(func() (object.Object, bool) {
 						v := object.NewInteger(cur)
 						cur += step
 						return v, true
@@ -317,7 +321,7 @@ materialized list of n repetitions.`,
 				}
 				curF, _ := startObj.AsFloat()
 				stepF, _ := stepObj.AsFloat()
-				return object.NewIterator(func() (object.Object, bool) {
+				return object.NewInfiniteIterator(func() (object.Object, bool) {
 					v := object.NewFloat(curF)
 					curF += stepF
 					return v, true
@@ -369,7 +373,7 @@ next(), zip(), enumerate() or itertools.islice.`,
 
 			elements, ok := object.IterableToSlice(args[0])
 			if !ok {
-				return errors.NewTypeError("iterable", args[0].Type().String())
+				return notIterableError(args[0])
 			}
 
 			var start, stop, step int64 = 0, 0, 1
@@ -416,7 +420,7 @@ Example:
 			// cycle()) must stop at the first false predicate, as in Python.
 			next, ok := object.IterSource(args[1])
 			if !ok {
-				return errors.NewTypeError("iterable", args[1].Type().String())
+				return notIterableError(args[1])
 			}
 			result := []object.Object{}
 			for {
@@ -466,7 +470,7 @@ Example:
 					elements = elems
 					break
 				}
-				return errors.NewTypeError("iterable", args[1].Type().String())
+				return notIterableError(args[1])
 			}
 			result := []object.Object{}
 			dropping := true
@@ -527,7 +531,7 @@ Example:
 						iterables[i] = elems
 						break
 					}
-					return errors.NewTypeError("iterable", arg.Type().String())
+					return notIterableError(arg)
 				}
 				if len(iterables[i]) > maxLen {
 					maxLen = len(iterables[i])
@@ -594,7 +598,7 @@ Example:
 						collected = append(collected, elems)
 						break
 					}
-					return errors.NewTypeError("iterable", arg.Type().String())
+					return notIterableError(arg)
 				}
 			}
 			iterables := make([][]object.Object, 0, int(repeatN)*len(collected))
@@ -670,7 +674,7 @@ Example:
 					elements = elems
 					break
 				}
-				return errors.NewTypeError("iterable", args[0].Type().String())
+				return notIterableError(args[0])
 			}
 
 			r := len(elements)
@@ -682,7 +686,10 @@ Example:
 				}
 			}
 
-			if r < 0 || r > len(elements) {
+			if r < 0 {
+				return errors.NewValueError("r must be non-negative")
+			}
+			if r > len(elements) {
 				return &object.List{Elements: []object.Object{}}
 			}
 
@@ -725,7 +732,7 @@ Example:
 					elements = elems
 					break
 				}
-				return errors.NewTypeError("iterable", args[0].Type().String())
+				return notIterableError(args[0])
 			}
 
 			rArg, ok := args[1].(*object.Integer)
@@ -776,7 +783,7 @@ Example:
 					elements = elems
 					break
 				}
-				return errors.NewTypeError("iterable", args[0].Type().String())
+				return notIterableError(args[0])
 			}
 
 			rArg, ok := args[1].(*object.Integer)
@@ -822,7 +829,7 @@ Example:
 					elements = elems
 					break
 				}
-				return errors.NewTypeError("iterable", args[0].Type().String())
+				return notIterableError(args[0])
 			}
 
 			if err := checkKwargs("groupby", kwargs, "key"); err != nil {
@@ -907,7 +914,7 @@ Example:
 					elements = elems
 					break
 				}
-				return errors.NewTypeError("iterable", args[0].Type().String())
+				return notIterableError(args[0])
 			}
 
 			if err := checkKwargs("accumulate", kwargs, "func", "initial"); err != nil {
@@ -980,7 +987,7 @@ Example:
 					elements = elems
 					break
 				}
-				return errors.NewTypeError("iterable", args[1].Type().String())
+				return notIterableError(args[1])
 			}
 			result := []object.Object{}
 			for _, elem := range elements {
@@ -1022,7 +1029,7 @@ Example:
 					elements = elems
 					break
 				}
-				return errors.NewTypeError("iterable", args[1].Type().String())
+				return notIterableError(args[1])
 			}
 			result := []object.Object{}
 			for _, elem := range elements {
@@ -1060,11 +1067,11 @@ Example:
 			// itertools.cycle stops with the shorter input, as in Python.
 			data, dataOK := object.IterSource(args[0])
 			if !dataOK {
-				return errors.NewTypeError("iterable", args[0].Type().String())
+				return notIterableError(args[0])
 			}
 			selectors, selOK := object.IterSource(args[1])
 			if !selOK {
-				return errors.NewTypeError("iterable", args[1].Type().String())
+				return notIterableError(args[1])
 			}
 
 			result := []object.Object{}
@@ -1112,7 +1119,7 @@ Example:
 					elements = elems
 					break
 				}
-				return errors.NewTypeError("iterable", args[0].Type().String())
+				return notIterableError(args[0])
 			}
 
 			if len(elements) < 2 {
@@ -1158,7 +1165,7 @@ Example:
 					elements = elems
 					break
 				}
-				return errors.NewTypeError("iterable", args[0].Type().String())
+				return notIterableError(args[0])
 			}
 
 			n, ok := args[1].(*object.Integer)
@@ -1166,7 +1173,7 @@ Example:
 				return errors.NewTypeError("INTEGER", args[1].Type().String())
 			}
 			if n.IntValue() <= 0 {
-				return errors.NewError("n must be positive")
+				return errors.NewValueError("n must be at least one")
 			}
 
 			batchSize := int(n.IntValue())
@@ -1351,4 +1358,13 @@ func parseIsliceBounds(args []object.Object, start, stop, step *int64) object.Ob
 		}
 	}
 	return nil
+}
+
+// notIterableError is the error for an argument that cannot be collected
+// into a list: a clear message for an infinite iterator, else a TypeError.
+func notIterableError(obj object.Object) object.Object {
+	if it, ok := obj.(*object.Iterator); ok && it.Infinite() {
+		return errors.NewError("%s", object.InfiniteIteratorMessage)
+	}
+	return errors.NewTypeError("iterable", obj.Type().String())
 }

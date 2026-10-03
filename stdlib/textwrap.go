@@ -357,9 +357,24 @@ func textwrapArgs(fname string, args []object.Object, kwargs object.Kwargs) (str
 
 func runesLen(s string) int { return len([]rune(s)) }
 
-func isWrapSpace(r rune) bool { return unicode.IsSpace(r) }
+// isWrapSpace is TextWrapper's whitespace: ASCII only, so a non-breaking
+// space stays inside a word.
+func isWrapSpace(r rune) bool {
+	switch r {
+	case ' ', '\t', '\n', '\v', '\f', '\r':
+		return true
+	}
+	return false
+}
 
-func isWrapLetter(r rune) bool { return unicode.IsLetter(r) }
+// isWordChar is the regex class \w.
+func isWordChar(r rune) bool { return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) }
+
+// isWrapLetter is TextWrapper's letter class [^\d\W].
+func isWrapLetter(r rune) bool { return isWordChar(r) && !unicode.IsDigit(r) }
+
+// isWordPunct is TextWrapper's word_punct class [\w!"'&.,?].
+func isWordPunct(r rune) bool { return isWordChar(r) || strings.ContainsRune(`!"'&.,?`, r) }
 
 // expandTabsStr mirrors str.expandtabs(tabsize).
 func expandTabsStr(s string, tabsize int) string {
@@ -384,48 +399,68 @@ func expandTabsStr(s string, tabsize int) string {
 	return b.String()
 }
 
-// splitChunks splits text into alternating whitespace and word chunks, as
-// TextWrapper._split. With breakOnHyphens, hyphenated words also split after
-// a hyphen that joins letters ("well-known" -> "well-", "known").
+// splitChunks splits text into chunks as TextWrapper._split does: runs of
+// whitespace and words. With breakOnHyphens it follows CPython's wordsep_re,
+// also splitting after a hyphen that joins letters ("well-known" -> "well-",
+// "known") and around em-dashes ("three--four" -> "three", "--", "four").
 func (w *textWrapper) splitChunks(text string) []string {
 	rs := []rune(text)
+	at := func(k int) rune {
+		if k < 0 || k >= len(rs) {
+			return 0
+		}
+		return rs[k]
+	}
+	// dashRun returns the end of the run of hyphens starting at k when it is
+	// an em-dash: two or more hyphens followed by a word character.
+	dashRun := func(k int) (int, bool) {
+		m := k
+		for m < len(rs) && rs[m] == '-' {
+			m++
+		}
+		return m, m-k >= 2 && m < len(rs) && isWordChar(rs[m])
+	}
 	var chunks []string
 	i := 0
 	for i < len(rs) {
 		j := i
-		if isWrapSpace(rs[i]) {
+		switch {
+		case isWrapSpace(rs[i]):
 			for j < len(rs) && isWrapSpace(rs[j]) {
 				j++
 			}
-			chunks = append(chunks, string(rs[i:j]))
-			i = j
-			continue
-		}
-		for j < len(rs) && !isWrapSpace(rs[j]) {
-			j++
-		}
-		word := rs[i:j]
-		if w.breakOnHyphens {
-			start := 0
-			for k := 0; k < len(word); k++ {
-				if word[k] != '-' || k == start {
-					continue
-				}
-				// Preceded by two letters, or by letter-hyphen-letter.
-				before := (k-start >= 2 && isWrapLetter(word[k-1]) && isWrapLetter(word[k-2])) ||
-					(k-start >= 3 && isWrapLetter(word[k-1]) && word[k-2] == '-' && isWrapLetter(word[k-3]))
-				// Followed by letter, optional hyphen, letter.
-				after := k+2 < len(word) && isWrapLetter(word[k+1]) &&
-					(isWrapLetter(word[k+2]) || (word[k+2] == '-' && k+3 < len(word) && isWrapLetter(word[k+3])))
-				if before && after {
-					chunks = append(chunks, string(word[start:k+1]))
-					start = k + 1
+		case !w.breakOnHyphens:
+			for j < len(rs) && !isWrapSpace(rs[j]) {
+				j++
+			}
+		default:
+			// An em-dash after a word.
+			if rs[i] == '-' && i > 0 && isWordPunct(rs[i-1]) {
+				if end, ok := dashRun(i); ok {
+					j = end
+					break
 				}
 			}
-			chunks = append(chunks, string(word[start:]))
-		} else {
-			chunks = append(chunks, string(word))
+			// The shortest word ending at a hyphen between letters, before
+			// whitespace or the end, or before an em-dash.
+			for j = i + 1; ; j++ {
+				if rs[j-1] == '-' && isWrapLetter(at(j)) &&
+					(isWrapLetter(at(j+1)) || (at(j+1) == '-' && isWrapLetter(at(j+2)))) &&
+					((isWrapLetter(at(j-2)) && isWrapLetter(at(j-3))) ||
+						(isWrapLetter(at(j-2)) && at(j-3) == '-' && isWrapLetter(at(j-4)))) {
+					break
+				}
+				if j == len(rs) || isWrapSpace(rs[j]) {
+					break
+				}
+				if rs[j] == '-' && isWordPunct(rs[j-1]) {
+					if _, ok := dashRun(j); ok {
+						break
+					}
+				}
+			}
 		}
+		chunks = append(chunks, string(rs[i:j]))
 		i = j
 	}
 	return chunks

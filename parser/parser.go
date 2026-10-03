@@ -1126,29 +1126,8 @@ func (p *Parser) parseFStringContent(content string, raw bool) ([]string, []ast.
 			current.WriteByte('}')
 			i += 2
 		} else if !raw && content[i] == '\\' && i+1 < len(content) {
-			// Handle escape sequences (only for non-raw f-strings)
-			i++ // consume backslash
-			switch content[i] {
-			case 'n':
-				current.WriteByte('\n')
-			case 't':
-				current.WriteByte('\t')
-			case 'r':
-				current.WriteByte('\r')
-			case '\\':
-				current.WriteByte('\\')
-			case '\'':
-				current.WriteByte('\'')
-			case '"':
-				current.WriteByte('"')
-			case '0':
-				current.WriteByte(0)
-			default:
-				// Keep backslash and the character as-is
-				current.WriteByte('\\')
-				current.WriteByte(content[i])
-			}
-			i++
+			// Escape sequences (only for non-raw f-strings)
+			i = lexer.AppendEscape(&current, content, i, false)
 		} else {
 			current.WriteByte(content[i])
 			i++

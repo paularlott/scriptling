@@ -4,7 +4,9 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -186,5 +188,176 @@ r
 	}
 	if got := result.Inspect(); got != "{'echo': {'k': [1, 2]}, 'type': 210}" && got != "{'type': 210, 'echo': {'k': [1, 2]}}" {
 		t.Fatalf("reply = %s", got)
+	}
+}
+
+// startSlowStreamServer starts a node whose type-220 handler sends 256 KiB
+// (enough to be flushed to the caller), holds the reply open for a few
+// seconds, then sends "late". It returns a client joined to it with the
+// stream open as s and its first 4 bytes read into first.
+func startSlowStreamServer(t *testing.T) (client *scriptling.Scriptling) {
+	t.Helper()
+	addr := freeAddr(t)
+	server := newScriptling()
+	if _, err := server.Eval(`
+import time
+import scriptling.net.gossip as gossip
+a = gossip.create(bind_addr="` + addr + `")
+def slow(msg, w):
+    w.write(b"x" * 262144)
+    time.sleep(3)
+    w.write("late")
+a.handle_stream(220, slow)
+a.start()
+a_id = a.local_node()["id"]
+`); err != nil {
+		t.Fatalf("server: %v", err)
+	}
+	t.Cleanup(func() { server.Eval("a.stop()") })
+	aID, _ := server.GetVarAsString("a_id")
+
+	client = newScriptling()
+	if _, err := client.Eval(`
+import time
+import scriptling.net.gossip as gossip
+b = gossip.create(bind_addr="127.0.0.1:0")
+b.start()
+b.join(["` + addr + `"])
+for _ in range(200):
+    if b.get_node("` + aID + `") is not None:
+        break
+    time.sleep(0.02)
+s = b.open_stream("` + aID + `", 220, None)
+first = s.read(4)
+`); err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	return client
+}
+
+// close() from another task must end a read blocked waiting for data, rather
+// than wait for the read (which used to deadlock).
+func TestGossipStreamCloseDuringRead(t *testing.T) {
+	client := startSlowStreamServer(t)
+	defer client.Eval("b.stop()")
+
+	readErr := make(chan error, 1)
+	go func() {
+		_, err := client.Eval(`s.read()`)
+		readErr <- err
+	}()
+	time.Sleep(200 * time.Millisecond)
+
+	closed := make(chan error, 1)
+	go func() {
+		_, err := client.Eval(`s.close()`)
+		closed <- err
+	}()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("close: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("close() blocked behind a pending read")
+	}
+	select {
+	case err := <-readErr:
+		if err == nil || !strings.Contains(err.Error(), "closed stream") {
+			t.Fatalf("read after close: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("read did not end when the stream was closed")
+	}
+}
+
+// Stopping the cluster ends the streams it opened.
+func TestGossipStreamEndsWithCluster(t *testing.T) {
+	client := startSlowStreamServer(t)
+
+	readErr := make(chan error, 1)
+	go func() {
+		_, err := client.Eval(`s.read()`)
+		readErr <- err
+	}()
+	time.Sleep(200 * time.Millisecond)
+
+	stopped := make(chan error, 1)
+	go func() {
+		_, err := client.Eval(`b.stop()`)
+		stopped <- err
+	}()
+	for _, ch := range []chan error{stopped, readErr} {
+		select {
+		case <-ch:
+		case <-time.After(2500 * time.Millisecond):
+			t.Fatal("stream outlived its cluster")
+		}
+	}
+}
+
+// read(size) allocates for the data received, not the size asked for.
+func TestGossipStreamReadHugeSize(t *testing.T) {
+	client := startSlowStreamServer(t)
+	defer client.Eval("b.stop()")
+	result, err := client.Eval(`first`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.Inspect(); got != `b'xxxx'` {
+		t.Fatalf("read(4) = %s", got)
+	}
+	result, err = client.Eval(`
+data = s.read(1 << 40)
+s.close()
+data
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(result.(*object.Bytes).BytesValue()); got != 262144-4+4 {
+		t.Fatalf("read(huge) returned %d bytes", got)
+	}
+}
+
+func TestGossipHTTPTransportOptions(t *testing.T) {
+	p := newScriptling()
+	result, err := p.Eval(`
+import scriptling.net.gossip as gossip
+out = []
+for kw in [
+    {"encryption_key": "0123456789abcdef"},
+    {"bind_addr": "0.0.0.0:0"},
+]:
+    try:
+        gossip.create(transport="http", **kw)
+        out.append("no error")
+    except Exception as e:
+        out.append(str(e))
+
+# A port-0 bind advertises the port actually chosen; a scheme-less
+# advertise_addr becomes a URL.
+c = gossip.create(transport="http", bind_addr="127.0.0.1:0")
+out.append(c.local_node()["addr"])
+c.stop()
+c = gossip.create(transport="http", bind_addr="127.0.0.1:0", advertise_addr="node1.example:9000")
+out.append(c.local_node()["addr"])
+c.stop()
+out
+`)
+	if err != nil {
+		t.Fatalf("script: %v", err)
+	}
+	list := result.(*object.List)
+	checks := []func(string) bool{
+		func(s string) bool { return strings.Contains(s, "not supported with the http transport") },
+		func(s string) bool { return strings.Contains(s, "set advertise_addr") },
+		func(s string) bool { return strings.HasPrefix(s, "http://127.0.0.1:") && !strings.HasSuffix(s, ":0") },
+		func(s string) bool { return s == "http://node1.example:9000" },
+	}
+	for i, ok := range checks {
+		if got := list.Elements[i].Inspect(); !ok(got) {
+			t.Errorf("result %d = %s", i, got)
+		}
 	}
 }

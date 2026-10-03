@@ -346,34 +346,7 @@ For exceptions, returns just the exception message.`,
 				}
 				return object.NewInteger(int64(arg.FloatValue()))
 			case *object.String:
-				s := strings.ReplaceAll(strings.TrimSpace(arg.StringValue()), "_", "")
-				sign := ""
-				if strings.HasPrefix(s, "-") || strings.HasPrefix(s, "+") {
-					sign, s = s[:1], s[1:]
-				}
-				if hasBase {
-					lower := strings.ToLower(s)
-					switch {
-					case (base == 16 || base == 0) && strings.HasPrefix(lower, "0x"):
-						s, base = s[2:], 16
-					case (base == 2 || base == 0) && strings.HasPrefix(lower, "0b"):
-						s, base = s[2:], 2
-					case (base == 8 || base == 0) && strings.HasPrefix(lower, "0o"):
-						s, base = s[2:], 8
-					case base == 0:
-						// Base 0 interprets the string as an integer literal:
-						// no prefix means decimal, and leading zeros are invalid.
-						base = 10
-						if len(s) > 1 && s[0] == '0' && strings.Trim(s, "0") != "" {
-							return errors.NewValueError("invalid literal for int() with base 0: %q", arg.StringValue())
-						}
-					}
-				}
-				val, err := strconv.ParseInt(sign+s, base, 64)
-				if err != nil {
-					return errors.NewError("cannot convert %q to int with base %d", arg.StringValue(), base)
-				}
-				return object.NewInteger(val)
+				return parseIntLiteral(arg.StringValue(), base)
 			default:
 				return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
 			}
@@ -396,12 +369,7 @@ Examples: int("ff", 16) == 255, int("0b1010", 2) == 10, int("77", 8) == 63`,
 			case *object.Integer:
 				return object.NewFloat(float64(arg.IntValue()))
 			case *object.String:
-				var val float64
-				_, err := fmt.Sscanf(strings.ReplaceAll(arg.StringValue(), "_", ""), "%f", &val)
-				if err != nil {
-					return errors.NewError("cannot convert %s to float", arg.StringValue())
-				}
-				return object.NewFloat(val)
+				return parseFloatLiteral(arg.StringValue())
 			default:
 				return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
 			}
@@ -632,6 +600,17 @@ Default start is 0. Use list(enumerate(...)) to get a list.`,
 	},
 	"zip": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			strict := false
+			for _, k := range kwargs.Keys() {
+				if k != "strict" {
+					return &object.Exception{Message: fmt.Sprintf("zip() got an unexpected keyword argument '%s'", k), ExceptionType: object.ExceptionTypeTypeError, Raised: true}
+				}
+				truthy, errObj := evalTruthyFn(ctx, kwargs.Get(k), GetEnvFromContext(ctx))
+				if errObj != nil {
+					return errObj
+				}
+				strict = truthy
+			}
 			if len(args) == 0 {
 				// Return empty iterator for no arguments
 				return object.NewZipIterator([]object.Object{})
@@ -649,12 +628,16 @@ Default start is 0. Use list(enumerate(...)) to get a list.`,
 				}
 				iterArgs[i] = iterArg
 			}
+			if strict {
+				return object.NewStrictZipIterator(iterArgs)
+			}
 			return object.NewZipIterator(iterArgs)
 		},
 		HelpText: `zip(*iterables) - Aggregate elements from each iterable
 
 Returns an iterator of tuples, where the i-th tuple contains the i-th element from each of the argument sequences or iterables.
-The iterator stops when the shortest input iterable is exhausted.
+The iterator stops when the shortest input iterable is exhausted; with
+strict=True, inputs of different lengths raise ValueError.
 Use list(zip(...)) to get a list.`,
 	},
 	"super": {
@@ -732,22 +715,13 @@ Use list(zip(...)) to get a list.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			iterable, ok, rerr := iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx))
+			env := GetEnvFromContext(ctx)
+			found, rerr := firstWhereTruthy(ctx, args[0], env, true)
 			if rerr != nil {
 				return rerr
 			}
-			if !ok {
-				return errors.NewTypeError("iterable", args[0].Type().String())
-			}
-			env := GetEnvFromContext(ctx)
-			for _, elem := range iterable {
-				truthy, errObj := evalTruthyFn(ctx, elem, env)
-				if errObj != nil {
-					return errObj
-				}
-				if truthy {
-					return TRUE
-				}
+			if found {
+				return TRUE
 			}
 			return FALSE
 		},
@@ -761,22 +735,13 @@ Returns False for an empty iterable.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			iterable, ok, rerr := iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx))
+			env := GetEnvFromContext(ctx)
+			found, rerr := firstWhereTruthy(ctx, args[0], env, false)
 			if rerr != nil {
 				return rerr
 			}
-			if !ok {
-				return errors.NewTypeError("iterable", args[0].Type().String())
-			}
-			env := GetEnvFromContext(ctx)
-			for _, elem := range iterable {
-				truthy, errObj := evalTruthyFn(ctx, elem, env)
-				if errObj != nil {
-					return errObj
-				}
-				if !truthy {
-					return FALSE
-				}
+			if found {
+				return FALSE
 			}
 			return TRUE
 		},
@@ -1070,12 +1035,7 @@ Equivalent to (a // b, a % b) for integers.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			switch args[0].(type) {
-			case *object.Function, *object.Builtin, *object.LambdaFunction:
-				return TRUE
-			default:
-				return FALSE
-			}
+			return nativeBoolToBooleanObject(isCallableObject(args[0]))
 		},
 		HelpText: `callable(object) - Return True if the object appears callable, False otherwise`,
 	},
@@ -2458,11 +2418,34 @@ func init() {
 
 	// Exception constructors (TypeError, ValueError, ...) are types for
 	// isinstance(), matched with the same hierarchy as except clauses.
+	// Base classes of the hierarchy (see exceptionParents) for except
+	// clauses, isinstance() and raise.
+	for _, name := range []string{"BaseException", "LookupError", "ArithmeticError"} {
+		builtins[name] = exceptionConstructor(name)
+	}
 	exceptionBuiltins = make(map[*object.Builtin]string)
 	for name, b := range builtins {
-		if name == "Exception" || name == "StopIteration" || strings.HasSuffix(name, "Error") {
+		if name == "Exception" || name == "BaseException" || name == "StopIteration" || strings.HasSuffix(name, "Error") {
 			exceptionBuiltins[b] = name
 		}
+	}
+}
+
+// exceptionConstructor builds the constructor for a built-in exception type.
+func exceptionConstructor(name string) *object.Builtin {
+	return &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{Message: message, ExceptionType: name}
+		},
+		HelpText: name + "([message]) - Create a " + name + " exception",
 	}
 }
 
@@ -2485,21 +2468,16 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 
 	// Check for key function - support builtin, function, and lambda
 	var keyFunc object.Object
+	keyArg := kwargs.Get("key")
 	if len(args) == 2 {
-		switch args[1].(type) {
-		case *object.Builtin, *object.Function, *object.LambdaFunction:
-			keyFunc = args[1]
-		default:
-			return errors.NewError("sorted() key parameter must be a function")
-		}
-	} else if kwargs.Len() > 0 {
-		if keyArg := kwargs.Get("key"); keyArg != nil {
-			switch keyArg.(type) {
-			case *object.Builtin, *object.Function, *object.LambdaFunction:
-				keyFunc = keyArg
-			default:
-				return errors.NewError("sorted() key parameter must be a function")
+		keyArg = args[1]
+	}
+	if keyArg != nil {
+		if _, isNone := keyArg.(*object.Null); !isNone {
+			if !isCallableObject(keyArg) {
+				return notCallableError(keyArg)
 			}
+			keyFunc = keyArg
 		}
 	}
 
@@ -2522,13 +2500,7 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 			keys = make([]object.Object, n)
 			env := GetEnvFromContext(ctx)
 			for i, elem := range elements {
-				var key object.Object
-				switch fn := keyFunc.(type) {
-				case *object.Builtin:
-					key = fn.Fn(ctx, object.NewKwargs(nil), elem)
-				case *object.Function, *object.LambdaFunction:
-					key = applyFunctionWithContext(ctx, fn, []object.Object{elem}, nil, env)
-				}
+				key := applyFunctionWithContext(ctx, keyFunc, []object.Object{elem}, nil, env)
 				if propagates(key) {
 					return key
 				}
@@ -2577,11 +2549,119 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 	return &object.List{Elements: elements}
 }
 
+// hasIteratorArg reports whether any argument is a lazy iterator, which map()
+// and filter() must pull from lazily (it may be infinite) rather than
+// collect up front.
+func hasIteratorArg(args []object.Object) bool {
+	for _, arg := range args {
+		if _, ok := arg.(*object.Iterator); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// lazyApply returns an iterator over the iterables zipped together, passing
+// each tuple to step. step returns the value to yield and whether to yield
+// it; an error or raised exception from a source or from step is yielded and
+// ends the iteration.
+func lazyApply(ctx context.Context, iterables []object.Object, step func(items []object.Object) (object.Object, bool)) object.Object {
+	sources := make([]object.Object, len(iterables))
+	for i, arg := range iterables {
+		src, rerr := acceptInstanceIterableFn(ctx, arg)
+		if rerr != nil {
+			return rerr
+		}
+		if src == nil {
+			return errors.NewTypeError("iterable (LIST, TUPLE, STRING, ITERATOR)", arg.Type().String())
+		}
+		sources[i] = src
+	}
+	zipped := object.NewZipIterator(sources)
+	done := false
+	next := func() (object.Object, bool) {
+		for !done {
+			t, ok := zipped.Next()
+			if !ok {
+				done = true
+				break
+			}
+			if propagates(t) {
+				done = true
+				return t, true
+			}
+			res, keep := step(t.(*object.Tuple).Elements)
+			if propagates(res) {
+				done = true
+				return res, true
+			}
+			if keep {
+				return res, true
+			}
+		}
+		return nil, false
+	}
+	if zipped.Infinite() {
+		return object.NewInfiniteIterator(next)
+	}
+	return object.NewIterator(next)
+}
+
+// firstWhereTruthy reports whether any element of iterable has truthiness
+// want, stopping at the first one; iterators are pulled one element at a
+// time, so any() and all() finish on infinite iterators as in Python.
+func firstWhereTruthy(ctx context.Context, iterable object.Object, env *object.Environment, want bool) (bool, object.Object) {
+	test := func(elem object.Object) (bool, object.Object) {
+		if propagates(elem) {
+			return false, elem
+		}
+		truthy, errObj := evalTruthyFn(ctx, elem, env)
+		if errObj != nil {
+			return false, errObj
+		}
+		return truthy == want, nil
+	}
+	if it, ok := iterable.(*object.Iterator); ok {
+		cc := newContextChecker(ctx)
+		for {
+			if err := cc.check(); err != nil {
+				return false, err
+			}
+			elem, more := it.Next()
+			if !more {
+				return false, nil
+			}
+			if hit, errObj := test(elem); errObj != nil || hit {
+				return hit, errObj
+			}
+		}
+	}
+	elements, ok, rerr := iterableToSliceCheckedFn(ctx, iterable, env)
+	if rerr != nil {
+		return false, rerr
+	}
+	if !ok {
+		return false, errors.NewTypeError("iterable", iterable.Type().String())
+	}
+	for _, elem := range elements {
+		if hit, errObj := test(elem); errObj != nil || hit {
+			return hit, errObj
+		}
+	}
+	return false, nil
+}
+
 func mapFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 	if len(args) < 2 {
 		return errors.NewError("map() requires at least 2 arguments")
 	}
 	fn := args[0]
+	if hasIteratorArg(args[1:]) {
+		env := GetEnvFromContext(ctx)
+		return lazyApply(ctx, args[1:], func(items []object.Object) (object.Object, bool) {
+			return applyFunctionWithContext(ctx, fn, append([]object.Object(nil), items...), nil, env), true
+		})
+	}
 	// Get all iterables as slices
 	iterables := make([][]object.Object, len(args)-1)
 	minLen := -1
@@ -2633,6 +2713,24 @@ func filterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 		return err
 	}
 	fn := args[0]
+	if hasIteratorArg(args[1:]) {
+		env := GetEnvFromContext(ctx)
+		return lazyApply(ctx, args[1:], func(items []object.Object) (object.Object, bool) {
+			elem := items[0]
+			test := elem
+			if fn.Type() != object.NULL_OBJ {
+				test = applyFunctionWithContext(ctx, fn, []object.Object{elem}, nil, env)
+				if propagates(test) {
+					return test, true
+				}
+			}
+			truthy, errObj := evalTruthyFn(ctx, test, env)
+			if errObj != nil {
+				return errObj, true
+			}
+			return elem, truthy
+		})
+	}
 	iterable, ok, rerr := iterableToSliceCheckedFn(ctx, args[1], GetEnvFromContext(ctx))
 	if rerr != nil {
 		return rerr
@@ -3113,17 +3211,11 @@ func iterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 	case *object.Instance:
 		env := GetEnvFromContext(ctx)
 		if fn, ok := findDunderMethod(o, "__iter__"); ok {
-			result := applyFunctionWithContext(ctx, fn, prependSelf(o, nil), nil, env)
-			if object.IsError(result) || result.Type() == object.EXCEPTION_OBJ {
-				return result
+			iter, errObj := callIter(ctx, o, fn, env)
+			if errObj != nil {
+				return errObj
 			}
-			if iterInst, ok := result.(*object.Instance); ok {
-				return instanceToIterator(ctx, iterInst, env)
-			}
-			if iterIter, ok := result.(*object.Iterator); ok {
-				return iterIter
-			}
-			return errors.NewError("__iter__ must return an iterator")
+			return iter
 		}
 		if _, ok := findDunderMethod(o, "__next__"); ok {
 			return instanceToIterator(ctx, o, env)
@@ -3229,13 +3321,11 @@ func minMaxFunctionImpl(ctx context.Context, kwargs object.Kwargs, wantMax bool,
 	// Optional key function: builtin, function, or lambda, like sorted().
 	var keyFunc object.Object
 	if k := kwargs.Get("key"); k != nil {
-		switch k.(type) {
-		case *object.Builtin, *object.Function, *object.LambdaFunction:
+		if _, isNone := k.(*object.Null); !isNone { // key=None means no key
+			if !isCallableObject(k) {
+				return notCallableError(k)
+			}
 			keyFunc = k
-		case *object.Null:
-			// key=None means no key, as in Python.
-		default:
-			return errors.NewError("%s() key parameter must be a function", name)
 		}
 	}
 
@@ -3290,13 +3380,7 @@ func minMaxFunctionImpl(ctx context.Context, kwargs object.Kwargs, wantMax bool,
 		if keyFunc == nil {
 			return elem, nil
 		}
-		var key object.Object
-		switch fn := keyFunc.(type) {
-		case *object.Builtin:
-			key = fn.Fn(ctx, object.NewKwargs(nil), elem)
-		case *object.Function, *object.LambdaFunction:
-			key = applyFunctionWithContext(ctx, fn, []object.Object{elem}, nil, env)
-		}
+		key := applyFunctionWithContext(ctx, keyFunc, []object.Object{elem}, nil, env)
 		if propagates(key) {
 			return nil, key
 		}
@@ -3324,4 +3408,135 @@ func minMaxFunctionImpl(ctx context.Context, kwargs object.Kwargs, wantMax bool,
 		}
 	}
 	return best
+}
+
+// parseIntLiteral converts a string to an int as Python's int(s, base) does:
+// surrounding whitespace, a sign, a prefix matching the base (any prefix for
+// base 0) and single underscores between digits are allowed. Anything else
+// is a ValueError naming the original string.
+func parseIntLiteral(text string, base int) object.Object {
+	invalid := func() object.Object {
+		return errors.NewValueError("invalid literal for int() with base %d: %s", base, object.ReprString(text))
+	}
+	s := strings.TrimSpace(text)
+	sign := ""
+	if strings.HasPrefix(s, "-") || strings.HasPrefix(s, "+") {
+		sign, s = s[:1], s[1:]
+	}
+	digitBase := base
+	prefixed := false
+	if len(s) >= 2 && s[0] == '0' {
+		switch p := s[1] | 0x20; {
+		case p == 'x' && (base == 16 || base == 0):
+			digitBase, prefixed = 16, true
+		case p == 'b' && (base == 2 || base == 0):
+			digitBase, prefixed = 2, true
+		case p == 'o' && (base == 8 || base == 0):
+			digitBase, prefixed = 8, true
+		}
+	}
+	if prefixed {
+		s = s[2:]
+		// An underscore may follow the prefix: 0x_ff.
+		s = strings.TrimPrefix(s, "_")
+	} else if base == 0 {
+		// Base 0 reads a decimal literal, where leading zeros are invalid.
+		digitBase = 10
+		if len(s) > 1 && s[0] == '0' && strings.Trim(s, "0_") != "" {
+			return invalid()
+		}
+	}
+	digits, ok := stripDigitUnderscores(s, isAlnumDigit)
+	if !ok || digits == "" {
+		return invalid()
+	}
+	val, err := strconv.ParseInt(sign+digits, digitBase, 64)
+	if err != nil {
+		if isRangeError(err) {
+			return errors.NewValueError("int() value out of range: %s", object.ReprString(text))
+		}
+		return invalid()
+	}
+	return object.NewInteger(val)
+}
+
+// parseFloatLiteral converts a string to a float as Python's float(s) does:
+// decimal and exponent forms, inf/infinity/nan in any case, and single
+// underscores between digits.
+func parseFloatLiteral(text string) object.Object {
+	invalid := func() object.Object {
+		return errors.NewValueError("could not convert string to float: %s", object.ReprString(text))
+	}
+	s := strings.TrimSpace(text)
+	body := strings.TrimLeft(s, "+-")
+	if len(s)-len(body) > 1 {
+		return invalid()
+	}
+	switch strings.ToLower(body) {
+	case "inf", "infinity", "nan":
+		v, _ := strconv.ParseFloat(s, 64)
+		return object.NewFloat(v)
+	}
+	// Go also accepts hex floats and other forms Python's float() rejects.
+	for _, c := range body {
+		if !(c >= '0' && c <= '9') && c != '.' && c != 'e' && c != 'E' && c != '+' && c != '-' && c != '_' {
+			return invalid()
+		}
+	}
+	digits, ok := stripDigitUnderscores(s, isDecimalDigit)
+	if !ok {
+		return invalid()
+	}
+	v, err := strconv.ParseFloat(digits, 64)
+	if err != nil && !isRangeError(err) {
+		return invalid()
+	}
+	return object.NewFloat(v)
+}
+
+func isRangeError(err error) bool {
+	numErr, ok := err.(*strconv.NumError)
+	return ok && numErr.Err == strconv.ErrRange
+}
+
+func isDecimalDigit(c byte) bool { return c >= '0' && c <= '9' }
+
+func isAlnumDigit(c byte) bool {
+	return c >= '0' && c <= '9' || c|0x20 >= 'a' && c|0x20 <= 'z'
+}
+
+// stripDigitUnderscores removes underscores that sit between two digits (in
+// any base) and reports false for any other underscore.
+func stripDigitUnderscores(s string, isDigit func(c byte) bool) (string, bool) {
+	if !strings.Contains(s, "_") {
+		return s, true
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '_' {
+			if i == 0 || i == len(s)-1 || !isDigit(s[i-1]) || !isDigit(s[i+1]) {
+				return "", false
+			}
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String(), true
+}
+
+// isCallableObject reports whether obj can be called: functions, lambdas,
+// builtins, bound methods, classes, instances defining __call__ and
+// callable Go clients.
+func isCallableObject(obj object.Object) bool {
+	switch o := obj.(type) {
+	case *object.Function, *object.LambdaFunction, *object.Builtin, *object.BoundMethod, *object.Class:
+		return true
+	case *object.Instance:
+		_, ok := o.Class.Methods["__call__"]
+		return ok
+	case *object.ClientWrapper:
+		_, ok := o.Client.(object.ScriptCallable)
+		return ok
+	}
+	return false
 }

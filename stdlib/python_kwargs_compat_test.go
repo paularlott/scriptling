@@ -120,7 +120,7 @@ out`, "[(0, 'a'), (1, 'b'), (2, 'a'), (3, 'b')]"},
 		// legacy finite forms are unchanged
 		{`list(itertools.islice(itertools.count(0, 5), 3))`, "[0, 5, 10]"},
 		{`itertools.cycle([1, 2], 2)`, "[1, 2, 1, 2]"},
-		{`itertools.repeat("x", 2)`, "['x', 'x']"},
+		{`list(itertools.repeat("x", 2))`, "['x', 'x']"},
 	})
 }
 

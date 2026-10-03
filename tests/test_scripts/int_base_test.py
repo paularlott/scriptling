@@ -33,8 +33,8 @@ assert int(42) == 42, f"expected 42, got {int(42)}"
 try:
     int("xyz", 10)
     assert False, "should have raised"
-except Exception as e:
-    assert "cannot convert" in str(e), f"unexpected error: {e}"
+except ValueError as e:
+    assert str(e) == "invalid literal for int() with base 10: 'xyz'", f"unexpected error: {e}"
 
 # base out of range raises error
 try:

@@ -9,10 +9,10 @@ result = itertools.chain([1], [2], [3])
 assert result == [1, 2, 3]
 
 # Test repeat
-result = itertools.repeat("x", 3)
+result = list(itertools.repeat("x", 3))
 assert result == ["x", "x", "x"]
 
-result = itertools.repeat(0, 5)
+result = list(itertools.repeat(0, 5))
 assert result == [0, 0, 0, 0, 0]
 
 # Test cycle

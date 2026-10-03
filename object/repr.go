@@ -3,6 +3,8 @@ package object
 import (
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // ReprString renders a string the way Python's repr does: single quotes by
@@ -33,15 +35,41 @@ func ReprString(v string) string {
 			out.WriteByte(c)
 		case c < 0x20 || c == 0x7f:
 			// Other control characters print as \xNN, as in Python.
-			out.WriteString("\\x")
-			out.WriteByte("0123456789abcdef"[c>>4])
-			out.WriteByte("0123456789abcdef"[c&0xf])
+			writeHexEscape(&out, 'x', rune(c), 2)
+		case c >= utf8.RuneSelf:
+			r, size := utf8.DecodeRuneInString(v[i:])
+			i += size - 1
+			if r == utf8.RuneError && size == 1 || reprPrintable(r) {
+				out.WriteString(v[i-size+1 : i+1])
+			} else if r < 0x100 {
+				writeHexEscape(&out, 'x', r, 2)
+			} else if r < 0x10000 {
+				writeHexEscape(&out, 'u', r, 4)
+			} else {
+				writeHexEscape(&out, 'U', r, 8)
+			}
 		default:
 			out.WriteByte(c)
 		}
 	}
 	out.WriteByte(quote)
 	return out.String()
+}
+
+// reprPrintable reports whether repr shows a non-ASCII rune as is. Python
+// escapes separators other than the ASCII space, control and format
+// characters, surrogates, private-use and unassigned code points.
+func reprPrintable(r rune) bool {
+	return !unicode.In(r, unicode.Zs, unicode.Zl, unicode.Zp, unicode.Cc, unicode.Cf, unicode.Cs, unicode.Co) &&
+		(unicode.IsPrint(r) || unicode.IsGraphic(r) || unicode.In(r, unicode.L, unicode.M, unicode.N, unicode.P, unicode.S))
+}
+
+func writeHexEscape(out *strings.Builder, kind byte, r rune, digits int) {
+	out.WriteByte('\\')
+	out.WriteByte(kind)
+	for shift := (digits - 1) * 4; shift >= 0; shift -= 4 {
+		out.WriteByte("0123456789abcdef"[(r>>uint(shift))&0xf])
+	}
 }
 
 // ReprException renders an exception as Python's repr does:

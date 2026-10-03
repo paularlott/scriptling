@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
@@ -1373,9 +1374,28 @@ func evalReflectedInstanceComparison(ctx context.Context, operator ast.Op, left,
 	}
 	method, has := rInst.Class.Methods[methodName]
 	if !has {
+		if operator == ast.OpNeq {
+			if eq, hasEq := rInst.Class.Methods["__eq__"]; hasEq {
+				return negateEquality(ctx, eq, []object.Object{right, left}, env)
+			}
+		}
 		return nil
 	}
 	return applyFunctionWithContext(ctx, method, []object.Object{right, left}, nil, env)
+}
+
+// negateEquality implements != for a class that defines __eq__ but not
+// __ne__: as in Python 3, the result is the inverse of __eq__.
+func negateEquality(ctx context.Context, eq object.Object, args []object.Object, env *object.Environment) object.Object {
+	result := applyFunctionWithContext(ctx, eq, args, nil, env)
+	if propagates(result) {
+		return result
+	}
+	truthy, errObj := evalTruthyFn(ctx, result, env)
+	if errObj != nil {
+		return errObj
+	}
+	return nativeBoolToBooleanObject(!truthy)
 }
 
 // evalInstanceInfixExpression handles operators on instances by calling dunder methods
@@ -1389,6 +1409,11 @@ func evalInstanceInfixExpression(ctx context.Context, operator ast.Op, left *obj
 	// Look up the dunder method in the instance's class
 	method, ok := left.Class.Methods[methodName]
 	if !ok {
+		if operator == ast.OpNeq {
+			if eq, hasEq := left.Class.Methods["__eq__"]; hasEq {
+				return negateEquality(ctx, eq, []object.Object{left, right}, env)
+			}
+		}
 		return nil // No dunder method defined
 	}
 
@@ -1438,6 +1463,9 @@ func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Obje
 			unpacked = append(unpacked, object.NewString(string(r)))
 		}
 	case *object.Iterator:
+		if val.Infinite() {
+			return nil, errors.NewError("%s", object.InfiniteIteratorMessage)
+		}
 		for {
 			elem, hasNext := val.Next()
 			if !hasNext {
@@ -2336,7 +2364,7 @@ func isPlainFormattable(val object.Object) bool {
 // renders with str semantics), raising TypeError for a non-empty one.
 func formatValueChecked(ctx context.Context, val object.Object, spec string, env *object.Environment) (string, object.Object) {
 	if isPlainFormattable(val) {
-		return formatWithSpec(val, spec), nil
+		return formatWithSpec(val, spec)
 	}
 	switch v := val.(type) {
 	case *object.Instance:
@@ -3186,7 +3214,7 @@ func matchesExceptionType(exception object.Object, exceptTypeExpr ast.Expression
 		return false
 	}
 
-	return matchesExceptionTypeExpr(exceptionType, exceptTypeExpr)
+	return matchesExceptionTypeExpr(exceptionType, exceptTypeExpr, env)
 }
 
 // evalExceptTypeSideEffects evaluates the parts of an except-type expression
@@ -3225,9 +3253,19 @@ func evalExceptTypeSideEffects(ctx context.Context, expr ast.Expression, env *ob
 	}
 }
 
-func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expression) bool {
+func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expression, env *object.Environment) bool {
 	switch expr := exceptTypeExpr.(type) {
 	case *ast.Identifier:
+		// A name bound to an exception type or a tuple of them (E = KeyError,
+		// errs = (KeyError, IndexError)) matches what it holds; other names
+		// match by name.
+		if env != nil {
+			if val, ok := env.Get(expr.Value()); ok {
+				if matched, isType := matchesExceptionValue(exceptionType, val); isType {
+					return matched
+				}
+			}
+		}
 		return matchesNamedExceptionType(exceptionType, expr.Value())
 	case *ast.IndexExpression:
 		// Handle dotted names like requests.HTTPError — match on the last component
@@ -3236,14 +3274,14 @@ func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expressio
 		return matchesNamedExceptionType(exceptionType, parts[len(parts)-1])
 	case *ast.TupleLiteral:
 		for _, elem := range expr.Elements {
-			if matchesExceptionTypeExpr(exceptionType, elem) {
+			if matchesExceptionTypeExpr(exceptionType, elem, env) {
 				return true
 			}
 		}
 		return false
 	case *ast.ListLiteral:
 		for _, elem := range expr.Elements {
-			if matchesExceptionTypeExpr(exceptionType, elem) {
+			if matchesExceptionTypeExpr(exceptionType, elem, env) {
 				return true
 			}
 		}
@@ -3253,11 +3291,60 @@ func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expressio
 	}
 }
 
+// matchesExceptionValue matches an exception against a value used as an
+// except type: an exception type, or a tuple of them. isType is false when
+// val is neither.
+func matchesExceptionValue(exceptionType string, val object.Object) (matched, isType bool) {
+	switch v := val.(type) {
+	case *object.Builtin:
+		name, ok := exceptionBuiltins[v]
+		return ok && matchesNamedExceptionType(exceptionType, name), ok
+	case *object.Tuple:
+		for _, elem := range v.Elements {
+			m, ok := matchesExceptionValue(exceptionType, elem)
+			if !ok {
+				return false, false
+			}
+			if m {
+				matched = true
+			}
+		}
+		return matched, true
+	}
+	return false, false
+}
+
+// exceptionParents gives the parent of each built-in exception type that has
+// one besides Exception, so except clauses and isinstance() follow Python's
+// hierarchy (except LookupError catches KeyError).
+var exceptionParents = map[string]string{
+	object.ExceptionTypeKeyError:          "LookupError",
+	object.ExceptionTypeIndexError:        "LookupError",
+	object.ExceptionTypeZeroDivisionError: "ArithmeticError",
+	"OverflowError":                       "ArithmeticError",
+	"FileNotFoundError":                   "OSError",
+	"FileExistsError":                     "OSError",
+	"IsADirectoryError":                   "OSError",
+	"NotADirectoryError":                  "OSError",
+	"TimeoutError":                        "OSError",
+	"ConnectionError":                     "OSError",
+	"ModuleNotFoundError":                 "ImportError",
+	"RecursionError":                      "RuntimeError",
+	"NotImplementedError":                 "RuntimeError",
+	"UnicodeError":                        "ValueError",
+	"JSONDecodeError":                     "ValueError",
+}
+
 func matchesNamedExceptionType(exceptionType, expectedType string) bool {
-	if expectedType == "Exception" {
+	if expectedType == "Exception" || expectedType == "BaseException" {
 		return true
 	}
-	return exceptionType == expectedType
+	for t := exceptionType; t != ""; t = exceptionParents[t] {
+		if t == expectedType {
+			return true
+		}
+	}
+	return false
 }
 
 // buildDottedName constructs a dotted name from nested IndexExpression nodes
@@ -3922,25 +4009,40 @@ var acceptInstanceIterableFn func(ctx context.Context, obj object.Object) (objec
 // resulting iterator is likewise pulled lazily. It returns (nil, nil) when
 // the object is not an iterable type at all, so the caller reports its usual
 // type error.
+// callIter calls an instance's __iter__ method fn and returns the iterator
+// it gives: a native iterator, or a script iterator (an instance with
+// __next__) wrapped as one. Anything else is Python's TypeError.
+func callIter(ctx context.Context, inst *object.Instance, fn object.Object, env *object.Environment) (*object.Iterator, object.Object) {
+	iterObj := applyFunctionWithContext(ctx, fn, prependSelf(inst, nil), nil, env)
+	if propagates(iterObj) {
+		return nil, iterObj
+	}
+	switch it := iterObj.(type) {
+	case *object.Iterator:
+		return it, nil
+	case *object.Instance:
+		return instanceToIterator(ctx, it, env), nil
+	}
+	return nil, &object.Exception{
+		Message:       fmt.Sprintf("iter() returned non-iterator of type '%s'", getTypeName(iterObj)),
+		ExceptionType: object.ExceptionTypeTypeError,
+		Raised:        true,
+	}
+}
+
 func acceptInstanceIterable(ctx context.Context, obj object.Object) (object.Object, object.Object) {
 	switch o := obj.(type) {
-	case *object.List, *object.Tuple, *object.String, *object.FloatArray, *object.Iterator:
+	case *object.List, *object.Tuple, *object.String, *object.FloatArray, *object.Iterator,
+		*object.Bytes, *object.Set, *object.Dict, *object.DictKeys, *object.DictValues, *object.DictItems:
 		return obj, nil
 	case *object.Instance:
 		if fn, has := findDunderMethod(o, "__iter__"); has {
 			env := GetEnvFromContext(ctx)
-			iterObj := applyFunctionWithContext(ctx, fn, prependSelf(o, nil), nil, env)
-			if propagates(iterObj) {
-				return nil, iterObj
+			iter, errObj := callIter(ctx, o, fn, env)
+			if errObj != nil {
+				return nil, errObj
 			}
-			switch it := iterObj.(type) {
-			case *object.Iterator:
-				return it, nil
-			case *object.Instance:
-				return instanceToIterator(ctx, it, env), nil
-			default:
-				return nil, errors.NewError("__iter__ must return an iterator")
-			}
+			return iter, nil
 		}
 		elems, ok, rerr := iterableToSliceChecked(ctx, obj, GetEnvFromContext(ctx))
 		if rerr != nil {
@@ -3961,6 +4063,9 @@ var iterableToSliceCheckedFn func(ctx context.Context, obj object.Object, env *o
 
 func iterableToSliceChecked(ctx context.Context, obj object.Object, env *object.Environment) ([]object.Object, bool, object.Object) {
 	if iter, isIter := obj.(*object.Iterator); isIter {
+		if iter.Infinite() {
+			return nil, false, errors.NewError("%s", object.InfiniteIteratorMessage)
+		}
 		// A raw iterator may yield raised exceptions or internal errors
 		// (e.g. wrapped user iterators); check every element while pulling.
 		// Context is checked periodically so an infinite user iterator stays
@@ -3991,17 +4096,9 @@ func iterableToSliceChecked(ctx context.Context, obj object.Object, env *object.
 	if !has {
 		return nil, false, nil
 	}
-	iterObj := applyFunctionWithContext(ctx, fn, prependSelf(inst, nil), nil, env)
-	if propagates(iterObj) {
-		return nil, false, iterObj
-	}
-	var iter *object.Iterator
-	if iterInst, ok := iterObj.(*object.Instance); ok {
-		iter = instanceToIterator(ctx, iterInst, env)
-	} else if iterIter, ok := iterObj.(*object.Iterator); ok {
-		iter = iterIter
-	} else {
-		return nil, false, errors.NewError("__iter__ must return an iterator")
+	iter, errObj := callIter(ctx, inst, fn, env)
+	if errObj != nil {
+		return nil, false, errObj
 	}
 	elements := []object.Object{}
 	cc := newContextChecker(ctx)
@@ -4170,17 +4267,9 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 		}
 	case *object.Instance:
 		if iterFn, ok := findDunderMethod(o, "__iter__"); ok {
-			iterObj := applyFunctionWithContext(ctx, iterFn, prependSelf(o, nil), nil, nil)
-			if propagates(iterObj) {
-				return iterObj
-			}
-			var iter *object.Iterator
-			if iterInst, ok := iterObj.(*object.Instance); ok {
-				iter = instanceToIterator(ctx, iterInst, nil)
-			} else if iterIter, ok := iterObj.(*object.Iterator); ok {
-				iter = iterIter
-			} else {
-				return errors.NewError("__iter__ must return an iterator")
+			iter, errObj := callIter(ctx, o, iterFn, nil)
+			if errObj != nil {
+				return errObj
 			}
 			for {
 				el, ok := iter.Next()
@@ -4205,22 +4294,59 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 	return nil
 }
 
-func formatWithSpec(obj object.Object, spec string) string {
+// checkFormatCode checks a format code and flags against the value's type,
+// as Python's int, float and str __format__ do.
+func checkFormatCode(obj object.Object, code rune, sign, align rune, zFlag bool) object.Object {
+	var allowed string
+	switch obj.(type) {
+	case *object.Integer, *object.Boolean:
+		allowed = "bcdoxXneEfFgG%"
+		if zFlag {
+			return formatSpecError("Negative zero coercion (z) not allowed in integer format specifier")
+		}
+	case *object.Float:
+		allowed = "neEfFgG%"
+		if zFlag {
+			return formatSpecError("Negative zero coercion (z) is not supported")
+		}
+	case *object.String:
+		allowed = "s"
+		if sign != 0 {
+			return formatSpecError("Sign not allowed in string format specifier")
+		}
+		if align == '=' {
+			return formatSpecError("'=' alignment not allowed in string format specifier")
+		}
+	default:
+		return nil
+	}
+	if code != 0 && !strings.ContainsRune(allowed, code) {
+		return formatSpecError("Unknown format code '%c' for object of type '%s'", code, getTypeName(obj))
+	}
+	return nil
+}
+
+func formatSpecError(format string, args ...any) object.Object {
+	return &object.Exception{Message: fmt.Sprintf(format, args...), ExceptionType: object.ExceptionTypeValueError, Raised: true}
+}
+
+// formatWithSpec formats obj with spec as Python's format() does, raising
+// ValueError for a malformed spec or a format code the value's type does not
+// support.
+func formatWithSpec(obj object.Object, spec string) (string, object.Object) {
 	if spec == "" {
 		switch v := obj.(type) {
 		case *object.Integer:
-			return strconv.FormatInt(v.IntValue(), 10)
+			return strconv.FormatInt(v.IntValue(), 10), nil
 		case *object.Float:
-			return object.FloatStr(v.FloatValue())
+			return object.FloatStr(v.FloatValue()), nil
 		}
-		return obj.Inspect()
+		return obj.Inspect(), nil
 	}
 
-	// Parse the format spec: [[fill]align][sign][#][0][width][grouping][.precision][type]
-	// We support: [fill]align, 0width, width, .precision, type
-	// Types: d, f, e, E, g, G, x, X, o, b, s, %
-	// Align: <, >, ^, = (with optional fill char)
-	// Grouping: ,
+	// Parse the format spec:
+	// [[fill]align][sign][z][#][0][width][grouping][.precision][type]
+	// Types: b c d o x X n e E f F g G s %; align: < > ^ =; grouping: , _
 
 	var fill rune = ' '
 	var align rune
@@ -4229,64 +4355,113 @@ func formatWithSpec(obj object.Object, spec string) string {
 	var width int
 	var precision int = -1
 	var grouping bool
+	groupSep := ","
+	var alt bool
 	var typeChar byte
 
-	i := 0
-	runes := []rune(spec)
-	n := len(runes)
-
-	// Check for fill+align (2 chars: fill then align)
-	if n >= 2 && (runes[1] == '<' || runes[1] == '>' || runes[1] == '^' || runes[1] == '=') {
-		fill = runes[0]
-		align = runes[1]
-		i = 2
-	} else if n >= 1 && (runes[0] == '<' || runes[0] == '>' || runes[0] == '^' || runes[0] == '=') {
-		align = runes[0]
-		i = 1
+	n, i := len(spec), 0
+	isAlign := func(c byte) bool { return c == '<' || c == '>' || c == '^' || c == '=' }
+	// The fill may be any character, including a multi-byte one.
+	if r, size := utf8.DecodeRuneInString(spec); size < n && isAlign(spec[size]) {
+		fill, align, i = r, rune(spec[size]), size+1
+	} else if isAlign(spec[0]) {
+		align, i = rune(spec[0]), 1
 	}
 
 	// Sign (+, -, space)
-	if i < n && (runes[i] == '+' || runes[i] == '-' || runes[i] == ' ') {
-		sign = runes[i]
+	if i < n && (spec[i] == '+' || spec[i] == '-' || spec[i] == ' ') {
+		sign = rune(spec[i])
 		i++
 	}
 
-	// Skip # (alternate form)
-	if i < n && runes[i] == '#' {
+	zFlag := i < n && spec[i] == 'z'
+	if zFlag {
+		i++
+	}
+
+	// Alternate form: 0x/0o/0b prefixes
+	if i < n && spec[i] == '#' {
+		alt = true
 		i++
 	}
 
 	// Zero padding
-	if i < n && runes[i] == '0' && align == 0 {
+	if i < n && spec[i] == '0' && align == 0 {
 		zero = true
 		i++
 	}
 
 	// Width
-	for i < n && runes[i] >= '0' && runes[i] <= '9' {
-		width = width*10 + int(runes[i]-'0')
+	for i < n && spec[i] >= '0' && spec[i] <= '9' {
+		width = width*10 + int(spec[i]-'0')
 		i++
 	}
 
 	// Grouping
-	if i < n && runes[i] == ',' {
+	if i < n && (spec[i] == ',' || spec[i] == '_') {
 		grouping = true
+		groupSep = spec[i : i+1]
 		i++
 	}
 
 	// Precision
-	if i < n && runes[i] == '.' {
+	if i < n && spec[i] == '.' {
 		i++
 		precision = 0
-		for i < n && runes[i] >= '0' && runes[i] <= '9' {
-			precision = precision*10 + int(runes[i]-'0')
+		start := i
+		for i < n && spec[i] >= '0' && spec[i] <= '9' {
+			precision = precision*10 + int(spec[i]-'0')
 			i++
+		}
+		if i == start {
+			return "", formatSpecError("Format specifier missing precision")
 		}
 	}
 
 	// Type
 	if i < n {
-		typeChar = byte(runes[i])
+		code, size := utf8.DecodeRuneInString(spec[i:])
+		if i+size < n {
+			return "", formatSpecError("Invalid format specifier '%s' for object of type '%s'", spec, getTypeName(obj))
+		}
+		if errObj := checkFormatCode(obj, code, sign, align, zFlag); errObj != nil {
+			return "", errObj
+		}
+		typeChar = spec[i]
+	} else if errObj := checkFormatCode(obj, 0, sign, align, zFlag); errObj != nil {
+		return "", errObj
+	}
+
+	// With any spec a bool formats as its int value (only format(True, "")
+	// gives "True"), and 'n' is 'd' or 'g' (no locale grouping).
+	if b, ok := obj.(*object.Boolean); ok {
+		obj = object.NewInteger(0)
+		if b.BoolValue() {
+			obj = object.NewInteger(1)
+		}
+	}
+	if typeChar == 'n' {
+		typeChar = 'd'
+		if obj.Type() == object.FLOAT_OBJ {
+			typeChar = 'g'
+		}
+	}
+	if typeChar == 'c' {
+		if intVal, err := obj.AsInt(); err == nil {
+			obj = object.NewString(string(rune(intVal)))
+			typeChar = 's'
+		}
+	}
+	if alt && (typeChar == 'x' || typeChar == 'X' || typeChar == 'o' || typeChar == 'b') {
+		if intVal, err := obj.AsInt(); err == nil {
+			formatted := prefixedBaseInt(intVal, typeChar, width, zero)
+			if sign == '+' && intVal >= 0 {
+				formatted = "+" + formatted
+			} else if sign == ' ' && intVal >= 0 {
+				formatted = " " + formatted
+			}
+			return padFormatted(formatted, width, fill, align, false), nil
+		}
 	}
 
 	// Format the value
@@ -4451,6 +4626,9 @@ func formatWithSpec(obj object.Object, spec string) string {
 			commaStr = applySign(commaStr, intVal >= 0, sign)
 			formatted = commaStr
 		}
+		if groupSep != "," {
+			formatted = strings.ReplaceAll(formatted, ",", groupSep)
+		}
 	} else if grouping && (typeChar == 'f' || typeChar == 'F') {
 		parts := strings.SplitN(formatted, ".", 2)
 		if intVal, err := strconv.ParseInt(strings.TrimLeft(parts[0], "-"), 10, 64); err == nil {
@@ -4462,6 +4640,9 @@ func formatWithSpec(obj object.Object, spec string) string {
 				formatted = commaInt + "." + parts[1]
 			} else {
 				formatted = commaInt
+			}
+			if groupSep != "," {
+				formatted = strings.ReplaceAll(formatted, ",", groupSep)
 			}
 		}
 	}
@@ -4500,7 +4681,7 @@ func formatWithSpec(obj object.Object, spec string) string {
 		}
 	}
 
-	return formatted
+	return formatted, nil
 }
 
 // applySign prepends a sign character to a formatted number string.
@@ -4558,6 +4739,36 @@ func formatZeroPaddedInt(n int64, width int) string {
 		return digits
 	}
 	return strings.Repeat("0", width-len(digits)) + digits
+}
+
+// prefixedBaseInt formats n in the base of code ('x', 'X', 'o' or 'b') with
+// Python's alternate-form prefix; zero padding goes after the prefix and
+// counts it in the width.
+func prefixedBaseInt(n int64, code byte, width int, zero bool) string {
+	prefix := "0" + string(code)
+	base := map[byte]int{'x': 16, 'X': 16, 'o': 8, 'b': 2}[code]
+	neg := ""
+	if n < 0 {
+		neg, n = "-", -n
+	}
+	digits := formatBaseInt(n, base, code == 'X', width-len(prefix)-len(neg), zero)
+	return neg + prefix + digits
+}
+
+// padFormatted pads s to width with fill; numbers default to the right.
+func padFormatted(s string, width int, fill rune, align rune, leftDefault bool) string {
+	padding := width - len([]rune(s))
+	if padding <= 0 {
+		return s
+	}
+	switch {
+	case align == '<' || (align == 0 && leftDefault):
+		return s + strings.Repeat(string(fill), padding)
+	case align == '^':
+		left := padding / 2
+		return strings.Repeat(string(fill), left) + s + strings.Repeat(string(fill), padding-left)
+	}
+	return strings.Repeat(string(fill), padding) + s
 }
 
 func formatBaseInt(n int64, base int, upper bool, width int, zero bool) string {

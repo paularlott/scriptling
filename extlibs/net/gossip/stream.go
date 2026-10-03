@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 
 	"github.com/paularlott/gossip"
 	"github.com/paularlott/scriptling/conversion"
@@ -57,11 +58,21 @@ func streamBytes(data object.Object) ([]byte, object.Object) {
 // ---------------------------------------------------------------------------
 
 // streamWriterData is the reply writer handed to a stream handler. It is only
-// valid while the handler runs.
+// valid while the handler runs. mu serialises writes and the end of the
+// handler; it is only ever taken without the interpreter lock held (inside
+// RunBlocking, or on the gossip goroutine), so it cannot deadlock with it.
 type streamWriterData struct {
 	mu     sync.Mutex
 	w      io.Writer
 	closed bool
+}
+
+// finish marks the writer unusable once the handler has returned, waiting
+// for any write in progress.
+func (d *streamWriterData) finish() {
+	d.mu.Lock()
+	d.closed = true
+	d.mu.Unlock()
 }
 
 func writerFrom(args []object.Object) (*streamWriterData, object.Object) {
@@ -95,14 +106,21 @@ var streamWriterClass = &object.Class{
 				if errObj != nil {
 					return errObj
 				}
-				d.mu.Lock()
-				defer d.mu.Unlock()
-				if d.closed {
-					return errors.NewError("stream is closed: write() is only valid inside the stream handler")
-				}
 				var n int
 				var werr error
-				object.RunBlocking(ctx, func() { n, werr = d.w.Write(data) })
+				closed := false
+				object.RunBlocking(ctx, func() {
+					d.mu.Lock()
+					defer d.mu.Unlock()
+					if d.closed {
+						closed = true
+						return
+					}
+					n, werr = d.w.Write(data)
+				})
+				if closed {
+					return errors.NewError("stream is closed: write() is only valid inside the stream handler")
+				}
 				if werr != nil {
 					return errors.NewError("stream write failed: %s", werr.Error())
 				}
@@ -117,19 +135,22 @@ var streamWriterClass = &object.Class{
 // Reader: the caller side
 // ---------------------------------------------------------------------------
 
+// streamReaderData is the caller's side of a stream. readMu serialises reads
+// and is only taken inside RunBlocking (interpreter lock released); close()
+// takes no lock at all, so closing from another task can never deadlock with
+// a read blocked waiting for data. Closing aborts any read in progress.
 type streamReaderData struct {
-	mu     sync.Mutex
+	readMu sync.Mutex
 	rc     io.ReadCloser
 	r      *bufio.Reader
 	cancel context.CancelFunc
-	closed bool
+	closed atomic.Bool
 }
 
 func (d *streamReaderData) close() {
-	if d.closed {
+	if d.closed.Swap(true) {
 		return
 	}
-	d.closed = true
 	d.cancel()
 	_ = d.rc.Close()
 }
@@ -177,28 +198,25 @@ var streamReaderClass = &object.Class{
 						size = v
 					}
 				}
-				d.mu.Lock()
-				defer d.mu.Unlock()
-				if d.closed {
+				if d.closed.Load() {
 					return errors.NewError("read from a closed stream")
 				}
 				var data []byte
 				var rerr error
 				object.RunBlocking(ctx, func() {
-					if size < 0 {
-						data, rerr = io.ReadAll(d.r)
-						return
+					d.readMu.Lock()
+					defer d.readMu.Unlock()
+					// Memory grows with the data received, never with the
+					// size asked for.
+					var src io.Reader = d.r
+					if size >= 0 {
+						src = io.LimitReader(d.r, size)
 					}
-					buf := make([]byte, size)
-					var n int
-					n, rerr = io.ReadFull(d.r, buf)
-					data = buf[:n]
-					if rerr == io.ErrUnexpectedEOF && n > 0 {
-						// Short read at the end of a complete reply: the next
-						// read reports whether the stream ended cleanly.
-						rerr = nil
-					}
+					data, rerr = io.ReadAll(src)
 				})
+				if d.closed.Load() {
+					return errors.NewError("read from a closed stream")
+				}
 				if rerr != nil && rerr != io.EOF {
 					return streamReadError(rerr)
 				}
@@ -212,14 +230,19 @@ var streamReaderClass = &object.Class{
 				if errObj != nil {
 					return errObj
 				}
-				d.mu.Lock()
-				defer d.mu.Unlock()
-				if d.closed {
+				if d.closed.Load() {
 					return errors.NewError("read from a closed stream")
 				}
 				var line []byte
 				var rerr error
-				object.RunBlocking(ctx, func() { line, rerr = d.r.ReadBytes('\n') })
+				object.RunBlocking(ctx, func() {
+					d.readMu.Lock()
+					defer d.readMu.Unlock()
+					line, rerr = d.r.ReadBytes('\n')
+				})
+				if d.closed.Load() {
+					return errors.NewError("read from a closed stream")
+				}
 				if rerr != nil && rerr != io.EOF {
 					return streamReadError(rerr)
 				}
@@ -233,9 +256,7 @@ var streamReaderClass = &object.Class{
 				if errObj != nil {
 					return errObj
 				}
-				d.mu.Lock()
 				d.close()
-				d.mu.Unlock()
 				return &object.Null{}
 			},
 			HelpText: `close() - Close the stream; abandons any unread reply`,
@@ -248,9 +269,7 @@ var streamReaderClass = &object.Class{
 		"__exit__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if d, errObj := readerFrom(args); errObj == nil {
-					d.mu.Lock()
 					d.close()
-					d.mu.Unlock()
 				}
 				return object.NewBoolean(false)
 			},
@@ -262,7 +281,9 @@ var streamReaderClass = &object.Class{
 // Cluster methods
 // ---------------------------------------------------------------------------
 
-func streamClusterMethods(c *gossip.Cluster, eval evaliface.Evaluator, env *object.Environment) map[string]object.Object {
+// streamClusterMethods adds open_stream and handle_stream. clusterCtx ends
+// when the cluster stops, which aborts any stream still open.
+func streamClusterMethods(c *gossip.Cluster, clusterCtx context.Context, eval evaliface.Evaluator, env *object.Environment) map[string]object.Object {
 	return map[string]object.Object{
 		"open_stream": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -281,8 +302,14 @@ func streamClusterMethods(c *gossip.Cluster, eval evaliface.Evaluator, env *obje
 				if node == nil {
 					return errors.NewError("node not found: %s", nodeIDStr)
 				}
-				// The stream lives as long as the script unless closed first.
-				streamCtx, cancel := context.WithCancel(ctx)
+				// The stream lives as long as both the script and the cluster,
+				// unless closed first.
+				streamCtx, cancelStream := context.WithCancel(ctx)
+				stopWithCluster := context.AfterFunc(clusterCtx, cancelStream)
+				cancel := func() {
+					stopWithCluster()
+					cancelStream()
+				}
 				var rc io.ReadCloser
 				var openErr error
 				object.RunBlocking(ctx, func() {
@@ -332,9 +359,7 @@ Parameters:
 						return eval.CallObjectFunction(ctx, handlerFn, []object.Object{msgObj, writer}, nil, env)
 					})
 					// The writer is only valid while the handler runs.
-					wd.mu.Lock()
-					wd.closed = true
-					wd.mu.Unlock()
+					wd.finish()
 					switch r := result.(type) {
 					case *object.Error:
 						return fmt.Errorf("%s", r.Message)

@@ -716,16 +716,9 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 			iter = o.CreateIterator()
 		case *object.Instance:
 			if fn, ok := findDunderMethod(o, "__iter__"); ok {
-				iterObj := applyFunctionWithContext(ctx, fn, prependSelf(o, nil), nil, env)
-				if propagates(iterObj) {
-					return iterObj
-				}
-				if iterInst, ok := iterObj.(*object.Instance); ok {
-					iter = instanceToIterator(ctx, iterInst, env)
-				} else if iterIter, ok := iterObj.(*object.Iterator); ok {
-					iter = iterIter
-				} else {
-					return errors.NewError("__iter__ must return an iterator")
+				var errObj object.Object
+				if iter, errObj = callIter(ctx, o, fn, env); errObj != nil {
+					return errObj
 				}
 			} else {
 				return errors.NewTypeError("iterable", iterableVal.Type().String())
@@ -2195,8 +2188,12 @@ func compileFString(n *ast.FStringLiteral) object.EvalFn {
 					if rerr != nil {
 						return rerr
 					}
+					formatted, ferr := formatWithSpec(object.NewString(rendered), spec)
+					if ferr != nil {
+						return ferr
+					}
 					builder.WriteString(debugText)
-					builder.WriteString(formatWithSpec(object.NewString(rendered), spec))
+					builder.WriteString(formatted)
 					continue
 				}
 				var formatted string
@@ -2207,10 +2204,16 @@ func compileFString(n *ast.FStringLiteral) object.EvalFn {
 					if rerr != nil {
 						return rerr
 					}
-					formatted = formatWithSpec(object.NewString(rendered), spec)
+					var ferr object.Object
+					if formatted, ferr = formatWithSpec(object.NewString(rendered), spec); ferr != nil {
+						return ferr
+					}
 				} else if isPlainFormattable(exprResult) {
 					// Hot path: numbers and strings take the spec directly.
-					formatted = formatWithSpec(exprResult, spec)
+					var ferr object.Object
+					if formatted, ferr = formatWithSpec(exprResult, spec); ferr != nil {
+						return ferr
+					}
 				} else {
 					// Instances may define __format__; other types render
 					// with str semantics and reject a non-empty spec.
@@ -2380,6 +2383,10 @@ func (s *compSource) run(ctx context.Context, env *object.Environment, sized fun
 	iterableVal := s.iterable(ctx, env)
 	if propagates(iterableVal) {
 		return iterableVal
+	}
+	if it, ok := iterableVal.(*object.Iterator); ok && it.Infinite() {
+		// A comprehension collects every element, so it would never end.
+		return errors.NewError("%s", object.InfiniteIteratorMessage)
 	}
 	if sized != nil {
 		switch it := iterableVal.(type) {

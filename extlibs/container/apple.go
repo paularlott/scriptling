@@ -194,7 +194,7 @@ func (c *appleClient) ImageRemove(ctx context.Context, image string) error {
 	// Newer CLIs report a missing image with a generic "failed to delete";
 	// removing an absent image is not an error (as with Docker), so only
 	// fail when the image is still there.
-	if _, inspectErr := c.run(ctx, "image", "inspect", image); inspectErr != nil {
+	if inspectOut, inspectErr := c.run(ctx, "image", "inspect", image); inspectErr != nil && strings.Contains(inspectOut, "not found") {
 		return nil
 	}
 	return fmt.Errorf("image remove: %s", out)

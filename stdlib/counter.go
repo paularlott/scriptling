@@ -3,7 +3,6 @@ package stdlib
 import (
 	"context"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/paularlott/scriptling/errors"
@@ -33,61 +32,152 @@ func newCounter() *object.Instance {
 	return inst
 }
 
-func counterCount(d *object.Dict, key object.Object) int64 {
+// Counts are numbers: ints normally, floats when a script stores them, as
+// Python allows. counterZero is the count of a missing element.
+var counterZero = object.NewInteger(0)
+
+func counterCount(d *object.Dict, key object.Object) object.Object {
 	if pair, ok := d.Pairs[object.DictKey(key)]; ok {
-		if n, ok := pair.Value.(*object.Integer); ok {
-			return n.IntValue()
-		}
+		return pair.Value
 	}
-	return 0
+	return counterZero
 }
 
-func counterAdd(d *object.Dict, key object.Object, n int64) {
-	d.Pairs[object.DictKey(key)] = object.DictPair{Key: key, Value: object.NewInteger(counterCount(d, key) + n)}
+// countValue returns a count as a float for comparisons, and whether it is
+// a number at all.
+func countValue(n object.Object) (float64, bool) {
+	switch v := n.(type) {
+	case *object.Integer:
+		return float64(v.IntValue()), true
+	case *object.Float:
+		return v.FloatValue(), true
+	case *object.Boolean:
+		if v.BoolValue() {
+			return 1, true
+		}
+		return 0, true
+	}
+	return 0, false
 }
+
+// addCounts returns a + sign*b, staying an int when both are ints.
+func addCounts(a, b object.Object, sign int64) (object.Object, object.Object) {
+	ai, aInt := a.(*object.Integer)
+	bi, bInt := b.(*object.Integer)
+	if aInt && bInt {
+		return object.NewInteger(ai.IntValue() + sign*bi.IntValue()), nil
+	}
+	af, aOK := countValue(a)
+	bf, bOK := countValue(b)
+	if !aOK {
+		return nil, errors.NewTypeError("a number count", a.Type().String())
+	}
+	if !bOK {
+		return nil, errors.NewTypeError("a number count", b.Type().String())
+	}
+	return object.NewFloat(af + float64(sign)*bf), nil
+}
+
+func counterAdd(d *object.Dict, key, n object.Object, sign int64) object.Object {
+	if !object.IsHashable(key) {
+		return &object.Exception{Message: "unhashable type: '" + strings.ToLower(key.Type().String()) + "'", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
+	}
+	sum, err := addCounts(counterCount(d, key), n, sign)
+	if err != nil {
+		return err
+	}
+	d.Pairs[object.DictKey(key)] = object.DictPair{Key: key, Value: sum}
+	return nil
+}
+
+var counterOne = object.NewInteger(1)
 
 // counterApply adds (sign 1) or subtracts (sign -1) counts from src: another
-// Counter or a mapping contributes its counts, any other iterable counts
-// each element once.
-func counterApply(d *object.Dict, src object.Object, sign int64) object.Object {
+// Counter or a mapping contributes its counts, None nothing, and any other
+// iterable counts each element once.
+func counterApply(ctx context.Context, d *object.Dict, src object.Object, sign int64) object.Object {
+	var elems []object.Object
 	switch s := src.(type) {
+	case *object.Null:
+		return nil
 	case *object.Instance:
 		if s.Class == counterClassRef {
 			for _, pair := range counterData(s).Pairs {
-				if n, ok := pair.Value.(*object.Integer); ok {
-					counterAdd(d, pair.Key, sign*n.IntValue())
+				if err := counterAdd(d, pair.Key, pair.Value, sign); err != nil {
+					return err
 				}
 			}
 			return nil
 		}
+		var errObj object.Object
+		if elems, errObj = instanceElements(ctx, s); errObj != nil {
+			return errObj
+		}
 	case *object.Dict:
 		for _, pair := range s.Pairs {
-			n, ok := pair.Value.(*object.Integer)
-			if !ok {
-				return errors.NewTypeError("INTEGER count", pair.Value.Type().String())
+			if err := counterAdd(d, pair.Key, pair.Value, sign); err != nil {
+				return err
 			}
-			counterAdd(d, pair.Key, sign*n.IntValue())
 		}
 		return nil
-	}
-	elems, ok := object.IterableToSlice(src)
-	if !ok {
-		return errors.NewTypeError("iterable or mapping", src.Type().String())
+	default:
+		var ok bool
+		if elems, ok = object.IterableToSlice(src); !ok {
+			return notIterableError(src)
+		}
 	}
 	for _, e := range elems {
-		counterAdd(d, e, sign)
+		if err := counterAdd(d, e, counterOne, sign); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// instanceElements collects the elements of a script object that defines
+// __iter__, whose iterator may itself be a script object with __next__.
+func instanceElements(ctx context.Context, inst *object.Instance) ([]object.Object, object.Object) {
+	iterFn, ok := inst.Class.Methods["__iter__"]
+	if !ok {
+		return nil, errors.NewTypeError("iterable or mapping", inst.Class.Name)
+	}
+	it := callCallable(ctx, iterFn, inst)
+	if object.IsError(it) || it.Type() == object.EXCEPTION_OBJ {
+		return nil, it
+	}
+	itInst, isInst := it.(*object.Instance)
+	if !isInst {
+		if elems, ok := object.IterableToSlice(it); ok {
+			return elems, nil
+		}
+		return nil, notIterableError(it)
+	}
+	nextFn, ok := itInst.Class.Methods["__next__"]
+	if !ok {
+		return nil, &object.Exception{Message: "iter() returned non-iterator of type '" + itInst.Class.Name + "'", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
+	}
+	var elems []object.Object
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, errors.NewError("%s", err.Error())
+		}
+		v := callCallable(ctx, nextFn, itInst)
+		if ex, isEx := v.(*object.Exception); isEx && ex.ExceptionType == object.ExceptionTypeStopIteration {
+			return elems, nil
+		}
+		if object.IsError(v) || v.Type() == object.EXCEPTION_OBJ {
+			return nil, v
+		}
+		elems = append(elems, v)
+	}
 }
 
 // counterApplyKwargs adds keyword counts: Counter(a=1, b=2).
 func counterApplyKwargs(d *object.Dict, kwargs object.Kwargs, sign int64) object.Object {
 	for _, key := range kwargs.Keys() {
-		n, ok := kwargs.Get(key).(*object.Integer)
-		if !ok {
-			return errors.NewTypeError("INTEGER count", kwargs.Get(key).Type().String())
+		if err := counterAdd(d, object.NewString(key), kwargs.Get(key), sign); err != nil {
+			return err
 		}
-		counterAdd(d, object.NewString(key), sign*n.IntValue())
 	}
 	return nil
 }
@@ -103,7 +193,8 @@ func counterKeyRepr(k object.Object) string {
 
 type counterEntry struct {
 	key   object.Object
-	count int64
+	count object.Object
+	value float64 // count as a number, for ordering
 }
 
 // counterSorted lists entries most common first. Python breaks ties by
@@ -112,34 +203,51 @@ type counterEntry struct {
 func counterSorted(d *object.Dict) []counterEntry {
 	entries := make([]counterEntry, 0, len(d.Pairs))
 	for _, pair := range d.Pairs {
-		if n, ok := pair.Value.(*object.Integer); ok {
-			entries = append(entries, counterEntry{pair.Key, n.IntValue()})
-		}
+		v, _ := countValue(pair.Value)
+		entries = append(entries, counterEntry{pair.Key, pair.Value, v})
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
-		if entries[i].count != entries[j].count {
-			return entries[i].count > entries[j].count
+		if entries[i].value != entries[j].value {
+			return entries[i].value > entries[j].value
 		}
 		return counterKeyRepr(entries[i].key) < counterKeyRepr(entries[j].key)
 	})
 	return entries
 }
 
-func counterMostCommon(inst *object.Instance, n int) object.Object {
+// counterMostCommon returns the n most common entries, or all of them when
+// all is set. A negative n gives none, as in Python.
+func counterMostCommon(inst *object.Instance, n int, all bool) object.Object {
 	entries := counterSorted(counterData(inst))
-	if n < 0 || n > len(entries) {
+	if all || n > len(entries) {
 		n = len(entries)
 	}
+	n = max(n, 0)
 	out := make([]object.Object, n)
 	for i := 0; i < n; i++ {
-		out[i] = &object.Tuple{Elements: []object.Object{entries[i].key, object.NewInteger(entries[i].count)}}
+		out[i] = &object.Tuple{Elements: []object.Object{entries[i].key, entries[i].count}}
 	}
 	return &object.List{Elements: out}
 }
 
+// mostCommonArg reads most_common's optional n: None or absent means all;
+// anything but an int is a TypeError.
+func mostCommonArg(args []object.Object, i int) (n int, all bool, errObj object.Object) {
+	if len(args) <= i {
+		return 0, true, nil
+	}
+	switch v := args[i].(type) {
+	case *object.Null:
+		return 0, true, nil
+	case *object.Integer:
+		return int(v.IntValue()), false, nil
+	}
+	return 0, false, &object.Exception{Message: "'" + strings.ToLower(args[i].Type().String()) + "' object cannot be interpreted as an integer", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
+}
+
 // counterArithmetic implements +, -, | and & like Python: results keep only
 // positive counts.
-func counterArithmetic(op byte, a, b *object.Instance) *object.Instance {
+func counterArithmetic(op byte, a, b *object.Instance) object.Object {
 	ad, bd := counterData(a), counterData(b)
 	out := newCounter()
 	od := counterData(out)
@@ -152,19 +260,32 @@ func counterArithmetic(op byte, a, b *object.Instance) *object.Instance {
 	}
 	for _, key := range keys {
 		x, y := counterCount(ad, key), counterCount(bd, key)
-		var v int64
+		var v object.Object
 		switch op {
-		case '+':
-			v = x + y
-		case '-':
-			v = x - y
-		case '|':
-			v = max(x, y)
-		case '&':
-			v = min(x, y)
+		case '+', '-':
+			sign := int64(1)
+			if op == '-' {
+				sign = -1
+			}
+			sum, err := addCounts(x, y, sign)
+			if err != nil {
+				return err
+			}
+			v = sum
+		case '|', '&':
+			xf, xOK := countValue(x)
+			yf, yOK := countValue(y)
+			if !xOK || !yOK {
+				_, err := addCounts(x, y, 1)
+				return err
+			}
+			v = x
+			if (op == '|') == (yf > xf) {
+				v = y
+			}
 		}
-		if v > 0 {
-			counterAdd(od, key, v)
+		if f, _ := countValue(v); f > 0 {
+			od.Pairs[object.DictKey(key)] = object.DictPair{Key: key, Value: v}
 		}
 	}
 	return out
@@ -203,7 +324,7 @@ var CounterClass = &object.Class{
 			}
 			_, d := counterSelf(args)
 			if len(args) == 2 {
-				if err := counterApply(d, args[1], 1); err != nil {
+				if err := counterApply(ctx, d, args[1], 1); err != nil {
 					return err
 				}
 			}
@@ -217,11 +338,14 @@ var CounterClass = &object.Class{
 				return err
 			}
 			_, d := counterSelf(args)
-			return object.NewInteger(counterCount(d, args[1]))
+			return counterCount(d, args[1])
 		}),
 		"__setitem__": counterMethod("c[key] = count", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.ExactArgs(args, 3); err != nil {
 				return err
+			}
+			if !object.IsHashable(args[1]) {
+				return &object.Exception{Message: "unhashable type: '" + strings.ToLower(args[1].Type().String()) + "'", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
 			}
 			_, d := counterSelf(args)
 			d.Pairs[object.DictKey(args[1])] = object.DictPair{Key: args[1], Value: args[2]}
@@ -272,16 +396,27 @@ var CounterClass = &object.Class{
 			default:
 				return object.NewBoolean(false)
 			}
-			if len(d.Pairs) != len(other.Pairs) {
-				return object.NewBoolean(false)
-			}
-			for k, p := range d.Pairs {
-				q, ok := other.Pairs[k]
-				if !ok || q.Value.Inspect() != p.Value.Inspect() {
-					return object.NewBoolean(false)
+			// Python 3.10+: a missing element counts as zero, and counts
+			// compare as numbers (1 == 1.0).
+			same := func(a, b *object.Dict) bool {
+				for k, p := range a.Pairs {
+					var q object.Object = counterZero
+					if pair, ok := b.Pairs[k]; ok {
+						q = pair.Value
+					}
+					x, xOK := countValue(p.Value)
+					y, yOK := countValue(q)
+					if xOK && yOK {
+						if x != y {
+							return false
+						}
+					} else if p.Value.Inspect() != q.Inspect() {
+						return false
+					}
 				}
+				return true
 			}
-			return object.NewBoolean(true)
+			return object.NewBoolean(same(d, other) && same(other, d))
 		}),
 		"__repr__": counterMethod("repr(c) - Counter({'a': 2, 'b': 1})", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			_, d := counterSelf(args)
@@ -291,7 +426,7 @@ var CounterClass = &object.Class{
 			}
 			parts := make([]string, len(entries))
 			for i, e := range entries {
-				parts[i] = counterKeyRepr(e.key) + ": " + strconv.FormatInt(e.count, 10)
+				parts[i] = counterKeyRepr(e.key) + ": " + counterKeyRepr(e.count)
 			}
 			return object.NewString("Counter({" + strings.Join(parts, ", ") + "})")
 		}),
@@ -345,7 +480,7 @@ var CounterClass = &object.Class{
 			}
 			_, d := counterSelf(args)
 			if len(args) == 2 {
-				if err := counterApply(d, args[1], 1); err != nil {
+				if err := counterApply(ctx, d, args[1], 1); err != nil {
 					return err
 				}
 			}
@@ -360,7 +495,7 @@ var CounterClass = &object.Class{
 			}
 			_, d := counterSelf(args)
 			if len(args) == 2 {
-				if err := counterApply(d, args[1], -1); err != nil {
+				if err := counterApply(ctx, d, args[1], -1); err != nil {
 					return err
 				}
 			}
@@ -371,36 +506,38 @@ var CounterClass = &object.Class{
 		}),
 		"total": counterMethod("total() - sum of all counts", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			_, d := counterSelf(args)
-			var sum int64
+			var sum object.Object = counterZero
 			for _, p := range d.Pairs {
-				if n, ok := p.Value.(*object.Integer); ok {
-					sum += n.IntValue()
+				var err object.Object
+				if sum, err = addCounts(sum, p.Value, 1); err != nil {
+					return err
 				}
 			}
-			return object.NewInteger(sum)
+			return sum
 		}),
 		"most_common": counterMethod("most_common([n]) - (element, count) pairs, most common first", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
 			}
 			inst, _ := counterSelf(args)
-			n := -1
-			if len(args) == 2 {
-				if _, isNone := args[1].(*object.Null); !isNone {
-					v, err := args[1].AsInt()
-					if err != nil {
-						return err
-					}
-					n = int(v)
-				}
+			n, all, errObj := mostCommonArg(args, 1)
+			if errObj != nil {
+				return errObj
 			}
-			return counterMostCommon(inst, n)
+			return counterMostCommon(inst, n, all)
 		}),
 		"elements": counterMethod("elements() - each element repeated by its count", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			_, d := counterSelf(args)
 			var out []object.Object
 			for _, e := range counterSorted(d) {
-				for i := int64(0); i < e.count; i++ {
+				n, isInt := e.count.(*object.Integer)
+				if !isInt {
+					if _, isFloat := e.count.(*object.Float); isFloat {
+						return &object.Exception{Message: "'float' object cannot be interpreted as an integer", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
+					}
+					continue
+				}
+				for i := int64(0); i < n.IntValue(); i++ {
 					out = append(out, e.key)
 				}
 			}
@@ -431,7 +568,7 @@ func counterConstructor(ctx context.Context, kwargs object.Kwargs, args ...objec
 	inst := newCounter()
 	d := counterData(inst)
 	if len(args) == 1 {
-		if err := counterApply(d, args[0], 1); err != nil {
+		if err := counterApply(ctx, d, args[0], 1); err != nil {
 			return err
 		}
 	}
@@ -450,13 +587,9 @@ func counterMostCommonFn(ctx context.Context, kwargs object.Kwargs, args ...obje
 	if !ok || inst.Class != counterClassRef {
 		return errors.NewTypeError("Counter", args[0].Type().String())
 	}
-	n := -1
-	if len(args) == 2 {
-		v, err := args[1].AsInt()
-		if err != nil {
-			return err
-		}
-		n = int(v)
+	n, all, errObj := mostCommonArg(args, 1)
+	if errObj != nil {
+		return errObj
 	}
-	return counterMostCommon(inst, n)
+	return counterMostCommon(inst, n, all)
 }
