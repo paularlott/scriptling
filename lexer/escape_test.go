@@ -25,3 +25,37 @@ func TestUnescapeString(t *testing.T) {
 		}
 	}
 }
+
+func TestStringLiteralLineCounting(t *testing.T) {
+	// Each literal spans a backslash continuation; the identifier after it
+	// must be on line 3.
+	const bs = "\\"
+	for _, src := range []string{
+		"x = \"a" + bs + "\nb\"\ny",
+		"x = \"a" + bs + "\r\nb\"\ny",
+		"x = f\"a" + bs + "\nb\"\ny",
+		"x = r\"a" + bs + "\nb\"\ny",
+		"x = \"\"\"a" + bs + "\"\nb\"\"\"\ny",
+	} {
+		l := New(src)
+		tok := l.NextToken()
+		for tok.Literal != "y" && tok.Type != "EOF" {
+			tok = l.NextToken()
+		}
+		if tok.Line != 3 {
+			t.Errorf("%q: y on line %d, want 3", src, tok.Line)
+		}
+	}
+}
+
+func TestTripleQuotedEscapedQuote(t *testing.T) {
+	const bs = "\\"
+	for src, want := range map[string]string{
+		`"""a` + bs + `""""`:                        `a"`,
+		`"""say ` + bs + `"""hi` + bs + `""" ok"""`: `say """hi""" ok`,
+	} {
+		if tok := New(src).NextToken(); tok.Literal != want {
+			t.Errorf("%s: got %q, want %q", src, tok.Literal, want)
+		}
+	}
+}

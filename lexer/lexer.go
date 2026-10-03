@@ -1,6 +1,8 @@
 package lexer
 
 import (
+	"strings"
+
 	"github.com/paularlott/scriptling/token"
 )
 
@@ -621,9 +623,9 @@ func (l *Lexer) readString(quote byte, bytesMode bool) string {
 	for l.ch != quote && l.ch != 0 {
 		if l.ch == '\\' {
 			l.readChar() // the escaped character, which may be a quote
-			if l.ch == '\n' {
-				l.line++ // backslash-newline continues the literal
-			}
+		}
+		if l.ch == '\n' {
+			l.line++ // backslash-newline continues the literal
 		}
 		if l.ch != 0 {
 			l.readChar()
@@ -655,6 +657,7 @@ func (l *Lexer) readRawString(quote byte) string {
 			if bs%2 == 0 {
 				// closing quote found
 				str := l.input[start:i]
+				l.line += strings.Count(str, "\n")
 				// Advance lexer state to character after the closing quote
 				nextIdx := i + 1
 				if nextIdx >= inputLen {
@@ -703,10 +706,17 @@ func (l *Lexer) readTripleString(quote byte) string {
 		if l.ch == quote && l.peekChar() == quote && l.peekN(2) == quote {
 			break
 		}
+		if l.ch == '\\' {
+			// The escaped character (even a quote) never ends the
+			// literal, as in Python, including raw literals.
+			l.readChar()
+		}
 		if l.ch == '\n' {
 			l.line++
 		}
-		l.readChar()
+		if l.ch != 0 {
+			l.readChar()
+		}
 	}
 	str := l.input[position:l.position]
 	// Consume the three closing quotes if present
@@ -733,10 +743,17 @@ func (l *Lexer) readRawTripleString(quote byte) string {
 		if l.ch == quote && l.peekChar() == quote && l.peekN(2) == quote {
 			break
 		}
+		if l.ch == '\\' {
+			// The escaped character (even a quote) never ends the
+			// literal, as in Python, including raw literals.
+			l.readChar()
+		}
 		if l.ch == '\n' {
 			l.line++
 		}
-		l.readChar()
+		if l.ch != 0 {
+			l.readChar()
+		}
 	}
 	str := l.input[position:l.position]
 	// Consume the three closing quotes if present
@@ -758,10 +775,11 @@ func (l *Lexer) readFString(quote byte) string {
 	for l.ch != quote && l.ch != 0 {
 		if l.ch == '\\' {
 			l.readChar() // skip backslash
-			if l.ch != 0 {
-				l.readChar() // skip escaped character
-			}
-		} else {
+		}
+		if l.ch == '\n' {
+			l.line++ // backslash-newline continues the literal
+		}
+		if l.ch != 0 {
 			l.readChar()
 		}
 	}
@@ -782,10 +800,17 @@ func (l *Lexer) readTripleFString(quote byte) string {
 		if l.ch == quote && l.peekChar() == quote && l.peekN(2) == quote {
 			break
 		}
+		if l.ch == '\\' {
+			// The escaped character (even a quote) never ends the
+			// literal, as in Python, including raw literals.
+			l.readChar()
+		}
 		if l.ch == '\n' {
 			l.line++
 		}
-		l.readChar()
+		if l.ch != 0 {
+			l.readChar()
+		}
 	}
 	str := l.input[position:l.position]
 	// Consume the three closing quotes if present

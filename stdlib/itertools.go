@@ -126,11 +126,11 @@ var ItertoolsLibrary = object.NewLibrary(ItertoolsLibraryName, map[string]*objec
 						result = append(result, object.NewString(string(ch)))
 					}
 				default:
-					if elems, ok := object.IterableToSlice(arg); ok {
-						result = append(result, elems...)
-						break
+					elems, errObj := collectIterable(arg)
+					if errObj != nil {
+						return errObj
 					}
-					return notIterableError(arg)
+					result = append(result, elems...)
 				}
 			}
 			return &object.List{Elements: result}
@@ -233,11 +233,11 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
-				if elems, ok := object.IterableToSlice(args[0]); ok {
-					elements = elems
-					break
+				elems, errObj := collectIterable(args[0])
+				if errObj != nil {
+					return errObj
 				}
-				return notIterableError(args[0])
+				elements = elems
 			}
 			if len(args) == 2 {
 				n, ok := args[1].(*object.Integer)
@@ -371,9 +371,9 @@ next(), zip(), enumerate() or itertools.islice.`,
 				})
 			}
 
-			elements, ok := object.IterableToSlice(args[0])
-			if !ok {
-				return notIterableError(args[0])
+			elements, errObj := collectIterable(args[0])
+			if errObj != nil {
+				return errObj
 			}
 
 			var start, stop, step int64 = 0, 0, 1
@@ -424,11 +424,14 @@ Example:
 			}
 			result := []object.Object{}
 			for {
+				if err := ctx.Err(); err != nil {
+					return errors.NewError("%s", err.Error())
+				}
 				elem, more := next()
 				if !more {
 					break
 				}
-				if object.IsError(elem) || elem.Type() == object.EXCEPTION_OBJ {
+				if object.IsPropagating(elem) {
 					return elem
 				}
 				res := callCallable(ctx, pred, elem)
@@ -466,11 +469,11 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			default:
-				if elems, ok := object.IterableToSlice(args[1]); ok {
-					elements = elems
-					break
+				elems, errObj := collectIterable(args[1])
+				if errObj != nil {
+					return errObj
 				}
-				return notIterableError(args[1])
+				elements = elems
 			}
 			result := []object.Object{}
 			dropping := true
@@ -527,11 +530,11 @@ Example:
 					}
 					iterables[i] = chars
 				default:
-					if elems, ok := object.IterableToSlice(arg); ok {
-						iterables[i] = elems
-						break
+					elems, errObj := collectIterable(arg)
+					if errObj != nil {
+						return errObj
 					}
-					return notIterableError(arg)
+					iterables[i] = elems
 				}
 				if len(iterables[i]) > maxLen {
 					maxLen = len(iterables[i])
@@ -594,11 +597,11 @@ Example:
 					}
 					collected = append(collected, chars)
 				default:
-					if elems, ok := object.IterableToSlice(arg); ok {
-						collected = append(collected, elems)
-						break
+					elems, errObj := collectIterable(arg)
+					if errObj != nil {
+						return errObj
 					}
-					return notIterableError(arg)
+					collected = append(collected, elems)
 				}
 			}
 			iterables := make([][]object.Object, 0, int(repeatN)*len(collected))
@@ -670,11 +673,11 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
-				if elems, ok := object.IterableToSlice(args[0]); ok {
-					elements = elems
-					break
+				elems, errObj := collectIterable(args[0])
+				if errObj != nil {
+					return errObj
 				}
-				return notIterableError(args[0])
+				elements = elems
 			}
 
 			r := len(elements)
@@ -728,11 +731,11 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
-				if elems, ok := object.IterableToSlice(args[0]); ok {
-					elements = elems
-					break
+				elems, errObj := collectIterable(args[0])
+				if errObj != nil {
+					return errObj
 				}
-				return notIterableError(args[0])
+				elements = elems
 			}
 
 			rArg, ok := args[1].(*object.Integer)
@@ -779,11 +782,11 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
-				if elems, ok := object.IterableToSlice(args[0]); ok {
-					elements = elems
-					break
+				elems, errObj := collectIterable(args[0])
+				if errObj != nil {
+					return errObj
 				}
-				return notIterableError(args[0])
+				elements = elems
 			}
 
 			rArg, ok := args[1].(*object.Integer)
@@ -825,11 +828,11 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			default:
-				if elems, ok := object.IterableToSlice(args[0]); ok {
-					elements = elems
-					break
+				elems, errObj := collectIterable(args[0])
+				if errObj != nil {
+					return errObj
 				}
-				return notIterableError(args[0])
+				elements = elems
 			}
 
 			if err := checkKwargs("groupby", kwargs, "key"); err != nil {
@@ -910,11 +913,11 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			default:
-				if elems, ok := object.IterableToSlice(args[0]); ok {
-					elements = elems
-					break
+				elems, errObj := collectIterable(args[0])
+				if errObj != nil {
+					return errObj
 				}
-				return notIterableError(args[0])
+				elements = elems
 			}
 
 			if err := checkKwargs("accumulate", kwargs, "func", "initial"); err != nil {
@@ -983,11 +986,11 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			default:
-				if elems, ok := object.IterableToSlice(args[1]); ok {
-					elements = elems
-					break
+				elems, errObj := collectIterable(args[1])
+				if errObj != nil {
+					return errObj
 				}
-				return notIterableError(args[1])
+				elements = elems
 			}
 			result := []object.Object{}
 			for _, elem := range elements {
@@ -1025,11 +1028,11 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			default:
-				if elems, ok := object.IterableToSlice(args[1]); ok {
-					elements = elems
-					break
+				elems, errObj := collectIterable(args[1])
+				if errObj != nil {
+					return errObj
 				}
-				return notIterableError(args[1])
+				elements = elems
 			}
 			result := []object.Object{}
 			for _, elem := range elements {
@@ -1073,16 +1076,28 @@ Example:
 			if !selOK {
 				return notIterableError(args[1])
 			}
+			if isEndless(args[0]) && isEndless(args[1]) {
+				return errors.NewError("%s", object.InfiniteIteratorMessage)
+			}
 
 			result := []object.Object{}
 			for {
+				if err := ctx.Err(); err != nil {
+					return errors.NewError("%s", err.Error())
+				}
 				d, ok := data()
 				if !ok {
 					break
 				}
+				if object.IsPropagating(d) {
+					return d
+				}
 				sel, ok := selectors()
 				if !ok {
 					break
+				}
+				if object.IsPropagating(sel) {
+					return sel
 				}
 				if isTruthy(sel) {
 					result = append(result, d)
@@ -1115,11 +1130,11 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
-				if elems, ok := object.IterableToSlice(args[0]); ok {
-					elements = elems
-					break
+				elems, errObj := collectIterable(args[0])
+				if errObj != nil {
+					return errObj
 				}
-				return notIterableError(args[0])
+				elements = elems
 			}
 
 			if len(elements) < 2 {
@@ -1161,11 +1176,11 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
-				if elems, ok := object.IterableToSlice(args[0]); ok {
-					elements = elems
-					break
+				elems, errObj := collectIterable(args[0])
+				if errObj != nil {
+					return errObj
 				}
-				return notIterableError(args[0])
+				elements = elems
 			}
 
 			n, ok := args[1].(*object.Integer)
@@ -1358,6 +1373,38 @@ func parseIsliceBounds(args []object.Object, start, stop, step *int64) object.Ob
 		}
 	}
 	return nil
+}
+
+func isEndless(obj object.Object) bool {
+	it, ok := obj.(*object.Iterator)
+	return ok && it.Infinite()
+}
+
+// collectIterable gathers an argument's elements. An iterator is pulled to
+// its end; an error or exception raised while pulling it is returned, as is
+// an endless iterator, which would never finish.
+func collectIterable(obj object.Object) ([]object.Object, object.Object) {
+	if it, ok := obj.(*object.Iterator); ok {
+		if it.Infinite() {
+			return nil, errors.NewError("%s", object.InfiniteIteratorMessage)
+		}
+		var elems []object.Object
+		for {
+			v, more := it.Next()
+			if !more {
+				return elems, nil
+			}
+			if object.IsPropagating(v) {
+				return nil, v
+			}
+			elems = append(elems, v)
+		}
+	}
+	elems, ok := object.IterableToSlice(obj)
+	if !ok {
+		return nil, notIterableError(obj)
+	}
+	return elems, nil
 }
 
 // notIterableError is the error for an argument that cannot be collected

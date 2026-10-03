@@ -243,9 +243,9 @@ Returns a random floating-point number N such that a <= N <= b.`,
 				}
 			}
 			if at == nil {
-				list, ok := object.IterableToSlice(args[0])
-				if !ok {
-					return errors.NewTypeError("sequence", args[0].Type().String())
+				list, errObj := collectIterable(args[0])
+				if errObj != nil {
+					return errObj
 				}
 				n = int64(len(list))
 				at = func(i int64) object.Object { return list[i] }
@@ -389,9 +389,9 @@ lambd is 1.0 divided by the desired mean.`,
 					return newArgTypeError("choices() got an unexpected keyword argument '%s'", key)
 				}
 			}
-			population, ok := object.IterableToSlice(args[0])
-			if !ok {
-				return errors.NewTypeError("sequence", args[0].Type().String())
+			population, errObj := collectIterable(args[0])
+			if errObj != nil {
+				return errObj
 			}
 			n := len(population)
 
@@ -567,31 +567,34 @@ alpha (shape) and beta (scale) must be positive.`,
 	},
 	"triangular": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			args, kerr := kwargsToPositional("triangular", args, kwargs, "low", "high", "mode")
-			if kerr != nil {
-				return kerr
-			}
 			if err := errors.MaxArgs(args, 3); err != nil {
 				return err
 			}
-			// low and high default to 0 and 1, as in Python.
-			for len(args) < 2 {
-				args = append(args, object.NewFloat(float64(len(args))))
+			if err := checkKwargs("triangular", kwargs, "low", "high", "mode"); err != nil {
+				return err
 			}
-			low, err := args[0].AsFloat()
-			if err != nil {
-				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
-			}
-			high, err := args[1].AsFloat()
-			if err != nil {
-				return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
-			}
-			mode := (low + high) / 2.0
-			if len(args) == 3 && args[2].Type() != object.NULL_OBJ {
-				mode, err = args[2].AsFloat()
-				if err != nil {
-					return errors.NewTypeError("INTEGER or FLOAT", args[2].Type().String())
+			// Each argument is optional, positionally or by keyword: low and
+			// high default to 0 and 1 and mode to their midpoint, as in Python.
+			vals := [3]float64{0, 1, 0}
+			hasMode := false
+			for i, name := range []string{"low", "high", "mode"} {
+				v, aerr := optionalArg("triangular", args, kwargs, i, name)
+				if aerr != nil {
+					return aerr
 				}
+				if v == nil {
+					continue
+				}
+				f, err := v.AsFloat()
+				if err != nil {
+					return errors.NewTypeError("INTEGER or FLOAT", v.Type().String())
+				}
+				vals[i] = f
+				hasMode = hasMode || i == 2
+			}
+			low, high, mode := vals[0], vals[1], vals[2]
+			if !hasMode {
+				mode = (low + high) / 2.0
 			}
 			if low == high {
 				return object.NewFloat(low)

@@ -1512,12 +1512,18 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }, loggerIns
 		log = loggerInstance
 		library = buildLibrary()
 		extlibs.RegisterCleanup(func() {
+			// Take the clusters out under the lock, then stop them without
+			// it: stopping can wait for in-flight requests.
 			clusters.Lock()
+			entries := make([]clusterEntry, 0, len(clusters.m))
 			for id, e := range clusters.m {
-				e.stop()
+				entries = append(entries, e)
 				delete(clusters.m, id)
 			}
 			clusters.Unlock()
+			for _, e := range entries {
+				e.stop()
+			}
 		})
 	})
 	registrar.RegisterLibrary(library)

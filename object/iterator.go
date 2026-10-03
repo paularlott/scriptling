@@ -214,6 +214,10 @@ func NewRangeIterator(start, stop, step int64) *Iterator {
 	}
 }
 
+// IsPropagating reports whether a value yielded by an iterator is an internal
+// error or a raised exception that the consumer must propagate.
+func IsPropagating(obj Object) bool { return isPropagatingValue(obj) }
+
 // isPropagatingValue reports whether a value yielded by an iterator is an
 // internal error or a raised exception that the consumer must propagate.
 func isPropagatingValue(obj Object) bool {

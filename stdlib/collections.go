@@ -193,7 +193,11 @@ Example:
 						elements = append(elements, object.NewString(string(ch)))
 					}
 				default:
-					return errors.NewTypeError("iterable", args[0].Type().String())
+					elems, errObj := collectIterable(args[0])
+					if errObj != nil {
+						return errObj
+					}
+					elements = elems
 				}
 			}
 
@@ -493,9 +497,9 @@ var DequeClass = &object.Class{
 				return err
 			}
 			inst := args[0].(*object.Instance)
-			add, ok := object.IterableToSlice(args[1])
-			if !ok {
-				return errors.NewTypeError("iterable", args[1].Type().String())
+			add, errObj := collectIterable(args[1])
+			if errObj != nil {
+				return errObj
 			}
 			elems := append(dequeElems(inst), add...)
 			setDequeElems(inst, dequeClamp(inst, elems, true))
@@ -506,9 +510,9 @@ var DequeClass = &object.Class{
 				return err
 			}
 			inst := args[0].(*object.Instance)
-			add, ok := object.IterableToSlice(args[1])
-			if !ok {
-				return errors.NewTypeError("iterable", args[1].Type().String())
+			add, errObj := collectIterable(args[1])
+			if errObj != nil {
+				return errObj
 			}
 			// Python's extendleft appends each item to the left, so the
 			// iterable's order reverses.

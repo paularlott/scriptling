@@ -3336,8 +3336,12 @@ var exceptionParents = map[string]string{
 }
 
 func matchesNamedExceptionType(exceptionType, expectedType string) bool {
-	if expectedType == "Exception" || expectedType == "BaseException" {
+	switch expectedType {
+	case "BaseException":
 		return true
+	case "Exception":
+		// Everything but a raised BaseException itself derives from Exception.
+		return exceptionType != "BaseException"
 	}
 	for t := exceptionType; t != ""; t = exceptionParents[t] {
 		if t == expectedType {
@@ -4296,13 +4300,30 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 
 // checkFormatCode checks a format code and flags against the value's type,
 // as Python's int, float and str __format__ do.
-func checkFormatCode(obj object.Object, code rune, sign, align rune, zFlag bool) object.Object {
+func checkFormatCode(obj object.Object, code rune, sign, align rune, zFlag, hasPrecision, grouping bool, groupSep string) object.Object {
+	if grouping {
+		// Python: ',' only with decimal codes; '_' also with b, o, x, X.
+		bad := "bcoxXns"
+		if groupSep == "_" {
+			bad = "cns"
+		}
+		if code != 0 && strings.ContainsRune(bad, code) || code == 0 && obj.Type() == object.STRING_OBJ {
+			c := code
+			if c == 0 {
+				c = 's'
+			}
+			return formatSpecError("Cannot specify '%s' with '%c'.", groupSep, c)
+		}
+	}
 	var allowed string
 	switch obj.(type) {
 	case *object.Integer, *object.Boolean:
 		allowed = "bcdoxXneEfFgG%"
 		if zFlag {
 			return formatSpecError("Negative zero coercion (z) not allowed in integer format specifier")
+		}
+		if hasPrecision && (code == 0 || strings.ContainsRune("bcdoxXn", code)) {
+			return formatSpecError("Precision not allowed in integer format specifier")
 		}
 	case *object.Float:
 		allowed = "neEfFgG%"
@@ -4424,11 +4445,11 @@ func formatWithSpec(obj object.Object, spec string) (string, object.Object) {
 		if i+size < n {
 			return "", formatSpecError("Invalid format specifier '%s' for object of type '%s'", spec, getTypeName(obj))
 		}
-		if errObj := checkFormatCode(obj, code, sign, align, zFlag); errObj != nil {
+		if errObj := checkFormatCode(obj, code, sign, align, zFlag, precision >= 0, grouping, groupSep); errObj != nil {
 			return "", errObj
 		}
 		typeChar = spec[i]
-	} else if errObj := checkFormatCode(obj, 0, sign, align, zFlag); errObj != nil {
+	} else if errObj := checkFormatCode(obj, 0, sign, align, zFlag, precision >= 0, grouping, groupSep); errObj != nil {
 		return "", errObj
 	}
 
@@ -4452,15 +4473,13 @@ func formatWithSpec(obj object.Object, spec string) (string, object.Object) {
 			typeChar = 's'
 		}
 	}
-	if alt && (typeChar == 'x' || typeChar == 'X' || typeChar == 'o' || typeChar == 'b') {
+	if typeChar == 'x' || typeChar == 'X' || typeChar == 'o' || typeChar == 'b' {
 		if intVal, err := obj.AsInt(); err == nil {
-			formatted := prefixedBaseInt(intVal, typeChar, width, zero)
-			if sign == '+' && intVal >= 0 {
-				formatted = "+" + formatted
-			} else if sign == ' ' && intVal >= 0 {
-				formatted = " " + formatted
+			sep := ""
+			if grouping {
+				sep = groupSep
 			}
-			return padFormatted(formatted, width, fill, align, false), nil
+			return formatIntBase(intVal, typeChar, sign, alt, sep, zero, width, fill, align), nil
 		}
 	}
 
@@ -4552,30 +4571,6 @@ func formatWithSpec(obj object.Object, spec string) (string, object.Object) {
 				}
 			}
 			formatted = applySign(formatted, floatVal >= 0, sign)
-		} else {
-			formatted = obj.Inspect()
-		}
-	case 'x':
-		if intVal, err := obj.AsInt(); err == nil {
-			formatted = formatBaseInt(intVal, 16, false, width, zero)
-		} else {
-			formatted = obj.Inspect()
-		}
-	case 'X':
-		if intVal, err := obj.AsInt(); err == nil {
-			formatted = formatBaseInt(intVal, 16, true, width, zero)
-		} else {
-			formatted = obj.Inspect()
-		}
-	case 'o':
-		if intVal, err := obj.AsInt(); err == nil {
-			formatted = formatBaseInt(intVal, 8, false, width, zero)
-		} else {
-			formatted = obj.Inspect()
-		}
-	case 'b':
-		if intVal, err := obj.AsInt(); err == nil {
-			formatted = formatBaseInt(intVal, 2, false, width, zero)
 		} else {
 			formatted = obj.Inspect()
 		}
@@ -4741,18 +4736,57 @@ func formatZeroPaddedInt(n int64, width int) string {
 	return strings.Repeat("0", width-len(digits)) + digits
 }
 
-// prefixedBaseInt formats n in the base of code ('x', 'X', 'o' or 'b') with
-// Python's alternate-form prefix; zero padding goes after the prefix and
-// counts it in the width.
-func prefixedBaseInt(n int64, code byte, width int, zero bool) string {
-	prefix := "0" + string(code)
-	base := map[byte]int{'x': 16, 'X': 16, 'o': 8, 'b': 2}[code]
-	neg := ""
+// formatIntBase formats n for the x, X, o and b codes as Python does: sign,
+// then the 0x/0o/0b prefix when alt is set, then the digits, grouped in fours
+// by sep ("_") when given. Zero padding and '=' alignment go between the
+// prefix and the digits; other alignments pad the whole result.
+func formatIntBase(n int64, code byte, sign rune, alt bool, sep string, zero bool, width int, fill rune, align rune) string {
+	head := ""
+	u := uint64(n)
 	if n < 0 {
-		neg, n = "-", -n
+		head, u = "-", uint64(-n)
+	} else if sign == '+' || sign == ' ' {
+		head = string(sign)
 	}
-	digits := formatBaseInt(n, base, code == 'X', width-len(prefix)-len(neg), zero)
-	return neg + prefix + digits
+	if alt {
+		head += "0" + string(code)
+	}
+	base := map[byte]int{'x': 16, 'X': 16, 'o': 8, 'b': 2}[code]
+	digits := strconv.FormatUint(u, base)
+	if code == 'X' {
+		digits = strings.ToUpper(digits)
+	}
+	group := func(d string) string {
+		if sep == "" {
+			return d
+		}
+		var b strings.Builder
+		for i, c := range d {
+			if i > 0 && (len(d)-i)%4 == 0 {
+				b.WriteString(sep)
+			}
+			b.WriteRune(c)
+		}
+		return b.String()
+	}
+	body := group(digits)
+	if zero || align == '=' {
+		pad := '0'
+		if !zero {
+			pad = fill
+		}
+		if pad == '0' && sep != "" {
+			// Zero padding is grouped like the digits.
+			for len(head)+len(body) < width {
+				digits = "0" + digits
+				body = group(digits)
+			}
+		} else if n := width - len(head) - len([]rune(body)); n > 0 {
+			body = strings.Repeat(string(pad), n) + body
+		}
+		return head + body
+	}
+	return padFormatted(head+body, width, fill, align, false)
 }
 
 // padFormatted pads s to width with fill; numbers default to the right.
@@ -4769,20 +4803,6 @@ func padFormatted(s string, width int, fill rune, align rune, leftDefault bool) 
 		return strings.Repeat(string(fill), left) + s + strings.Repeat(string(fill), padding-left)
 	}
 	return strings.Repeat(string(fill), padding) + s
-}
-
-func formatBaseInt(n int64, base int, upper bool, width int, zero bool) string {
-	formatted := strconv.FormatInt(n, base)
-	if upper {
-		formatted = strings.ToUpper(formatted)
-	}
-	if !zero || width <= 0 || len(formatted) >= width {
-		return formatted
-	}
-	if n < 0 {
-		return "-" + strings.Repeat("0", width-len(formatted)) + formatted[1:]
-	}
-	return strings.Repeat("0", width-len(formatted)) + formatted
 }
 
 func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expression, capturedVars map[string]object.Object, env *object.Environment) (object.Object, object.Object) {

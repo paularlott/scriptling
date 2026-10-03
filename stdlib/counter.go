@@ -121,9 +121,9 @@ func counterApply(ctx context.Context, d *object.Dict, src object.Object, sign i
 		}
 		return nil
 	default:
-		var ok bool
-		if elems, ok = object.IterableToSlice(src); !ok {
-			return notIterableError(src)
+		var errObj object.Object
+		if elems, errObj = collectIterable(src); errObj != nil {
+			return errObj
 		}
 	}
 	for _, e := range elems {
@@ -147,10 +147,7 @@ func instanceElements(ctx context.Context, inst *object.Instance) ([]object.Obje
 	}
 	itInst, isInst := it.(*object.Instance)
 	if !isInst {
-		if elems, ok := object.IterableToSlice(it); ok {
-			return elems, nil
-		}
-		return nil, notIterableError(it)
+		return collectIterable(it)
 	}
 	nextFn, ok := itInst.Class.Methods["__next__"]
 	if !ok {

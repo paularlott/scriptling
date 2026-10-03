@@ -2181,20 +2181,14 @@ func compileFString(n *ast.FStringLiteral) object.EvalFn {
 					}
 					spec = expanded
 				}
-				if debugText != "" && conv == "" {
-					// f"{x=}" debug: repr-style rendering by default, spec still
-					// applies to the value, and the prefix is prepended verbatim.
-					rendered, rerr := renderConvertedValue(ctx, exprResult, "r", env)
-					if rerr != nil {
-						return rerr
-					}
-					formatted, ferr := formatWithSpec(object.NewString(rendered), spec)
-					if ferr != nil {
-						return ferr
-					}
+				if debugText != "" {
+					// f"{x=}" debug: the prefix is written verbatim, then the
+					// value as usual, except that with neither a conversion nor
+					// a spec it is shown with repr() (Python's rule).
 					builder.WriteString(debugText)
-					builder.WriteString(formatted)
-					continue
+					if conv == "" && spec == "" {
+						conv = "r"
+					}
 				}
 				var formatted string
 				if conv != "" {

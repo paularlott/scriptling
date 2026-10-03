@@ -45,3 +45,29 @@ func TestCollectingInfiniteIteratorFails(t *testing.T) {
 		})
 	}
 }
+
+// A timeout stops filter() skipping through an endless iterator.
+func TestFilterOverEndlessIteratorHonoursTimeout(t *testing.T) {
+	for _, expr := range []string{
+		"next(filter(None, it.repeat(0)))",
+		"next(filter(lambda x: False, it.count()))",
+	} {
+		t.Run(expr, func(t *testing.T) {
+			p := New()
+			stdlib.RegisterAll(p)
+			done := make(chan error, 1)
+			go func() {
+				_, err := p.EvalWithTimeout(300*time.Millisecond, "import itertools as it\n"+expr)
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatal("expected a timeout error")
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("timeout did not stop filter()")
+			}
+		})
+	}
+}

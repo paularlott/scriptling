@@ -615,6 +615,9 @@ Default start is 0. Use list(enumerate(...)) to get a list.`,
 				// Return empty iterator for no arguments
 				return object.NewZipIterator([]object.Object{})
 			}
+			if errObj := checkDictPairing("zip", args); errObj != nil {
+				return errObj
+			}
 			// Validate all arguments are iterable; instances run the iterator
 			// protocol (lazily — only __iter__ is called here).
 			iterArgs := make([]object.Object, len(args))
@@ -2549,6 +2552,28 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 	return &object.List{Elements: elements}
 }
 
+// checkDictPairing rejects two or more dicts or dict views walked in step.
+// Scriptling dict order is unspecified and can differ between two walks of
+// the same dict, so zip(d.keys(), d.values()) could silently pair the wrong
+// items.
+func checkDictPairing(name string, args []object.Object) object.Object {
+	dicts := 0
+	for _, arg := range args {
+		switch arg.(type) {
+		case *object.Dict, *object.DictKeys, *object.DictValues, *object.DictItems:
+			dicts++
+		}
+	}
+	if dicts < 2 {
+		return nil
+	}
+	return &object.Exception{
+		Message:       fmt.Sprintf("%s() cannot walk two dicts or dict views together because dict order is unspecified; use d.items() or sorted(d)", name),
+		ExceptionType: object.ExceptionTypeTypeError,
+		Raised:        true,
+	}
+}
+
 // hasIteratorArg reports whether any argument is a lazy iterator, which map()
 // and filter() must pull from lazily (it may be infinite) rather than
 // collect up front.
@@ -2563,8 +2588,8 @@ func hasIteratorArg(args []object.Object) bool {
 
 // lazyApply returns an iterator over the iterables zipped together, passing
 // each tuple to step. step returns the value to yield and whether to yield
-// it; an error or raised exception from a source or from step is yielded and
-// ends the iteration.
+// it. An error or raised exception from a source ends the iteration; one from
+// step is yielded and the iteration can continue.
 func lazyApply(ctx context.Context, iterables []object.Object, step func(items []object.Object) (object.Object, bool)) object.Object {
 	sources := make([]object.Object, len(iterables))
 	for i, arg := range iterables {
@@ -2579,8 +2604,15 @@ func lazyApply(ctx context.Context, iterables []object.Object, step func(items [
 	}
 	zipped := object.NewZipIterator(sources)
 	done := false
+	cc := newContextChecker(ctx)
 	next := func() (object.Object, bool) {
 		for !done {
+			// filter() may skip any number of elements of an endless
+			// input, so a timeout must be able to stop it.
+			if err := cc.check(); err != nil {
+				done = true
+				return err, true
+			}
 			t, ok := zipped.Next()
 			if !ok {
 				done = true
@@ -2590,12 +2622,9 @@ func lazyApply(ctx context.Context, iterables []object.Object, step func(items [
 				done = true
 				return t, true
 			}
-			res, keep := step(t.(*object.Tuple).Elements)
-			if propagates(res) {
-				done = true
-				return res, true
-			}
-			if keep {
+			// A raise from the function is yielded; as in Python, later
+			// elements can still be pulled.
+			if res, keep := step(t.(*object.Tuple).Elements); keep || propagates(res) {
 				return res, true
 			}
 		}
@@ -2656,10 +2685,16 @@ func mapFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 		return errors.NewError("map() requires at least 2 arguments")
 	}
 	fn := args[0]
+	if len(args) > 2 {
+		if errObj := checkDictPairing("map", args[1:]); errObj != nil {
+			return errObj
+		}
+	}
 	if hasIteratorArg(args[1:]) {
 		env := GetEnvFromContext(ctx)
 		return lazyApply(ctx, args[1:], func(items []object.Object) (object.Object, bool) {
-			return applyFunctionWithContext(ctx, fn, append([]object.Object(nil), items...), nil, env), true
+			// items is a fresh slice per element, so it can be the args.
+			return applyFunctionWithContext(ctx, fn, items, nil, env), true
 		})
 	}
 	// Get all iterables as slices
@@ -3447,7 +3482,8 @@ func parseIntLiteral(text string, base int) object.Object {
 		}
 	}
 	digits, ok := stripDigitUnderscores(s, isAlnumDigit)
-	if !ok || digits == "" {
+	// The only sign is the one before any prefix: 0x-5 is invalid.
+	if !ok || digits == "" || digits[0] == '-' || digits[0] == '+' {
 		return invalid()
 	}
 	val, err := strconv.ParseInt(sign+digits, digitBase, 64)
@@ -3473,9 +3509,13 @@ func parseFloatLiteral(text string) object.Object {
 		return invalid()
 	}
 	switch strings.ToLower(body) {
-	case "inf", "infinity", "nan":
-		v, _ := strconv.ParseFloat(s, 64)
-		return object.NewFloat(v)
+	case "inf", "infinity":
+		if s[0] == '-' {
+			return object.NewFloat(math.Inf(-1))
+		}
+		return object.NewFloat(math.Inf(1))
+	case "nan":
+		return object.NewFloat(math.NaN())
 	}
 	// Go also accepts hex floats and other forms Python's float() rejects.
 	for _, c := range body {

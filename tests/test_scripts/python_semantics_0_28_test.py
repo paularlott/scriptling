@@ -253,3 +253,61 @@ except LookupError as e:
     assert str(e) == "l"
 assert isinstance(KeyError("k"), LookupError) and not isinstance(ValueError("v"), LookupError)
 assert isinstance(ZeroDivisionError("z"), ArithmeticError) and isinstance(ValueError("v"), BaseException)
+
+# --- review fixes: errors through lazy map, f-string debug specs, formatting ---
+import collections
+
+
+def boom(x):
+    if x == 2:
+        raise ValueError("boom at 2")
+    return x
+
+
+for collect in [collections.Counter, lambda it: list(itertools.chain(it, [9])), lambda it: list(itertools.pairwise(it)),
+                lambda it: list(itertools.compress(it, [1, 1, 1])), collections.deque]:
+    try:
+        collect(map(boom, iter([1, 2, 3])))
+        assert False, "the ValueError should propagate"
+    except ValueError as e:
+        assert str(e) == "boom at 2"
+m = map(boom, iter([1, 2, 3]))
+assert next(m) == 1
+try:
+    next(m)
+    assert False, "should raise"
+except ValueError:
+    pass
+assert next(m) == 3
+
+x, n = 3.14159, 42
+assert f"{x=:.2f}" == "x=3.14" and f"{n=:d}" == "n=42" and f"{n=!s:>4}" == "n=  42" and f"{n=}" == "n=42"
+for value, spec, want in [(255, "+#010x", "+0x00000ff"), (255, "*=#10x", "0x******ff"), (2**20, "_x", "10_0000"),
+                          (2**20, "#_x", "0x10_0000"), (255, "010_x", "0_0000_00ff"), (-255, "#010x", "-0x00000ff")]:
+    assert format(value, spec) == want, (spec, format(value, spec))
+for value, spec in [(5, ".2"), ("a", ","), (255, ",x")]:
+    try:
+        format(value, spec)
+        assert False, "should raise"
+    except ValueError:
+        pass
+assert str(float("-nan")) == "nan" and float("+inf") > 0
+for text in ["0x-5", "0x+5"]:
+    try:
+        int(text, 0)
+        assert False, "should raise"
+    except ValueError:
+        pass
+assert 0 <= random.triangular(mode=0.5) <= 1 and 0 <= random.triangular(high=10) <= 10
+try:
+    try:
+        raise BaseException("b")
+    except Exception:
+        assert False, "Exception must not catch BaseException"
+except BaseException:
+    pass
+try:
+    list(zip({"a": 1}.keys(), {"a": 1}.values()))
+except TypeError:
+    pass  # Scriptling: dict order is unspecified; CPython pairs them
+assert list(collections.deque(iter([1, 2]))) == [1, 2]
