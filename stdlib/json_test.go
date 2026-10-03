@@ -125,7 +125,7 @@ func TestJSONDumpsHandlesCyclicStructures(t *testing.T) {
 		key := object.NewString("self")
 		d.Pairs[object.DictKey(key)] = object.DictPair{Key: key, Value: d}
 		got := call(d)
-		want := "{\"self\":\"\\u003ccyclic reference\\u003e\"}"
+		want := "{\"self\":\"<cyclic reference>\"}"
 		if got != want {
 			t.Fatalf("dumps() = %q, want %q", got, want)
 		}
@@ -137,7 +137,7 @@ func TestJSONDumpsHandlesCyclicStructures(t *testing.T) {
 		key := object.NewString("k")
 		d.Pairs[object.DictKey(key)] = object.DictPair{Key: key, Value: l}
 		got := call(d)
-		want := "{\"k\":[\"\\u003ccyclic reference\\u003e\"]}"
+		want := "{\"k\":[\"<cyclic reference>\"]}"
 		if got != want {
 			t.Fatalf("dumps() = %q, want %q", got, want)
 		}

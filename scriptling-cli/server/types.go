@@ -143,6 +143,7 @@ func (h *reloadableMCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 
 // Server represents the HTTP server
 type Server struct {
+	startCh               chan struct{} // this server's start signal; tags its setup script
 	config                ServerConfig
 	httpServer            *http.Server
 	mcpHandler            *reloadableMCPHandler

@@ -3,6 +3,8 @@ package gossip
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
 	"sync"
 	"time"
 
@@ -26,7 +28,18 @@ const (
 
 // clusterEntry tracks a live cluster for teardown.
 type clusterEntry struct {
-	cluster *gossip.Cluster
+	cluster    *gossip.Cluster
+	httpServer *http.Server // serves the "http" transport; nil for sockets
+}
+
+// stop stops the cluster and the HTTP server carrying its transport.
+func (e clusterEntry) stop() {
+	e.cluster.Stop()
+	if e.httpServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = e.httpServer.Shutdown(ctx)
+	}
 }
 
 // dispatchAsync runs a gossip handler on a fresh goroutine, isolated from the
@@ -367,6 +380,14 @@ Parameters:
 // per-environment interpreter lock via dispatchAsync/dispatchSync, so a script
 // never needs to pump events — it just stays alive for handlers to fire.
 func buildClusterObject(c *gossip.Cluster, clusterID string, eval evaliface.Evaluator, env *object.Environment) *object.Builtin {
+	obj := buildClusterBaseObject(c, clusterID, eval, env)
+	for name, method := range streamClusterMethods(c, eval, env) {
+		obj.Attributes[name] = method
+	}
+	return obj
+}
+
+func buildClusterBaseObject(c *gossip.Cluster, clusterID string, eval evaliface.Evaluator, env *object.Environment) *object.Builtin {
 	return &object.Builtin{
 		Attributes: map[string]object.Object{
 			"start": &object.Builtin{
@@ -416,10 +437,15 @@ Parameters:
 			},
 			"stop": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					c.Stop()
 					clusters.Lock()
+					entry, ok := clusters.m[clusterID]
 					delete(clusters.m, clusterID)
 					clusters.Unlock()
+					if ok {
+						entry.stop()
+					} else {
+						c.Stop()
+					}
 					return &object.Null{}
 				},
 				HelpText: `stop() - Stop the cluster and clean up resources`,
@@ -578,26 +604,10 @@ Parameters:
 					handlerFn := args[1]
 
 					handleErr := c.HandleFunc(gossip.MessageType(msgType), func(sender *gossip.Node, packet *gossip.Packet) error {
-						var payload interface{}
-						if unmarshalErr := packet.Unmarshal(&payload); unmarshalErr != nil {
-							return unmarshalErr
+						msgObj, err := messageObject(sender, packet)
+						if err != nil {
+							return err
 						}
-
-						var payloadObj object.Object
-						if str, ok := payload.(string); ok {
-							payloadObj = object.NewString(str)
-						} else if payload != nil {
-							payloadObj = conversion.FromGo(payload)
-						} else {
-							payloadObj = &object.Null{}
-						}
-
-						senderObj := nodeToObject(sender)
-						msgObj := object.NewStringDict(map[string]object.Object{
-							"type":    object.NewInteger(int64(packet.MessageType)),
-							"sender":  senderObj,
-							"payload": payloadObj,
-						})
 
 						result := dispatchSync(func() object.Object {
 							return eval.CallObjectFunction(ctx, handlerFn, []object.Object{msgObj}, nil, env)
@@ -644,26 +654,10 @@ The handler receives a dict with:
 					handlerFn := args[1]
 
 					handleErr := c.HandleFuncWithReply(gossip.MessageType(msgType), func(sender *gossip.Node, packet *gossip.Packet) (interface{}, error) {
-						var payload interface{}
-						if unmarshalErr := packet.Unmarshal(&payload); unmarshalErr != nil {
-							return nil, unmarshalErr
+						msgObj, err := messageObject(sender, packet)
+						if err != nil {
+							return nil, err
 						}
-
-						var payloadObj object.Object
-						if str, ok := payload.(string); ok {
-							payloadObj = object.NewString(str)
-						} else if payload != nil {
-							payloadObj = conversion.FromGo(payload)
-						} else {
-							payloadObj = &object.Null{}
-						}
-
-						senderObj := nodeToObject(sender)
-						msgObj := object.NewStringDict(map[string]object.Object{
-							"type":    object.NewInteger(int64(packet.MessageType)),
-							"sender":  senderObj,
-							"payload": payloadObj,
-						})
 
 						result := dispatchSync(func() object.Object {
 							return eval.CallObjectFunction(ctx, handlerFn, []object.Object{msgObj}, nil, env)
@@ -1242,6 +1236,17 @@ func buildLibrary() *object.Library {
 				}
 
 				config := gossip.DefaultConfig()
+				// The http transport is carried by an HTTP server on bind_addr
+				// (started below); peers reach it by URL. gossip expects the
+				// request path as BindAddr and a URL to advertise.
+				httpListenAddr := ""
+				if transport == "http" {
+					httpListenAddr = bindAddr
+					bindAddr = "/"
+					if advertiseAddr == "" {
+						advertiseAddr = "http://" + httpListenAddr
+					}
+				}
 				config.BindAddr = bindAddr
 				config.AdvertiseAddr = advertiseAddr
 				config.NodeID = nodeID
@@ -1380,9 +1385,19 @@ func buildLibrary() *object.Library {
 					}
 				}
 
+				var httpServer *http.Server
 				switch transport {
 				case "http":
-					config.Transport = gossip.NewHTTPTransport(config)
+					httpTransport := gossip.NewHTTPTransport(config)
+					config.Transport = httpTransport
+					listener, listenErr := net.Listen("tcp", httpListenAddr)
+					if listenErr != nil {
+						return errors.NewError("failed to listen on %s: %s", httpListenAddr, listenErr.Error())
+					}
+					mux := http.NewServeMux()
+					mux.HandleFunc("/", httpTransport.HandleGossipRequest)
+					httpServer = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+					go func() { _ = httpServer.Serve(listener) }()
 				case "socket":
 					config.Transport = gossip.NewSocketTransport(config)
 				default:
@@ -1391,12 +1406,15 @@ func buildLibrary() *object.Library {
 
 				cluster, clusterErr := gossip.NewCluster(config)
 				if clusterErr != nil {
+					if httpServer != nil {
+						_ = httpServer.Close()
+					}
 					return errors.NewError("failed to create cluster: %s", clusterErr.Error())
 				}
 
 				clusterID := cluster.LocalNode().ID.String()
 				clusters.Lock()
-				clusters.m[clusterID] = clusterEntry{cluster: cluster}
+				clusters.m[clusterID] = clusterEntry{cluster: cluster, httpServer: httpServer}
 				clusters.Unlock()
 
 				return buildClusterObject(cluster, clusterID, eval, env)
@@ -1460,7 +1478,7 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }, loggerIns
 		extlibs.RegisterCleanup(func() {
 			clusters.Lock()
 			for id, e := range clusters.m {
-				e.cluster.Stop()
+				e.stop()
 				delete(clusters.m, id)
 			}
 			clusters.Unlock()

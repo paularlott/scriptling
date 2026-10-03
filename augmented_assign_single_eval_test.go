@@ -80,7 +80,7 @@ class Box:
 b = Box()
 b["k"] += 1
 result = [b.store["k"], log]
-`, "[8, [get, set]]"},
+`, "[8, ['get', 'set']]"},
 		{"nested subscript", `
 calls = []
 def outer():
@@ -92,7 +92,7 @@ def inner():
 d = {"x": {"y": 1}}
 d[outer()][inner()] += 10
 result = [d["x"]["y"], calls]
-`, "[11, [o, i]]"},
+`, "[11, ['o', 'i']]"},
 		{"in-place list extend", `
 calls = 0
 def key():
@@ -114,7 +114,7 @@ d = {"m": {"a": 1}}
 alias = d["m"]
 d[key()] |= {"b": 2}
 result = [sorted(alias.keys()), calls]
-`, "[[a, b], 1]"},
+`, "[['a', 'b'], 1]"},
 		{"value evaluated after target, once", `
 order = []
 def key():
@@ -126,7 +126,7 @@ def val():
 d = {"a": 0}
 d[key()] += val()
 result = [d["a"], order]
-`, "[1, [key, val]]"},
+`, "[1, ['key', 'val']]"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -174,7 +174,7 @@ fa[0][0] -= 1
 		}
 	}
 	calls, _ := p.GetVarAsObject("calls")
-	if calls.Inspect() != "[r, c]" {
+	if calls.Inspect() != "['r', 'c']" {
 		t.Fatalf("index expressions ran %s, want once each", calls.Inspect())
 	}
 }

@@ -2414,6 +2414,10 @@ func (echoMockClient) Close() error { return nil }
 // then a normal echo response for all subsequent calls.
 type rateLimitMockClient struct {
 	called int32
+	// afterFirst, when set, runs at the start of every call but the first,
+	// so a test can hold later calls until the rate-limited first call has
+	// been fed back to the limiter.
+	afterFirst func()
 }
 
 func (r *rateLimitMockClient) Provider() string               { return "mock" }
@@ -2436,7 +2440,11 @@ func (r *rateLimitMockClient) ChatCompletion(_ context.Context, req mcpai.ChatCo
 		},
 	}
 	// First call signals a rate limit so adaptive backoff kicks in.
-	if atomic.AddInt32(&r.called, 1) == 1 {
+	n := atomic.AddInt32(&r.called, 1)
+	if n > 1 && r.afterFirst != nil {
+		r.afterFirst()
+	}
+	if n == 1 {
 		resp.Retry = &openaiapi.RetryMetadata{
 			Attempts:     1,
 			RateLimitHit: true,
@@ -2979,6 +2987,29 @@ func TestPipelineRateLimitRecovers(t *testing.T) {
 	kwargs := object.NewKwargs(map[string]object.Object{"max_parallel": object.NewInteger(4)})
 
 	pipe := pipelineMethod(inst, ctx, kwargs, "gpt-4").(*object.Instance)
+	p, perr := getPipelineInstance(pipe)
+	if perr != nil {
+		t.Fatalf("getPipelineInstance: %v", perr.Message)
+	}
+	// Hold every later call until the limiter has processed the first,
+	// rate-limited call. Otherwise, if that worker is descheduled, the
+	// others can finish most items at full width and the rate limit lands
+	// at the end with nothing left to recover on.
+	// The gate opens once, when the limiter first drops below max_parallel,
+	// and stays open: later calls must not wait after the limit recovers.
+	var halved atomic.Bool
+	rl.afterFirst = func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for !halved.Load() && time.Now().Before(deadline) {
+			if limit, _ := p.limiter.snapshot(); limit < 4 {
+				halved.Store(true)
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	// Workers start as items are added, so the gate is set up first.
 	n := 12
 	for i := 0; i < n; i++ {
 		addMethod(pipe, ctx, fmt.Sprintf("item%d", i))
@@ -2997,10 +3028,6 @@ func TestPipelineRateLimitRecovers(t *testing.T) {
 		}
 	}
 
-	p, perr := getPipelineInstance(pipe)
-	if perr != nil {
-		t.Fatalf("getPipelineInstance: %v", perr.Message)
-	}
 	limit, active := p.limiter.snapshot()
 	if active != 0 {
 		t.Errorf("in-flight count after complete() = %d, want 0", active)

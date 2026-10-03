@@ -19,14 +19,14 @@ assert result == [0, 0, 0, 0, 0]
 result = itertools.cycle([1, 2], 3)
 assert result == [1, 2, 1, 2, 1, 2]
 
-# Test count
-result = itertools.count(0, 5)
-assert result == [0, 1, 2, 3, 4]
+# Test count: count(start, step) is infinite, as in Python
+result = list(itertools.islice(itertools.count(0, 5), 4))
+assert result == [0, 5, 10, 15]
 
-result = itertools.count(0, 10, 2)
-assert result == [0, 2, 4, 6, 8]
+result = list(itertools.islice(itertools.count(10), 3))
+assert result == [10, 11, 12]
 
-result = itertools.count(5, 0, -1)
+result = list(itertools.islice(itertools.count(5, -1), 5))
 assert result == [5, 4, 3, 2, 1]
 
 # Test islice

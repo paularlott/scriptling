@@ -56,7 +56,7 @@ func (c *appleClient) Login(ctx context.Context, server, username, password stri
 
 // Pull implements ContainerDriver.
 func (c *appleClient) Pull(ctx context.Context, image string) error {
-	_, err := c.run(ctx, "pull", image)
+	_, err := c.run(ctx, "image", "pull", image)
 	return err
 }
 
@@ -142,24 +142,45 @@ func (c *appleClient) ImageList(ctx context.Context) ([]ImageInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("image list: %s", out)
 	}
+	return parseAppleImageList(out)
+}
+
+// appleDescriptor is an OCI descriptor in the container CLI's JSON.
+type appleDescriptor struct {
+	Digest string `json:"digest"`
+	Size   int64  `json:"size"`
+}
+
+// parseAppleImageList reads `container image list --format json`. CLI 1.1
+// nests the name and descriptor under "configuration"; earlier versions put
+// "reference" and "descriptor" at the top level. Both are accepted.
+func parseAppleImageList(out string) ([]ImageInfo, error) {
 	var raw []struct {
-		Reference  string `json:"reference"`
-		Descriptor struct {
-			Digest string `json:"digest"`
-			Size   int64  `json:"size"`
-		} `json:"descriptor"`
+		ID            string          `json:"id"`
+		Reference     string          `json:"reference"`
+		Descriptor    appleDescriptor `json:"descriptor"`
+		Configuration struct {
+			Name       string          `json:"name"`
+			Descriptor appleDescriptor `json:"descriptor"`
+		} `json:"configuration"`
 	}
 	if err := json.Unmarshal([]byte(out), &raw); err != nil {
 		return nil, fmt.Errorf("image list: failed to parse output")
 	}
 	result := make([]ImageInfo, len(raw))
 	for i, r := range raw {
-		result[i] = ImageInfo{
-			ID:        r.Descriptor.Digest,
-			Reference: r.Reference,
-			Digest:    r.Descriptor.Digest,
-			Size:      r.Descriptor.Size,
+		ref, desc := r.Reference, r.Descriptor
+		if ref == "" {
+			ref = r.Configuration.Name
 		}
+		if desc.Digest == "" {
+			desc = r.Configuration.Descriptor
+		}
+		id := r.ID
+		if id == "" {
+			id = desc.Digest
+		}
+		result[i] = ImageInfo{ID: id, Reference: ref, Digest: desc.Digest, Size: desc.Size}
 	}
 	return result, nil
 }
@@ -167,10 +188,16 @@ func (c *appleClient) ImageList(ctx context.Context) ([]ImageInfo, error) {
 // ImageRemove implements ContainerDriver.
 func (c *appleClient) ImageRemove(ctx context.Context, image string) error {
 	out, err := c.run(ctx, "image", "rm", image)
-	if err != nil && !strings.Contains(out, "not found") {
-		return fmt.Errorf("image remove: %s", out)
+	if err == nil || strings.Contains(out, "not found") {
+		return nil
 	}
-	return nil
+	// Newer CLIs report a missing image with a generic "failed to delete";
+	// removing an absent image is not an error (as with Docker), so only
+	// fail when the image is still there.
+	if _, inspectErr := c.run(ctx, "image", "inspect", image); inspectErr != nil {
+		return nil
+	}
+	return fmt.Errorf("image remove: %s", out)
 }
 
 // Run implements ContainerDriver.
@@ -257,8 +284,28 @@ func (c *appleClient) Remove(ctx context.Context, nameOrID string) error {
 	return nil
 }
 
+// appleStatus is a container's state. Container CLI 1.1 reports an object
+// ({"state": "running", ...}); earlier versions a plain string.
+type appleStatus string
+
+func (s *appleStatus) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		*s = appleStatus(str)
+		return nil
+	}
+	var obj struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return err
+	}
+	*s = appleStatus(obj.State)
+	return nil
+}
+
 type appleListItem struct {
-	Status        string `json:"status"`
+	Status        appleStatus `json:"status"`
 	Configuration struct {
 		ID    string `json:"id"`
 		Image struct {
@@ -293,7 +340,7 @@ func (c *appleClient) Inspect(ctx context.Context, nameOrID string) (*ContainerI
 	return &ContainerInfo{
 		ID:      item.Configuration.ID,
 		Name:    item.Configuration.ID,
-		Status:  item.Status,
+		Status:  string(item.Status),
 		Image:   item.Configuration.Image.Reference,
 		Running: item.Status == "running",
 	}, nil
@@ -314,7 +361,7 @@ func (c *appleClient) List(ctx context.Context) ([]ContainerInfo, error) {
 		result[i] = ContainerInfo{
 			ID:      item.Configuration.ID,
 			Name:    item.Configuration.ID,
-			Status:  item.Status,
+			Status:  string(item.Status),
 			Image:   item.Configuration.Image.Reference,
 			Running: item.Status == "running",
 		}
@@ -351,15 +398,33 @@ func (c *appleClient) VolumeList(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("volume list: %s", out)
 	}
+	return parseAppleVolumeList(out)
+}
+
+// parseAppleVolumeList reads `container volume list --format json`. CLI 1.1
+// nests the name under "configuration" (with the same value as "id");
+// earlier versions put "name" at the top level. Both are accepted.
+func parseAppleVolumeList(out string) ([]string, error) {
 	var items []struct {
-		Name string `json:"name"`
+		ID            string `json:"id"`
+		Name          string `json:"name"`
+		Configuration struct {
+			Name string `json:"name"`
+		} `json:"configuration"`
 	}
 	if err := json.Unmarshal([]byte(out), &items); err != nil {
 		return nil, fmt.Errorf("volume list: failed to parse output")
 	}
 	names := make([]string, len(items))
 	for i, v := range items {
-		names[i] = v.Name
+		switch {
+		case v.Name != "":
+			names[i] = v.Name
+		case v.Configuration.Name != "":
+			names[i] = v.Configuration.Name
+		default:
+			names[i] = v.ID
+		}
 	}
 	return names, nil
 }

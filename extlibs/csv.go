@@ -49,7 +49,7 @@ func NewCsvLibrary() *object.Library {
 				}
 				return &object.List{Elements: elements}
 			},
-			HelpText: `parse(content, delimiter=",") - Parse a CSV string into a list of rows
+			HelpText: `loads(content, delimiter=",") - Parse a CSV string into a list of rows
 
 Returns a list of lists, where each inner list is a row of string values.
 Handles quoting, embedded commas, and embedded newlines per RFC 4180.
@@ -99,7 +99,7 @@ Returns:
 				}
 				return &object.List{Elements: elements}
 			},
-			HelpText: `parse_dict(content, delimiter=",") - Parse CSV into a list of dicts
+			HelpText: `loads_dict(content, delimiter=",") - Parse CSV into a list of dicts
 
 Treats the first row as column headers. Each subsequent row becomes a dict
 mapping header names to cell values.
@@ -150,7 +150,7 @@ Returns:
 				w.Flush()
 				return object.NewString(buf.String())
 			},
-			HelpText: `format(rows, delimiter=",") - Format rows into a CSV string
+			HelpText: `dumps(rows, delimiter=",") - Format rows into a CSV string
 
 Parameters:
   rows      List of lists (each inner list is a row of string values)
@@ -224,7 +224,7 @@ Returns:
 				w.Flush()
 				return object.NewString(buf.String())
 			},
-			HelpText: `format_dict(rows, delimiter=",") - Format dicts into a CSV string
+			HelpText: `dumps_dict(rows, delimiter=",") - Format dicts into a CSV string
 
 Column headers are taken from the keys of the first dict. Each dict becomes
 a row, with values written in header order.

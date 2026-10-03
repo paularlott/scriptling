@@ -609,6 +609,12 @@ Returns:
 			// and collectJSONRPCMethods read RuntimeState fields directly without
 			// re-acquiring the lock, so this is safe.
 			RuntimeState.Lock()
+			if staleServerContext(ctx) {
+				// A setup script from a replaced server: never start the
+				// newer one, and don't wait on its lifetime.
+				RuntimeState.Unlock()
+				return &object.Null{}
+			}
 			if !RuntimeState.ServerStarted && RuntimeState.ServerStartCh != nil {
 				RuntimeState.ServerStarted = true
 				if RuntimeState.ServerCollect != nil {
@@ -659,8 +665,9 @@ after the setup script finishes.
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			RuntimeState.RLock()
 			ch := RuntimeState.ServerRunningCh
+			stale := staleServerContext(ctx)
 			RuntimeState.RUnlock()
-			if ch == nil {
+			if ch == nil || stale {
 				return object.NewBoolean(false)
 			}
 			select {
@@ -1082,4 +1089,23 @@ func ReleaseBackgroundTasks() {
 		}
 		go run()
 	}
+}
+
+// serverStartKey tags a setup script's context with the start channel of
+// the server it belongs to.
+type serverStartKey struct{}
+
+// WithServerStart marks ctx as belonging to the server whose start channel is
+// ch. start_server() and server_running() under a context whose server has
+// since been replaced (a setup script left over from an earlier server)
+// neither start nor report the newer server.
+func WithServerStart(ctx context.Context, ch chan struct{}) context.Context {
+	return context.WithValue(ctx, serverStartKey{}, ch)
+}
+
+// staleServerContext reports whether ctx belongs to a server that is no
+// longer the current one. Callers hold RuntimeState's lock.
+func staleServerContext(ctx context.Context) bool {
+	ch, ok := ctx.Value(serverStartKey{}).(chan struct{})
+	return ok && ch != RuntimeState.ServerStartCh
 }

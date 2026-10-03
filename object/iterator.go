@@ -173,80 +173,107 @@ func NewRangeIterator(start, stop, step int64) *Iterator {
 	}
 }
 
-// ZipIterator creates an iterator that zips multiple iterables together
-func NewZipIterator(iterables []Object) *Iterator {
-	// Convert all iterables to slices
-	slices := make([][]Object, len(iterables))
-	minLen := -1
-
-	for i, iterable := range iterables {
-		elements, ok := IterableToSlice(iterable)
-		if !ok {
-			// Return empty iterator for invalid types
-			return &Iterator{
-				next: func() (Object, bool) {
-					return nil, false
-				},
-				consumed: true,
-			}
-		}
-		slices[i] = elements
-
-		if minLen == -1 || len(slices[i]) < minLen {
-			minLen = len(slices[i])
-		}
+// isPropagatingValue reports whether a value yielded by an iterator is an
+// internal error or a raised exception that the consumer must propagate.
+func isPropagatingValue(obj Object) bool {
+	if IsError(obj) {
+		return true
 	}
+	ex, ok := obj.(*Exception)
+	return ok && ex.Raised
+}
 
+// IterSource returns a pull function over iterable. Iterators are consumed
+// lazily (so infinite iterators such as itertools.cycle work, as in Python);
+// other iterables are materialized once. ok is false for non-iterables.
+func IterSource(iterable Object) (func() (Object, bool), bool) {
+	if it, isIter := iterable.(*Iterator); isIter {
+		return it.Next, true
+	}
+	elements, ok := IterableToSlice(iterable)
+	if !ok {
+		return nil, false
+	}
 	index := 0
+	return func() (Object, bool) {
+		if index >= len(elements) {
+			return nil, false
+		}
+		v := elements[index]
+		index++
+		return v, true
+	}, true
+}
 
+// emptyIterator returns an already-exhausted iterator.
+func emptyIterator() *Iterator {
 	return &Iterator{
 		next: func() (Object, bool) {
-			if index >= minLen {
-				return nil, false
-			}
-
-			tuple := make([]Object, len(slices))
-			for j := range slices {
-				tuple[j] = slices[j][index]
-			}
-			index++
-
-			return &Tuple{Elements: tuple}, true
+			return nil, false
 		},
+		consumed: true,
+		length:   -1,
 	}
 }
 
-// EnumerateIterator creates an iterator that returns (index, value) tuples
-func NewEnumerateIterator(iterable Object, start int64) *Iterator {
-	// Convert iterable to slice
-	elements, ok := IterableToSlice(iterable)
-	if !ok {
-		// Return empty iterator for invalid types
-		return &Iterator{
-			next: func() (Object, bool) {
-				return nil, false
-			},
-			consumed: true,
+// ZipIterator creates an iterator that zips multiple iterables together.
+// Iterator inputs are pulled lazily, left to right, stopping at the first
+// exhausted input (Python semantics). An error or raised exception yielded
+// by an input is passed through unwrapped so the consumer propagates it.
+func NewZipIterator(iterables []Object) *Iterator {
+	sources := make([]func() (Object, bool), len(iterables))
+	for i, iterable := range iterables {
+		src, ok := IterSource(iterable)
+		if !ok {
+			return emptyIterator()
 		}
+		sources[i] = src
 	}
-
-	index := 0
-
-	return &Iterator{
-		next: func() (Object, bool) {
-			if index >= len(elements) {
+	if len(sources) == 0 {
+		return emptyIterator()
+	}
+	done := false
+	return NewIterator(func() (Object, bool) {
+		if done {
+			return nil, false
+		}
+		tuple := make([]Object, len(sources))
+		for j, src := range sources {
+			v, ok := src()
+			if !ok {
+				done = true
 				return nil, false
 			}
+			if isPropagatingValue(v) {
+				done = true
+				return v, true
+			}
+			tuple[j] = v
+		}
+		return &Tuple{Elements: tuple}, true
+	})
+}
 
-			tuple := &Tuple{Elements: []Object{
-				NewInteger(start + int64(index)),
-				elements[index],
-			}}
-			index++
-
-			return tuple, true
-		},
+// EnumerateIterator creates an iterator of (index, value) tuples. Iterator
+// inputs are pulled lazily so infinite iterators can be enumerated.
+func NewEnumerateIterator(iterable Object, start int64) *Iterator {
+	src, ok := IterSource(iterable)
+	if !ok {
+		return emptyIterator()
 	}
+	index := start
+	return NewIterator(func() (Object, bool) {
+		v, ok := src()
+		if !ok {
+			return nil, false
+		}
+		if isPropagatingValue(v) {
+			return v, true
+		}
+		tuple := &Tuple{Elements: []Object{NewInteger(index), v}}
+		index++
+		return tuple, true
+	})
 }
 
 // ReversedIterator creates an iterator that returns elements in reverse order

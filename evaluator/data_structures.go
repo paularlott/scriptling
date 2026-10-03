@@ -95,6 +95,23 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 			return evalTupleSliceExpression(left, index)
 		}
 	case object.DICT_OBJ:
+		// Dot access is attribute access (library modules are dicts): a
+		// missing name is AttributeError, as for math.nope in Python.
+		// Bracket access keeps KeyError.
+		if isDotAccess {
+			if name, ok := index.(*object.String); ok {
+				if pair, exists := left.(*object.Dict).GetByString(name.StringValue()); exists {
+					return pair.Value
+				}
+				// Modules expose only their members, not dict methods.
+				if left.(*object.Dict).Module == "" {
+					if method := builtinMethodRef(left, name.StringValue()); method != nil {
+						return method
+					}
+				}
+				return attributeError(left, name.StringValue())
+			}
+		}
 		return evalDictIndexExpression(ctx, left, index)
 	case object.STRING_OBJ:
 		switch index.Type() {
@@ -130,7 +147,7 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 		case "__name__", "name":
 			return object.NewString(fn.Name)
 		}
-		return errors.NewError("function has no attribute '%s'", attr)
+		return attributeError(left, attr)
 	case object.LAMBDA_OBJ:
 		if !isDotAccess {
 			return errors.NewError("index operator not supported: %s", leftType)
@@ -140,9 +157,31 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 		case "__name__", "name":
 			return object.NewString("<lambda>")
 		}
-		return errors.NewError("lambda has no attribute '%s'", attr)
+		return attributeError(left, attr)
 	}
-	return errors.NewError("index operator not supported: %s", leftType)
+	if isDotAccess {
+		attr, _ := index.AsString()
+		if method := builtinMethodRef(left, attr); method != nil {
+			return method
+		}
+		return attributeError(left, attr)
+	}
+	// Python's wording: sequences reject the index type, other values
+	// cannot be indexed at all.
+	message := fmt.Sprintf("'%s' object is not subscriptable", getTypeName(left))
+	switch leftType {
+	case object.LIST_OBJ, object.TUPLE_OBJ:
+		message = fmt.Sprintf("%s indices must be integers or slices, not %s", getTypeName(left), getTypeName(index))
+	case object.STRING_OBJ:
+		message = fmt.Sprintf("string indices must be integers, not '%s'", getTypeName(index))
+	case object.BYTES_OBJ:
+		message = fmt.Sprintf("byte indices must be integers or slices, not %s", getTypeName(index))
+	}
+	return &object.Exception{
+		Message:       message,
+		ExceptionType: object.ExceptionTypeTypeError,
+		Raised:        true,
+	}
 }
 
 func evalSuperIndexExpression(superObj, index object.Object) object.Object {
@@ -162,7 +201,7 @@ func evalSuperIndexExpression(superObj, index object.Object) object.Object {
 		}
 		currentClass = currentClass.BaseClass
 	}
-	return NULL
+	return attributeError(super, field)
 }
 
 func evalListIndexExpression(list, index object.Object) object.Object {
@@ -345,7 +384,7 @@ func evalDictIndexExpression(ctx context.Context, dict, index object.Object) obj
 	if !ok {
 		keyMsg := index.Inspect()
 		if ks, ok := index.(*object.String); ok {
-			keyMsg = pyReprString(ks.StringValue())
+			keyMsg = object.ReprString(ks.StringValue())
 		}
 		return &object.Exception{Message: keyMsg, ExceptionType: object.ExceptionTypeKeyError, Raised: true}
 	}
@@ -396,16 +435,20 @@ func evalStringIndexExpression(str, index object.Object) object.Object {
 func evalInstanceIndexExpression(ctx context.Context, instance, index object.Object, isDotAccess bool) object.Object {
 	inst := instance.(*object.Instance)
 
-	// Only call __getitem__ for explicit bracket access (obj[key]), not dot access (obj.attr)
+	// Bracket access (obj[key]) is __getitem__, inherited or not; without it
+	// the object is not subscriptable, as in Python.
 	if !isDotAccess {
-		if getitem, ok := inst.Class.Methods["__getitem__"]; ok {
+		if getitem, ok := inst.Class.LookupMember("__getitem__"); ok {
 			args := []object.Object{instance, index}
 			return applyFunctionWithContext(ctx, getitem, args, nil, nil)
 		}
+		return &object.Exception{
+			Message:       fmt.Sprintf("'%s' object is not subscriptable", inst.Class.Name),
+			ExceptionType: object.ExceptionTypeTypeError,
+			Raised:        true,
+		}
 	}
 
-	// Fallback to string-based field access. A non-string index without a
-	// __getitem__ means the object is not subscriptable (Python TypeError).
 	if index.Type() != object.STRING_OBJ {
 		return &object.Exception{
 			Message:       fmt.Sprintf("'%s' object is not subscriptable", inst.Class.Name),
@@ -440,7 +483,14 @@ func evalInstanceIndexExpression(ctx context.Context, instance, index object.Obj
 			return fn // non-callable class attribute (e.g. string set by class decorator)
 		}
 	}
-	return NULL
+	if field == "__class__" {
+		return inst.Class
+	}
+	// As in Python, __getattr__ is consulted only when normal lookup fails.
+	if getattr, ok := inst.Class.LookupMember("__getattr__"); ok {
+		return applyFunctionWithContext(ctx, getattr, []object.Object{instance, index}, nil, nil)
+	}
+	return attributeError(inst, field)
 }
 
 func evalClassIndexExpression(class, index object.Object) object.Object {
@@ -461,7 +511,7 @@ func evalClassIndexExpression(class, index object.Object) object.Object {
 		}
 		return fn
 	}
-	return NULL
+	return attributeError(cl, field)
 }
 
 func evalPropertyIndexExpression(prop, index object.Object) object.Object {
@@ -470,7 +520,7 @@ func evalPropertyIndexExpression(prop, index object.Object) object.Object {
 		return errors.NewError("property attribute must be string")
 	}
 	if field != "setter" {
-		return errors.NewError("property has no attribute '%s'", field)
+		return attributeError(prop, field)
 	}
 	p := prop.(*object.Property)
 	// Return a callable: setter(fn) -> new Property{Getter: p.Getter, Setter: fn}
@@ -498,7 +548,7 @@ func evalBuiltinIndexExpression(builtin, index object.Object) object.Object {
 			return val
 		}
 	}
-	return NULL
+	return attributeError(b, field)
 }
 
 func sliceList(elements []object.Object, start, end, step int64, hasStart, hasEnd, hasStep bool) object.Object {

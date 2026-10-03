@@ -860,8 +860,8 @@ import scriptling.package as package
 		"# root asset\n",
 		"# nested asset\n",
 		"True",
-		"[other/something.md, something.md]",
-		"[ppns]",
+		"['other/something.md', 'something.md']",
+		"['ppns']",
 	}
 	if len(list.Elements) != len(want) {
 		t.Fatalf("result has %d elements (%v), want %d", len(list.Elements), result.Inspect(), len(want))

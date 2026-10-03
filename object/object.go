@@ -802,10 +802,16 @@ type Builtin struct {
 	Fn         BuiltinFunction
 	HelpText   string            // Optional help documentation for this builtin
 	Attributes map[string]Object // Optional attributes for this builtin
+	Repr       string            // Optional repr, e.g. for bound methods
 }
 
 func (b *Builtin) Type() ObjectType { return BUILTIN_OBJ }
-func (b *Builtin) Inspect() string  { return "<builtin function>" }
+func (b *Builtin) Inspect() string {
+	if b.Repr != "" {
+		return b.Repr
+	}
+	return "<builtin function>"
+}
 
 func (b *Builtin) AsString() (string, Object) { return "", errMustBeString }
 func (b *Builtin) AsInt() (int64, Object)     { return 0, errMustBeInteger }
@@ -889,7 +895,7 @@ func (l *Library) GetDict() *Dict {
 		}
 	}
 
-	return &Dict{Pairs: dict}
+	return &Dict{Pairs: dict, Module: l.name}
 }
 
 // CachedDict returns nil (caching removed). Kept for test compatibility.
@@ -1932,8 +1938,11 @@ func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
 			ParamSlotIndexes: v.ParamSlotIndexes,
 			ReuseCallEnv:     v.ReuseCallEnv,
 			CompiledDefaults: v.CompiledDefaults,
-			CompiledBody:     v.CompiledBody,
-			CompilerOwned:    v.CompilerOwned, // the copy belongs to the target tree alone
+			// CompiledBody is not copied: the source function may be running
+			// on another goroutine that memoises it on first call, and this
+			// can run without the GIL. The copy re-derives it from the
+			// atomic AST cache on its own first call.
+			CompilerOwned: v.CompilerOwned, // the copy belongs to the target tree alone
 		}
 	}
 	for name, v := range s.lambdas {
@@ -1985,7 +1994,7 @@ func deepCopyDict(d *Dict) *Dict {
 		}
 		pairs[k] = v
 	}
-	return &Dict{Pairs: pairs}
+	return &Dict{Pairs: pairs, Module: d.Module}
 }
 
 // ResetStore removes all keys from the environment store except those in keep.
@@ -2083,53 +2092,7 @@ type List struct {
 }
 
 func (l *List) Type() ObjectType { return LIST_OBJ }
-func (l *List) Inspect() string {
-	var out strings.Builder
-	inspectListInto(&out, l, make(inspectSeen))
-	return out.String()
-}
-
-// cyclicInspectPlaceholder is rendered in place of a container that refers to
-// itself (directly or through a chain) during Inspect. Without this guard a
-// self-referential list/tuple/dict recurses until the Go stack overflows,
-// which no recover() can catch and which aborts the whole host process.
-const cyclicInspectPlaceholder = "<cyclic reference>"
-
-// inspectSeen holds the containers currently being rendered on the path from
-// the Inspect root, so a cycle is detected instead of recursed into.
-type inspectSeen map[Object]struct{}
-
-// inspectInto renders obj into out, delegating containers to the cycle-aware
-// helpers and falling back to the object's own Inspect for leaves.
-func inspectInto(out *strings.Builder, obj Object, seen inspectSeen) {
-	switch o := obj.(type) {
-	case *List:
-		inspectListInto(out, o, seen)
-	case *Tuple:
-		inspectTupleInto(out, o, seen)
-	case *Dict:
-		inspectDictInto(out, o, seen)
-	default:
-		out.WriteString(obj.Inspect())
-	}
-}
-
-func inspectListInto(out *strings.Builder, l *List, seen inspectSeen) {
-	if _, cyclic := seen[l]; cyclic {
-		out.WriteString(cyclicInspectPlaceholder)
-		return
-	}
-	seen[l] = struct{}{}
-	defer delete(seen, l)
-	out.WriteString("[")
-	for i, el := range l.Elements {
-		if i > 0 {
-			out.WriteString(", ")
-		}
-		inspectInto(out, el, seen)
-	}
-	out.WriteString("]")
-}
+func (l *List) Inspect() string  { return inspectContainer(l) }
 
 func (l *List) AsString() (string, Object) { return "", errMustBeString }
 func (l *List) AsInt() (int64, Object)     { return 0, errMustBeInteger }
@@ -2151,31 +2114,7 @@ type Tuple struct {
 }
 
 func (t *Tuple) Type() ObjectType { return TUPLE_OBJ }
-func (t *Tuple) Inspect() string {
-	var out strings.Builder
-	inspectTupleInto(&out, t, make(inspectSeen))
-	return out.String()
-}
-
-func inspectTupleInto(out *strings.Builder, t *Tuple, seen inspectSeen) {
-	if _, cyclic := seen[t]; cyclic {
-		out.WriteString(cyclicInspectPlaceholder)
-		return
-	}
-	seen[t] = struct{}{}
-	defer delete(seen, t)
-	out.WriteString("(")
-	for i, el := range t.Elements {
-		if i > 0 {
-			out.WriteString(", ")
-		}
-		inspectInto(out, el, seen)
-	}
-	if len(t.Elements) == 1 {
-		out.WriteString(",") // Single element tuple needs trailing comma
-	}
-	out.WriteString(")")
-}
+func (t *Tuple) Inspect() string  { return inspectContainer(t) }
 
 func (t *Tuple) AsString() (string, Object) { return "", errMustBeString }
 func (t *Tuple) AsInt() (int64, Object)     { return 0, errMustBeInteger }
@@ -2194,6 +2133,10 @@ func (t *Tuple) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 type Dict struct {
 	Pairs map[string]DictPair
+	// Module is the import name when this dict is a library module
+	// ("math", "scriptling.runtime.kv"), empty for an ordinary dict.
+	// Modules display as <module 'math'> and expose only their members.
+	Module string
 }
 
 type DictPair struct {
@@ -2222,32 +2165,7 @@ func NewStringDict(entries map[string]Object) *Dict {
 }
 
 func (d *Dict) Type() ObjectType { return DICT_OBJ }
-func (d *Dict) Inspect() string {
-	var out strings.Builder
-	inspectDictInto(&out, d, make(inspectSeen))
-	return out.String()
-}
-
-func inspectDictInto(out *strings.Builder, d *Dict, seen inspectSeen) {
-	if _, cyclic := seen[d]; cyclic {
-		out.WriteString(cyclicInspectPlaceholder)
-		return
-	}
-	seen[d] = struct{}{}
-	defer delete(seen, d)
-	out.WriteString("{")
-	i := 0
-	for _, pair := range d.Pairs {
-		if i > 0 {
-			out.WriteString(", ")
-		}
-		inspectInto(out, pair.Key, seen)
-		out.WriteString(": ")
-		inspectInto(out, pair.Value, seen)
-		i++
-	}
-	out.WriteString("}")
-}
+func (d *Dict) Inspect() string  { return inspectContainer(d) }
 
 func (d *Dict) AsString() (string, Object) { return "", errMustBeString }
 func (d *Dict) AsInt() (int64, Object)     { return 0, errMustBeInteger }

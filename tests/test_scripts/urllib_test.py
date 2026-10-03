@@ -24,10 +24,10 @@ assert urllib.parse.quote_plus("hello world") == "hello+world"
 # Test urlparse
 url_str = "https://example.com/path?query=value"
 parsed = urllib.parse.urlparse(url_str)
-assert parsed["scheme"] == "https"
-assert parsed["netloc"] == "example.com"
-assert parsed["path"] == "/path"
-assert parsed["query"] == "query=value"
+assert parsed.scheme == "https"
+assert parsed.netloc == "example.com"
+assert parsed.path == "/path"
+assert parsed.query == "query=value"
 
 # Test geturl method
 reconstructed = parsed.geturl()

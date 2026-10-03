@@ -108,11 +108,11 @@ assert "bark" in attrs
 attrs = dir(Dog)
 assert "bark" in attrs
 
-# dir on dict
+# dir on dict lists its methods, as in Python
 d = {"alpha": 1, "beta": 2}
-keys = dir(d)
-assert "alpha" in keys
-assert "beta" in keys
+attrs = dir(d)
+assert "keys" in attrs
+assert "alpha" not in attrs
 
 # dir returns sorted list
 names = dir()

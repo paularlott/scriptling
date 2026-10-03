@@ -31,11 +31,17 @@ var (
 	// callDunderMethodFn is set in init() to break the initialization cycle
 	callDunderMethodFn func(ctx context.Context, inst *object.Instance, method string, args []object.Object, env *object.Environment) object.Object
 
+	// getAttributeFn is getAttribute, set in init() to break the init cycle
+	getAttributeFn func(ctx context.Context, obj object.Object, name string) object.Object
+
 	// hashInstanceFn calls __hash__ on an instance; set in init() to break init cycle
 	hashInstanceFn func(ctx context.Context, inst *object.Instance) object.Object
 
 	// typeBuiltins maps type-related builtin pointers to their names for isinstance()
 	typeBuiltins map[*object.Builtin]string
+
+	// exceptionBuiltins maps exception constructors to their type names
+	exceptionBuiltins map[*object.Builtin]string
 )
 
 var builtins = map[string]*object.Builtin{
@@ -149,21 +155,13 @@ Use list(filter(...)) to get a list.`,
 			// default repr. On success it returns (text, nil).
 			stringify := func(arg object.Object) (string, object.Object) {
 				if inst, ok := arg.(*object.Instance); ok {
-					if result := callDunderMethodFn(ctx, inst, "__str__", nil, env); result != nil {
-						if object.IsError(result) || result.Type() == object.EXCEPTION_OBJ {
-							return "", result
-						}
-						if s, err2 := result.AsString(); err2 == nil {
-							return s, nil
-						}
-						return result.Inspect(), nil
-					}
-					return arg.Inspect(), nil
+					// str() semantics: __str__, then __repr__, then default.
+					return strInstanceChecked(ctx, inst, env)
 				}
-				if str, err := arg.AsString(); err == nil {
+				if str, err := arg.AsString(); err == nil && !object.IsReprContainer(arg) {
 					return str, nil
 				}
-				return arg.Inspect(), nil
+				return renderConvertedValue(ctx, arg, "s", env)
 			}
 
 			// Build output string — fast path for common single-arg case
@@ -284,21 +282,20 @@ the class it was raised as (e.g. "ValueError"), not the generic "EXCEPTION".`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			// For exceptions, return just the message (like Python)
-			if exc, ok := args[0].(*object.Exception); ok {
-				return object.NewString(exc.Message)
+			// Exceptions give their message, instances __str__ then
+			// __repr__, containers repr their elements: Python's str().
+			// Scalars (the hot case, e.g. str(i) in a loop) convert directly.
+			switch v := args[0].(type) {
+			case *object.String:
+				return v
+			case *object.Integer, *object.Float, *object.Boolean, *object.Null:
+				return object.NewString(v.Inspect())
 			}
-			// Instances convert with str() semantics: __str__, falling back
-			// to __repr__ (Python's object.__str__ delegates to __repr__).
-			if inst, ok := args[0].(*object.Instance); ok {
-				env := GetEnvFromContext(ctx)
-				rendered, rerr := strInstanceChecked(ctx, inst, env)
-				if rerr != nil {
-					return rerr
-				}
-				return object.NewString(rendered)
+			rendered, rerr := renderConvertedValue(ctx, args[0], "s", GetEnvFromContext(ctx))
+			if rerr != nil {
+				return rerr
 			}
-			return object.NewString(args[0].Inspect())
+			return object.NewString(rendered)
 		},
 		HelpText: `str(obj) - Convert an object to a string
 
@@ -310,38 +307,69 @@ For exceptions, returns just the exception message.`,
 			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
 			}
-			base := 10
+			// base may be given positionally or as base= (Python: int(x, base=10)).
+			var baseObj object.Object
 			if len(args) == 2 {
-				b, ok := args[1].(*object.Integer)
+				baseObj = args[1]
+				if kwargs.Has("base") {
+					return &object.Error{Message: "int() got multiple values for argument 'base'", ExceptionType: object.ExceptionTypeTypeError}
+				}
+			} else if v := kwargs.Get("base"); v != nil {
+				baseObj = v
+			}
+			for _, k := range kwargs.Keys() {
+				if k != "base" {
+					return &object.Error{Message: fmt.Sprintf("'%s' is an invalid keyword argument for int()", k), ExceptionType: object.ExceptionTypeTypeError}
+				}
+			}
+			hasBase := baseObj != nil
+			base := 10
+			if hasBase {
+				b, ok := baseObj.(*object.Integer)
 				if !ok {
-					return errors.NewTypeError("INTEGER", args[1].Type().String())
+					return errors.NewTypeError("INTEGER", baseObj.Type().String())
 				}
 				base = int(b.IntValue())
-				if base < 2 || base > 36 {
-					return errors.NewError("int() base must be >= 2 and <= 36")
+				if base != 0 && (base < 2 || base > 36) {
+					return errors.NewValueError("int() base must be >= 2 and <= 36, or 0")
 				}
 			}
 			switch arg := args[0].(type) {
 			case *object.Integer:
+				if hasBase {
+					return &object.Error{Message: "int() can't convert non-string with explicit base", ExceptionType: object.ExceptionTypeTypeError}
+				}
 				return arg
 			case *object.Float:
-				if len(args) == 2 {
-					return errors.NewTypeError("STRING", arg.Type().String())
+				if hasBase {
+					return &object.Error{Message: "int() can't convert non-string with explicit base", ExceptionType: object.ExceptionTypeTypeError}
 				}
 				return object.NewInteger(int64(arg.FloatValue()))
 			case *object.String:
 				s := strings.ReplaceAll(strings.TrimSpace(arg.StringValue()), "_", "")
-				if len(args) == 2 {
+				sign := ""
+				if strings.HasPrefix(s, "-") || strings.HasPrefix(s, "+") {
+					sign, s = s[:1], s[1:]
+				}
+				if hasBase {
+					lower := strings.ToLower(s)
 					switch {
-					case base == 16 && (strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X")):
-						s = s[2:]
-					case base == 2 && (strings.HasPrefix(s, "0b") || strings.HasPrefix(s, "0B")):
-						s = s[2:]
-					case base == 8 && (strings.HasPrefix(s, "0o") || strings.HasPrefix(s, "0O")):
-						s = s[2:]
+					case (base == 16 || base == 0) && strings.HasPrefix(lower, "0x"):
+						s, base = s[2:], 16
+					case (base == 2 || base == 0) && strings.HasPrefix(lower, "0b"):
+						s, base = s[2:], 2
+					case (base == 8 || base == 0) && strings.HasPrefix(lower, "0o"):
+						s, base = s[2:], 8
+					case base == 0:
+						// Base 0 interprets the string as an integer literal:
+						// no prefix means decimal, and leading zeros are invalid.
+						base = 10
+						if len(s) > 1 && s[0] == '0' && strings.Trim(s, "0") != "" {
+							return errors.NewValueError("invalid literal for int() with base 0: %q", arg.StringValue())
+						}
 					}
 				}
-				val, err := strconv.ParseInt(s, base, 64)
+				val, err := strconv.ParseInt(sign+s, base, 64)
 				if err != nil {
 					return errors.NewError("cannot convert %q to int with base %d", arg.StringValue(), base)
 				}
@@ -1112,6 +1140,21 @@ Equivalent to (a // b, a % b) for integers.`,
 					continue
 				}
 
+				if b, ok := typeArg.(*object.Builtin); ok {
+					if excName, isExc := exceptionBuiltins[b]; isExc {
+						if exc, ok := obj.(*object.Exception); ok {
+							actual := exc.ExceptionType
+							if actual == "" {
+								actual = "Exception"
+							}
+							if matchesNamedExceptionType(actual, excName) {
+								return TRUE
+							}
+						}
+						continue
+					}
+				}
+
 				var typeName string
 				if s, err := typeArg.AsString(); err == nil {
 					typeName = s
@@ -1300,16 +1343,19 @@ Values default to None. Called as dict.fromkeys(...)`,
 		},
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			result := &object.Dict{Pairs: make(map[string]object.DictPair)}
-			// Handle kwargs
-			for _, key := range kwargs.Keys() {
-				val := kwargs.Get(key)
-				result.Pairs[object.DictKey(object.NewString(key))] = object.DictPair{
-					Key:   object.NewString(key),
-					Value: val,
+			// Keyword arguments are applied last, so they override keys from
+			// the positional mapping, as in Python: dict({"a": 1}, a=2).
+			addKwargs := func() *object.Dict {
+				for _, key := range kwargs.Keys() {
+					result.Pairs[object.DictKey(object.NewString(key))] = object.DictPair{
+						Key:   object.NewString(key),
+						Value: kwargs.Get(key),
+					}
 				}
+				return result
 			}
 			if len(args) == 0 {
-				return result
+				return addKwargs()
 			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
@@ -1318,6 +1364,39 @@ Values default to None. Called as dict.fromkeys(...)`,
 			// raw iterators — Python accepts e.g. a generator of pairs) into
 			// a list of elements with raise checking before the type switch.
 			arg := args[0]
+			// A mapping object (an instance with keys(), such as a Counter)
+			// copies key -> obj[key], as Python's dict(mapping) does.
+			if inst, ok := arg.(*object.Instance); ok {
+				if _, hasKeys := inst.Class.LookupMember("keys"); hasKeys {
+					env := GetEnvFromContext(ctx)
+					keysObj := callDunderMethodFn(ctx, inst, "keys", nil, env)
+					if propagates(keysObj) {
+						return keysObj
+					}
+					keys, ok, rerr := iterableToSliceCheckedFn(ctx, keysObj, env)
+					if rerr != nil {
+						return rerr
+					}
+					if !ok {
+						return errors.NewTypeError("iterable keys()", keysObj.Type().String())
+					}
+					for _, k := range keys {
+						v := callDunderMethodFn(ctx, inst, "__getitem__", []object.Object{k}, env)
+						if v == nil {
+							return errors.NewTypeError("mapping with __getitem__", inst.Class.Name)
+						}
+						if propagates(v) {
+							return v
+						}
+						hk, herr := evalHashKeyChecked(ctx, k)
+						if herr != nil {
+							return herr
+						}
+						result.Pairs[hk] = object.DictPair{Key: k, Value: v}
+					}
+					return addKwargs()
+				}
+			}
 			switch arg.(type) {
 			case *object.Instance, *object.Iterator:
 				elems, ok, rerr := iterableToSliceCheckedFn(ctx, arg, GetEnvFromContext(ctx))
@@ -1355,13 +1434,13 @@ Values default to None. Called as dict.fromkeys(...)`,
 			default:
 				return errors.NewTypeError("DICT or LIST of pairs", arg.Type().String())
 			}
-			return result
+			return addKwargs()
 		},
 		HelpText: `dict([mapping], **kwargs) - Create a dictionary
 
 With no argument, returns an empty dict.
 Can initialize from another dict or list of [key, value] pairs.
-Keyword arguments are added to the dict.`,
+Keyword arguments are added last and override keys from the mapping.`,
 	},
 	"tuple": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -1433,22 +1512,11 @@ Otherwise, returns a set containing unique items from the iterable.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			switch obj := args[0].(type) {
-			case *object.String:
-				return object.NewString(pyReprString(obj.StringValue()))
-			case *object.Instance:
-				// Call __repr__ first, then __str__, then fallback
-				env := GetEnvFromContext(ctx)
-				if result := callDunderMethodFn(ctx, obj, "__repr__", nil, env); result != nil {
-					return result
-				}
-				if result := callDunderMethodFn(ctx, obj, "__str__", nil, env); result != nil {
-					return result
-				}
-				return object.NewString(obj.Inspect())
-			default:
-				return object.NewString(obj.Inspect())
+			rendered, rerr := renderConvertedValue(ctx, args[0], "r", GetEnvFromContext(ctx))
+			if rerr != nil {
+				return rerr
 			}
+			return object.NewString(rendered)
 		},
 		HelpText: `repr(object) - Return a string representation
 
@@ -1514,81 +1582,13 @@ Returns a unique integer identifier for the object.`,
 					return err
 				}
 			}
-			// Handle format specifiers
-			if formatSpec == "" {
-				return object.NewString(value.Inspect())
+			// Same rendering as f-strings and str.format, so format(42, "05d"),
+			// f"{42:05d}" and "{:05d}".format(42) always agree.
+			rendered, rerr := renderFormatArg(ctx, value, formatSpec, "", GetEnvFromContext(ctx))
+			if rerr != nil {
+				return rerr
 			}
-			// Parse format spec and apply formatting inline to avoid initialization cycle
-			switch v := value.(type) {
-			case *object.Integer:
-				if len(formatSpec) > 0 {
-					switch formatSpec[len(formatSpec)-1] {
-					case 'd':
-						return object.NewString(strconv.FormatInt(v.IntValue(), 10))
-					case 'x':
-						return object.NewString(strconv.FormatInt(v.IntValue(), 16))
-					case 'X':
-						return object.NewString(strings.ToUpper(strconv.FormatInt(v.IntValue(), 16)))
-					case 'o':
-						return object.NewString(strconv.FormatInt(v.IntValue(), 8))
-					case 'b':
-						return object.NewString(strconv.FormatInt(v.IntValue(), 2))
-					}
-				}
-				var width int
-				fmt.Sscanf(formatSpec, "%d", &width)
-				if width > 0 {
-					return object.NewString(fmt.Sprintf("%*d", width, v.IntValue()))
-				}
-				return object.NewString(strconv.FormatInt(v.IntValue(), 10))
-			case *object.Float:
-				if len(formatSpec) > 0 {
-					switch formatSpec[len(formatSpec)-1] {
-					case 'f', 'F':
-						if idx := strings.Index(formatSpec, "."); idx >= 0 {
-							var prec int
-							fmt.Sscanf(formatSpec[idx+1:len(formatSpec)-1], "%d", &prec)
-							return object.NewString(fmt.Sprintf("%.*f", prec, v.FloatValue()))
-						}
-						return object.NewString(fmt.Sprintf("%f", v.FloatValue()))
-					case 'e':
-						return object.NewString(strconv.FormatFloat(v.FloatValue(), 'e', -1, 64))
-					case 'E':
-						return object.NewString(strconv.FormatFloat(v.FloatValue(), 'E', -1, 64))
-					case '%':
-						return object.NewString(fmt.Sprintf("%.2f%%", v.FloatValue()*100))
-					}
-				}
-				return object.NewString(strconv.FormatFloat(v.FloatValue(), 'g', -1, 64))
-			case *object.String:
-				if formatSpec == "" {
-					return object.NewString(v.StringValue())
-				}
-				var width int
-				align := '<'
-				spec := formatSpec
-				if len(spec) > 0 && (spec[0] == '<' || spec[0] == '>' || spec[0] == '^') {
-					align = rune(spec[0])
-					spec = spec[1:]
-				}
-				fmt.Sscanf(spec, "%d", &width)
-				if width <= len(v.StringValue()) {
-					return object.NewString(v.StringValue())
-				}
-				padding := width - len(v.StringValue())
-				switch align {
-				case '>':
-					return object.NewString(strings.Repeat(" ", padding) + v.StringValue())
-				case '^':
-					left := padding / 2
-					right := padding - left
-					return object.NewString(strings.Repeat(" ", left) + v.StringValue() + strings.Repeat(" ", right))
-				default:
-					return object.NewString(v.StringValue() + strings.Repeat(" ", padding))
-				}
-			default:
-				return object.NewString(value.Inspect())
-			}
+			return object.NewString(rendered)
 		},
 		HelpText: `format(value[, format_spec]) - Format a value
 
@@ -1604,26 +1604,20 @@ Supports width, alignment, and type specifiers.`,
 			if err != nil {
 				return err
 			}
-			// Check if object has the attribute/method
-			switch obj := args[0].(type) {
-			case *object.Instance:
-				if _, ok := obj.GetField(name); ok {
-					return TRUE
-				}
-				if _, ok := obj.Class.LookupMember(name); ok {
-					return TRUE
-				}
-				return FALSE
-			case *object.Dict:
-				_, exists := obj.Pairs[object.DictKey(object.NewString(name))]
-				return nativeBoolToBooleanObject(exists)
-			default:
+			// As in Python: getattr, with only AttributeError meaning "no".
+			result := getAttributeFn(ctx, args[0], name)
+			if isAttributeError(result) {
 				return FALSE
 			}
+			if propagates(result) {
+				return result
+			}
+			return TRUE
 		},
 		HelpText: `hasattr(object, name) - Check if object has an attribute
 
-Returns True if the object has the named attribute.`,
+Returns True if getattr(object, name) succeeds, False if it raises
+AttributeError.`,
 	},
 	"getattr": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -1634,30 +1628,16 @@ Returns True if the object has the named attribute.`,
 			if err != nil {
 				return err
 			}
-			// Get attribute from object
-			switch obj := args[0].(type) {
-			case *object.Instance:
-				if val, ok := obj.GetField(name); ok {
-					return val
-				}
-				if method, ok := obj.Class.LookupMember(name); ok {
-					return method
-				}
-			case *object.Dict:
-				if pair, exists := obj.Pairs[object.DictKey(object.NewString(name))]; exists {
-					return pair.Value
-				}
-			}
-			// Return default if provided
-			if len(args) == 3 {
+			result := getAttributeFn(ctx, args[0], name)
+			if len(args) == 3 && isAttributeError(result) {
 				return args[2]
 			}
-			return errors.NewError("'%s' object has no attribute '%s'", args[0].Type().String(), name)
+			return result
 		},
 		HelpText: `getattr(object, name[, default]) - Get an attribute from an object
 
-Returns the value of the named attribute.
-If default is provided, returns it when attribute doesn't exist.`,
+Returns the value of the named attribute, exactly as object.name would.
+If default is provided, returns it when the attribute doesn't exist.`,
 	},
 	"setattr": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -1706,7 +1686,7 @@ Only works on dict-like objects.`,
 					obj.InvalidateBoundMethod(name)
 					return NULL
 				}
-				return errors.NewError("'%s' object has no attribute '%s'", obj.Class.Name, name)
+				return attributeError(obj, name)
 			case *object.Dict:
 				dictKey := object.DictKey(object.NewString(name))
 				if _, ok := obj.Pairs[dictKey]; ok {
@@ -2172,42 +2152,6 @@ func boolNumber(b bool) float64 {
 	return 0
 }
 
-// pyReprString renders a string the way Python's repr does: single quotes by
-// default, switching to double quotes when the string contains a single
-// quote and no double quote, with backslash, newline, carriage return and
-// tab escaped.
-func pyReprString(v string) string {
-	quote := byte('\'')
-	hasSingle := strings.ContainsAny(v, "'")
-	hasDouble := strings.ContainsAny(v, "\"")
-	if hasSingle && !hasDouble {
-		quote = '"'
-	}
-	var out strings.Builder
-	out.Grow(len(v) + 2)
-	out.WriteByte(quote)
-	for i := 0; i < len(v); i++ {
-		c := v[i]
-		switch {
-		case c == '\\':
-			out.WriteString("\\\\")
-		case c == '\n':
-			out.WriteString("\\n")
-		case c == '\r':
-			out.WriteString("\\r")
-		case c == '\t':
-			out.WriteString("\\t")
-		case c == quote:
-			out.WriteByte('\\')
-			out.WriteByte(c)
-		default:
-			out.WriteByte(c)
-		}
-	}
-	out.WriteByte(quote)
-	return out.String()
-}
-
 // roundHalfEven rounds to the nearest integer with exact .5 ties going to
 // the even neighbor, matching Python's round(). math.Round would send ties
 // away from zero instead.
@@ -2425,6 +2369,63 @@ func compareElements(ctx context.Context, a, b []object.Object, env *object.Envi
 
 // Initialize the complex builtin functions
 // These are defined as variable assignments to allow forward declaration in the builtins map
+// attributeError is the catchable AttributeError for a missing attribute,
+// worded as Python words it: "'P' object has no attribute 'x'" for an
+// instance, "type object 'P' ..." for a class, Python type names otherwise.
+func attributeError(obj object.Object, name string) object.Object {
+	var message string
+	switch o := obj.(type) {
+	case *object.Instance:
+		message = fmt.Sprintf("'%s' object has no attribute '%s'", o.Class.Name, name)
+	case *object.Dict:
+		if o.Module != "" {
+			message = fmt.Sprintf("module '%s' has no attribute '%s'", o.Module, name)
+		} else {
+			message = fmt.Sprintf("'dict' object has no attribute '%s'", name)
+		}
+	case *object.Class:
+		message = fmt.Sprintf("type object '%s' has no attribute '%s'", o.Name, name)
+	case *object.Super:
+		message = fmt.Sprintf("'super' object has no attribute '%s'", name)
+	case *object.Function, *object.LambdaFunction:
+		message = fmt.Sprintf("'function' object has no attribute '%s'", name)
+	case *object.Builtin:
+		message = fmt.Sprintf("'builtin_function_or_method' object has no attribute '%s'", name)
+	case *object.Property:
+		message = fmt.Sprintf("'property' object has no attribute '%s'", name)
+	default:
+		message = fmt.Sprintf("'%s' object has no attribute '%s'", getTypeName(obj), name)
+	}
+	return &object.Exception{
+		Message:       message,
+		ExceptionType: object.ExceptionTypeAttributeError,
+		Raised:        true,
+	}
+}
+
+// getAttribute reads obj.name with dot-access semantics, so getattr() and
+// hasattr() see bound methods, properties, __getattr__ and __class__ exactly
+// as obj.name does. Dicts (including library modules) treat keys as
+// attributes, then fall back to dict methods.
+func getAttribute(ctx context.Context, obj object.Object, name string) object.Object {
+	return evalIndexExpression(ctx, obj, object.NewString(name), true)
+}
+
+// isAttributeError reports whether obj is a raised AttributeError.
+func isAttributeError(obj object.Object) bool {
+	exc, ok := obj.(*object.Exception)
+	return ok && exc.ExceptionType == object.ExceptionTypeAttributeError
+}
+
+// notCallableError is the catchable TypeError for calling a non-callable.
+func notCallableError(obj object.Object) object.Object {
+	return &object.Exception{
+		Message:       fmt.Sprintf("'%s' object is not callable", getTypeName(obj)),
+		ExceptionType: object.ExceptionTypeTypeError,
+		Raised:        true,
+	}
+}
+
 func init() {
 	mapFunction = mapFunctionImpl
 	filterFunction = filterFunctionImpl
@@ -2435,6 +2436,8 @@ func init() {
 	iterFunction = iterFunctionImpl
 	nextFunction = nextFunctionImpl
 	callDunderMethodFn = callDunderMethod
+	getAttributeFn = getAttribute
+	attachTypeMethods()
 	hashInstanceFn = func(ctx context.Context, inst *object.Instance) object.Object {
 		hashFn := inst.Class.Methods["__hash__"]
 		return applyFunctionWithContext(ctx, hashFn, []object.Object{inst}, nil, nil)
@@ -2449,6 +2452,17 @@ func init() {
 		builtins["list"]:  "list",
 		builtins["dict"]:  "dict",
 		builtins["tuple"]: "tuple",
+		builtins["set"]:   "set",
+		builtins["bytes"]: "bytes",
+	}
+
+	// Exception constructors (TypeError, ValueError, ...) are types for
+	// isinstance(), matched with the same hierarchy as except clauses.
+	exceptionBuiltins = make(map[*object.Builtin]string)
+	for name, b := range builtins {
+		if name == "Exception" || name == "StopIteration" || strings.HasSuffix(name, "Error") {
+			exceptionBuiltins[b] = name
+		}
 	}
 }
 
@@ -3150,13 +3164,19 @@ func dirFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 				names = append(names, name)
 			}
 		case *object.Dict:
+			// A module lists its members; an ordinary dict its methods.
+			if o.Module == "" {
+				names = builtinMethodDir(object.DICT_OBJ)
+				break
+			}
 			for _, p := range o.Pairs {
 				if s, err := p.Key.AsString(); err == nil {
 					names = append(names, s)
 				}
 			}
 		default:
-			return &object.List{Elements: []object.Object{}}
+			// Built-in values list their methods: dir([]) shows append, ...
+			names = builtinMethodDir(o.Type())
 		}
 	}
 	sort.Strings(names)

@@ -1,6 +1,7 @@
 package stdlib
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"math"
@@ -53,21 +54,25 @@ func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 	}
 
 	data := objectToJSON(args[0])
-	var (
-		bytes []byte
-		err   error
-	)
+	// Encode without HTML escaping: Python's json never turns <, > and &
+	// into \u003c etc. (encoding/json's Marshal does).
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(data); err != nil {
+		return errors.NewError("json serialize error: %s", err.Error())
+	}
+	out := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
 	// hasIndent distinguishes indent=0 (newline-separated, no spaces, as in
 	// Python) from no indent argument at all (fully compact).
 	if hasIndent {
-		bytes, err = json.MarshalIndent(data, "", indent)
-	} else {
-		bytes, err = json.Marshal(data)
+		var ind bytes.Buffer
+		if err := json.Indent(&ind, out, "", indent); err != nil {
+			return errors.NewError("json serialize error: %s", err.Error())
+		}
+		out = ind.Bytes()
 	}
-	if err != nil {
-		return errors.NewError("json serialize error: %s", err.Error())
-	}
-	return object.NewString(string(bytes))
+	return object.NewString(string(out))
 }
 
 var JSONLibrary = object.NewLibrary(JSONLibraryName, map[string]*object.Builtin{
@@ -138,6 +143,18 @@ func objectToJSONSeen(obj object.Object, seen map[object.Object]struct{}) interf
 	case *object.Boolean:
 		return obj.BoolValue()
 	case *object.List:
+		if _, cyclic := seen[obj]; cyclic {
+			return "<cyclic reference>"
+		}
+		seen[obj] = struct{}{}
+		defer delete(seen, obj)
+		arr := make([]interface{}, len(obj.Elements))
+		for i, el := range obj.Elements {
+			arr[i] = objectToJSONSeen(el, seen)
+		}
+		return arr
+	case *object.Tuple:
+		// Python serializes tuples as JSON arrays.
 		if _, cyclic := seen[obj]; cyclic {
 			return "<cyclic reference>"
 		}

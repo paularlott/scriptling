@@ -63,3 +63,38 @@ func TestParseAppleInspectOutput(t *testing.T) {
 		}
 	})
 }
+
+func TestParseAppleListsBothFormats(t *testing.T) {
+	// container CLI 1.1 nests names under "configuration".
+	images, err := parseAppleImageList(`[{"configuration":{"descriptor":{"digest":"sha256:aa","size":10},"name":"docker.io/paularlott/knot-ubuntu:26.04"},"id":"aa"}]`)
+	if err != nil || len(images) != 1 || images[0].Reference != "docker.io/paularlott/knot-ubuntu:26.04" || images[0].Digest != "sha256:aa" || images[0].ID != "aa" {
+		t.Fatalf("1.1 image list: %+v, %v", images, err)
+	}
+	// Earlier CLIs use top-level fields.
+	images, err = parseAppleImageList(`[{"reference":"ubuntu:24.04","descriptor":{"digest":"sha256:bb","size":20}}]`)
+	if err != nil || len(images) != 1 || images[0].Reference != "ubuntu:24.04" || images[0].ID != "sha256:bb" || images[0].Size != 20 {
+		t.Fatalf("legacy image list: %+v, %v", images, err)
+	}
+
+	vols, err := parseAppleVolumeList(`[{"configuration":{"name":"data","driver":"local"},"id":"data"}]`)
+	if err != nil || len(vols) != 1 || vols[0] != "data" {
+		t.Fatalf("1.1 volume list: %v, %v", vols, err)
+	}
+	vols, err = parseAppleVolumeList(`[{"name":"old"}]`)
+	if err != nil || len(vols) != 1 || vols[0] != "old" {
+		t.Fatalf("legacy volume list: %v, %v", vols, err)
+	}
+}
+
+func TestParseAppleInspectStatusFormats(t *testing.T) {
+	// container CLI 1.1: status is an object.
+	item, err := parseAppleInspectOutput(`[{"configuration":{"id":"web","image":{"reference":"docker.io/x:1"}},"id":"web","status":{"state":"running","startedDate":"2026-10-03T08:33:13Z"}}]`)
+	if err != nil || string(item.Status) != "running" || item.Configuration.ID != "web" || item.Configuration.Image.Reference != "docker.io/x:1" {
+		t.Fatalf("1.1 inspect: %+v, %v", item, err)
+	}
+	// Earlier CLIs: status is a string.
+	item, err = parseAppleInspectOutput(`[{"configuration":{"id":"db","image":{"reference":"x:2"}},"status":"stopped"}]`)
+	if err != nil || string(item.Status) != "stopped" {
+		t.Fatalf("legacy inspect: %+v, %v", item, err)
+	}
+}

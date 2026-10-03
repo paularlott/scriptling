@@ -2722,28 +2722,21 @@ func TestTypedReceiverInheritanceGoFieldsNotExposed(t *testing.T) {
 	t.Run("go struct fields not accessible from scriptling", func(t *testing.T) {
 		result, err := p.Eval(`
 p = Player("Ada")
-name_attr = p.Name
-score_attr = p.Score
+hidden = []
+for attr in ["Name", "Score"]:
+    try:
+        getattr(p, attr)
+    except AttributeError:
+        hidden.append(attr)
 `)
 		if err != nil {
 			t.Fatalf("Eval failed: %v", err)
 		}
 		_ = result
-		nameAttr, _ := p.GetVar("name_attr")
-		if nameAttr != nil {
-			n, ok := nameAttr.(*object.Null)
-			if !ok {
-				t.Errorf("expected Name to be None (Go struct fields not exposed), got %v", nameAttr)
-			}
-			_ = n
-		}
-		scoreAttr, _ := p.GetVar("score_attr")
-		if scoreAttr != nil {
-			n, ok := scoreAttr.(*object.Null)
-			if !ok {
-				t.Errorf("expected Score to be None (Go struct fields not exposed), got %v", scoreAttr)
-			}
-			_ = n
+		// Go struct fields are not exposed: reading one is an AttributeError.
+		hidden, _ := p.GetVarAsList("hidden")
+		if len(hidden) != 2 {
+			t.Errorf("expected Name and Score to raise AttributeError, got %v", hidden)
 		}
 	})
 
@@ -2773,7 +2766,10 @@ class BetterPlayer(Player):
         return self.add_score(n * 2)
 
     def try_name(self):
-        return self.Name
+        try:
+            return self.Name
+        except AttributeError:
+            return "hidden"
 
 bp = BetterPlayer("Eve")
 score = bp.bonus(5)
@@ -2788,11 +2784,9 @@ name_via_method = bp.get_name()
 		if score != int64(10) {
 			t.Errorf("expected score=10, got %v", score)
 		}
-		nameViaAttr, _ := p.GetVar("name_via_attr")
-		if nameViaAttr != nil {
-			if _, ok := nameViaAttr.(*object.Null); !ok {
-				t.Errorf("expected try_name() to return None, got %v", nameViaAttr)
-			}
+		nameViaAttr, _ := p.GetVarAsString("name_via_attr")
+		if nameViaAttr != "hidden" {
+			t.Errorf("expected self.Name to raise AttributeError, got %q", nameViaAttr)
 		}
 		nameViaMethod, _ := p.GetVarAsString("name_via_method")
 		if nameViaMethod != "Eve" {
@@ -2929,18 +2923,19 @@ s = p.score
 	t.Run("struct fields still not directly accessible", func(t *testing.T) {
 		result, err := p.Eval(`
 p = Player("Ada", 10)
-raw_name = p.Name
+raw_name = hasattr(p, "Name")
+try:
+    p.Name
+    raised = False
+except AttributeError:
+    raised = True
 `)
 		if err != nil {
 			t.Fatalf("Eval failed: %v", err)
 		}
 		_ = result
-		rawName, _ := p.GetVar("raw_name")
-		if rawName == nil {
-			return
-		}
-		if _, ok := rawName.(*object.Null); !ok {
-			t.Errorf("expected raw struct field Name to be None, got %v", rawName)
+		if raised, _ := p.GetVarAsBool("raised"); !raised {
+			t.Errorf("expected raw struct field Name to raise AttributeError")
 		}
 	})
 }

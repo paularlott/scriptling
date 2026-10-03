@@ -66,11 +66,11 @@ func TestEnumerateStartKwarg(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{`str(list(enumerate(["a", "b"])))`, `[(0, a), (1, b)]`},
-		{`str(list(enumerate(["a", "b"], 1)))`, `[(1, a), (2, b)]`},
-		{`str(list(enumerate(["a", "b"], start=1)))`, `[(1, a), (2, b)]`},
-		{`str(list(enumerate(["a"], start=5)))`, `[(5, a)]`},
-		{`str(list(enumerate(["a"], start=-1)))`, `[(-1, a)]`},
+		{`str(list(enumerate(["a", "b"])))`, `[(0, 'a'), (1, 'b')]`},
+		{`str(list(enumerate(["a", "b"], 1)))`, `[(1, 'a'), (2, 'b')]`},
+		{`str(list(enumerate(["a", "b"], start=1)))`, `[(1, 'a'), (2, 'b')]`},
+		{`str(list(enumerate(["a"], start=5)))`, `[(5, 'a')]`},
+		{`str(list(enumerate(["a"], start=-1)))`, `[(-1, 'a')]`},
 	}
 	for _, tt := range tests {
 		result, ok := testEval(tt.input).(*object.String)

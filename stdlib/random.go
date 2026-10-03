@@ -99,6 +99,10 @@ If a is omitted, current time is used. Otherwise, a is used as the seed.`,
 	},
 	"randint": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			args, kerr := kwargsToPositional("randint", args, kwargs, "a", "b")
+			if kerr != nil {
+				return kerr
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -182,6 +186,10 @@ Randomly shuffles the elements of the list in place using the Fisher-Yates algor
 	},
 	"uniform": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			args, kerr := kwargsToPositional("uniform", args, kwargs, "a", "b")
+			if kerr != nil {
+				return kerr
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -212,12 +220,17 @@ Returns a random floating-point number N such that a <= N <= b.`,
 	},
 	"sample": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			args, kerr := kwargsToPositional("sample", args, kwargs, "population", "k")
+			if kerr != nil {
+				return kerr
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
-			list, err := args[0].AsList()
-			if err != nil {
-				return err
+			// Python accepts any sequence (list, tuple, str, range, ...).
+			list, ok := object.IterableToSlice(args[0])
+			if !ok {
+				return errors.NewTypeError("sequence", args[0].Type().String())
 			}
 			k, ok := args[1].(*object.Integer)
 			if !ok {
@@ -358,16 +371,54 @@ lambd is 1.0 divided by the desired mean.`,
 			if err := errors.RangeArgs(args, 1, 3); err != nil {
 				return err
 			}
-			population, err := args[0].AsList()
-			if err != nil {
-				return err
+			for _, key := range kwargs.Keys() {
+				if key != "weights" && key != "cum_weights" && key != "k" {
+					return newArgTypeError("choices() got an unexpected keyword argument '%s'", key)
+				}
+			}
+			population, ok := object.IterableToSlice(args[0])
+			if !ok {
+				return errors.NewTypeError("sequence", args[0].Type().String())
 			}
 			n := len(population)
 			if n == 0 {
 				return errors.NewError("choices: population cannot be empty")
 			}
 
-			var weights []float64
+			// weightList converts a weights/cum_weights argument (None is nil).
+			weightList := func(name string, obj object.Object) ([]float64, object.Object) {
+				if obj == nil {
+					return nil, nil
+				}
+				if _, isNull := obj.(*object.Null); isNull {
+					return nil, nil
+				}
+				var elems []object.Object
+				switch w := obj.(type) {
+				case *object.List:
+					elems = w.Elements
+				case *object.Tuple:
+					elems = w.Elements
+				default:
+					return nil, errors.NewTypeError("LIST", obj.Type().String())
+				}
+				if len(elems) != n {
+					return nil, errors.NewError("choices: the number of %s does not match the population", name)
+				}
+				out := make([]float64, n)
+				for i, w := range elems {
+					f, err := w.AsFloat()
+					if err != nil {
+						return nil, errors.NewTypeError("INTEGER or FLOAT", w.Type().String())
+					}
+					if math.IsNaN(f) || math.IsInf(f, 0) {
+						return nil, errors.NewError("choices: %s must be finite", name)
+					}
+					out[i] = f
+				}
+				return out, nil
+			}
+
 			wObj := kwargs.Get("weights")
 			if len(args) >= 2 {
 				if kwargs.Has("weights") {
@@ -375,41 +426,34 @@ lambd is 1.0 divided by the desired mean.`,
 				}
 				wObj = args[1]
 			}
-			if wObj != nil {
-				if _, ok := wObj.(*object.Null); ok {
-					wObj = nil
-				}
+			weights, werr := weightList("weights", wObj)
+			if werr != nil {
+				return werr
 			}
-			if wObj != nil {
-				wList, ok := wObj.(*object.List)
-				if !ok {
-					return errors.NewTypeError("LIST", wObj.Type().String())
-				}
-				if len(wList.Elements) != n {
-					return errors.NewError("choices: weights length (%d) must match population length (%d)", len(wList.Elements), n)
-				}
-				weights = make([]float64, n)
-				for i, w := range wList.Elements {
-					f, err := w.AsFloat()
-					if err != nil {
-						return errors.NewTypeError("INTEGER or FLOAT", w.Type().String())
+			cumWeights, cerr := weightList("cum_weights", kwargs.Get("cum_weights"))
+			if cerr != nil {
+				return cerr
+			}
+			if weights != nil && cumWeights != nil {
+				return newArgTypeError("Cannot specify both weights and cumulative weights")
+			}
+			if cumWeights == nil {
+				if weights == nil {
+					weights = make([]float64, n)
+					for i := range weights {
+						weights[i] = 1.0
 					}
-					if f < 0 || math.IsNaN(f) || math.IsInf(f, 0) {
+				}
+				for _, f := range weights {
+					if f < 0 {
 						return errors.NewError("choices: weights must be finite and non-negative")
 					}
-					weights[i] = f
 				}
-			} else {
-				weights = make([]float64, n)
-				for i := range weights {
-					weights[i] = 1.0
+				cumWeights = make([]float64, n)
+				cumWeights[0] = weights[0]
+				for i := 1; i < n; i++ {
+					cumWeights[i] = cumWeights[i-1] + weights[i]
 				}
-			}
-
-			cumWeights := make([]float64, n)
-			cumWeights[0] = weights[0]
-			for i := 1; i < n; i++ {
-				cumWeights[i] = cumWeights[i-1] + weights[i]
 			}
 			total := cumWeights[n-1]
 			if total <= 0 || math.IsInf(total, 0) || math.IsNaN(total) {
@@ -446,9 +490,10 @@ lambd is 1.0 divided by the desired mean.`,
 			}
 			return &object.List{Elements: result}
 		},
-		HelpText: `choices(population, weights=None, k=1) - Weighted random sampling with replacement
+		HelpText: `choices(population, weights=None, *, cum_weights=None, k=1) - Weighted random sampling with replacement
 
-Select k items from population with the given weights.
+Select k items from population with the given relative weights, or with
+cumulative weights (cum_weights). Specifying both is an error.
 Returns a list of k selected items.`,
 	},
 	"betavariate": {
@@ -503,6 +548,10 @@ alpha (shape) and beta (scale) must be positive.`,
 	},
 	"triangular": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			args, kerr := kwargsToPositional("triangular", args, kwargs, "low", "high", "mode")
+			if kerr != nil {
+				return kerr
+			}
 			if err := errors.RangeArgs(args, 2, 3); err != nil {
 				return err
 			}
@@ -515,7 +564,7 @@ alpha (shape) and beta (scale) must be positive.`,
 				return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
 			}
 			mode := (low + high) / 2.0
-			if len(args) == 3 {
+			if len(args) == 3 && args[2].Type() != object.NULL_OBJ {
 				mode, err = args[2].AsFloat()
 				if err != nil {
 					return errors.NewTypeError("INTEGER or FLOAT", args[2].Type().String())

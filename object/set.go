@@ -1,31 +1,12 @@
 package object
 
-import (
-	"bytes"
-	"sort"
-	"strings"
-)
-
 // Set represents a set of unique objects
 type Set struct {
 	Elements map[string]Object
 }
 
 func (s *Set) Type() ObjectType { return SET_OBJ }
-func (s *Set) Inspect() string {
-	var out bytes.Buffer
-	elements := []string{}
-	for _, e := range s.Elements {
-		elements = append(elements, e.Inspect())
-	}
-	// Sort for deterministic output
-	sort.Strings(elements)
-
-	out.WriteString("{")
-	out.WriteString(strings.Join(elements, ", "))
-	out.WriteString("}")
-	return out.String()
-}
+func (s *Set) Inspect() string  { return inspectContainer(s) }
 
 func (s *Set) AsString() (string, Object) { return s.Inspect(), nil }
 func (s *Set) AsInt() (int64, Object)     { return 0, errMustBeInteger }

@@ -1490,7 +1490,7 @@ func evalFastDictGetCompiled(ctx context.Context, dict *object.Dict, argFns []ob
 func evalFastDictCallableMethodCompiled(ctx context.Context, dict *object.Dict, method string, argFns []object.EvalFn, env *object.Environment) object.Object {
 	pair, ok := dict.GetByString(method)
 	if !ok {
-		return errors.NewError("%s: method %s not found in library", errors.ErrIdentifierNotFound, method)
+		return attributeError(dict, method)
 	}
 
 	args := evalCompiledCallArgs(ctx, env, argFns)
@@ -1511,7 +1511,7 @@ func evalFastDictCallableMethodCompiled(ctx context.Context, dict *object.Dict, 
 	case *object.Class:
 		return applyFunctionWithContext(ctx, fn, args, nil, env)
 	default:
-		return errors.NewError("%s: %s is not callable", errors.ErrIdentifierNotFound, method)
+		return notCallableError(fn)
 	}
 }
 
@@ -2208,22 +2208,17 @@ func compileFString(n *ast.FStringLiteral) object.EvalFn {
 						return rerr
 					}
 					formatted = formatWithSpec(object.NewString(rendered), spec)
-				} else if exc, ok := exprResult.(*object.Exception); ok {
-					// Exceptions format as their message (str(e)), like Python.
-					formatted = formatWithSpec(object.NewString(exc.Message), spec)
-				} else if inst, ok := exprResult.(*object.Instance); ok {
-					// Instances convert with str() semantics (__str__ then
-					// __repr__); a raise propagates. The spec applies to the
-					// converted string, as in Python.
-					rendered, rerr := strInstanceChecked(ctx, inst, env)
+				} else if isPlainFormattable(exprResult) {
+					// Hot path: numbers and strings take the spec directly.
+					formatted = formatWithSpec(exprResult, spec)
+				} else {
+					// Instances may define __format__; other types render
+					// with str semantics and reject a non-empty spec.
+					rendered, rerr := formatValueChecked(ctx, exprResult, spec, env)
 					if rerr != nil {
 						return rerr
 					}
-					formatted = formatWithSpec(object.NewString(rendered), spec)
-				} else {
-					// Other types keep their typed value so numeric specs
-					// (.2f, >6d) apply directly.
-					formatted = formatWithSpec(exprResult, spec)
+					formatted = rendered
 				}
 				builder.WriteString(formatted)
 			}

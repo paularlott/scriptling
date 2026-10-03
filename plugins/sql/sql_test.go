@@ -451,7 +451,7 @@ return [rows[0]["a"], rows[0]["b"], rows[0]["c"], rows[0]["d"] == " a ? b ", row
 	if err != nil {
 		t.Fatalf("eval: %v", err)
 	}
-	if result.Inspect() != "[True, True, True, True, True, ?, ?]" {
+	if result.Inspect() != "[True, True, True, True, True, '?', '?']" {
 		t.Fatalf("jsonb operators broken: %s", result.Inspect())
 	}
 }

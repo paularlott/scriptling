@@ -173,7 +173,7 @@ results = []
 for k, (a, b) in data:
     results.append([k, a, b])
 results`,
-			`[[x, 1, 2], [y, 3, 4]]`,
+			`[['x', 1, 2], ['y', 3, 4]]`,
 		},
 		// for k, (_, v) in — discard first element of nested tuple
 		{
@@ -191,7 +191,7 @@ results = []
 for (a, b), c in pairs:
     results.append([a, b, c])
 results`,
-			`[[1, 2, x], [3, 4, y]]`,
+			`[[1, 2, 'x'], [3, 4, 'y']]`,
 		},
 		// deeply nested: for a, (b, (c, d)) in
 		{

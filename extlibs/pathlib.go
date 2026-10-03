@@ -32,6 +32,22 @@ func pathFrom(inst *object.Instance) (string, object.Object) {
 	return "", errors.NewError("Path: invalid native data")
 }
 
+// strFieldMethod is a class __str__ that returns the instance's "__str__"
+// field, for native classes that store their display text there.
+func strFieldMethod() *object.Builtin {
+	return &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if inst, ok := args[0].(*object.Instance); ok {
+				if s, ok := inst.GetField("__str__"); ok {
+					return s
+				}
+			}
+			return object.NewString(args[0].Inspect())
+		},
+		HelpText: "__str__() - The object's display text",
+	}
+}
+
 func pathArg(args []object.Object) (string, object.Object) {
 	inst, ok := args[0].(*object.Instance)
 	if !ok {
@@ -124,6 +140,15 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 					}
 					parts := []string{cleanPath}
 					for _, arg := range args[1:] {
+						// Segments may be strings or other Paths.
+						if other, ok := arg.(*object.Instance); ok {
+							s, errObj := pathFrom(other)
+							if errObj != nil {
+								return errObj
+							}
+							parts = append(parts, s)
+							continue
+						}
 						s, err := arg.AsString()
 						if err != nil {
 							return err
@@ -442,6 +467,21 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 				HelpText: "glob(pattern) - Return a list of Path objects matching the pattern in this directory",
 			},
 		},
+	}
+
+	// Path("a") / "b" joins, str(p) is the path and repr(p) PosixPath('...'),
+	// as in Python.
+	p.PathClass.Methods["__truediv__"] = p.PathClass.Methods["joinpath"]
+	p.PathClass.Methods["__str__"] = strFieldMethod()
+	p.PathClass.Methods["__repr__"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			path, errObj := pathArg(args)
+			if errObj != nil {
+				return errObj
+			}
+			return object.NewString("PosixPath(" + object.ReprString(path) + ")")
+		},
+		HelpText: "__repr__() - PosixPath('...')",
 	}
 
 	return object.NewLibrary(PathlibLibraryName, map[string]*object.Builtin{

@@ -191,11 +191,11 @@ func setNestedDictPath(env *object.Environment, name string, libDict *object.Dic
 		if d, ok := existing.(*object.Dict); ok {
 			rootDict = d
 		} else {
-			rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
+			rootDict = &object.Dict{Pairs: make(map[string]object.DictPair), Module: rootName}
 			env.Set(rootName, rootDict)
 		}
 	} else {
-		rootDict = &object.Dict{Pairs: make(map[string]object.DictPair)}
+		rootDict = &object.Dict{Pairs: make(map[string]object.DictPair), Module: rootName}
 		env.Set(rootName, rootDict)
 		env.MarkImportedBinding(rootName)
 	}
@@ -207,12 +207,12 @@ func setNestedDictPath(env *object.Environment, name string, libDict *object.Dic
 			if d, ok := pair.Value.(*object.Dict); ok {
 				current = d
 			} else {
-				newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+				newDict := &object.Dict{Pairs: make(map[string]object.DictPair), Module: strings.Join(parts[:i+1], ".")}
 				current.SetByString(part, newDict)
 				current = newDict
 			}
 		} else {
-			newDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+			newDict := &object.Dict{Pairs: make(map[string]object.DictPair), Module: strings.Join(parts[:i+1], ".")}
 			current.SetByString(part, newDict)
 			current = newDict
 		}
@@ -1130,7 +1130,7 @@ func (p *Scriptling) loadLibraryIntoEnv(ctx context.Context, name string, env *o
 				Value: obj,
 			}
 		}
-		libDict = &object.Dict{Pairs: pairs}
+		libDict = &object.Dict{Pairs: pairs, Module: name}
 	} else if lib, ok := p.registeredLibraries[name]; ok {
 		// Try from registered libraries
 		libDict = lib.GetDict()
@@ -1324,7 +1324,7 @@ func (p *Scriptling) registerScriptLibrary(name string, store map[string]object.
 			Value: obj,
 		}
 	}
-	setNestedDictPath(p.env, name, &object.Dict{Pairs: lib})
+	setNestedDictPath(p.env, name, &object.Dict{Pairs: lib, Module: name})
 }
 
 // EnableOutputCapture enables capturing print output instead of sending to stdout

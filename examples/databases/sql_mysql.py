@@ -40,7 +40,7 @@ for row in rows:
 # The ORM: dict-shaped rows without hand-written SQL
 orm = conn.get_orm()
 orm.insert("people", {"name": "linus", "score": 7.0})
-high = orm.select("people", columns=["name"], where="score >= ?", params=[8.0], order_by="score desc")
+high = orm.select("people", "name").where("score", ">=", 8.0).order_by("score", desc=True).fetch()
 print("orm high scorers:", [row["name"] for row in high])
 print("orm tables:", orm.tables())
 

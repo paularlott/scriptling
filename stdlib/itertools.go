@@ -2,6 +2,7 @@ package stdlib
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/evaliface"
@@ -32,6 +33,77 @@ func callCallable(ctx context.Context, fn object.Object, args ...object.Object) 
 		return errors.NewError("evaluator not available in context")
 	}
 	return eval.CallObjectFunction(ctx, fn, args, nil, nil)
+}
+
+// newArgTypeError builds an error that `except TypeError:` matches, for
+// Python's argument errors (unexpected or duplicated keyword arguments).
+func newArgTypeError(format string, args ...interface{}) *object.Error {
+	return &object.Error{Message: fmt.Sprintf(format, args...), ExceptionType: object.ExceptionTypeTypeError}
+}
+
+// optionalArg returns the optional parameter at position idx, or the keyword
+// argument name when not given positionally (as Python accepts either). A
+// value given both ways is a TypeError. None is returned as nil.
+func optionalArg(fname string, args []object.Object, kwargs object.Kwargs, idx int, name string) (object.Object, object.Object) {
+	var v object.Object
+	if len(args) > idx {
+		if kwargs.Has(name) {
+			return nil, newArgTypeError("%s() got multiple values for argument '%s'", fname, name)
+		}
+		v = args[idx]
+	} else {
+		v = kwargs.Get(name)
+	}
+	if _, isNull := v.(*object.Null); isNull {
+		return nil, nil
+	}
+	return v, nil
+}
+
+// kwargsToPositional merges keyword arguments into the positional list for
+// functions whose Python parameters may be passed either way. names lists the
+// parameters in positional order. A keyword naming an already-filled
+// position, an unknown keyword, or a gap before a keyword is a TypeError.
+func kwargsToPositional(fname string, args []object.Object, kwargs object.Kwargs, names ...string) ([]object.Object, object.Object) {
+	if kwargs.Len() == 0 {
+		return args, nil
+	}
+	out := append([]object.Object(nil), args...)
+	for i, name := range names {
+		v := kwargs.Get(name)
+		if v == nil {
+			continue
+		}
+		if i < len(args) {
+			return nil, newArgTypeError("%s() got multiple values for argument '%s'", fname, name)
+		}
+		if i != len(out) {
+			return nil, newArgTypeError("%s() missing required argument: '%s'", fname, names[len(out)])
+		}
+		out = append(out, v)
+	}
+	if err := checkKwargs(fname, kwargs, names...); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// checkKwargs rejects keyword arguments the function does not accept, as
+// Python raises TypeError rather than silently ignoring them.
+func checkKwargs(fname string, kwargs object.Kwargs, allowed ...string) object.Object {
+	for _, k := range kwargs.Keys() {
+		ok := false
+		for _, a := range allowed {
+			if k == a {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return newArgTypeError("%s() got an unexpected keyword argument '%s'", fname, k)
+		}
+	}
+	return nil
 }
 
 // ItertoolsLibrary provides Python-like itertools functions
@@ -70,19 +142,29 @@ Example:
 	},
 	"repeat": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			// repeat(elem, n) - Repeat element n times
+			// repeat(elem[, times]) - Repeat element times times, or
+			// endlessly (a lazy iterator, as in Python) when times is omitted.
 			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
 			}
-			elem := args[0]
-			times := int64(1)
-			if len(args) == 2 {
-				if n, ok := args[1].(*object.Integer); ok {
-					times = n.IntValue()
-				} else {
-					return errors.NewTypeError("INTEGER", args[1].Type().String())
-				}
+			if err := checkKwargs("repeat", kwargs, "times"); err != nil {
+				return err
 			}
+			elem := args[0]
+			timesObj, terr := optionalArg("repeat", args, kwargs, 1, "times")
+			if terr != nil {
+				return terr
+			}
+			if timesObj == nil {
+				return object.NewIterator(func() (object.Object, bool) {
+					return elem, true
+				})
+			}
+			n, ok := timesObj.(*object.Integer)
+			if !ok {
+				return errors.NewTypeError("INTEGER", timesObj.Type().String())
+			}
+			times := n.IntValue()
 			if times < 0 {
 				times = 0
 			}
@@ -92,9 +174,11 @@ Example:
 			}
 			return &object.List{Elements: result}
 		},
-		HelpText: `repeat(elem, n) - Repeat element n times
+		HelpText: `repeat(elem[, times]) - Repeat element times times
 
-Returns a list with the element repeated n times.
+Returns a list with the element repeated times times. Without times it
+returns an infinite iterator, like Python's itertools.repeat; consume it with
+next(), zip() or itertools.islice.
 
 Example:
   itertools.repeat("x", 3) -> ["x", "x", "x"]
@@ -108,6 +192,31 @@ Example:
 			// returns the materialized list.
 			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
+			}
+			// An iterator input is consumed lazily, saving each element for
+			// the replay passes (Python semantics), so cycle(count()) or a
+			// generator works without materializing it up front.
+			if src, isIter := args[0].(*object.Iterator); isIter && len(args) == 1 {
+				var saved []object.Object
+				exhausted := false
+				i := 0
+				return object.NewIterator(func() (object.Object, bool) {
+					if !exhausted {
+						if v, ok := src.Next(); ok {
+							if !object.IsError(v) && v.Type() != object.EXCEPTION_OBJ {
+								saved = append(saved, v)
+							}
+							return v, true
+						}
+						exhausted = true
+					}
+					if len(saved) == 0 {
+						return nil, false
+					}
+					elem := saved[i%len(saved)]
+					i++
+					return elem, true
+				})
 			}
 			var elements []object.Object
 			switch a := args[0].(type) {
@@ -141,7 +250,8 @@ Example:
 				return &object.List{Elements: result}
 			}
 			if len(elements) == 0 {
-				return &object.Exception{Message: "cycle() of empty iterable", ExceptionType: object.ExceptionTypeRuntimeError, Raised: true}
+				// Python: cycle of an empty iterable is an empty iterator.
+				return object.NewIterator(func() (object.Object, bool) { return nil, false })
 			}
 			i := 0
 			return object.NewIterator(func() (object.Object, bool) {
@@ -158,49 +268,66 @@ materialized list of n repetitions.`,
 	},
 	"count": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			// count(start, stop[, step]) - Generate a sequence of numbers
-			if err := errors.RangeArgs(args, 2, 3); err != nil {
-				return err
-			}
-			start, ok := args[0].(*object.Integer)
-			if !ok {
-				return errors.NewTypeError("INTEGER", args[0].Type().String())
-			}
-			stop, ok := args[1].(*object.Integer)
-			if !ok {
-				return errors.NewTypeError("INTEGER", args[1].Type().String())
-			}
-			step := int64(1)
-			if len(args) == 3 {
-				if s, ok := args[2].(*object.Integer); ok {
-					step = s.IntValue()
-				} else {
-					return errors.NewTypeError("INTEGER", args[2].Type().String())
+			// count(start=0, step=1) - Python's infinite lazy counter; start
+			// and step may be positional or keywords.
+			{
+				if len(args) > 2 {
+					return &object.Exception{
+						Message:       fmt.Sprintf("count() takes at most 2 arguments (%d given)", len(args)),
+						ExceptionType: object.ExceptionTypeTypeError,
+						Raised:        true,
+					}
 				}
-			}
-			if step == 0 {
-				return errors.NewError("step cannot be zero")
-			}
-			result := []object.Object{}
-			if step > 0 {
-				for i := start.IntValue(); i < stop.IntValue(); i += step {
-					result = append(result, object.NewInteger(i))
+				if err := checkKwargs("count", kwargs, "start", "step"); err != nil {
+					return err
 				}
-			} else {
-				for i := start.IntValue(); i > stop.IntValue(); i += step {
-					result = append(result, object.NewInteger(i))
+				startObj, serr := optionalArg("count", args, kwargs, 0, "start")
+				if serr != nil {
+					return serr
 				}
+				stepObj, terr := optionalArg("count", args, kwargs, 1, "step")
+				if terr != nil {
+					return terr
+				}
+				if _, isNull := stepObj.(*object.Null); isNull {
+					stepObj = nil
+				}
+				if startObj == nil {
+					startObj = object.NewInteger(0)
+				}
+				if stepObj == nil {
+					stepObj = object.NewInteger(1)
+				}
+				for _, o := range []object.Object{startObj, stepObj} {
+					switch o.(type) {
+					case *object.Integer, *object.Float:
+					default:
+						return errors.NewTypeError("a number is required", o.Type().String())
+					}
+				}
+				si, sInt := startObj.(*object.Integer)
+				ti, tInt := stepObj.(*object.Integer)
+				if sInt && tInt {
+					cur, step := si.IntValue(), ti.IntValue()
+					return object.NewIterator(func() (object.Object, bool) {
+						v := object.NewInteger(cur)
+						cur += step
+						return v, true
+					})
+				}
+				curF, _ := startObj.AsFloat()
+				stepF, _ := stepObj.AsFloat()
+				return object.NewIterator(func() (object.Object, bool) {
+					v := object.NewFloat(curF)
+					curF += stepF
+					return v, true
+				})
 			}
-			return &object.List{Elements: result}
 		},
-		HelpText: `count(start, stop[, step]) - Generate a sequence of numbers
+		HelpText: `count(start=0, step=1) - Count up from start by step, forever
 
-Returns a list of numbers from start to stop (exclusive) with optional step.
-Similar to range() but as an itertools function.
-
-Example:
-  itertools.count(0, 5) -> [0, 1, 2, 3, 4]
-  itertools.count(0, 10, 2) -> [0, 2, 4, 6, 8]`,
+Returns an infinite iterator like Python's itertools.count; consume it with
+next(), zip(), enumerate() or itertools.islice.`,
 	},
 	"islice": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -285,21 +412,21 @@ Example:
 			if !isCallable(pred) {
 				return errors.NewTypeError("callable", pred.Type().String())
 			}
-			var elements []object.Object
-			switch a := args[1].(type) {
-			case *object.List:
-				elements = a.Elements
-			case *object.Tuple:
-				elements = a.Elements
-			default:
-				if elems, ok := object.IterableToSlice(args[1]); ok {
-					elements = elems
-					break
-				}
+			// Pull lazily: takewhile over an infinite iterator (count(),
+			// cycle()) must stop at the first false predicate, as in Python.
+			next, ok := object.IterSource(args[1])
+			if !ok {
 				return errors.NewTypeError("iterable", args[1].Type().String())
 			}
 			result := []object.Object{}
-			for _, elem := range elements {
+			for {
+				elem, more := next()
+				if !more {
+					break
+				}
+				if object.IsError(elem) || elem.Type() == object.EXCEPTION_OBJ {
+					return elem
+				}
 				res := callCallable(ctx, pred, elem)
 				if object.IsError(res) || res.Type() == object.EXCEPTION_OBJ {
 					return res
@@ -520,6 +647,10 @@ Example:
 	},
 	"permutations": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			args, kerr := kwargsToPositional("permutations", args, kwargs, "iterable", "r")
+			if kerr != nil {
+				return kerr
+			}
 			// permutations(iterable[, r])
 			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
@@ -543,7 +674,7 @@ Example:
 			}
 
 			r := len(elements)
-			if len(args) == 2 {
+			if len(args) == 2 && args[1].Type() != object.NULL_OBJ {
 				if rArg, ok := args[1].(*object.Integer); ok {
 					r = int(rArg.IntValue())
 				} else {
@@ -571,6 +702,10 @@ Example:
 	},
 	"combinations": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			args, kerr := kwargsToPositional("combinations", args, kwargs, "iterable", "r")
+			if kerr != nil {
+				return kerr
+			}
 			// combinations(iterable, r)
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
@@ -618,6 +753,10 @@ Example:
 	},
 	"combinations_with_replacement": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			args, kerr := kwargsToPositional("combinations_with_replacement", args, kwargs, "iterable", "r")
+			if kerr != nil {
+				return kerr
+			}
 			// combinations_with_replacement(iterable, r)
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
@@ -686,12 +825,15 @@ Example:
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 
-			var keyFunc object.Object
-			if len(args) == 2 {
-				keyFunc = args[1]
-				if !isCallable(keyFunc) {
-					return errors.NewTypeError("callable", keyFunc.Type().String())
-				}
+			if err := checkKwargs("groupby", kwargs, "key"); err != nil {
+				return err
+			}
+			keyFunc, kerr := optionalArg("groupby", args, kwargs, 1, "key")
+			if kerr != nil {
+				return kerr
+			}
+			if keyFunc != nil && !isCallable(keyFunc) {
+				return errors.NewTypeError("callable", keyFunc.Type().String())
 			}
 
 			if len(elements) == 0 {
@@ -739,7 +881,7 @@ Example:
 
 			return &object.List{Elements: result}
 		},
-		HelpText: `groupby(iterable[, key]) - Group consecutive elements
+		HelpText: `groupby(iterable, key=None) - Group consecutive elements
 
 Groups consecutive elements that have the same key value.
 Returns list of (key, group) tuples where group is a list.
@@ -768,16 +910,24 @@ Example:
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 
-			if len(elements) == 0 {
-				return &object.List{Elements: []object.Object{}}
+			if err := checkKwargs("accumulate", kwargs, "func", "initial"); err != nil {
+				return err
+			}
+			accumFunc, ferr := optionalArg("accumulate", args, kwargs, 1, "func")
+			if ferr != nil {
+				return ferr
+			}
+			if accumFunc != nil && !isCallable(accumFunc) {
+				return errors.NewTypeError("callable", accumFunc.Type().String())
+			}
+			// initial is keyword-only; when given it is emitted first and
+			// seeds the accumulation (Python 3.8+).
+			if initial, _ := optionalArg("accumulate", nil, kwargs, 0, "initial"); initial != nil {
+				elements = append([]object.Object{initial}, elements...)
 			}
 
-			var accumFunc object.Object
-			if len(args) == 2 {
-				accumFunc = args[1]
-				if !isCallable(accumFunc) {
-					return errors.NewTypeError("callable", accumFunc.Type().String())
-				}
+			if len(elements) == 0 {
+				return &object.List{Elements: []object.Object{}}
 			}
 
 			result := []object.Object{elements[0]}
@@ -800,9 +950,10 @@ Example:
 			}
 			return &object.List{Elements: result}
 		},
-		HelpText: `accumulate(iterable[, func]) - Running totals/accumulation
+		HelpText: `accumulate(iterable[, func, *, initial=None]) - Running totals/accumulation
 
 Returns list of accumulated values. Default is sum, but can provide custom function.
+If initial is given, it is emitted first and seeds the accumulation.
 
 Example:
   itertools.accumulate([1, 2, 3, 4]) -> [1, 3, 6, 10]
@@ -905,23 +1056,29 @@ Example:
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
-			data, dataOK := object.IterableToSlice(args[0])
+			// Pull lazily so an infinite selector (or data) iterator such as
+			// itertools.cycle stops with the shorter input, as in Python.
+			data, dataOK := object.IterSource(args[0])
 			if !dataOK {
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
-			selectors, selOK := object.IterableToSlice(args[1])
+			selectors, selOK := object.IterSource(args[1])
 			if !selOK {
 				return errors.NewTypeError("iterable", args[1].Type().String())
 			}
 
 			result := []object.Object{}
-			minLen := len(data)
-			if len(selectors) < minLen {
-				minLen = len(selectors)
-			}
-			for i := 0; i < minLen; i++ {
-				if isTruthy(selectors[i]) {
-					result = append(result, data[i])
+			for {
+				d, ok := data()
+				if !ok {
+					break
+				}
+				sel, ok := selectors()
+				if !ok {
+					break
+				}
+				if isTruthy(sel) {
+					result = append(result, d)
 				}
 			}
 			return &object.List{Elements: result}
@@ -978,6 +1135,10 @@ Example:
 	},
 	"batched": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			args, kerr := kwargsToPositional("batched", args, kwargs, "iterable", "n")
+			if kerr != nil {
+				return kerr
+			}
 			// batched(iterable, n) - Batch elements into tuples of size n
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err

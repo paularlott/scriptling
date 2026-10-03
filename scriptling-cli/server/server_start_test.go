@@ -1500,3 +1500,54 @@ while runtime.server_running():
 		t.Fatalf("unexpected stdio response: %#v", body)
 	}
 }
+
+// A setup script from an earlier server that exits after a newer server has
+// installed its lifecycle channels must not start the newer server: that
+// would start it before its own setup script finished and swallow that
+// script's error.
+func TestStaleSetupGoroutineDoesNotStartNewServer(t *testing.T) {
+	stale := writeSetup(t, `
+import time
+import scriptling.runtime as runtime
+runtime.start_server(wait=False)
+time.sleep(0.2)
+`)
+	if _, err := NewServer(ServerConfig{ScriptFile: stale}); err != nil {
+		t.Fatalf("NewServer(stale): %v", err)
+	}
+
+	failing := writeSetup(t, `
+import time
+time.sleep(0.6)
+raise Exception('boom')
+`)
+	_, err := NewServer(ServerConfig{ScriptFile: failing})
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("NewServer should return the setup script's error, got %v", err)
+	}
+}
+
+// A setup script from a replaced server calling start_server() late must not
+// start the newer server (which would swallow the newer script's error).
+func TestStaleStartServerCallIgnored(t *testing.T) {
+	stale := writeSetup(t, `
+import time
+import scriptling.runtime as runtime
+runtime.start_server(wait=False)
+time.sleep(0.3)
+runtime.start_server(wait=False)
+`)
+	if _, err := NewServer(ServerConfig{ScriptFile: stale}); err != nil {
+		t.Fatalf("NewServer(stale): %v", err)
+	}
+
+	failing := writeSetup(t, `
+import time
+time.sleep(0.6)
+raise Exception('boom')
+`)
+	_, err := NewServer(ServerConfig{ScriptFile: failing})
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("NewServer should return the setup script's error, got %v", err)
+	}
+}

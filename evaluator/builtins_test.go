@@ -174,7 +174,7 @@ func TestBuiltinSortedWithLambda(t *testing.T) {
 		{
 			name:     "sort strings by length",
 			script:   `sorted(["ccc", "a", "bb"], key=lambda s: len(s))`,
-			expected: `[a, bb, ccc]`,
+			expected: `['a', 'bb', 'ccc']`,
 		},
 		{
 			name:     "sort with negative key",
@@ -206,12 +206,12 @@ func TestBuiltinSortedTuplesAndLists(t *testing.T) {
 		{
 			name:     "sorted tuples by first element",
 			script:   `sorted([(3, "c"), (1, "a"), (2, "b")])`,
-			expected: `[(1, a), (2, b), (3, c)]`,
+			expected: `[(1, 'a'), (2, 'b'), (3, 'c')]`,
 		},
 		{
 			name:     "sorted tuples reverse",
 			script:   `sorted([(3, "c"), (1, "a"), (2, "b")], reverse=True)`,
-			expected: `[(3, c), (2, b), (1, a)]`,
+			expected: `[(3, 'c'), (2, 'b'), (1, 'a')]`,
 		},
 		{
 			name:     "sorted tuples tiebreak on second element",
@@ -226,7 +226,7 @@ func TestBuiltinSortedTuplesAndLists(t *testing.T) {
 		{
 			name:     "list.sort mutates tuples in place",
 			script:   `x = [(3, "c"), (1, "a"), (2, "b")]; x.sort(); x`,
-			expected: `[(1, a), (2, b), (3, c)]`,
+			expected: `[(1, 'a'), (2, 'b'), (3, 'c')]`,
 		},
 	}
 
@@ -252,12 +252,12 @@ func TestBuiltinIterablesOnDictViewsSetsStrings(t *testing.T) {
 		expected string
 	}{
 		// sorted
-		{name: "sorted dict_keys", script: `d = {"b": 2, "a": 1, "c": 3}; sorted(d.keys())`, expected: `[a, b, c]`},
+		{name: "sorted dict_keys", script: `d = {"b": 2, "a": 1, "c": 3}; sorted(d.keys())`, expected: `['a', 'b', 'c']`},
 		{name: "sorted dict_values", script: `d = {"b": 2, "a": 1, "c": 3}; sorted(d.values())`, expected: `[1, 2, 3]`},
-		{name: "sorted dict_items by value", script: `d = {"a": 3, "c": 1, "b": 2}; sorted(d.items(), key=lambda x: x[1])`, expected: `[(c, 1), (b, 2), (a, 3)]`},
+		{name: "sorted dict_items by value", script: `d = {"a": 3, "c": 1, "b": 2}; sorted(d.items(), key=lambda x: x[1])`, expected: `[('c', 1), ('b', 2), ('a', 3)]`},
 		{name: "sorted set", script: `sorted(set([3, 1, 2]))`, expected: `[1, 2, 3]`},
-		{name: "sorted string", script: `sorted("cab")`, expected: `[a, b, c]`},
-		{name: "sorted dict yields keys", script: `d = {"b": 2, "a": 1}; sorted(d)`, expected: `[a, b]`},
+		{name: "sorted string", script: `sorted("cab")`, expected: `['a', 'b', 'c']`},
+		{name: "sorted dict yields keys", script: `d = {"b": 2, "a": 1}; sorted(d)`, expected: `['a', 'b']`},
 		{name: "sorted does not mutate input list", script: `o = [3, 1, 2]; sorted(o); o`, expected: `[3, 1, 2]`},
 		// sum
 		{name: "sum dict_values", script: `d = {"a": 1, "b": 2, "c": 3}; sum(d.values())`, expected: `6`},
@@ -320,7 +320,7 @@ msg`, expected: `Cannot specify a default for min() with multiple arguments`},
 		{name: "sorted mixed bool and int stable", script: `sorted([2, True, 0, False, 1])`, expected: `[0, False, True, 1, 2]`},
 		{name: "sorted mixed bool and float", script: `str(sorted([1.5, True, 0.5]))`, expected: `[0.5, True, 1.5]`},
 		{name: "max key returning bool", script: `max([{"ok": False, "n": "a"}, {"ok": True, "n": "b"}], key=lambda r: r["ok"])["n"]`, expected: `b`},
-		{name: "tuple ordering with bools", script: `str(min([(True, "x"), (False, "y")]))`, expected: `(False, y)`},
+		{name: "tuple ordering with bools", script: `str(min([(True, "x"), (False, "y")]))`, expected: `(False, 'y')`},
 		{name: "sorted bool vs string still errors", script: `def f():
     return sorted([True, "x"])
 msg = "no error"
@@ -363,11 +363,11 @@ func TestSetOperators(t *testing.T) {
 		{name: "cross-type equality false", script: `set([1,2]) == [1,2]`, expected: `False`},
 		{name: "chained with equality", script: `(set([1,2,3]) & set([2,3,4])) == set([2,3])`, expected: `True`},
 		// empty-set edge cases
-		{name: "empty intersection", script: `set([]) & set([1])`, expected: `{}`},
+		{name: "empty intersection", script: `set([]) & set([1])`, expected: `set()`},
 		{name: "empty union", script: `set([]) | set([1])`, expected: `{1}`},
 		{name: "difference from empty", script: `set([1]) - set([])`, expected: `{1}`},
 		{name: "empty symmetric difference", script: `set([]) ^ set([1])`, expected: `{1}`},
-		{name: "two empties intersection", script: `set([]) & set([])`, expected: `{}`},
+		{name: "two empties intersection", script: `set([]) & set([])`, expected: `set()`},
 	}
 
 	for _, tt := range tests {
@@ -442,7 +442,7 @@ func TestTruthyCollections(t *testing.T) {
 		{name: "nonempty dict_values truthy", script: `bool({1: 1}.values())`, expected: `True`},
 		{name: "empty dict_items falsy", script: `bool({}.items())`, expected: `False`},
 		// short-circuit: empty set is falsy so `and` returns it without evaluating RHS
-		{name: "empty set short-circuits and", script: `set() and "RHS"`, expected: `{}`},
+		{name: "empty set short-circuits and", script: `set() and "RHS"`, expected: `set()`},
 		{name: "nonempty set and evaluates RHS", script: `set([1]) and "RHS"`, expected: `RHS`},
 		{name: "empty tuple short-circuits and", script: `() and "RHS"`, expected: `()`},
 		// if-condition uses the same isTruthy path

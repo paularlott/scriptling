@@ -1075,7 +1075,7 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 				pair, found := dict.GetByString(key)
 				if !found {
 					return &object.Exception{
-						Message:       pyReprString(key),
+						Message:       object.ReprString(key),
 						ExceptionType: object.ExceptionTypeKeyError,
 						Raised:        true,
 					}
@@ -1130,49 +1130,14 @@ func applyStringSpec(spec string, body string) string {
 // formatPercentValue formats a single value according to a Python % format specifier.
 func formatPercentValue(ctx context.Context, spec string, conversion byte, val object.Object, env *object.Environment) (string, object.Object) {
 	switch conversion {
-	case 's':
-		// %s converts with str(): exceptions use their message and instances
-		// go through __str__ (whose raise propagates), like the str builtin.
-		if exc, ok := val.(*object.Exception); ok {
-			return exc.Message, nil
+	case 's', 'r':
+		// %s and %r convert exactly like str() and repr(); a raise from a
+		// dunder propagates, and the width/precision spec applies after.
+		rendered, rerr := renderConvertedValue(ctx, val, string(conversion), env)
+		if rerr != nil {
+			return "", rerr
 		}
-		if inst, ok := val.(*object.Instance); ok {
-			result := callDunderMethodFn(ctx, inst, "__str__", nil, env)
-			if propagates(result) {
-				return "", result
-			}
-			if s, ok := result.(*object.String); ok {
-				return s.StringValue(), nil
-			}
-		}
-		return applyStringSpec(spec, val.Inspect()), nil
-	case 'r':
-		// %r converts with repr(): instances dispatch __repr__ then __str__
-		// (a raise propagates); other types keep the default representation.
-		if inst, ok := val.(*object.Instance); ok {
-			if result := callDunderMethodFn(ctx, inst, "__repr__", nil, env); result != nil {
-				if propagates(result) {
-					return "", result
-				}
-				if s, ok := result.(*object.String); ok {
-					return s.StringValue(), nil
-				}
-			}
-			if result := callDunderMethodFn(ctx, inst, "__str__", nil, env); result != nil {
-				if propagates(result) {
-					return "", result
-				}
-				if s, ok := result.(*object.String); ok {
-					return applyStringSpec(spec, s.StringValue()), nil
-				}
-			}
-		}
-		// Strings quote under repr, matching the repr() builtin and
-		// f-string !r.
-		if sv, ok := val.(*object.String); ok {
-			return applyStringSpec(spec, pyReprString(sv.StringValue())), nil
-		}
-		return applyStringSpec(spec, val.Inspect()), nil
+		return applyStringSpec(spec, rendered), nil
 	case 'd', 'i':
 		var intVal int64
 		switch v := val.(type) {
@@ -1964,7 +1929,7 @@ func applyFunction(ctx context.Context, fn object.Object, args []object.Object, 
 		}
 		return errors.NewError("cannot call %s: not callable", fn.Inspect())
 	default:
-		return errors.NewError("not a function or class: %s", fn.Type())
+		return notCallableError(fn)
 	}
 }
 
@@ -2332,40 +2297,100 @@ var evalTruthyFn func(ctx context.Context, obj object.Object, env *object.Enviro
 func renderConvertedValue(ctx context.Context, val object.Object, conv string, env *object.Environment) (string, object.Object) {
 	switch conv {
 	case "r", "a":
-		if inst, ok := val.(*object.Instance); ok {
-			if result := callDunderMethodFn(ctx, inst, "__repr__", nil, env); result != nil {
-				if propagates(result) {
-					return "", result
-				}
-				if s, ok := result.(*object.String); ok {
-					return s.StringValue(), nil
-				}
-			}
-			if result := callDunderMethodFn(ctx, inst, "__str__", nil, env); result != nil {
-				if propagates(result) {
-					return "", result
-				}
-				if s, ok := result.(*object.String); ok {
-					return s.StringValue(), nil
-				}
-			}
-			return inst.Inspect(), nil
+		switch v := val.(type) {
+		case *object.Instance:
+			return reprInstanceChecked(ctx, v, env)
+		case *object.String:
+			return object.ReprString(v.StringValue()), nil
+		case *object.Exception:
+			return object.ReprException(v), nil
 		}
-		// Strings quote under repr (the same quoting style as the repr()
-		// builtin).
-		if s, ok := val.(*object.String); ok {
-			return pyReprString(s.StringValue()), nil
-		}
-		return val.Inspect(), nil
 	default: // "s" or none: str semantics
-		if exc, ok := val.(*object.Exception); ok {
-			return exc.Message, nil
+		switch v := val.(type) {
+		case *object.Exception:
+			return v.Message, nil
+		case *object.Instance:
+			return strInstanceChecked(ctx, v, env)
 		}
-		if inst, ok := val.(*object.Instance); ok {
-			return strInstanceChecked(ctx, inst, env)
-		}
-		return val.Inspect(), nil
 	}
+	// A container renders its elements with repr in both cases, as Python
+	// does: str(["a"]) is "['a']" and nested instances use __repr__.
+	if object.IsReprContainer(val) {
+		return containerReprChecked(ctx, val, env)
+	}
+	return val.Inspect(), nil
+}
+
+// isPlainFormattable reports whether val takes a format spec directly.
+func isPlainFormattable(val object.Object) bool {
+	switch val.(type) {
+	case *object.String, *object.Integer, *object.Float, *object.Boolean:
+		return true
+	}
+	return false
+}
+
+// formatValueChecked applies a format spec to a value as Python's format()
+// does. Numbers and strings take the spec directly; an instance uses its
+// __format__ when it has one; anything else accepts only an empty spec (and
+// renders with str semantics), raising TypeError for a non-empty one.
+func formatValueChecked(ctx context.Context, val object.Object, spec string, env *object.Environment) (string, object.Object) {
+	if isPlainFormattable(val) {
+		return formatWithSpec(val, spec), nil
+	}
+	switch v := val.(type) {
+	case *object.Instance:
+		if _, ok := v.Class.LookupMember("__format__"); ok {
+			result := callDunderMethodFn(ctx, v, "__format__", []object.Object{object.NewString(spec)}, env)
+			if propagates(result) {
+				return "", result
+			}
+			if s, ok := result.(*object.String); ok {
+				return s.StringValue(), nil
+			}
+			return "", &object.Exception{
+				Message:       fmt.Sprintf("__format__ must return a str, not %s", getTypeName(result)),
+				ExceptionType: object.ExceptionTypeTypeError,
+				Raised:        true,
+			}
+		}
+	}
+	if spec != "" {
+		return "", &object.Exception{
+			Message:       fmt.Sprintf("unsupported format string passed to %s.__format__", getTypeName(val)),
+			ExceptionType: object.ExceptionTypeTypeError,
+			Raised:        true,
+		}
+	}
+	return renderConvertedValue(ctx, val, "s", env)
+}
+
+// reprInstanceChecked renders an instance with repr() semantics: __repr__,
+// else the default <Class object at 0x...>. Unlike str(), __str__ is never
+// used. A raise from __repr__ is returned.
+func reprInstanceChecked(ctx context.Context, inst *object.Instance, env *object.Environment) (string, object.Object) {
+	if result := callDunderMethodFn(ctx, inst, "__repr__", nil, env); result != nil {
+		if propagates(result) {
+			return "", result
+		}
+		if s, ok := result.(*object.String); ok {
+			return s.StringValue(), nil
+		}
+		return "", &object.Exception{
+			Message:       fmt.Sprintf("__repr__ returned non-string (type %s)", getTypeName(result)),
+			ExceptionType: object.ExceptionTypeTypeError,
+			Raised:        true,
+		}
+	}
+	return inst.Inspect(), nil
+}
+
+// containerReprChecked renders a list, tuple, dict, set or dict view as
+// Python does, calling __repr__ on nested instances.
+func containerReprChecked(ctx context.Context, val object.Object, env *object.Environment) (string, object.Object) {
+	return object.InspectRepr(val, func(inst *object.Instance) (string, object.Object) {
+		return reprInstanceChecked(ctx, inst, env)
+	})
 }
 
 // strInstanceChecked renders an instance with str() semantics: __str__ first,
@@ -3503,14 +3528,14 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			if findPropertyInClass(key.StringValue(), o.Class) != nil {
 				return raisedAssignmentError(object.ExceptionTypeAttributeError, fmt.Sprintf("can't delete attribute '%s'", key.StringValue()))
 			}
-			return raisedAssignmentError(object.ExceptionTypeAttributeError, fmt.Sprintf("'%s' object has no attribute '%s'", o.Class.Name, key.StringValue()))
+			return &assignmentExceptionError{ex: attributeError(o, key.StringValue()).(*object.Exception)}
 		case *object.Class:
 			key, ok := index.(*object.String)
 			if !ok {
 				return fmt.Errorf("class attribute must be string")
 			}
 			if _, exists := o.Methods[key.StringValue()]; !exists {
-				return raisedAssignmentError(object.ExceptionTypeAttributeError, fmt.Sprintf("type object '%s' has no attribute '%s'", o.Name, key.StringValue()))
+				return &assignmentExceptionError{ex: attributeError(o, key.StringValue()).(*object.Exception)}
 			}
 			delete(o.Methods, key.StringValue())
 			o.InvalidateLookupCache()
@@ -3889,18 +3914,34 @@ func setIdentifierFast(target *ast.Identifier, value object.Object, env *object.
 var acceptInstanceIterableFn func(ctx context.Context, obj object.Object) (object.Object, object.Object)
 
 // acceptInstanceIterable validates one enumerate/zip argument. Materialized
-// builtin iterables pass through unchanged. Class instances (via __iter__) and
-// raw iterators are materialized eagerly WITH raise checking — the zip and
-// enumerate constructors pull their inputs unchecked at construction, so an
-// always-raising iterator would otherwise loop forever inside construction; a
-// raise now surfaces from the first raising element instead. It returns
-// (nil, nil) when the object is not an iterable type at all, so the caller
-// reports its usual type error.
+// builtin iterables and raw iterators pass through unchanged: the zip and
+// enumerate iterators pull iterator inputs lazily (so infinite iterators such
+// as itertools.cycle work, as in Python) and pass a yielded error or raised
+// exception straight to the consumer. Class instances get __iter__ called
+// now (a raise there surfaces at construction, like Python) and the
+// resulting iterator is likewise pulled lazily. It returns (nil, nil) when
+// the object is not an iterable type at all, so the caller reports its usual
+// type error.
 func acceptInstanceIterable(ctx context.Context, obj object.Object) (object.Object, object.Object) {
-	switch obj.(type) {
-	case *object.List, *object.Tuple, *object.String, *object.FloatArray:
+	switch o := obj.(type) {
+	case *object.List, *object.Tuple, *object.String, *object.FloatArray, *object.Iterator:
 		return obj, nil
-	case *object.Instance, *object.Iterator:
+	case *object.Instance:
+		if fn, has := findDunderMethod(o, "__iter__"); has {
+			env := GetEnvFromContext(ctx)
+			iterObj := applyFunctionWithContext(ctx, fn, prependSelf(o, nil), nil, env)
+			if propagates(iterObj) {
+				return nil, iterObj
+			}
+			switch it := iterObj.(type) {
+			case *object.Iterator:
+				return it, nil
+			case *object.Instance:
+				return instanceToIterator(ctx, it, env), nil
+			default:
+				return nil, errors.NewError("__iter__ must return an iterator")
+			}
+		}
 		elems, ok, rerr := iterableToSliceChecked(ctx, obj, GetEnvFromContext(ctx))
 		if rerr != nil {
 			return nil, rerr
@@ -4697,6 +4738,9 @@ func getTypeName(obj object.Object) string {
 	case object.LIST_OBJ:
 		return "list"
 	case object.DICT_OBJ:
+		if obj.(*object.Dict).Module != "" {
+			return "module"
+		}
 		return "dict"
 	case object.TUPLE_OBJ:
 		return "tuple"
@@ -4704,6 +4748,41 @@ func getTypeName(obj object.Object) string {
 		return "set"
 	case object.NULL_OBJ:
 		return "NoneType"
+	case object.BYTES_OBJ:
+		return "bytes"
+	case object.DICT_KEYS_OBJ:
+		return "dict_keys"
+	case object.DICT_VALUES_OBJ:
+		return "dict_values"
+	case object.DICT_ITEMS_OBJ:
+		return "dict_items"
+	case object.FUNCTION_OBJ, object.LAMBDA_OBJ:
+		return "function"
+	case object.BUILTIN_OBJ:
+		return "builtin_function_or_method"
+	case object.CLASS_OBJ:
+		return "type"
+	case object.INSTANCE_OBJ:
+		return obj.(*object.Instance).Class.Name
+	case object.EXCEPTION_OBJ:
+		if exc, ok := obj.(*object.Exception); ok && exc.ExceptionType != "" {
+			return exc.ExceptionType
+		}
+		return "Exception"
+	case object.SUPER_OBJ:
+		return "super"
+	case object.ITERATOR_OBJ:
+		return "iterator"
+	case object.SLICE_OBJ:
+		return "slice"
+	case object.PROPERTY_OBJ:
+		return "property"
+	case object.STATICMETHOD_OBJ:
+		return "staticmethod"
+	case object.CLASSMETHOD_OBJ:
+		return "classmethod"
+	case object.FLOAT_ARRAY_OBJ:
+		return "FloatArray"
 	default:
 		return obj.Type().String()
 	}

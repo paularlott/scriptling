@@ -38,7 +38,7 @@ func TestRegexLibrarySurface(t *testing.T) {
 	}
 
 	t.Run("match anchors at the start", func(t *testing.T) {
-		if got := run(t, `[re.match(r"\d+", "123abc").group(0), re.match(r"\d+", "abc123")]`); got != "[123, None]" {
+		if got := run(t, `[re.match(r"\d+", "123abc").group(0), re.match(r"\d+", "abc123")]`); got != "['123', None]" {
 			t.Fatalf("match anchoring: %s", got)
 		}
 	})
@@ -48,7 +48,7 @@ func TestRegexLibrarySurface(t *testing.T) {
 		}
 	})
 	t.Run("fullmatch spans the whole string", func(t *testing.T) {
-		if got := run(t, `[re.fullmatch(r"\d+", "123").group(0), re.fullmatch(r"\d+", "123a")]`); got != "[123, None]" {
+		if got := run(t, `[re.fullmatch(r"\d+", "123").group(0), re.fullmatch(r"\d+", "123a")]`); got != "['123', None]" {
 			t.Fatalf("fullmatch: %s", got)
 		}
 	})
@@ -56,12 +56,12 @@ func TestRegexLibrarySurface(t *testing.T) {
 		if got := run(t, `
 m = re.match(r"(\w+)@(\w+)\.com", "ada@example.com")
 [m.group(0), m.group(1), m.group(2)]
-`); got != "[ada@example.com, ada, example]" {
+`); got != "['ada@example.com', 'ada', 'example']" {
 			t.Fatalf("groups: %s", got)
 		}
 	})
 	t.Run("findall", func(t *testing.T) {
-		if got := run(t, `re.findall(r"\d+", "a1 b22 c333")`); got != "[1, 22, 333]" {
+		if got := run(t, `re.findall(r"\d+", "a1 b22 c333")`); got != "['1', '22', '333']" {
 			t.Fatalf("findall: %s", got)
 		}
 	})
@@ -71,7 +71,7 @@ out = []
 for m in re.finditer(r"\d+", "a1 b22"):
     out.append(m.group(0))
 out
-`); got != "[1, 22]" {
+`); got != "['1', '22']" {
 			t.Fatalf("finditer: %s", got)
 		}
 	})
@@ -91,7 +91,7 @@ out
 		}
 	})
 	t.Run("split", func(t *testing.T) {
-		if got := run(t, `re.split(r"[,\s]+", "a, b,, c")`); got != "[a, b, c]" {
+		if got := run(t, `re.split(r"[,\s]+", "a, b,, c")`); got != "['a', 'b', 'c']" {
 			t.Fatalf("split: %s", got)
 		}
 	})
@@ -99,7 +99,7 @@ out
 		if got := run(t, `
 p = re.compile(r"\d+")
 [p.match("123abc").group(0), re.findall(r"\d+", "a1b22")]
-`); got != "[123, [1, 22]]" {
+`); got != "['123', ['1', '22']]" {
 			t.Fatalf("compile: %s", got)
 		}
 	})

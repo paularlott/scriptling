@@ -290,7 +290,7 @@ class User:
 
 user = User()
 del user.name
-user.name == None and user.age == 30
+not hasattr(user, "name") and user.age == 30
 `,
 			expected: true,
 		},

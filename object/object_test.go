@@ -73,7 +73,7 @@ func TestListInspect(t *testing.T) {
 			NewBoolean(true),
 		},
 	}
-	expected := "[1, hello, True]"
+	expected := "[1, 'hello', True]"
 	if list.Inspect() != expected {
 		t.Errorf("list.Inspect() = %q, want %q", list.Inspect(), expected)
 	}
@@ -88,7 +88,7 @@ func TestDictInspect(t *testing.T) {
 	}
 	result := dict.Inspect()
 	// Dict order is not guaranteed, so check both possibilities
-	if result != "{name: Alice, age: 30}" && result != "{age: 30, name: Alice}" {
+	if result != "{'name': 'Alice', 'age': 30}" && result != "{'age': 30, 'name': 'Alice'}" {
 		t.Errorf("dict.Inspect() = %q, want either order", result)
 	}
 }
@@ -1627,7 +1627,7 @@ func TestInspectHandlesCyclicContainers(t *testing.T) {
 		d := &Dict{Pairs: map[string]DictPair{}}
 		key := NewString("self")
 		d.Pairs[DictKey(key)] = DictPair{Key: key, Value: d}
-		want := "{self: <cyclic reference>}"
+		want := "{'self': <cyclic reference>}"
 		if got := d.Inspect(); got != want {
 			t.Fatalf("Inspect() = %q, want %q", got, want)
 		}
@@ -1652,7 +1652,7 @@ func TestInspectHandlesCyclicContainers(t *testing.T) {
 		l := &List{Elements: []Object{d}}
 		key := NewString("k")
 		d.Pairs[DictKey(key)] = DictPair{Key: key, Value: l}
-		want := "{k: [<cyclic reference>]}"
+		want := "{'k': [<cyclic reference>]}"
 		if got := d.Inspect(); got != want {
 			t.Fatalf("Inspect() = %q, want %q", got, want)
 		}

@@ -2,8 +2,6 @@ package stdlib
 
 import (
 	"context"
-	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/paularlott/scriptling/errors"
@@ -11,267 +9,6 @@ import (
 )
 
 // Counter class for counting elements
-
-// counterCounts extracts the key->count map from a Counter instance,
-// ignoring non-integer fields.
-func counterCounts(inst *object.Instance) map[string]int64 {
-	counts := make(map[string]int64)
-	inst.RangeFields(func(key string, v object.Object) bool {
-		if n, ok := v.(*object.Integer); ok {
-			counts[key] = n.IntValue()
-		}
-		return true
-	})
-	return counts
-}
-
-// newCounterFromCounts builds a Counter instance from a count map, dropping
-// non-positive entries like Python's Counter arithmetic does.
-func newCounterFromCounts(counts map[string]int64) *object.Instance {
-	inst := object.NewInstanceWithFields(counterClassRef, make(map[string]object.Object))
-	for key, n := range counts {
-		if n > 0 {
-			inst.SetField(key, object.NewInteger(n))
-		}
-	}
-	return inst
-}
-
-// counterArithmetic implements +, -, | and & over two Counters.
-func counterArithmetic(op byte, a, b *object.Instance) *object.Instance {
-	ac, bc := counterCounts(a), counterCounts(b)
-	out := make(map[string]int64)
-	switch op {
-	case '+':
-		for k, v := range ac {
-			out[k] += v
-		}
-		for k, v := range bc {
-			out[k] += v
-		}
-	case '-':
-		for k, v := range ac {
-			out[k] = v - bc[k]
-		}
-	case '|':
-		// Union: max per key across both.
-		for k, v := range ac {
-			if w, ok := bc[k]; ok {
-				if w > v {
-					v = w
-				}
-			}
-			out[k] = v
-		}
-		for k, v := range bc {
-			if _, ok := ac[k]; !ok {
-				out[k] = v
-			}
-		}
-	case '&':
-		// Intersection: min per key over common keys.
-		for k, v := range ac {
-			if w, ok := bc[k]; ok {
-				if w < v {
-					v = w
-				}
-				out[k] = v
-			}
-		}
-	}
-	return newCounterFromCounts(out)
-}
-
-var CounterClass = &object.Class{
-	Name: "Counter",
-	Methods: map[string]object.Object{
-		"__init__": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				// __init__(self[, iterable]) - Initialize counter
-				if len(args) == 0 {
-					return &object.Null{} // No args, just return
-				}
-				counter := args[0].(*object.Instance)
-
-				if len(args) == 1 {
-					return &object.Null{} // No iterable, just return
-				}
-				if err := errors.MaxArgs(args, 2); err != nil {
-					return err
-				}
-
-				// Helper to increment counter for a key
-				countKey := func(key string) {
-					if countObj, exists := counter.GetField(key); exists {
-						if count, ok := countObj.(*object.Integer); ok {
-							counter.SetField(key, object.NewInteger(count.IntValue()+1))
-						}
-					} else {
-						counter.SetField(key, object.NewInteger(1))
-					}
-				}
-
-				// Process the iterable argument
-				switch arg := args[1].(type) {
-				case *object.List:
-					for _, elem := range arg.Elements {
-						countKey(elem.Inspect())
-					}
-				case *object.Tuple:
-					for _, elem := range arg.Elements {
-						countKey(elem.Inspect())
-					}
-				case *object.String:
-					for _, ch := range arg.StringValue() {
-						countKey(string(ch))
-					}
-				case *object.Dict:
-					// Copy existing dict - convert to counter fields
-					for _, v := range arg.Pairs {
-						if count, ok := v.Value.(*object.Integer); ok {
-							keyStr, _ := v.Key.AsString()
-							counter.SetField(keyStr, count)
-						}
-					}
-				default:
-					return errors.NewTypeError("iterable or dict", args[1].Type().String())
-				}
-
-				return &object.Null{}
-			},
-		},
-		"__add__": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if a, b, err := twoCounters(args); err != nil {
-				return err
-			} else if a != nil {
-				return counterArithFn('+', a, b)
-			}
-			return nil
-		}},
-		"__sub__": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if a, b, err := twoCounters(args); err != nil {
-				return err
-			} else if a != nil {
-				return counterArithFn('-', a, b)
-			}
-			return nil
-		}},
-		"__or__": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if a, b, err := twoCounters(args); err != nil {
-				return err
-			} else if a != nil {
-				return counterArithFn('|', a, b)
-			}
-			return nil
-		}},
-		"__and__": &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if a, b, err := twoCounters(args); err != nil {
-				return err
-			} else if a != nil {
-				return counterArithFn('&', a, b)
-			}
-			return nil
-		}},
-		"__getitem__": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				// __getitem__(self, key) - Get count for key
-				if err := errors.ExactArgs(args, 2); err != nil {
-					return err
-				}
-				counter := args[0].(*object.Instance)
-				key := args[1].Inspect()
-
-				if count, ok := counter.GetField(key); ok {
-					return count
-				}
-				// Return 0 for missing keys (like Python Counter)
-				return object.NewInteger(0)
-			},
-			HelpText: `__getitem__(key) - Get count for key (supports c[key] syntax)`,
-		},
-		"most_common": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				// most_common([n]) - Return n most common elements
-				counter := args[0].(*object.Instance)
-
-				n := counter.FieldCount()
-				if len(args) == 2 {
-					if nArg, ok := args[1].(*object.Integer); ok {
-						n = int(nArg.IntValue())
-					} else {
-						return errors.NewTypeError("INTEGER", args[1].Type().String())
-					}
-				}
-
-				// Convert to sortable slice
-				type pair struct {
-					key   string
-					count int64
-				}
-				pairs := make([]pair, 0, counter.FieldCount())
-				counter.RangeFields(func(key string, countObj object.Object) bool {
-					if count, ok := countObj.(*object.Integer); ok {
-						pairs = append(pairs, pair{key: key, count: count.IntValue()})
-					}
-					return true
-				})
-
-				// Sort by count descending
-				sort.Slice(pairs, func(i, j int) bool {
-					return pairs[i].count > pairs[j].count
-				})
-
-				// Take top n
-				if n > len(pairs) {
-					n = len(pairs)
-				}
-				result := make([]object.Object, n)
-				for i := 0; i < n; i++ {
-					key := pairs[i].key
-					// Try to parse as integer
-					if intVal, err := strconv.ParseInt(key, 10, 64); err == nil {
-						result[i] = &object.Tuple{Elements: []object.Object{
-							object.NewInteger(intVal),
-							object.NewInteger(pairs[i].count),
-						}}
-					} else {
-						result[i] = &object.Tuple{Elements: []object.Object{
-							object.NewString(key),
-							object.NewInteger(pairs[i].count),
-						}}
-					}
-				}
-				return &object.List{Elements: result}
-			},
-			HelpText: `most_common([n]) - Return n most common elements
-
-Returns a list of (element, count) tuples sorted by count descending.
-If n is omitted, returns all elements.`,
-		},
-		"elements": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.NoArgs(args); err != nil {
-					return err
-				}
-				counter := args[0].(*object.Instance)
-
-				var result []object.Object
-				counter.RangeFields(func(key string, countObj object.Object) bool {
-					if count, ok := countObj.(*object.Integer); ok {
-						for i := int64(0); i < count.IntValue(); i++ {
-							result = append(result, object.NewString(key))
-						}
-					}
-					return true
-				})
-				return &object.List{Elements: result}
-			},
-			HelpText: `elements() - Return iterator over elements
-
-Returns an iterator over elements, repeating each element by its count.`,
-		},
-	},
-}
 
 // DefaultDict class for dicts with default factory behavior
 var DefaultDictClass = &object.Class{
@@ -371,150 +108,25 @@ var DefaultDictClass = &object.Class{
 }
 
 // createCounterInstance creates a new Counter instance
-func createCounterInstance() *object.Instance {
-	return object.NewInstanceWithFields(CounterClass, make(map[string]object.Object))
-}
 
 // CollectionsLibrary provides Python-like collections functions
 var CollectionsLibrary = object.NewLibrary(CollectionsLibraryName, map[string]*object.Builtin{
 	"Counter": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			// Counter([iterable]) - Count elements
-			counter := createCounterInstance()
+		Fn: counterConstructor,
+		HelpText: `Counter([iterable_or_mapping], **kwargs) - Count elements
 
-			if len(args) == 0 {
-				return counter
-			}
-			if err := errors.MaxArgs(args, 1); err != nil {
-				return err
-			}
-
-			switch arg := args[0].(type) {
-			case *object.List:
-				for _, elem := range arg.Elements {
-					key := elem.Inspect()
-					if countObj, exists := counter.GetField(key); exists {
-						if count, ok := countObj.(*object.Integer); ok {
-							counter.SetField(key, object.NewInteger(count.IntValue()+1))
-						}
-					} else {
-						counter.SetField(key, object.NewInteger(1))
-					}
-				}
-			case *object.Tuple:
-				for _, elem := range arg.Elements {
-					key := elem.Inspect()
-					if countObj, exists := counter.GetField(key); exists {
-						if count, ok := countObj.(*object.Integer); ok {
-							counter.SetField(key, object.NewInteger(count.IntValue()+1))
-						}
-					} else {
-						counter.SetField(key, object.NewInteger(1))
-					}
-				}
-			case *object.String:
-				for _, ch := range arg.StringValue() {
-					key := string(ch)
-					if countObj, exists := counter.GetField(key); exists {
-						if count, ok := countObj.(*object.Integer); ok {
-							counter.SetField(key, object.NewInteger(count.IntValue()+1))
-						}
-					} else {
-						counter.SetField(key, object.NewInteger(1))
-					}
-				}
-			case *object.Dict:
-				// Copy existing dict - convert to counter fields
-				for _, v := range arg.Pairs {
-					if count, ok := v.Value.(*object.Integer); ok {
-						keyStr, _ := v.Key.AsString()
-						counter.SetField(keyStr, count)
-					}
-				}
-			default:
-				return errors.NewTypeError("iterable or dict", args[0].Type().String())
-			}
-
-			return counter
-		},
-		HelpText: `Counter([iterable]) - Count elements
-
-Creates a Counter object that counts occurrences of elements.
+A dict of element -> count, as in Python. Missing elements count 0.
 
 Example:
   c = collections.Counter([1, 1, 2, 3, 3, 3])
-  c[1] -> 2  # Count of element 1
-  c[4] -> 0  # Missing elements return 0
-  c.most_common() -> [(3, 3), (1, 2), (2, 1)]
-  c.elements() -> [1, 1, 2, 3, 3, 3]`,
+  c[3]                -> 3
+  c[4]                -> 0
+  c.most_common(2)    -> [(3, 3), (1, 2)]
+  c.update([1]); c.total() -> 7`,
 	},
 	"most_common": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			// most_common(counter[, n]) - Return n most common elements
-			if err := errors.RangeArgs(args, 1, 2); err != nil {
-				return err
-			}
-			counter, ok := args[0].(*object.Instance)
-			if !ok || counter.Class != CounterClass {
-				return errors.NewTypeError("Counter", args[0].Type().String())
-			}
-
-			n := counter.FieldCount()
-			if len(args) == 2 {
-				if nArg, ok := args[1].(*object.Integer); ok {
-					n = int(nArg.IntValue())
-				} else {
-					return errors.NewTypeError("INTEGER", args[1].Type().String())
-				}
-			}
-
-			// Convert to sortable slice
-			type pair struct {
-				key   string
-				count int64
-			}
-			pairs := make([]pair, 0, counter.FieldCount())
-			counter.RangeFields(func(key string, countObj object.Object) bool {
-				if count, ok := countObj.(*object.Integer); ok {
-					pairs = append(pairs, pair{key: key, count: count.IntValue()})
-				}
-				return true
-			})
-
-			// Sort by count descending
-			sort.Slice(pairs, func(i, j int) bool {
-				return pairs[i].count > pairs[j].count
-			})
-
-			// Take top n
-			if n > len(pairs) {
-				n = len(pairs)
-			}
-			result := make([]object.Object, n)
-			for i := 0; i < n; i++ {
-				key := pairs[i].key
-				// Try to parse as integer
-				if intVal, err := strconv.ParseInt(key, 10, 64); err == nil {
-					result[i] = &object.Tuple{Elements: []object.Object{
-						object.NewInteger(intVal),
-						object.NewInteger(pairs[i].count),
-					}}
-				} else {
-					result[i] = &object.Tuple{Elements: []object.Object{
-						object.NewString(key),
-						object.NewInteger(pairs[i].count),
-					}}
-				}
-			}
-			return &object.List{Elements: result}
-		},
-		HelpText: `most_common(counter[, n]) - Return n most common elements
-
-Returns a list of (element, count) tuples sorted by count.
-
-Example:
-  c = collections.Counter([1, 1, 2, 3, 3, 3])
-  collections.most_common(c, 2) -> [(3, 3), (1, 2)]`,
+		Fn:       counterMostCommonFn,
+		HelpText: `most_common(counter[, n]) - Same as counter.most_common(n)`,
 	},
 
 	"OrderedDict": {
@@ -615,7 +227,7 @@ dropping from the opposite end on overflow.
 
 Example:
   d = collections.deque([1, 2, 3])
-  collections.deque_appendleft(d, 0)  # [0, 1, 2, 3]`,
+  d.appendleft(0)  # deque([0, 1, 2, 3])`,
 	},
 	"namedtuple": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -811,18 +423,18 @@ func setDequeElems(inst *object.Instance, elems []object.Object) {
 	inst.SetField("_elements", &object.List{Elements: elems})
 }
 
-// dequeClamp enforces maxlen after a right-side append: overflow drops from
-// the left. Returns the value to discard (already gone from elems).
-func dequeClamp(inst *object.Instance, elems []object.Object, fromRight bool) []object.Object {
+// dequeClamp enforces maxlen after items were added: as in Python, overflow
+// drops from the opposite end (addedRight: from the left, else the right).
+func dequeClamp(inst *object.Instance, elems []object.Object, addedRight bool) []object.Object {
 	ml, ok := inst.Field("maxlen").(*object.Integer)
 	if !ok || ml.IntValue() < 0 {
 		return elems
 	}
 	for int64(len(elems)) > ml.IntValue() {
-		if fromRight {
-			elems = elems[:len(elems)-1]
-		} else {
+		if addedRight {
 			elems = elems[1:]
+		} else {
+			elems = elems[:len(elems)-1]
 		}
 	}
 	return elems
@@ -1018,29 +630,7 @@ var counterClassRef *object.Class
 
 func init() {
 	newDeque = createDequeInstance
-	counterArithFn = counterArithmetic
 	counterClassRef = CounterClass
-}
-
-// counterArithFn is wired in init() to break the CounterClass
-// initialization cycle (the dunder closures reference the arithmetic).
-var counterArithFn func(op byte, a, b *object.Instance) *object.Instance
-
-// twoCounters validates the (self, other) arguments of a Counter dunder:
-// other must also be a Counter instance.
-func twoCounters(args []object.Object) (*object.Instance, *object.Instance, object.Object) {
-	if len(args) != 2 {
-		return nil, nil, errors.NewError("expected 2 arguments (%d given)", len(args))
-	}
-	a, ok := args[0].(*object.Instance)
-	if !ok || a.Class != counterClassRef {
-		return nil, nil, errors.NewTypeError("Counter", args[0].Type().String())
-	}
-	b, ok := args[1].(*object.Instance)
-	if !ok || b.Class != counterClassRef {
-		return nil, nil, errors.NewTypeError("Counter", args[1].Type().String())
-	}
-	return a, b, nil
 }
 
 // reprValue renders a value for a namedtuple repr: strings use Python

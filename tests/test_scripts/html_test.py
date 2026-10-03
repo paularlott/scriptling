@@ -1,12 +1,14 @@
 import html
 import html.parser
 
-# Test html.escape() - Go html encoding (&#39; for ', &#34; for ")
+# Test html.escape() - Python html encoding (&#x27; for ', &quot; for ")
 assert html.escape("<div>") == "&lt;div&gt;"
 assert html.escape("&") == "&amp;"
-assert html.escape('"') == "&#34;"
-assert html.escape("'") == "&#39;"
-assert html.escape("<script>alert('xss')</script>") == "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;"
+assert html.escape('"') == "&quot;"
+assert html.escape("'") == "&#x27;"
+assert html.escape("<script>alert('xss')</script>") == "&lt;script&gt;alert(&#x27;xss&#x27;)&lt;/script&gt;"
+assert html.escape("<a href=\"x\">'", quote=False) == "&lt;a href=\"x\"&gt;'"
+assert html.escape("\"'", False) == "\"'"
 
 # Test html.unescape() - handles both numeric and named entities
 assert html.unescape("&lt;div&gt;") == "<div>"

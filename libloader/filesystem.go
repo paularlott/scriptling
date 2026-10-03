@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 // FilesystemLoader loads libraries from the filesystem.
@@ -95,6 +97,35 @@ func (l *FilesystemLoader) LoadWithContext(ctx context.Context, name string) (st
 		if err := ctx.Err(); err != nil {
 			return "", false, err
 		}
+
+		// One stat answers the common cases: a missing candidate, or a file
+		// unchanged since it was last read. Anything else (errors other than
+		// not-exist, changed files) takes the full readFile path.
+		info, statErr := os.Stat(path)
+		if statErr == nil {
+			if info.IsDir() {
+				continue
+			}
+			if content, ok := cachedSource(path, info); ok {
+				return content, true, nil
+			}
+		} else if os.IsNotExist(statErr) {
+			continue
+		}
+
+		if statErr == nil {
+			// A regular file we have already stat'ed: read it directly.
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return "", false, fmt.Errorf("failed to read %s: %w", path, err)
+			}
+			content := string(data)
+			storeSource(path, info, content)
+			return content, true, nil
+		}
+
+		// An unusual stat error (permissions, a file in place of a
+		// directory): readFile classifies it exactly as before.
 		content, found, err := l.readFile(path)
 		if err != nil {
 			return "", false, err
@@ -105,6 +136,97 @@ func (l *FilesystemLoader) LoadWithContext(ctx context.Context, name string) (st
 	}
 
 	return "", false, nil
+}
+
+// sourceCache holds library sources read from disk, shared by every
+// FilesystemLoader in the process so that new interpreter instances (which
+// often build their own loader) skip re-reading unchanged files. Keyed by the
+// candidate path; each hit is revalidated with a single stat. Its total size
+// is capped: once full, further files are simply read from disk each time.
+var sourceCache = struct {
+	sync.RWMutex
+	files    map[string]*cachedFile
+	bytes    int
+	maxBytes int
+}{files: make(map[string]*cachedFile), maxBytes: DefaultSourceCacheMaxBytes}
+
+// DefaultSourceCacheMaxBytes is the default limit on library source held by
+// the filesystem loaders' shared cache: 32 MiB.
+const DefaultSourceCacheMaxBytes = 32 << 20
+
+type cachedFile struct {
+	info    os.FileInfo
+	content string
+}
+
+// racyWindow is how recently a file may have been modified and still be
+// cached. Within it, a rewrite could keep the same size and mtime on
+// filesystems with coarse timestamps, so such files are always re-read
+// (the same rule git uses for its index).
+const racyWindow = 2 * time.Second
+
+func cachedSource(path string, info os.FileInfo) (string, bool) {
+	sourceCache.RLock()
+	c, ok := sourceCache.files[path]
+	sourceCache.RUnlock()
+	if !ok {
+		return "", false
+	}
+	if os.SameFile(c.info, info) && c.info.Size() == info.Size() && c.info.ModTime().Equal(info.ModTime()) {
+		return c.content, true
+	}
+	sourceCache.Lock()
+	if sourceCache.files[path] == c {
+		delete(sourceCache.files, path)
+		sourceCache.bytes -= len(c.content)
+	}
+	sourceCache.Unlock()
+	return "", false
+}
+
+// storeSource caches content read for path. info must come from a stat taken
+// before the read, so a concurrent rewrite leaves the entry looking stale
+// rather than fresh.
+func storeSource(path string, info os.FileInfo, content string) {
+	if time.Since(info.ModTime()) < racyWindow {
+		return
+	}
+	sourceCache.Lock()
+	defer sourceCache.Unlock()
+	old := 0
+	if prev, ok := sourceCache.files[path]; ok {
+		old = len(prev.content)
+	}
+	if sourceCache.maxBytes > 0 && sourceCache.bytes-old+len(content) > sourceCache.maxBytes {
+		return
+	}
+	sourceCache.files[path] = &cachedFile{info: info, content: content}
+	sourceCache.bytes += len(content) - old
+}
+
+// ClearSourceCache drops every cached library source, forcing the next load
+// of each file to read it from disk.
+func ClearSourceCache() {
+	sourceCache.Lock()
+	sourceCache.files = make(map[string]*cachedFile)
+	sourceCache.bytes = 0
+	sourceCache.Unlock()
+}
+
+// SetSourceCacheMaxBytes limits the total library source the shared cache
+// holds (default DefaultSourceCacheMaxBytes). 0 removes the limit. Lowering
+// it clears the cache so the new limit holds at once.
+func SetSourceCacheMaxBytes(maxBytes int) {
+	if maxBytes < 0 {
+		maxBytes = 0
+	}
+	sourceCache.Lock()
+	sourceCache.maxBytes = maxBytes
+	if maxBytes > 0 && sourceCache.bytes > maxBytes {
+		sourceCache.files = make(map[string]*cachedFile)
+		sourceCache.bytes = 0
+	}
+	sourceCache.Unlock()
 }
 
 // resolvePaths returns the possible file paths for a library name.

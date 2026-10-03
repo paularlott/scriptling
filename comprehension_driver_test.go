@@ -15,7 +15,7 @@ func TestComprehensionDriverSemantics(t *testing.T) {
 def range(n):
     return ["a", "b"]
 result = [x + "!" for x in range(5)]
-`, "[a!, b!]"},
+`, "['a!', 'b!']"},
 		{"range with step and negative step", `
 result = [[i for i in range(1, 10, 3)], [i for i in range(5, 0, -2)], [i for i in range(3, 3)]]
 `, "[[1, 4, 7], [5, 3, 1], []]"},
@@ -26,11 +26,11 @@ result = [(a, b) for a in range(3) for b in [10, 20] if a % 2 == 0]
 x = "outer"
 squares = [x * x for x in range(4)]
 result = [squares, x]
-`, "[[0, 1, 4, 9], outer]"},
+`, "[[0, 1, 4, 9], 'outer']"},
 		{"tuple unpacking target", `
 result = [k + str(v) for k, v in {"a": 1, "b": 2}.items()]
 result.sort()
-`, "[a1, b2]"},
+`, "['a1', 'b2']"},
 		{"dict and set over range", `
 d = {i: i * i for i in range(4) if i}
 s = sorted({i % 3 for i in range(10)})

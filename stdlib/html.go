@@ -9,31 +9,57 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
+// Replacers matching Python's html.escape output exactly.
+var (
+	htmlEscapeQuote   = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;", "'", "&#x27;")
+	htmlEscapeNoQuote = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+)
+
 var HTMLLibrary = object.NewLibrary(HTMLLibraryName, map[string]*object.Builtin{
 	"escape": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil {
+			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
 			}
 			str, ok := args[0].(*object.String)
 			if !ok {
 				return errors.NewTypeError("STRING", args[0].Type().String())
 			}
-			return object.NewString(html.EscapeString(str.StringValue()))
+			for _, k := range kwargs.Keys() {
+				if k != "quote" {
+					return newArgTypeError("escape() got an unexpected keyword argument '%s'", k)
+				}
+			}
+			quote := true
+			if len(args) == 2 {
+				if kwargs.Has("quote") {
+					return newArgTypeError("escape() got multiple values for argument 'quote'")
+				}
+				quote = isTruthy(args[1])
+			} else if q := kwargs.Get("quote"); q != nil {
+				quote = isTruthy(q)
+			}
+			// Same replacements and entities as Python's html.escape.
+			if quote {
+				return object.NewString(htmlEscapeQuote.Replace(str.StringValue()))
+			}
+			return object.NewString(htmlEscapeNoQuote.Replace(str.StringValue()))
 		},
-		HelpText: `escape(s) - Escape HTML special characters
+		HelpText: `escape(s, quote=True) - Escape HTML special characters
 
-Converts &, <, >, ", and ' to HTML-safe sequences.
+Converts &, < and > to HTML-safe sequences. If quote is true (the default),
+also converts " to &quot; and ' to &#x27;.
 
 Parameters:
-  s - String to escape
+  s     - String to escape
+  quote - Also escape quote characters (default True)
 
 Returns: Escaped string
 
 Example:
   import html
   safe = html.escape("<script>alert('xss')</script>")
-  print(safe)  # "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;"`,
+  print(safe)  # "&lt;script&gt;alert(&#x27;xss&#x27;)&lt;/script&gt;"`,
 	},
 	"unescape": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

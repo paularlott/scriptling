@@ -107,7 +107,7 @@ import scriptling.package as package
 		"hello from data/config.json",
 		"# demo://libs",
 		"Configuration",
-		"[docs/configuration.md, docs/getting-started.md]",
+		"['docs/configuration.md', 'docs/getting-started.md']",
 	}
 	if len(list.Elements) != len(want) {
 		t.Fatalf("result has %d elements (%v), want %d", len(list.Elements), result.Inspect(), len(want))

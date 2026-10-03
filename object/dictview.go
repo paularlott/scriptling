@@ -1,9 +1,5 @@
 package object
 
-import (
-	"fmt"
-)
-
 // CreateIterator returns an iterator over the dict's keys.
 // In Python, iterating a dict yields its keys (same as dict.keys()).
 func (d *Dict) CreateIterator() *Iterator {
@@ -36,7 +32,7 @@ type DictKeys struct {
 }
 
 func (dk *DictKeys) Type() ObjectType { return DICT_KEYS_OBJ }
-func (dk *DictKeys) Inspect() string  { return fmt.Sprintf("dict_keys(%s)", dk.Dict.Inspect()) }
+func (dk *DictKeys) Inspect() string  { return inspectContainer(dk) }
 
 func (dk *DictKeys) AsString() (string, Object)          { return dk.Inspect(), nil }
 func (dk *DictKeys) AsInt() (int64, Object)              { return 0, errMustBeInteger }
@@ -88,7 +84,7 @@ type DictValues struct {
 }
 
 func (dv *DictValues) Type() ObjectType { return DICT_VALUES_OBJ }
-func (dv *DictValues) Inspect() string  { return fmt.Sprintf("dict_values(%s)", dv.Dict.Inspect()) }
+func (dv *DictValues) Inspect() string  { return inspectContainer(dv) }
 
 func (dv *DictValues) AsString() (string, Object)          { return dv.Inspect(), nil }
 func (dv *DictValues) AsInt() (int64, Object)              { return 0, errMustBeInteger }
@@ -130,7 +126,7 @@ type DictItems struct {
 }
 
 func (di *DictItems) Type() ObjectType { return DICT_ITEMS_OBJ }
-func (di *DictItems) Inspect() string  { return fmt.Sprintf("dict_items(%s)", di.Dict.Inspect()) }
+func (di *DictItems) Inspect() string  { return inspectContainer(di) }
 
 func (di *DictItems) AsString() (string, Object)          { return di.Inspect(), nil }
 func (di *DictItems) AsInt() (int64, Object)              { return 0, errMustBeInteger }

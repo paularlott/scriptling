@@ -71,7 +71,7 @@ func NewOSLibrary(config fssecurity.Config) (*object.Library, *object.Library) {
 // libraries as dicts of their functions and constants, so the os.path
 // attribute must match that shape for os.path.exists(...) to resolve.
 func pathModuleDict(osPathLib *object.Library) *object.Dict {
-	d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+	d := &object.Dict{Pairs: make(map[string]object.DictPair), Module: "os.path"}
 	for name, fn := range osPathLib.Functions() {
 		d.SetByString(name, fn)
 	}

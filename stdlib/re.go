@@ -477,15 +477,25 @@ func (c *regexCache) evictOldest() bool {
 	return true
 }
 
-// Helper to extract optional flags argument
-func getFlags(args []object.Object, flagsIndex int) (int64, error) {
-	if len(args) <= flagsIndex {
+// Helper to extract the optional flags argument, given positionally at
+// flagsIndex or as the flags= keyword (as Python's re functions accept).
+func getFlags(args []object.Object, kwargs object.Kwargs, flagsIndex int) (int64, error) {
+	var flagsObj object.Object
+	if len(args) > flagsIndex {
+		flagsObj = args[flagsIndex]
+		if kwargs.Has("flags") {
+			return 0, fmt.Errorf("argument for flags given by name ('flags') and position (%d)", flagsIndex+1)
+		}
+	} else if v := kwargs.Get("flags"); v != nil {
+		flagsObj = v
+	}
+	if flagsObj == nil {
 		return 0, nil
 	}
-	if args[flagsIndex].Type() != object.INTEGER_OBJ {
+	if flagsObj.Type() != object.INTEGER_OBJ {
 		return 0, fmt.Errorf("flags must be an integer")
 	}
-	val, _ := args[flagsIndex].AsInt()
+	val, _ := flagsObj.AsInt()
 	return val, nil
 }
 
@@ -501,7 +511,7 @@ var ReLibrary = object.NewLibrary(ReLibraryName, map[string]*object.Builtin{
 			pattern, _ := args[0].AsString()
 			text, _ := args[1].AsString()
 
-			flags, err := getFlags(args, 2)
+			flags, err := getFlags(args, kwargs, 2)
 			if err != nil {
 				return errors.NewError("%s", err.Error())
 			}
@@ -558,7 +568,7 @@ Flags:
 			pattern, _ := args[0].AsString()
 			text, _ := args[1].AsString()
 
-			flags, err := getFlags(args, 2)
+			flags, err := getFlags(args, kwargs, 2)
 			if err != nil {
 				return errors.NewError("%s", err.Error())
 			}
@@ -614,7 +624,7 @@ Flags:
 			pattern, _ := args[0].AsString()
 			text, _ := args[1].AsString()
 
-			flags, err := getFlags(args, 2)
+			flags, err := getFlags(args, kwargs, 2)
 			if err != nil {
 				return errors.NewError("%s", err.Error())
 			}
@@ -666,7 +676,7 @@ Flags:
 			pattern, _ := args[0].AsString()
 			text, _ := args[1].AsString()
 
-			flags, err := getFlags(args, 2)
+			flags, err := getFlags(args, kwargs, 2)
 			if err != nil {
 				return errors.NewError("%s", err.Error())
 			}
@@ -743,7 +753,7 @@ Flags:
 			}
 
 			// flags parameter (optional, position 4)
-			flags, err := getFlags(args, 4)
+			flags, err := getFlags(args, kwargs, 4)
 			if err != nil {
 				return errors.NewError("%s", err.Error())
 			}
@@ -848,7 +858,7 @@ Flags:
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// subn(pattern, repl, string[, count[, flags]]) returns
 			// (new_string, number_of_substitutions), like Python.
-			result := reSubBuiltin.Fn(ctx, object.NewKwargs(nil), args...)
+			result := reSubBuiltin.Fn(ctx, kwargs, args...)
 			if object.IsError(result) || result.Type() == object.EXCEPTION_OBJ {
 				return result
 			}
@@ -868,7 +878,7 @@ Flags:
 					count = v
 				}
 			}
-			if flags, err := getFlags(args, 4); err == nil {
+			if flags, err := getFlags(args, kwargs, 4); err == nil {
 				pattern = applyFlags(pattern, flags)
 			}
 			re, err := GetCompiledRegex(pattern)
@@ -915,7 +925,7 @@ substitutions made.`,
 			}
 
 			// flags parameter (optional, position 3)
-			flags, err := getFlags(args, 3)
+			flags, err := getFlags(args, kwargs, 3)
 			if err != nil {
 				return errors.NewError("%s", err.Error())
 			}
@@ -960,7 +970,7 @@ Flags:
 			}
 			pattern, _ := args[0].AsString()
 
-			flags, err := getFlags(args, 1)
+			flags, err := getFlags(args, kwargs, 1)
 			if err != nil {
 				return errors.NewError("%s", err.Error())
 			}
@@ -1012,7 +1022,7 @@ Returns a string with all special regex characters escaped.`,
 			pattern, _ := args[0].AsString()
 			text, _ := args[1].AsString()
 
-			flags, err := getFlags(args, 2)
+			flags, err := getFlags(args, kwargs, 2)
 			if err != nil {
 				return errors.NewError("%s", err.Error())
 			}

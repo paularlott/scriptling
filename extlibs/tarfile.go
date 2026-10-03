@@ -59,6 +59,7 @@ func (t *tarfileLibraryInstance) createLibrary() *object.Library {
 	t.TarClass = &object.Class{
 		Name: "TarFile",
 		Methods: map[string]object.Object{
+			"__str__":    strFieldMethod(),
 			"getnames":   &object.Builtin{Fn: t.fnGetnames, HelpText: "getnames() - Return a list of archive member names"},
 			"read":       &object.Builtin{Fn: t.fnRead, HelpText: "read(name) - Read a member from the archive as a string"},
 			"extract":    &object.Builtin{Fn: t.fnExtract, HelpText: "extract(member, path='.') - Extract a single member"},

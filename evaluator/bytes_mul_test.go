@@ -98,7 +98,7 @@ mixed
 	if err != nil {
 		t.Fatalf("bounded repetition failed: %v", err)
 	}
-	want := `[xyxyxy, xyxyxy, [1, 1], [1, 1], (7, 7), (7, 7), 1000000]`
+	want := `['xyxyxy', 'xyxyxy', [1, 1], [1, 1], (7, 7), (7, 7), 1000000]`
 	if result.Inspect() != want {
 		t.Fatalf("bounded repetition = %s, want %s", result.Inspect(), want)
 	}

@@ -39,7 +39,7 @@ func TestFloatStrMatchesPython(t *testing.T) {
 	if !ok {
 		t.Fatalf("object is not String. got=%T (%+v)", s, s)
 	}
-	want := "2.0|2.0|[2.0, 1.5]|(2.0,)|{a: 2.0}"
+	want := "2.0|2.0|[2.0, 1.5]|(2.0,)|{'a': 2.0}"
 	if result.StringValue() != want {
 		t.Errorf("expected %s, got %s", want, result.StringValue())
 	}
@@ -78,20 +78,20 @@ func TestRSplit(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{`str("a.b.c".rsplit("."))`, `[a, b, c]`},
-		{`str("a.b.c".rsplit(".", 1))`, `[a.b, c]`},
-		{`str("a.b.c".rsplit(".", 5))`, `[a, b, c]`},
-		{`str("a.b.c".rsplit(".", -1))`, `[a, b, c]`},
-		{`str("a  b\tc ".rsplit())`, `[a, b, c]`},
-		{`str("a  b\tc ".rsplit(None, 1))`, `[a  b, c]`},
-		{`str("a  b\tc ".rsplit(None, 2))`, `[a, b, c]`},
-		{`str("  a b".rsplit(None, 1))`, `[  a, b]`},
-		{`str("  ab  ".rsplit(None, 1))`, `[ab]`},
+		{`str("a.b.c".rsplit("."))`, `['a', 'b', 'c']`},
+		{`str("a.b.c".rsplit(".", 1))`, `['a.b', 'c']`},
+		{`str("a.b.c".rsplit(".", 5))`, `['a', 'b', 'c']`},
+		{`str("a.b.c".rsplit(".", -1))`, `['a', 'b', 'c']`},
+		{`str("a  b\tc ".rsplit())`, `['a', 'b', 'c']`},
+		{`str("a  b\tc ".rsplit(None, 1))`, `['a  b', 'c']`},
+		{`str("a  b\tc ".rsplit(None, 2))`, `['a', 'b', 'c']`},
+		{`str("  a b".rsplit(None, 1))`, `['  a', 'b']`},
+		{`str("  ab  ".rsplit(None, 1))`, `['ab']`},
 		{`str("".rsplit(None, 1))`, `[]`},
 		{`str("   ".rsplit(None, 1))`, `[]`},
-		{`str("abc".rsplit(".", 1))`, `[abc]`},
-		{`str("abc".rsplit(None, 0))`, `[abc]`},
-		{`str("a-b-c-d".rsplit("-", 2))`, `[a-b, c, d]`},
+		{`str("abc".rsplit(".", 1))`, `['abc']`},
+		{`str("abc".rsplit(None, 0))`, `['abc']`},
+		{`str("a-b-c-d".rsplit("-", 2))`, `['a-b', 'c', 'd']`},
 	}
 	for _, tt := range tests {
 		result, ok := testEval(tt.input).(*object.String)
@@ -312,10 +312,10 @@ func TestSplitlinesKeependsKwarg(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{`str("a\nb".splitlines(keepends=True))`, "[a\n, b]"},
-		{`str("a\nb".splitlines(True))`, "[a\n, b]"},
-		{`str("a\nb".splitlines())`, "[a, b]"},
-		{`str("a\r\nb\rc".splitlines(keepends=True))`, "[a\r\n, b\r, c]"},
+		{`str("a\nb".splitlines(keepends=True))`, "['a\\n', 'b']"},
+		{`str("a\nb".splitlines(True))`, "['a\\n', 'b']"},
+		{`str("a\nb".splitlines())`, "['a', 'b']"},
+		{`str("a\r\nb\rc".splitlines(keepends=True))`, "['a\\r\\n', 'b\\r', 'c']"},
 	}
 	for _, tt := range tests {
 		result, ok := testEval(tt.input).(*object.String)

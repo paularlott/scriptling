@@ -55,6 +55,7 @@ func (z *zipfileLibraryInstance) createLibrary() *object.Library {
 	z.ZipClass = &object.Class{
 		Name: "ZipFile",
 		Methods: map[string]object.Object{
+			"__str__":    strFieldMethod(),
 			"namelist":   &object.Builtin{Fn: z.fnNamelist, HelpText: "namelist() - Return a list of archive member names"},
 			"read":       &object.Builtin{Fn: z.fnRead, HelpText: "read(name) - Read a member from the archive as a string"},
 			"extract":    &object.Builtin{Fn: z.fnExtract, HelpText: "extract(member, path='.') - Extract a single member"},

@@ -2,6 +2,7 @@ package server
 
 import (
 	"archive/zip"
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -79,8 +80,12 @@ func NewServer(config ServerConfig) (*Server, error) {
 	// backward-compat goroutine exit path) while the RuntimeState lock is held,
 	// so the route snapshot is atomic with the ServerStarted flag — anything
 	// registered after start_server() returns is definitively excluded.
+	// startCh identifies this server's lifecycle: the setup goroutine below
+	// acts on the shared state only while it is still the current one.
+	startCh := make(chan struct{})
+	s.startCh = startCh
 	extlibs.RuntimeState.Lock()
-	extlibs.RuntimeState.ServerStartCh = make(chan struct{})
+	extlibs.RuntimeState.ServerStartCh = startCh
 	extlibs.RuntimeState.ServerRunningCh = s.serverRunningCh
 	extlibs.RuntimeState.ServerCollect = func() {
 		s.collectRoutes()
@@ -151,13 +156,13 @@ func NewServer(config ServerConfig) (*Server, error) {
 		// (backward compat). Mirrors the collection done inside start_server().
 		extlibs.RuntimeState.Lock()
 		alreadyStarted := extlibs.RuntimeState.ServerStarted
-		if !alreadyStarted && extlibs.RuntimeState.ServerStartCh == nil {
-			// Stale goroutine: a newer server's ResetRuntime cleared the start
-			// channel (and ServerStarted) before this one — leaked from an
-			// earlier server, e.g. a test that never signalled shutdown — could
-			// signal. Abandon; the new server drives its own lifecycle, and
-			// closing the nil channel or flipping ServerStarted would panic or
-			// hang it.
+		if extlibs.RuntimeState.ServerStartCh != startCh {
+			// Stale goroutine: a newer server's ResetRuntime replaced the start
+			// channel after this one — leaked from an earlier server, e.g. a
+			// test that never signalled shutdown — began. Abandon; the new
+			// server drives its own lifecycle, and closing its channel or
+			// flipping its ServerStarted would start it before its own setup
+			// script finished (and swallow that script's error).
 			extlibs.RuntimeState.Unlock()
 			if runErr != nil {
 				Log.Error("Setup script error after server start", "error", runErr)
@@ -169,7 +174,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 			if extlibs.RuntimeState.ServerCollect != nil {
 				extlibs.RuntimeState.ServerCollect()
 			}
-			close(extlibs.RuntimeState.ServerStartCh)
+			close(startCh)
 			if runErr != nil {
 				startErrCh <- runErr
 			}
@@ -180,7 +185,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 	}()
 
 	// Wait until routes are collected and the start signal is sent.
-	<-extlibs.RuntimeState.ServerStartCh
+	<-startCh
 
 	// Check for a pre-start error (non-blocking — buffered channel).
 	select {
@@ -278,6 +283,9 @@ func (s *Server) shutdownSetup() {
 // runSetupScript runs the setup script once to register routes
 func (s *Server) runSetupScript() error {
 	p := scriptling.New()
+	// Tag the script with this server so a late start_server() or
+	// server_running() from it cannot affect a newer server.
+	ctx := extlibs.WithServerStart(context.Background(), s.startCh)
 	s.setupScriptling(p)
 	s.applyPackLoader(p)
 
@@ -293,7 +301,7 @@ func (s *Server) runSetupScript() error {
 			return fmt.Errorf("setup script %s: %w", name, err)
 		}
 		p.SetSourceFile(name)
-		_, err := p.Eval(string(s.config.ScriptSource))
+		_, err := p.EvalWithContext(ctx, string(s.config.ScriptSource))
 		return err
 	}
 
@@ -307,7 +315,7 @@ func (s *Server) runSetupScript() error {
 			return fmt.Errorf("setup script %s: %w", s.config.ScriptFile, err)
 		}
 		p.SetSourceFile(s.config.ScriptFile)
-		_, err = p.Eval(string(content))
+		_, err = p.EvalWithContext(ctx, string(content))
 		return err
 	}
 
@@ -325,11 +333,11 @@ func (s *Server) runSetupScript() error {
 			if entry.Script != nil {
 				Log.Debug("Running setup script from bundle", "file", entry.ScriptName)
 				p.SetSourceFile(entry.ScriptName)
-				_, err := p.Eval(string(entry.Script))
+				_, err := p.EvalWithContext(ctx, string(entry.Script))
 				return err
 			}
 			Log.Debug("Running setup from package", "module", entry.Module, "entry", entry.Function)
-			_, err = p.Eval(fmt.Sprintf("import %s\n%s.%s()", entry.Module, entry.Module, entry.Function))
+			_, err = p.EvalWithContext(ctx, fmt.Sprintf("import %s\n%s.%s()", entry.Module, entry.Module, entry.Function))
 			return err
 		}
 	}

@@ -323,6 +323,17 @@ func (p *Parser) parseStatementInner() ast.Statement {
 	case token.AT:
 		return p.parseDecoratedStatement()
 	case token.IDENT:
+		// PEP 810 soft keyword: "lazy import x" / "lazy from x import y".
+		// The hint is accepted and ignored, so the import runs eagerly.
+		// Imports are cheap here (no module side effects for Go libraries,
+		// cached sources and programs for script libraries) and eager imports
+		// keep load errors at the import site.
+		// The keyword must share a line with the import: a bare "lazy" line
+		// followed by an import line is two statements.
+		if p.curToken.Literal == "lazy" && !p.skippedNewline && (p.peekTokenIs(token.IMPORT) || p.peekTokenIs(token.FROM)) {
+			p.nextToken()
+			return p.parseStatementInner()
+		}
 		if p.curToken.Literal == "match" && !p.peekTokenIs(token.ASSIGN) && !p.peekTokenIs(token.COMMA) && !p.peekTokenIs(token.COLON) && !p.peekTokenIs(token.WALRUS) && !p.isAugmentedAssign() && !p.peekTokenIs(token.LPAREN) && !p.peekTokenIs(token.DOT) && !p.peekTokenIs(token.LBRACKET) {
 			return p.parseMatchStatement()
 		}
@@ -609,38 +620,22 @@ func (p *Parser) parseFromImportStatement() *ast.FromImportStatement {
 		return nil
 	}
 
-	// Parse the names to import
-	if !p.expectPeek(token.IDENT) {
-		return nil
+	// Parse the names to import, optionally wrapped in parentheses so the
+	// list can span lines and end with a trailing comma.
+	parenthesized := p.peekTokenIs(token.LPAREN)
+	if parenthesized {
+		p.nextToken() // consume '('
 	}
 
-	// First name
-	name := p.ident(p.curToken.Literal)
 	stmt.Names = make([]*ast.Identifier, 0, 2)
 	stmt.Aliases = make([]*ast.Identifier, 0, 2)
-	stmt.Names = append(stmt.Names, name)
-
-	// Check for alias (as)
-	if p.peekTokenIs(token.AS) {
-		p.nextToken() // consume 'as'
+	for {
 		if !p.expectPeek(token.IDENT) {
 			return nil
 		}
-		stmt.Aliases = append(stmt.Aliases, p.ident(p.curToken.Literal))
-	} else {
-		stmt.Aliases = append(stmt.Aliases, nil)
-	}
+		stmt.Names = append(stmt.Names, p.ident(p.curToken.Literal))
 
-	// Parse additional names separated by commas
-	for p.peekTokenIs(token.COMMA) {
-		p.nextToken() // consume comma
-		if !p.expectPeek(token.IDENT) {
-			return nil
-		}
-		name := p.ident(p.curToken.Literal)
-		stmt.Names = append(stmt.Names, name)
-
-		// Check for alias
+		// Check for alias (as)
 		if p.peekTokenIs(token.AS) {
 			p.nextToken() // consume 'as'
 			if !p.expectPeek(token.IDENT) {
@@ -650,6 +645,18 @@ func (p *Parser) parseFromImportStatement() *ast.FromImportStatement {
 		} else {
 			stmt.Aliases = append(stmt.Aliases, nil)
 		}
+
+		if !p.peekTokenIs(token.COMMA) {
+			break
+		}
+		p.nextToken() // consume comma
+		if parenthesized && p.peekTokenIs(token.RPAREN) {
+			break // trailing comma
+		}
+	}
+
+	if parenthesized && !p.expectPeek(token.RPAREN) {
+		return nil
 	}
 
 	return stmt
@@ -1006,8 +1013,54 @@ func (p *Parser) parseFStringContent(content string, raw bool) ([]string, []ast.
 			var exprStr strings.Builder
 			var formatSpec strings.Builder
 			conversion := ""
-			for i < len(content) && content[i] != '}' && content[i] != ':' && content[i] != '!' {
-				exprStr.WriteByte(content[i])
+			// The expression ends at a top-level '}', ':' or '!' conversion.
+			// Brackets and string literals are skipped over, so slices
+			// (x[1:3]), dict literals, lambdas, x != y and quoted braces
+			// ('{}'.format(v)) stay inside the expression, as in Python.
+			depth := 0
+			var quote byte
+		scan:
+			for i < len(content) {
+				c := content[i]
+				if quote != 0 {
+					exprStr.WriteByte(c)
+					if c == '\\' && i+1 < len(content) {
+						exprStr.WriteByte(content[i+1])
+						i += 2
+						continue
+					}
+					if c == quote {
+						quote = 0
+					}
+					i++
+					continue
+				}
+				switch c {
+				case '\'', '"':
+					quote = c
+				case '(', '[', '{':
+					depth++
+				case ')', ']':
+					// Clamped: a stray closer must not stop a later
+					// top-level '}' from ending the expression.
+					if depth > 0 {
+						depth--
+					}
+				case '}':
+					if depth == 0 {
+						break scan
+					}
+					depth--
+				case ':':
+					if depth == 0 {
+						break scan
+					}
+				case '!':
+					if depth == 0 && (i+1 >= len(content) || content[i+1] != '=') {
+						break scan
+					}
+				}
+				exprStr.WriteByte(c)
 				i++
 			}
 

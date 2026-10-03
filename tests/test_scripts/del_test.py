@@ -39,7 +39,7 @@ class User:
 
 user = User()
 del user.email
-assert user.email == None
+assert not hasattr(user, "email")
 assert user.name == "Alice"
 
 # Missing targets raise catchable exceptions

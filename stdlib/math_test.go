@@ -936,7 +936,7 @@ func TestMathArrayEmptyUsesEmptySlice(t *testing.T) {
 
 func TestFloatArrayInspectMatchesPrettyPrint(t *testing.T) {
 	fa := object.NewFloatArray2D([]float64{1.0, 2.0, 3.0, 4.0}, 2, 2)
-	if fa.Inspect() != "[[1, 2], [3, 4]]" {
+	if fa.Inspect() != "[[1.0, 2.0], [3.0, 4.0]]" {
 		t.Fatalf("Inspect() = %q", fa.Inspect())
 	}
 	if fa.Inspect() != fa.PrettyPrint() {

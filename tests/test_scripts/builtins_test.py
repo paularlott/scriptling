@@ -136,6 +136,9 @@ result = format(3.14159, ".2f")
 assert result == "3.14"
 
 result = format(0.5, "%")
+assert result == "50.000000%"  # Python's default precision is 6
+
+result = format(0.5, ".2%")
 assert result == "50.00%"
 
 result = format("hello", ">10")

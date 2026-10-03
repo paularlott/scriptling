@@ -146,7 +146,7 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 			}
 			return applyFunctionWithContext(ctx, fn, args, keywords, env)
 		}
-		return errors.NewError("object CLASS has no method %s", method)
+		return attributeError(cl, method)
 	}
 
 	// Handle Super method calls
@@ -173,7 +173,7 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 		return callBytesMethod(ctx, obj.(*object.Bytes), method, args, keywords, env)
 	}
 
-	return errors.NewError("object %s has no method %s", obj.Type(), method)
+	return attributeError(obj, method)
 }
 
 func callSuperMethod(ctx context.Context, super *object.Super, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
@@ -185,7 +185,7 @@ func callSuperMethod(ctx context.Context, super *object.Super, method string, ar
 		}
 	}
 
-	return errors.NewError("super object has no method %s", method)
+	return attributeError(super, method)
 }
 
 // prependSelf returns args with self inserted at the front.
@@ -209,8 +209,7 @@ func callInstanceMethod(ctx context.Context, instance *object.Instance, method s
 		case *object.Function, *object.LambdaFunction, *object.Builtin, *object.BoundMethod:
 			return applyFunctionWithContext(ctx, fn, args, keywords, env)
 		}
-		// If not callable and being called, that's an error
-		return errors.NewError("'%s' object is not callable", val.Type())
+		return notCallableError(val)
 	}
 
 	if fn, ok := instance.Class.LookupMember(method); ok {
@@ -232,7 +231,15 @@ func callInstanceMethod(ctx context.Context, instance *object.Instance, method s
 		return applyFunctionWithContext(ctx, fn, newArgs, keywords, env)
 	}
 
-	return errors.NewError("instance has no method %s", method)
+	// As in Python, __getattr__ supplies attributes normal lookup misses.
+	if getattr, ok := instance.Class.LookupMember("__getattr__"); ok {
+		attr := applyFunctionWithContext(ctx, getattr, []object.Object{instance, object.NewString(method)}, nil, env)
+		if propagates(attr) {
+			return attr
+		}
+		return applyFunctionWithContext(ctx, attr, args, keywords, env)
+	}
+	return attributeError(instance, method)
 }
 
 func callDictMethod(ctx context.Context, dict *object.Dict, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
@@ -251,6 +258,18 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 			return applyFunctionWithContext(ctx, fn, args, keywords, env)
 		}
 		// If it's not a callable, fall through to dict instance methods
+		if dict.Module != "" {
+			// Documented Scriptling convenience: a module constant called
+			// with no arguments returns itself (os.environ()).
+			if len(args) == 0 && len(keywords) == 0 {
+				return pair.Value
+			}
+			return notCallableError(pair.Value)
+		}
+	}
+	// A module has only its members: math.keys() is an AttributeError.
+	if dict.Module != "" {
+		return attributeError(dict, method)
 	}
 
 	// Check for dict instance methods
@@ -455,9 +474,9 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(args) == 0 && len(keywords) == 0 {
 			return pair.Value
 		}
-		return errors.NewError("%s: %s is not callable", errors.ErrIdentifierNotFound, method)
+		return notCallableError(pair.Value)
 	}
-	return errors.NewError("%s: method %s not found in library", errors.ErrIdentifierNotFound, method)
+	return attributeError(dict, method)
 }
 
 func callListMethod(ctx context.Context, list *object.List, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
@@ -697,7 +716,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		}
 		return NULL
 	default:
-		return errors.NewError("%s: list method %s not found", errors.ErrIdentifierNotFound, method)
+		return attributeError(list, method)
 	}
 }
 
@@ -738,7 +757,7 @@ func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args [
 		}
 		return object.NewInteger(int64(b.Len()))
 	}
-	return errors.NewError("BYTES has no method %s", method)
+	return attributeError(b, method)
 }
 
 func callStringMethod(ctx context.Context, str *object.String, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
@@ -1838,7 +1857,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		return TRUE
 	default:
-		return errors.NewError("%s: %s", errors.ErrIdentifierNotFound, method)
+		return attributeError(str, method)
 	}
 }
 func callTupleMethod(ctx context.Context, tuple *object.Tuple, method string, args []object.Object, env *object.Environment) object.Object {
@@ -1903,7 +1922,7 @@ func callTupleMethod(ctx context.Context, tuple *object.Tuple, method string, ar
 		}
 		return errors.NewError("value not in tuple")
 	}
-	return errors.NewError("object TUPLE has no method %s", method)
+	return attributeError(tuple, method)
 }
 
 func callFloatArrayMethod(fa *object.FloatArray, method string, args []object.Object) object.Object {
@@ -1923,7 +1942,7 @@ func callFloatArrayMethod(fa *object.FloatArray, method string, args []object.Ob
 		}
 		return &object.List{Elements: elems}
 	default:
-		return errors.NewError("object FLOAT_ARRAY has no method %s", method)
+		return attributeError(fa, method)
 	}
 }
 
@@ -2059,7 +2078,7 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 		}
 		return errors.NewTypeError("SET", args[0].Type().String())
 	default:
-		return errors.NewError("%s: set method %s not found", errors.ErrIdentifierNotFound, method)
+		return attributeError(set, method)
 	}
 	return NULL
 }
@@ -2187,21 +2206,7 @@ func renderFormatArg(ctx context.Context, val object.Object, spec string, conv s
 		}
 		return formatWithSpec(object.NewString(rendered), spec), nil
 	}
-	if _, isStr := val.(*object.String); !isStr {
-		if exc, ok := val.(*object.Exception); ok {
-			val = object.NewString(exc.Message)
-		} else if inst, ok := val.(*object.Instance); ok {
-			s, rerr := strInstanceChecked(ctx, inst, env)
-			if rerr != nil {
-				return "", rerr
-			}
-			val = object.NewString(s)
-		}
-	}
-	if spec == "" {
-		return val.Inspect(), nil
-	}
-	return formatWithSpec(val, spec), nil
+	return formatValueChecked(ctx, val, spec, env)
 }
 
 // expandFormatSpecArgs resolves nested replacement fields inside a str.format

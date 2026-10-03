@@ -8,7 +8,7 @@ passed = True
 print("Testing Path creation and properties...")
 p = pathlib.Path("/home/user/file.txt")
 
-assert p["__str__"] == "/home/user/file.txt"
+assert str(p) == "/home/user/file.txt"
 assert p.name == "file.txt"
 assert p.stem == "file"
 assert p.suffix == ".txt"
@@ -83,15 +83,15 @@ assert read_content == content
 print("Testing joinpath...")
 p_join = pathlib.Path("/home/user")
 p_joined = p_join.joinpath("docs", "readme.txt")
-assert p_joined["__str__"] == "/home/user/docs/readme.txt"
+assert str(p_joined) == "/home/user/docs/readme.txt"
 
 # Test chaining
 p_chain = pathlib.Path("a").joinpath("b").joinpath("c")
-assert p_chain["__str__"] == "a/b/c"
+assert str(p_chain) == "a/b/c"
 
 # Test with absolute path in join (should replace)
 p_abs = pathlib.Path("/home").joinpath("/etc", "passwd")
-assert p_abs["__str__"] == "/etc/passwd"
+assert str(p_abs) == "/etc/passwd"
 
 # Test 5: Path unlink
 print("Testing unlink...")
@@ -120,7 +120,7 @@ p_dir.rmdir()
 # Test 7: Path operations
 print("Testing Path operations...")
 p_ops = pathlib.Path("/home/user/docs/../file.txt")
-assert p_ops["__str__"] == "/home/user/file.txt"  # Path gets cleaned
+assert str(p_ops) == "/home/user/file.txt"  # Path gets cleaned
 
 # Test resolve (if available)
 try:
@@ -135,8 +135,8 @@ p1 = pathlib.Path("/home/user/file.txt")
 p2 = pathlib.Path("/home/user/file.txt")
 p3 = pathlib.Path("/home/user/other.txt")
 
-assert p1["__str__"] == p2["__str__"]
-assert p1["__str__"] != p3["__str__"]
+assert str(p1) == str(p2)
+assert str(p1) != str(p3)
 
 # Test 9: Path with operators
 print("Testing Path with operators...")
@@ -144,7 +144,7 @@ print("Testing Path with operators...")
 try:
     p_base = pathlib.Path("/home")
     p_sub = p_base / "user" / "file.txt"
-    assert p_sub["__str__"] == "/home/user/file.txt"
+    assert str(p_sub) == "/home/user/file.txt"
 except:
     pass  # / operator not implemented
 
@@ -152,15 +152,15 @@ except:
 print("Testing edge cases...")
 # Empty path
 empty = pathlib.Path("")
-assert empty["__str__"] == "."
+assert str(empty) == "."
 
 # Current directory
 current = pathlib.Path(".")
-assert current["__str__"] == "."
+assert str(current) == "."
 
 # Parent directory
 parent = pathlib.Path("..")
-assert parent["__str__"] == ".."
+assert str(parent) == ".."
 
 # Cleanup
 try:

@@ -70,7 +70,8 @@ Example:
 					return err
 				}
 
-				decoded, decodeErr := mcptoon.Decode(text)
+				// Integers: 30 decodes as int, as in Python.
+				decoded, decodeErr := mcptoon.DecodeWithOptions(text, &mcptoon.DecodeOptions{Strict: true, Integers: true})
 				if decodeErr != nil {
 					return &object.Error{Message: decodeErr.Error()}
 				}
@@ -150,6 +151,7 @@ Returns:
 				decoded, decodeErr := mcptoon.DecodeWithOptions(text, &mcptoon.DecodeOptions{
 					Strict:     strict,
 					IndentSize: int(indentSize),
+					Integers:   true,
 				})
 				if decodeErr != nil {
 					return &object.Error{Message: decodeErr.Error()}

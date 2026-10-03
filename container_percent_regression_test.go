@@ -406,7 +406,7 @@ r
 		}
 	})
 
-	t.Run("%r uses __repr__ then __str__", func(t *testing.T) {
+	t.Run("%r uses __repr__, never __str__", func(t *testing.T) {
 		got := evalString(t, `
 class B:
     def __repr__(self):
@@ -416,8 +416,9 @@ class C:
         return "C(str)"
 "%r|%r" % (B(), C())
 `)
-		if got != "B(repr)|C(str)" {
-			t.Fatalf("result = %q, want %q", got, "B(repr)|C(str)")
+		// As in Python, repr ignores __str__: C has the default repr.
+		if !strings.HasPrefix(got, "B(repr)|<C object at 0x") {
+			t.Fatalf("result = %q, want B(repr)|<C object at 0x...>", got)
 		}
 	})
 
@@ -557,13 +558,18 @@ r
 		}
 	})
 
-	t.Run("format spec applies to message", func(t *testing.T) {
+	t.Run("format spec on exception is a TypeError", func(t *testing.T) {
+		// As in Python, exceptions have no __format__: format str(e) instead.
 		got := evalString(t, `
 e = ValueError("stored")
-f"[{e:>10}]"
+try:
+    r = f"[{e:>10}]"
+except TypeError as err:
+    r = str(err) + " " + f"[{str(e):>10}]"
+r
 `)
-		if got != "[    stored]" {
-			t.Fatalf("result = %q, want %q", got, "[    stored]")
+		if got != "unsupported format string passed to ValueError.__format__ [    stored]" {
+			t.Fatalf("result = %q", got)
 		}
 	})
 
@@ -1007,8 +1013,8 @@ caught
 		got := evalString(t, `
 str(list("abc")) + "," + str(sorted([3, 1, 2])) + "," + str(list(zip([1, 2], "ab")))
 `)
-		if got != "[a, b, c],[1, 2, 3],[(1, a), (2, b)]" {
-			t.Fatalf("result = %q, want %q", got, "[a, b, c],[1, 2, 3],[(1, a), (2, b)]")
+		if got != "['a', 'b', 'c'],[1, 2, 3],[(1, 'a'), (2, 'b')]" {
+			t.Fatalf("result = %q, want %q", got, "['a', 'b', 'c'],[1, 2, 3],[(1, 'a'), (2, 'b')]")
 		}
 	})
 }
