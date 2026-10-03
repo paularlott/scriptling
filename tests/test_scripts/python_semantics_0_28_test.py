@@ -331,3 +331,30 @@ except ValueError:
     pass
 assert list(itertools.chain(Letters(), Countdown())) == ["x", "y", "x", 2, 1, 0]
 assert list(collections.deque(Letters())) == ["x", "y", "x"]
+
+# --- islice and cycle over iterators ---
+
+
+def bad_at_one(x):
+    if x == 1:
+        raise ValueError("bad")
+    return x
+
+
+try:
+    list(itertools.islice(map(bad_at_one, iter([0, 1, 2, 3])), 2, 4))
+    assert False, "a raise in the skipped region must propagate"
+except ValueError:
+    pass
+assert list(itertools.islice(itertools.count(), 0, 5, 2)) == [0, 2, 4]
+assert list(itertools.islice(iter(range(6)), 2, None, 2)) == [2, 4]
+assert list(itertools.islice([0, 1, 2, 3], 2, None)) == [2, 3] and list(itertools.islice("abcdef", None, None, 2)) == ["a", "c", "e"]
+for bad in [(-1,), (0, -1), (0, 5, 0)]:
+    try:
+        list(itertools.islice([1, 2, 3], *bad))
+        assert False, "should raise"
+    except ValueError:
+        pass
+assert list(itertools.cycle(iter([]))) == []
+cyc = itertools.cycle(iter([1, 2]))
+assert [next(cyc) for _ in range(5)] == [1, 2, 1, 2, 1]

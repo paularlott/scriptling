@@ -199,12 +199,25 @@ Example:
 			// the replay passes (Python semantics), so cycle(count()) or a
 			// generator works without materializing it up front.
 			if src, isIter := args[0].(*object.Iterator); isIter && len(args) == 1 {
+				// Pull the first element now: an empty source gives an empty
+				// cycle (list(cycle(iter([]))) is []), anything else is
+				// endless. The element is still yielded first.
+				first, any := src.Next()
+				if !any {
+					return object.NewIterator(func() (object.Object, bool) { return nil, false })
+				}
+				pending := true
 				var saved []object.Object
 				exhausted := false
 				i := 0
-				// Endless unless the source is empty, which is not worth
-				// consuming the source up front to find out.
 				return object.NewInfiniteIterator(func() (object.Object, bool) {
+					if pending {
+						pending = false
+						if !object.IsPropagating(first) {
+							saved = append(saved, first)
+						}
+						return first, true
+					}
 					if !exhausted {
 						if v, ok := src.Next(); ok {
 							if !object.IsError(v) && v.Type() != object.EXCEPTION_OBJ {
@@ -339,58 +352,51 @@ next(), zip(), enumerate() or itertools.islice.`,
 			if err := errors.RangeArgs(args, 2, 4); err != nil {
 				return err
 			}
-			// Iterator inputs stay lazy: islice over an infinite iterator
-			// (itertools.cycle) must not materialize it.
+			start, stop, step, errObj := parseIsliceBounds(args)
+			if errObj != nil {
+				return errObj
+			}
+			// Iterator inputs stay lazy, so islice over an endless iterator
+			// does not collect it. Like Python, every element up to the
+			// last one taken is pulled, so a raise there propagates.
 			if iter, isIter := args[0].(*object.Iterator); isIter {
-				var start, stop, step int64 = 0, 0, 1
-				if err := parseIsliceBounds(args, &start, &stop, &step); err != nil {
-					return err
-				}
-				if step <= 0 {
-					return errors.NewError("step must be positive")
-				}
-				skipped := int64(0)
-				taken := int64(0)
-				return object.NewIterator(func() (object.Object, bool) {
-					for {
-						if taken >= stop-start {
-							return nil, false
+				pos := int64(0)
+				done := false
+				next := func() (object.Object, bool) {
+					for !done {
+						if stop >= 0 && pos >= stop {
+							break
 						}
 						val, ok := iter.Next()
 						if !ok {
-							return nil, false
+							break
 						}
-						pos := skipped
-						skipped++
-						if pos < start || (pos-start)%step != 0 {
-							continue
+						if object.IsPropagating(val) {
+							done = true
+							return val, true
 						}
-						taken++
-						return val, true
+						p := pos
+						pos++
+						if p >= start && (p-start)%step == 0 {
+							return val, true
+						}
 					}
-				})
+					done = true
+					return nil, false
+				}
+				if stop < 0 && iter.Infinite() {
+					return object.NewInfiniteIterator(next)
+				}
+				return object.NewIterator(next)
 			}
 
 			elements, errObj := collectIterable(ctx, args[0])
 			if errObj != nil {
 				return errObj
 			}
-
-			var start, stop, step int64 = 0, 0, 1
-			if err := parseIsliceBounds(args, &start, &stop, &step); err != nil {
-				return err
-			}
-
-			if step <= 0 {
-				return errors.NewError("step must be positive")
-			}
-			if start < 0 {
-				start = 0
-			}
-			if stop > int64(len(elements)) {
+			if stop < 0 || stop > int64(len(elements)) {
 				stop = int64(len(elements))
 			}
-
 			result := []object.Object{}
 			for i := start; i < stop; i += step {
 				result = append(result, elements[i])
@@ -1346,33 +1352,40 @@ func isTruthy(obj object.Object) bool {
 
 // parseIsliceBounds reads islice(iterable, stop) or islice(iterable,
 // start, stop[, step]) bounds.
-func parseIsliceBounds(args []object.Object, start, stop, step *int64) object.Object {
-	if len(args) == 2 {
-		if s, ok := args[1].(*object.Integer); ok {
-			*stop = s.IntValue()
-		} else {
-			return errors.NewTypeError("INTEGER", args[1].Type().String())
+// parseIsliceBounds reads islice's (stop) or (start, stop[, step]) as
+// Python does: None means the default (start 0, no stop, step 1), indices
+// must be non-negative integers and step positive. A stop of -1 means none.
+func parseIsliceBounds(args []object.Object) (start, stop, step int64, errObj object.Object) {
+	bound := func(obj object.Object, def int64) (int64, bool) {
+		switch v := obj.(type) {
+		case *object.Null:
+			return def, true
+		case *object.Integer:
+			return v.IntValue(), v.IntValue() >= 0
 		}
-		return nil
+		return 0, false
 	}
-	if s, ok := args[1].(*object.Integer); ok {
-		*start = s.IntValue()
-	} else {
-		return errors.NewTypeError("INTEGER", args[1].Type().String())
+	stopErr := errors.NewValueError("Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.")
+	stop, step = -1, 1
+	var ok bool
+	if len(args) == 2 {
+		if stop, ok = bound(args[1], -1); !ok {
+			return 0, 0, 0, stopErr
+		}
+		return 0, stop, 1, nil
 	}
-	if s, ok := args[2].(*object.Integer); ok {
-		*stop = s.IntValue()
-	} else {
-		return errors.NewTypeError("INTEGER", args[2].Type().String())
+	if stop, ok = bound(args[2], -1); !ok {
+		return 0, 0, 0, stopErr
+	}
+	if start, ok = bound(args[1], 0); !ok {
+		return 0, 0, 0, errors.NewValueError("Indices for islice() must be None or an integer: 0 <= x <= sys.maxsize.")
 	}
 	if len(args) == 4 {
-		if s, ok := args[3].(*object.Integer); ok {
-			*step = s.IntValue()
-		} else {
-			return errors.NewTypeError("INTEGER", args[3].Type().String())
+		if step, ok = bound(args[3], 1); !ok || step == 0 {
+			return 0, 0, 0, errors.NewValueError("Step for islice() must be a positive integer or None.")
 		}
 	}
-	return nil
+	return start, stop, step, nil
 }
 
 func isEndless(obj object.Object) bool {
