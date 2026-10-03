@@ -16,7 +16,7 @@ import (
 
 const (
 	LibraryName    = "scriptling.similarity"
-	LibraryDesc    = "String matching and similarity utilities including fuzzy search and MinHash"
+	LibraryDesc    = "String matching and similarity utilities including fuzzy search, MinHash and extractive text shortening"
 	defaultKey     = "name"
 	defaultHashes  = 64
 	minTokenLength = 2
@@ -307,6 +307,76 @@ the top_k results sorted by descending score.
 
 Returns:
   list of dicts: [{"index": int, "score": float}, ...]`,
+		},
+		"sentences": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return &object.Error{Message: fmt.Sprintf("sentences expected 1 argument, got %d", len(args))}
+				}
+				text, err := args[0].AsString()
+				if err != nil {
+					return &object.Error{Message: "sentences: text must be a string"}
+				}
+				return conversion.FromGo(Sentences(text))
+			},
+			HelpText: `sentences(text) - Split text into sentences
+
+A sentence ends at ". ", "! " or "? " followed by a capital letter, digit or
+opening quote (so "e.g. this" and "3.5 mm" stay whole) and at every line
+break, so transcripts and logs split one line per sentence. Sentences are
+trimmed; empty ones are dropped.
+
+Returns:
+  list[str]: Sentences in order`,
+		},
+		"extract": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) != 1 {
+					return &object.Error{Message: fmt.Sprintf("extract expected 1 argument, got %d", len(args))}
+				}
+				text, err := args[0].AsString()
+				if err != nil {
+					return &object.Error{Message: "extract: text must be a string"}
+				}
+				opts := ExtractOptions{
+					MaxChars:     int(kwargs.MustGetInt("max_chars", 0)),
+					MaxSentences: int(kwargs.MustGetInt("max_sentences", 0)),
+					Ratio:        kwargs.MustGetFloat("ratio", 0),
+				}
+				return object.NewString(Extract(text, opts))
+			},
+			HelpText: `extract(text, max_chars=None, max_sentences=None, ratio=None) - Keep the most informative sentences
+
+Scores sentences with TextRank (each sentence a node, edges weighted by the
+cosine similarity of the sentences' hashed word vectors) and keeps the
+highest-ranked ones, in their original order, within the bounds. A sentence
+that repeats (a signature carried through a thread) is ranked once and kept
+at most once. Text that already fits is returned unchanged. Repetitive
+line-oriented text such as a log is de-duplicated instead of ranked: the
+first and last lines and the first occurrence of each distinct line are
+kept, so the rare, informative lines survive. CPU-only; the similarity
+matrix is built in parallel.
+
+Use it in place of cutting a long text at a fixed length: the result is the
+same size but keeps what the text is about rather than whatever came first.
+
+Parameters:
+  text (str): The text to shorten
+  max_chars (int, optional): Keep sentences while the result fits in this many characters
+  max_sentences (int, optional): Keep at most this many sentences
+  ratio (float, optional): Keep this fraction of the sentences (0 < ratio <= 1)
+
+With no bounds, ratio defaults to 0.3. When several bounds are given, the
+tightest applies. A single sentence longer than max_chars is cut to fit.
+
+Returns:
+  str: The selected sentences, joined with spaces (or newlines for line-oriented text)
+
+Example:
+  import scriptling.similarity as sim
+
+  short = sim.extract(transcript, max_chars=20000)
+  gist = sim.extract(reply, ratio=0.25)`,
 		},
 		"vectorize": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
