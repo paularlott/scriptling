@@ -299,15 +299,35 @@ for text in ["0x-5", "0x+5"]:
     except ValueError:
         pass
 assert 0 <= random.triangular(mode=0.5) <= 1 and 0 <= random.triangular(high=10) <= 10
+caught_by = None
 try:
     try:
         raise BaseException("b")
     except Exception:
-        assert False, "Exception must not catch BaseException"
+        caught_by = "Exception"
 except BaseException:
-    pass
+    caught_by = "BaseException"
+assert caught_by == "BaseException", caught_by
+# CPython pairs a dict's keys and values; Scriptling, whose dict order is
+# unspecified, refuses (TypeError, checked in Go). Never mispaired.
+d = {"k%d" % i: i for i in range(20)}
 try:
-    list(zip({"a": 1}.keys(), {"a": 1}.values()))
+    pairs = list(zip(d.keys(), d.values()))
+    assert all(d[k] == v for k, v in pairs) and len(pairs) == 20
 except TypeError:
-    pass  # Scriptling: dict order is unspecified; CPython pairs them
+    pass
+assert len(format(1, "0200000_x")) == 200001  # fast: no quadratic regrouping
 assert list(collections.deque(iter([1, 2]))) == [1, 2]
+
+
+def unpacked(*a):
+    return a
+
+
+try:
+    unpacked(*map(boom, iter([1, 2, 3])))
+    assert False, "* unpacking should raise"
+except ValueError:
+    pass
+assert list(itertools.chain(Letters(), Countdown())) == ["x", "y", "x", 2, 1, 0]
+assert list(collections.deque(Letters())) == ["x", "y", "x"]

@@ -71,3 +71,21 @@ func TestFilterOverEndlessIteratorHonoursTimeout(t *testing.T) {
 		})
 	}
 }
+
+// Script-level behaviours CPython does not share, so they are checked here
+// rather than in the shared Python-compatible test script.
+func TestScriptlingOnlyErrors(t *testing.T) {
+	for script, want := range map[string]string{
+		`d = {"a": 1, "b": 2}
+list(zip(d.keys(), d.values()))`: "dict order is unspecified",
+		"x = r\"\"\"C:\\dir\\\"\"\"\nprint(1)": "unterminated string literal",
+		`x = "abc`:                             "unterminated string literal",
+	} {
+		p := New()
+		stdlib.RegisterAll(p)
+		_, err := p.Eval(script)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: got %v, want error containing %q", script, err, want)
+		}
+	}
+}

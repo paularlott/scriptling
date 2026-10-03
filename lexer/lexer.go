@@ -34,6 +34,9 @@ type Lexer struct {
 	indentStack    []int
 	pendingDedents int
 	bracketDepth   int // Track depth of (), [], {}
+	// unterminated is set by a string reader that hit the end of the input
+	// before the closing quote; NextToken then reports the token as ILLEGAL.
+	unterminated bool
 }
 
 func New(input string) *Lexer {
@@ -50,6 +53,7 @@ func (l *Lexer) Reset(input string) {
 	l.line = 1
 	l.pendingDedents = 0
 	l.bracketDepth = 0
+	l.unterminated = false
 	l.indentStack = l.indentBase[:1]
 	l.indentStack[0] = 0
 	l.readChar()
@@ -112,7 +116,21 @@ func (l *Lexer) consumeKeywordAfterSpaces(keyword string) bool {
 	return true
 }
 
+// UnterminatedString is the literal of the ILLEGAL token for a string
+// literal with no closing quote.
+const UnterminatedString = "unterminated string literal"
+
 func (l *Lexer) NextToken() token.Token {
+	tok := l.nextToken()
+	if l.unterminated {
+		l.unterminated = false
+		tok.Type = token.ILLEGAL
+		tok.Literal = UnterminatedString
+	}
+	return tok
+}
+
+func (l *Lexer) nextToken() token.Token {
 	if l.pendingDedents > 0 {
 		l.pendingDedents--
 		return token.Token{Type: token.DEDENT, Literal: "", Line: l.line}
@@ -632,6 +650,7 @@ func (l *Lexer) readString(quote byte, bytesMode bool) string {
 		}
 	}
 	raw := l.input[position:l.position]
+	l.unterminated = l.ch != quote
 	l.readChar() // consume closing quote
 	return UnescapeString(raw, bytesMode)
 }
@@ -675,6 +694,7 @@ func (l *Lexer) readRawString(quote byte) string {
 		i++
 	}
 	// Unterminated: return rest
+	l.unterminated = true
 	str := l.input[start:]
 	l.position = inputLen
 	l.readPosition = inputLen
@@ -719,6 +739,7 @@ func (l *Lexer) readTripleString(quote byte) string {
 		}
 	}
 	str := l.input[position:l.position]
+	l.unterminated = l.ch != quote
 	// Consume the three closing quotes if present
 	if l.ch == quote {
 		l.readChar()
@@ -756,6 +777,7 @@ func (l *Lexer) readRawTripleString(quote byte) string {
 		}
 	}
 	str := l.input[position:l.position]
+	l.unterminated = l.ch != quote
 	// Consume the three closing quotes if present
 	if l.ch == quote {
 		l.readChar()
@@ -784,6 +806,7 @@ func (l *Lexer) readFString(quote byte) string {
 		}
 	}
 	str := l.input[position:l.position]
+	l.unterminated = l.ch != quote
 	l.readChar() // consume closing quote
 	return str
 }
@@ -813,6 +836,7 @@ func (l *Lexer) readTripleFString(quote byte) string {
 		}
 	}
 	str := l.input[position:l.position]
+	l.unterminated = l.ch != quote
 	// Consume the three closing quotes if present
 	if l.ch == quote {
 		l.readChar()

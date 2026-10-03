@@ -1471,6 +1471,9 @@ func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Obje
 			if !hasNext {
 				break
 			}
+			if propagates(elem) {
+				return nil, elem // a raise while pulling the iterator
+			}
 			unpacked = append(unpacked, elem)
 		}
 	case *object.Dict:
@@ -4776,9 +4779,15 @@ func formatIntBase(n int64, code byte, sign rune, alt bool, sep string, zero boo
 			pad = fill
 		}
 		if pad == '0' && sep != "" {
-			// Zero padding is grouped like the digits.
-			for len(head)+len(body) < width {
-				digits = "0" + digits
+			// Zero padding is grouped like the digits: find the fewest
+			// digits d whose grouped length, d + (d-1)/4, fills the width.
+			target := width - len(head)
+			d := max(len(digits), target*4/5)
+			for d+(d-1)/4 < target {
+				d++
+			}
+			if d > len(digits) {
+				digits = strings.Repeat("0", d-len(digits)) + digits
 				body = group(digits)
 			}
 		} else if n := width - len(head) - len([]rune(body)); n > 0 {

@@ -855,6 +855,10 @@ func (p *Parser) parseTuplePackingTail(tok ast.LineInfo, first ast.Expression) a
 }
 
 func (p *Parser) noPrefixParseFnError(t token.TokenType) {
+	if t == token.ILLEGAL && p.curToken.Literal == lexer.UnterminatedString {
+		p.errors = append(p.errors, fmt.Sprintf("line %d: %s", p.curToken.Line, lexer.UnterminatedString))
+		return
+	}
 	msg := fmt.Sprintf("line %d: no prefix parse function for %s found", p.curToken.Line, t)
 	p.errors = append(p.errors, msg)
 }

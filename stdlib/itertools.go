@@ -126,7 +126,7 @@ var ItertoolsLibrary = object.NewLibrary(ItertoolsLibraryName, map[string]*objec
 						result = append(result, object.NewString(string(ch)))
 					}
 				default:
-					elems, errObj := collectIterable(arg)
+					elems, errObj := collectIterable(ctx, arg)
 					if errObj != nil {
 						return errObj
 					}
@@ -233,7 +233,7 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
-				elems, errObj := collectIterable(args[0])
+				elems, errObj := collectIterable(ctx, args[0])
 				if errObj != nil {
 					return errObj
 				}
@@ -371,7 +371,7 @@ next(), zip(), enumerate() or itertools.islice.`,
 				})
 			}
 
-			elements, errObj := collectIterable(args[0])
+			elements, errObj := collectIterable(ctx, args[0])
 			if errObj != nil {
 				return errObj
 			}
@@ -469,7 +469,7 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			default:
-				elems, errObj := collectIterable(args[1])
+				elems, errObj := collectIterable(ctx, args[1])
 				if errObj != nil {
 					return errObj
 				}
@@ -530,7 +530,7 @@ Example:
 					}
 					iterables[i] = chars
 				default:
-					elems, errObj := collectIterable(arg)
+					elems, errObj := collectIterable(ctx, arg)
 					if errObj != nil {
 						return errObj
 					}
@@ -597,7 +597,7 @@ Example:
 					}
 					collected = append(collected, chars)
 				default:
-					elems, errObj := collectIterable(arg)
+					elems, errObj := collectIterable(ctx, arg)
 					if errObj != nil {
 						return errObj
 					}
@@ -673,7 +673,7 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
-				elems, errObj := collectIterable(args[0])
+				elems, errObj := collectIterable(ctx, args[0])
 				if errObj != nil {
 					return errObj
 				}
@@ -731,7 +731,7 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
-				elems, errObj := collectIterable(args[0])
+				elems, errObj := collectIterable(ctx, args[0])
 				if errObj != nil {
 					return errObj
 				}
@@ -782,7 +782,7 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
-				elems, errObj := collectIterable(args[0])
+				elems, errObj := collectIterable(ctx, args[0])
 				if errObj != nil {
 					return errObj
 				}
@@ -828,7 +828,7 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			default:
-				elems, errObj := collectIterable(args[0])
+				elems, errObj := collectIterable(ctx, args[0])
 				if errObj != nil {
 					return errObj
 				}
@@ -913,7 +913,7 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			default:
-				elems, errObj := collectIterable(args[0])
+				elems, errObj := collectIterable(ctx, args[0])
 				if errObj != nil {
 					return errObj
 				}
@@ -986,7 +986,7 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			default:
-				elems, errObj := collectIterable(args[1])
+				elems, errObj := collectIterable(ctx, args[1])
 				if errObj != nil {
 					return errObj
 				}
@@ -1028,7 +1028,7 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			default:
-				elems, errObj := collectIterable(args[1])
+				elems, errObj := collectIterable(ctx, args[1])
 				if errObj != nil {
 					return errObj
 				}
@@ -1130,7 +1130,7 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
-				elems, errObj := collectIterable(args[0])
+				elems, errObj := collectIterable(ctx, args[0])
 				if errObj != nil {
 					return errObj
 				}
@@ -1176,7 +1176,7 @@ Example:
 					elements = append(elements, object.NewString(string(ch)))
 				}
 			default:
-				elems, errObj := collectIterable(args[0])
+				elems, errObj := collectIterable(ctx, args[0])
 				if errObj != nil {
 					return errObj
 				}
@@ -1380,10 +1380,14 @@ func isEndless(obj object.Object) bool {
 	return ok && it.Infinite()
 }
 
-// collectIterable gathers an argument's elements. An iterator is pulled to
-// its end; an error or exception raised while pulling it is returned, as is
+// collectIterable gathers an argument's elements. A script object is
+// iterated through __iter__ (and __next__), and an iterator is pulled to its
+// end; an error or exception raised while pulling it is returned, as is
 // an endless iterator, which would never finish.
-func collectIterable(obj object.Object) ([]object.Object, object.Object) {
+func collectIterable(ctx context.Context, obj object.Object) ([]object.Object, object.Object) {
+	if inst, ok := obj.(*object.Instance); ok {
+		return instanceElements(ctx, inst)
+	}
 	if it, ok := obj.(*object.Iterator); ok {
 		if it.Infinite() {
 			return nil, errors.NewError("%s", object.InfiniteIteratorMessage)

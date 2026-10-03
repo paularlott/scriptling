@@ -122,7 +122,7 @@ func counterApply(ctx context.Context, d *object.Dict, src object.Object, sign i
 		return nil
 	default:
 		var errObj object.Object
-		if elems, errObj = collectIterable(src); errObj != nil {
+		if elems, errObj = collectIterable(ctx, src); errObj != nil {
 			return errObj
 		}
 	}
@@ -139,7 +139,7 @@ func counterApply(ctx context.Context, d *object.Dict, src object.Object, sign i
 func instanceElements(ctx context.Context, inst *object.Instance) ([]object.Object, object.Object) {
 	iterFn, ok := inst.Class.Methods["__iter__"]
 	if !ok {
-		return nil, errors.NewTypeError("iterable or mapping", inst.Class.Name)
+		return nil, &object.Exception{Message: "'" + inst.Class.Name + "' object is not iterable", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
 	}
 	it := callCallable(ctx, iterFn, inst)
 	if object.IsError(it) || it.Type() == object.EXCEPTION_OBJ {
@@ -147,7 +147,7 @@ func instanceElements(ctx context.Context, inst *object.Instance) ([]object.Obje
 	}
 	itInst, isInst := it.(*object.Instance)
 	if !isInst {
-		return collectIterable(it)
+		return collectIterable(ctx, it)
 	}
 	nextFn, ok := itInst.Class.Methods["__next__"]
 	if !ok {

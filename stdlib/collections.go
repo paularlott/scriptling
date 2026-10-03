@@ -193,7 +193,7 @@ Example:
 						elements = append(elements, object.NewString(string(ch)))
 					}
 				default:
-					elems, errObj := collectIterable(args[0])
+					elems, errObj := collectIterable(ctx, args[0])
 					if errObj != nil {
 						return errObj
 					}
@@ -497,7 +497,7 @@ var DequeClass = &object.Class{
 				return err
 			}
 			inst := args[0].(*object.Instance)
-			add, errObj := collectIterable(args[1])
+			add, errObj := collectIterable(ctx, args[1])
 			if errObj != nil {
 				return errObj
 			}
@@ -510,7 +510,7 @@ var DequeClass = &object.Class{
 				return err
 			}
 			inst := args[0].(*object.Instance)
-			add, errObj := collectIterable(args[1])
+			add, errObj := collectIterable(ctx, args[1])
 			if errObj != nil {
 				return errObj
 			}

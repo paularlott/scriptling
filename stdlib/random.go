@@ -243,7 +243,7 @@ Returns a random floating-point number N such that a <= N <= b.`,
 				}
 			}
 			if at == nil {
-				list, errObj := collectIterable(args[0])
+				list, errObj := collectIterable(ctx, args[0])
 				if errObj != nil {
 					return errObj
 				}
@@ -389,7 +389,7 @@ lambd is 1.0 divided by the desired mean.`,
 					return newArgTypeError("choices() got an unexpected keyword argument '%s'", key)
 				}
 			}
-			population, errObj := collectIterable(args[0])
+			population, errObj := collectIterable(ctx, args[0])
 			if errObj != nil {
 				return errObj
 			}
@@ -583,6 +583,11 @@ alpha (shape) and beta (scale) must be positive.`,
 					return aerr
 				}
 				if v == nil {
+					// None is only a value for mode; for low and high it is a
+					// TypeError, as in Python.
+					if name != "mode" && (len(args) > i || kwargs.Has(name)) {
+						return errors.NewTypeError("INTEGER or FLOAT", "NULL")
+					}
 					continue
 				}
 				f, err := v.AsFloat()
