@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -106,6 +107,16 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 	// Handle library method calls (dictionaries)
 	if obj.Type() == object.DICT_OBJ {
 		return callDictMethod(ctx, obj.(*object.Dict), method, args, keywords, env)
+	}
+
+	// Handle integer methods
+	if obj.Type() == object.INTEGER_OBJ {
+		return callIntegerMethod(obj.(*object.Integer), method, args)
+	}
+
+	// Handle float methods
+	if obj.Type() == object.FLOAT_OBJ {
+		return callFloatMethod(obj.(*object.Float), method, args)
 	}
 
 	// Handle list methods
@@ -1947,6 +1958,19 @@ func callFloatArrayMethod(fa *object.FloatArray, method string, args []object.Ob
 }
 
 func callSetMethod(ctx context.Context, set *object.Set, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	// Frozen sets have no mutating methods at all, exactly as Python's
+	// frozenset: calling one is an AttributeError naming the method.
+	if set.Frozen {
+		switch method {
+		case "add", "remove", "discard", "pop", "clear", "update",
+			"intersection_update", "difference_update", "symmetric_difference_update":
+			return &object.Exception{
+				Message:       fmt.Sprintf("'frozenset' object has no attribute '%s'", method),
+				ExceptionType: object.ExceptionTypeAttributeError,
+				Raised:        true,
+			}
+		}
+	}
 	switch method {
 	case "add":
 		if err := errors.ExactArgs(args, 1); err != nil {
@@ -2029,54 +2053,55 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 			}
 		}
 		return NULL
-	case "union":
-		if err := errors.ExactArgs(args, 1); err != nil {
-			return err
+	case "union", "intersection", "difference":
+		// Python takes any number of arguments, each any iterable.
+		if len(args) == 0 {
+			return errors.NewError("%s() takes at least 1 argument (0 given)", method)
 		}
-		if other, ok := args[0].(*object.Set); ok {
-			return set.Union(other)
+		result := set
+		for _, arg := range args {
+			other, errObj := iterableToSet(ctx, arg, env)
+			if errObj != nil {
+				return errObj
+			}
+			switch method {
+			case "union":
+				result = result.Union(other)
+			case "intersection":
+				result = result.Intersection(other)
+			case "difference":
+				result = result.Difference(other)
+			}
 		}
-		return errors.NewTypeError("SET", args[0].Type().String())
-	case "intersection":
-		if err := errors.ExactArgs(args, 1); err != nil {
-			return err
-		}
-		if other, ok := args[0].(*object.Set); ok {
-			return set.Intersection(other)
-		}
-		return errors.NewTypeError("SET", args[0].Type().String())
-	case "difference":
-		if err := errors.ExactArgs(args, 1); err != nil {
-			return err
-		}
-		if other, ok := args[0].(*object.Set); ok {
-			return set.Difference(other)
-		}
-		return errors.NewTypeError("SET", args[0].Type().String())
+		return result
 	case "symmetric_difference":
+		// Python's symmetric_difference takes exactly one other set/iterable.
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
 		}
-		if other, ok := args[0].(*object.Set); ok {
-			return set.SymmetricDifference(other)
+		other, errObj := iterableToSet(ctx, args[0], env)
+		if errObj != nil {
+			return errObj
 		}
-		return errors.NewTypeError("SET", args[0].Type().String())
+		return set.SymmetricDifference(other)
 	case "issubset":
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
 		}
-		if other, ok := args[0].(*object.Set); ok {
-			return nativeBoolToBooleanObject(set.IsSubset(other))
+		other, errObj := iterableToSet(ctx, args[0], env)
+		if errObj != nil {
+			return errObj
 		}
-		return errors.NewTypeError("SET", args[0].Type().String())
+		return nativeBoolToBooleanObject(set.IsSubset(other))
 	case "issuperset":
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
 		}
-		if other, ok := args[0].(*object.Set); ok {
-			return nativeBoolToBooleanObject(set.IsSuperset(other))
+		other, errObj := iterableToSet(ctx, args[0], env)
+		if errObj != nil {
+			return errObj
 		}
-		return errors.NewTypeError("SET", args[0].Type().String())
+		return nativeBoolToBooleanObject(set.IsSuperset(other))
 	default:
 		return attributeError(set, method)
 	}

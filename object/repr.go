@@ -192,7 +192,11 @@ func (r *reprRenderer) container(obj Object) {
 		r.out.WriteByte('}')
 	case *Set:
 		if len(o.Elements) == 0 {
-			r.out.WriteString("set()")
+			if o.Frozen {
+				r.out.WriteString("frozenset()")
+			} else {
+				r.out.WriteString("set()")
+			}
 			return
 		}
 		// Sorted for deterministic output.
@@ -207,6 +211,12 @@ func (r *reprRenderer) container(obj Object) {
 			parts = append(parts, sub.out.String())
 		}
 		sort.Strings(parts)
+		if o.Frozen {
+			r.out.WriteString("frozenset({")
+			r.out.WriteString(strings.Join(parts, ", "))
+			r.out.WriteString("})")
+			return
+		}
 		r.out.WriteByte('{')
 		r.out.WriteString(strings.Join(parts, ", "))
 		r.out.WriteByte('}')

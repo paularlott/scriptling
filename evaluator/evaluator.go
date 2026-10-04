@@ -2031,6 +2031,9 @@ type funcParams struct {
 	variadic         *ast.Identifier
 	kwargs           *ast.Identifier
 	keywordOnlyStart int
+	// positionalOnly is the number of leading parameters that cannot be
+	// passed by keyword (before a '/' marker); 0 means no marker.
+	positionalOnly   int
 	parentEnv        *object.Environment
 	localSlots       map[string]int
 	localSlotNames   []string
@@ -2149,6 +2152,16 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 				return nil, errors.NewError("got an unexpected keyword argument '%s'", key)
 			}
 
+			// A '/' marker makes the parameters before it positional-only:
+			// naming one by keyword is Python's TypeError.
+			if paramIdx < fp.positionalOnly {
+				return nil, &object.Exception{
+					Message:       fmt.Sprintf("got some positional-only arguments passed as keyword arguments: '%s'", key),
+					ExceptionType: object.ExceptionTypeTypeError,
+					Raised:        true,
+				}
+			}
+
 			if isParamSet(paramIdx, key) {
 				return nil, errors.NewError("multiple values for argument '%s'", key)
 			}
@@ -2213,6 +2226,7 @@ func extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.O
 		variadic:         fn.Variadic,
 		kwargs:           fn.Kwargs,
 		keywordOnlyStart: fn.KeywordOnlyStart,
+		positionalOnly:   fn.PositionalOnly,
 		parentEnv:        fn.Env,
 		localSlots:       fn.LocalSlots,
 		localSlotNames:   fn.LocalSlotNames,
@@ -2229,6 +2243,7 @@ func extendLambdaEnv(ctx context.Context, fn *object.LambdaFunction, args []obje
 		variadic:         fn.Variadic,
 		kwargs:           fn.Kwargs,
 		keywordOnlyStart: fn.KeywordOnlyStart,
+		positionalOnly:   fn.PositionalOnly,
 		parentEnv:        fn.Env,
 		localSlots:       fn.LocalSlots,
 		localSlotNames:   fn.LocalSlotNames,
@@ -4985,6 +5000,9 @@ func getTypeName(obj object.Object) string {
 	case object.TUPLE_OBJ:
 		return "tuple"
 	case object.SET_OBJ:
+		if obj.(*object.Set).Frozen {
+			return "frozenset"
+		}
 		return "set"
 	case object.NULL_OBJ:
 		return "NoneType"

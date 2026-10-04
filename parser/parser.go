@@ -17,18 +17,21 @@ const (
 	WALRUS_EXPR       = 2 // := binds looser than everything except another :=
 	CONDITIONAL       = 3 // for conditional expressions (x if cond else y)
 	OR                = 4
-	BIT_OR            = 5
-	BIT_XOR           = 6
-	BIT_AND           = 7
-	AND               = 8
-	EQUALS            = 9
-	LESSGREATER       = 10
-	BIT_SHIFT         = 11
-	SUM               = 12
-	PRODUCT           = 13
-	POWER             = 14
-	PREFIX            = 15
-	CALL              = 16
+	AND               = 5
+	NOT_EXPR          = 6 // prefix `not`: tighter than and/or, looser than comparisons
+	// Comparisons share one level, as in Python (==, !=, <, >, <=, >=, in,
+	// is): mixed chains like a < b == c are built by parseInfixExpression.
+	EQUALS      = 7
+	LESSGREATER = 7
+	BIT_OR      = 8
+	BIT_XOR     = 9
+	BIT_AND     = 10
+	BIT_SHIFT   = 11
+	SUM         = 12
+	PRODUCT     = 13
+	POWER       = 14
+	PREFIX      = 15
+	CALL        = 16
 )
 
 func precedenceFor(tok token.TokenType) int {
@@ -1208,8 +1211,16 @@ func (p *Parser) parsePrefixExpression() ast.Expression {
 	expression := &ast.PrefixExpression{
 		Operator: ast.ParseOp(p.curToken.Literal),
 	}
+	// `not` is a low-precedence prefix operator, as in Python: its operand
+	// swallows comparisons (not a == b is not (a == b)) but stops before
+	// and/or. Arithmetic prefixes (-, ~) sit between * and **, so
+	// -2 ** 2 is -(2 ** 2) while -2 * 3 is (-2) * 3.
+	operandPrec := PRODUCT
+	if expression.Operator == ast.OpNot {
+		operandPrec = NOT_EXPR
+	}
 	p.nextToken()
-	expression.Right = p.parseExpression(PREFIX)
+	expression.Right = p.parseExpression(operandPrec)
 	return expression
 }
 
@@ -1221,19 +1232,23 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 	precedence := p.curPrecedence()
 	currentOp := p.curToken.Literal
 	p.nextToken()
-	expression.Right = p.parseExpression(precedence)
+	// ** is right-associative (2**3**2 is 2**(3**2)): parse its right
+	// operand one level looser so a following ** binds to it, not to us.
+	rightPrec := precedence
+	if expression.Operator == ast.OpPow {
+		rightPrec = precedence - 1
+	}
+	expression.Right = p.parseExpression(rightPrec)
 	expression.SetIntFast()
 
-	// Check for chained comparisons: a < b < c becomes a < b and b < c
-	if isComparisonOp(currentOp) && (p.peekTokenIs(token.LT) || p.peekTokenIs(token.GT) ||
-		p.peekTokenIs(token.LTE) || p.peekTokenIs(token.GTE) ||
-		p.peekTokenIs(token.EQ) || p.peekTokenIs(token.NOT_EQ)) {
+	// Check for chained comparisons: a < b < c becomes a < b and b < c.
+	// in/is comparisons chain too, as in Python: 1 in xs == flag is
+	// (1 in xs) and (xs == flag).
+	if isComparisonOp(currentOp) && p.peekIsComparisonToken() {
 		// Build chained comparison
 		comparisons := []*ast.InfixExpression{expression}
 
-		for isComparisonOp(currentOp) && (p.peekTokenIs(token.LT) || p.peekTokenIs(token.GT) ||
-			p.peekTokenIs(token.LTE) || p.peekTokenIs(token.GTE) ||
-			p.peekTokenIs(token.EQ) || p.peekTokenIs(token.NOT_EQ)) {
+		for isComparisonOp(currentOp) && p.peekIsComparisonToken() {
 			p.nextToken()
 			nextOp := p.curToken.Literal
 			nextComp := &ast.InfixExpression{
@@ -1264,8 +1279,23 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 	return expression
 }
 
+// peekIsComparisonToken reports whether the next token continues a
+// comparison chain: the ordering/equality operators plus in/is forms.
+func (p *Parser) peekIsComparisonToken() bool {
+	switch p.peekToken.Type {
+	case token.LT, token.GT, token.LTE, token.GTE, token.EQ, token.NOT_EQ,
+		token.IN, token.NOT_IN, token.IS, token.IS_NOT:
+		return true
+	}
+	return false
+}
+
 func isComparisonOp(op string) bool {
-	return op == "<" || op == ">" || op == "<=" || op == ">=" || op == "==" || op == "!="
+	switch op {
+	case "<", ">", "<=", ">=", "==", "!=", "in", "not in", "is", "is not":
+		return true
+	}
+	return false
 }
 
 func (p *Parser) parseGroupedExpression() ast.Expression {
@@ -1562,9 +1592,10 @@ func (p *Parser) parseFunctionStatement() *ast.FunctionStatement {
 	}
 
 	stmt.Function = &ast.FunctionLiteral{}
-	params, defaults, variadic, kwargs, keywordOnlyStart := p.parseFunctionParameters()
+	params, defaults, variadic, kwargs, keywordOnlyStart, posOnly := p.parseFunctionParameters()
 	stmt.Function.Parameters = params
 	stmt.Function.SetFuncOverflow(defaults, variadic, kwargs, keywordOnlyStart)
+	stmt.Function.SetPositionalOnly(posOnly)
 
 	// Optional return annotation: def f(...) -> int — parsed and discarded.
 	if p.peekTokenIs(token.MINUS) {
@@ -1622,16 +1653,18 @@ func (p *Parser) parseClassStatement() *ast.ClassStatement {
 	return stmt
 }
 
-func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier, *ast.Identifier, int) {
+func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier, *ast.Identifier, int, int) {
 	var identifiers []*ast.Identifier
 	var defaults map[string]ast.Expression
 	var variadic *ast.Identifier
 	var kwargs *ast.Identifier
 	keywordOnlyStart := -1
+	posOnly := 0
+	slashSeen := false
 
 	if p.peekTokenIs(token.RPAREN) {
 		p.nextToken()
-		return identifiers, defaults, nil, nil, keywordOnlyStart
+		return identifiers, defaults, nil, nil, keywordOnlyStart, posOnly
 	}
 
 	p.nextToken()
@@ -1647,49 +1680,55 @@ func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Ex
 				variadic = p.ident(p.curToken.Literal)
 				if p.peekTokenIs(token.COLON) {
 					if !p.skipAnnotation() {
-						return nil, nil, nil, nil, keywordOnlyStart
+						return nil, nil, nil, nil, keywordOnlyStart, posOnly
 					}
 				}
 			} else if p.peekTokenIs(token.COMMA) {
 				// Bare * marks following parameters as keyword-only.
 			} else {
 				if !p.expectPeek(token.IDENT) {
-					return nil, nil, nil, nil, keywordOnlyStart
+					return nil, nil, nil, nil, keywordOnlyStart, posOnly
 				}
 			}
 		} else if p.curTokenIs(token.POW) {
 			if !p.expectPeek(token.IDENT) {
-				return nil, nil, nil, nil, keywordOnlyStart
+				return nil, nil, nil, nil, keywordOnlyStart, posOnly
 			}
 			kwargs = p.ident(p.curToken.Literal)
 			if p.peekTokenIs(token.COLON) {
 				if !p.skipAnnotation() {
-					return nil, nil, nil, nil, keywordOnlyStart
+					return nil, nil, nil, nil, keywordOnlyStart, posOnly
 				}
 			}
 			if p.peekTokenIs(token.COMMA) {
 				p.nextToken()
 			}
 			if !p.expectPeek(token.RPAREN) {
-				return nil, nil, nil, nil, keywordOnlyStart
+				return nil, nil, nil, nil, keywordOnlyStart, posOnly
 			}
-			return identifiers, defaults, variadic, kwargs, keywordOnlyStart
+			return identifiers, defaults, variadic, kwargs, keywordOnlyStart, posOnly
+		} else if p.curTokenIs(token.SLASH) {
+			// Positional-only marker (def f(a, /, b)): every parameter before
+			// the slash is positional-only. Python allows the marker at most
+			// once, and only before *.
+			if slashSeen {
+				p.errors = append(p.errors, fmt.Sprintf("line %d: '/' may appear at most once in a parameter list", p.curToken.Line))
+				return nil, nil, nil, nil, keywordOnlyStart, posOnly
+			}
+			if keywordOnlyStart != -1 {
+				p.errors = append(p.errors, fmt.Sprintf("line %d: '/' must precede '*' in a parameter list", p.curToken.Line))
+				return nil, nil, nil, nil, keywordOnlyStart, posOnly
+			}
+			slashSeen = true
+			posOnly = len(identifiers)
 		} else {
-			if p.curTokenIs(token.SLASH) {
-				// Positional-only parameter syntax (def f(a, /, b)) is not
-				// supported; without this check the "/" silently becomes a
-				// parameter named "/" and every call fails with a confusing
-				// argument-count error.
-				p.errors = append(p.errors, "positional-only parameters ('/') are not supported")
-				return nil, nil, nil, nil, keywordOnlyStart
-			}
 			ident := p.ident(p.curToken.Literal)
 			identifiers = append(identifiers, ident)
 
 			// Optional type annotation: def f(a: int) — parsed and discarded.
 			if p.peekTokenIs(token.COLON) {
 				if !p.skipAnnotation() {
-					return nil, nil, nil, nil, keywordOnlyStart
+					return nil, nil, nil, nil, keywordOnlyStart, posOnly
 				}
 			}
 
@@ -1708,16 +1747,16 @@ func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Ex
 			p.nextToken()
 			if p.peekTokenIs(token.RPAREN) {
 				p.nextToken()
-				return identifiers, defaults, variadic, kwargs, keywordOnlyStart
+				return identifiers, defaults, variadic, kwargs, keywordOnlyStart, posOnly
 			}
 			p.nextToken()
 			continue
 		}
 
 		if !p.expectPeek(token.RPAREN) {
-			return nil, nil, nil, nil, keywordOnlyStart
+			return nil, nil, nil, nil, keywordOnlyStart, posOnly
 		}
-		return identifiers, defaults, variadic, kwargs, keywordOnlyStart
+		return identifiers, defaults, variadic, kwargs, keywordOnlyStart, posOnly
 	}
 }
 
@@ -1912,9 +1951,10 @@ func (p *Parser) parseLambda() ast.Expression {
 	lambda := &ast.Lambda{}
 
 	if !p.peekTokenIs(token.COLON) {
-		params, defaults, variadic, kwargs, keywordOnlyStart := p.parseLambdaParameters()
+		params, defaults, variadic, kwargs, keywordOnlyStart, posOnly := p.parseLambdaParameters()
 		lambda.Parameters = params
 		lambda.SetFuncOverflow(defaults, variadic, kwargs, keywordOnlyStart)
+		lambda.SetPositionalOnly(posOnly)
 	}
 
 	if !p.expectPeek(token.COLON) {
@@ -1931,17 +1971,19 @@ func (p *Parser) parseLambda() ast.Expression {
 	return lambda
 }
 
-func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier, *ast.Identifier, int) {
+func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier, *ast.Identifier, int, int) {
 	var identifiers []*ast.Identifier
 	var defaults map[string]ast.Expression
 	var variadic *ast.Identifier
 	var kwargs *ast.Identifier
 	keywordOnlyStart := -1
+	posOnly := 0
+	slashSeen := false
 
 	p.nextToken()
 
 	if p.curTokenIs(token.COLON) {
-		return identifiers, defaults, nil, nil, keywordOnlyStart
+		return identifiers, defaults, nil, nil, keywordOnlyStart, posOnly
 	}
 
 	for {
@@ -1957,18 +1999,29 @@ func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expr
 				// Bare * marks following parameters as keyword-only.
 			} else {
 				if !p.expectPeek(token.IDENT) {
-					return nil, nil, nil, nil, keywordOnlyStart
+					return nil, nil, nil, nil, keywordOnlyStart, posOnly
 				}
 			}
 		} else if p.curTokenIs(token.POW) {
 			if !p.expectPeek(token.IDENT) {
-				return nil, nil, nil, nil, keywordOnlyStart
+				return nil, nil, nil, nil, keywordOnlyStart, posOnly
 			}
 			kwargs = p.ident(p.curToken.Literal)
 			if p.peekTokenIs(token.COMMA) {
 				p.nextToken()
 			}
-			return identifiers, defaults, variadic, kwargs, keywordOnlyStart
+			return identifiers, defaults, variadic, kwargs, keywordOnlyStart, posOnly
+		} else if p.curTokenIs(token.SLASH) {
+			if slashSeen {
+				p.errors = append(p.errors, fmt.Sprintf("line %d: '/' may appear at most once in a parameter list", p.curToken.Line))
+				return nil, nil, nil, nil, keywordOnlyStart, posOnly
+			}
+			if keywordOnlyStart != -1 {
+				p.errors = append(p.errors, fmt.Sprintf("line %d: '/' must precede '*' in a parameter list", p.curToken.Line))
+				return nil, nil, nil, nil, keywordOnlyStart, posOnly
+			}
+			slashSeen = true
+			posOnly = len(identifiers)
 		} else {
 			ident := p.ident(p.curToken.Literal)
 			identifiers = append(identifiers, ident)
@@ -1986,14 +2039,14 @@ func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expr
 
 		if p.peekTokenIs(token.COMMA) {
 			p.nextToken()
-			if p.peekTokenIs(token.COLON) {
-				return identifiers, defaults, variadic, kwargs, keywordOnlyStart
+			if p.curTokenIs(token.COLON) {
+				return identifiers, defaults, variadic, kwargs, keywordOnlyStart, posOnly
 			}
 			p.nextToken()
 			continue
 		}
 
-		return identifiers, defaults, variadic, kwargs, keywordOnlyStart
+		return identifiers, defaults, variadic, kwargs, keywordOnlyStart, posOnly
 	}
 }
 

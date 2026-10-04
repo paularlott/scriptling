@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +47,19 @@ func DictKey(obj Object) string {
 		return "b:" + hex.EncodeToString(o.value)
 	case *Null:
 		return "null:"
+	case *Set:
+		// Frozen sets hash by content so equal frozensets land on the same
+		// dict/set key, as in Python. Mutable sets keep the identity key of
+		// the default case (they are unhashable at the language level).
+		if o.Frozen {
+			keys := make([]string, 0, len(o.Elements))
+			for k := range o.Elements {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			return "fs:{" + strings.Join(keys, ",") + "}"
+		}
+		return fmt.Sprintf("%s:%p", obj.Type(), obj)
 	case *Tuple:
 		// Tuples are hashable in Python if all elements are hashable
 		var b strings.Builder
@@ -110,6 +124,10 @@ func IsHashable(obj Object) bool {
 			}
 		}
 		return true
+	case *Set:
+		// Frozen sets are immutable, so their content hash is stable (Python
+		// frozenset); mutable sets are unhashable.
+		return o.Frozen
 	case *Instance:
 		_, ok := o.Class.Methods["__hash__"]
 		return ok
@@ -168,6 +186,7 @@ const (
 	ExceptionTypeStopIteration     = "StopIteration"
 	ExceptionTypeRuntimeError      = "RuntimeError"
 	ExceptionTypeZeroDivisionError = "ZeroDivisionError"
+	ExceptionTypeOverflowError     = "OverflowError"
 	ExceptionTypeIndexError        = "IndexError"
 	ExceptionTypeKeyError          = "KeyError"
 	ExceptionTypeAttributeError    = "AttributeError"
@@ -750,6 +769,9 @@ type Function struct {
 	Variadic         *ast.Identifier // *args parameter
 	Kwargs           *ast.Identifier // **kwargs parameter
 	KeywordOnlyStart int             // 1-based index where keyword-only params start; 0 means none
+	// PositionalOnly is the number of leading parameters that cannot be
+	// passed by keyword (before a '/' marker); 0 means no marker.
+	PositionalOnly   int
 	Body             *ast.BlockStatement
 	Env              *Environment
 	LocalSlots       map[string]int
@@ -792,6 +814,9 @@ type LambdaFunction struct {
 	Variadic         *ast.Identifier // *args parameter
 	Kwargs           *ast.Identifier // **kwargs parameter
 	KeywordOnlyStart int             // 1-based index where keyword-only params start; 0 means none
+	// PositionalOnly is the number of leading parameters that cannot be
+	// passed by keyword (before a '/' marker); 0 means no marker.
+	PositionalOnly   int
 	Body             ast.Expression
 	Env              *Environment
 	LocalSlots       map[string]int
@@ -2817,7 +2842,7 @@ func CloneObject(obj Object) Object {
 		for k, e := range v.Elements {
 			elements[k] = CloneObject(e)
 		}
-		return &Set{Elements: elements}
+		return &Set{Elements: elements, Frozen: v.Frozen}
 	case *Instance:
 		clone := &Instance{Class: v.Class}
 		v.RangeFields(func(k string, val Object) bool {

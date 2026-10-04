@@ -55,4 +55,5 @@ func RegisterAll(p interface{ RegisterLibrary(*object.Library) }) {
 	p.RegisterLibrary(ContextlibLibrary)
 	p.RegisterLibrary(DifflibLibrary)
 	p.RegisterLibrary(MsgpackLibrary)
+	p.RegisterLibrary(CopyLibrary)
 }

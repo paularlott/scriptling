@@ -777,6 +777,9 @@ type FuncOverflow struct {
 	Variadic         *Identifier
 	Kwargs           *Identifier
 	KeywordOnlyStart int
+	// PositionalOnly is the number of leading parameters before a '/' marker;
+	// 0 means no marker. Those parameters cannot be passed by keyword.
+	PositionalOnly int
 }
 
 type FunctionLiteral struct {
@@ -828,6 +831,26 @@ func (fl *FunctionLiteral) SetFuncOverflow(dv map[string]Expression, variadic, k
 		Kwargs:           kwargs,
 		KeywordOnlyStart: keywordOnlyStart,
 	}
+}
+
+// GetPositionalOnly returns the number of leading positional-only parameters
+// (0 when the parameter list has no '/' marker).
+func (fl *FunctionLiteral) GetPositionalOnly() int {
+	if fl.overflow == nil {
+		return 0
+	}
+	return fl.overflow.PositionalOnly
+}
+
+// SetPositionalOnly records the number of leading positional-only parameters.
+func (fl *FunctionLiteral) SetPositionalOnly(n int) {
+	if n <= 0 {
+		return
+	}
+	if fl.overflow == nil {
+		fl.overflow = &FuncOverflow{KeywordOnlyStart: -1}
+	}
+	fl.overflow.PositionalOnly = n
 }
 
 func (fl *FunctionLiteral) expressionNode()      {}
@@ -1527,6 +1550,26 @@ func (l *Lambda) SetFuncOverflow(dv map[string]Expression, variadic, kwargs *Ide
 		Kwargs:           kwargs,
 		KeywordOnlyStart: keywordOnlyStart,
 	}
+}
+
+// GetPositionalOnly returns the number of leading positional-only parameters
+// (0 when the parameter list has no '/' marker).
+func (l *Lambda) GetPositionalOnly() int {
+	if l.overflow == nil {
+		return 0
+	}
+	return l.overflow.PositionalOnly
+}
+
+// SetPositionalOnly records the number of leading positional-only parameters.
+func (l *Lambda) SetPositionalOnly(n int) {
+	if n <= 0 {
+		return
+	}
+	if l.overflow == nil {
+		l.overflow = &FuncOverflow{KeywordOnlyStart: -1}
+	}
+	l.overflow.PositionalOnly = n
 }
 
 func (l *Lambda) expressionNode()      {}

@@ -1447,20 +1447,59 @@ func TestBrokenIfDoesNotProduceNilStatement(t *testing.T) {
 	}
 }
 
-// TestParsePositionalOnlyRejected: the positional-only separator '/' must be
-// a clear parse error, not a silently accepted parameter named "/" (which
-// made every call fail with a confusing argument-count error).
-func TestParsePositionalOnlyRejected(t *testing.T) {
-	l := lexer.New(`def f(a, /, b):
-    return a + b
-f(1, 2)`)
-	p := New(l)
-	p.ParseProgram()
-	errs := p.Errors()
-	if len(errs) == 0 {
-		t.Fatal("positional-only syntax should report parser errors")
+// TestParsePositionalOnly: the '/' marker is accepted in def and lambda
+// parameter lists (parameters before it become positional-only), while its
+// two malformed placements stay parse errors: twice, and after '*'.
+func TestParsePositionalOnly(t *testing.T) {
+	valid := []string{
+		"def f(a, /, b):\n    return a + b\nf(1, 2)",
+		"def f(a, b, /):\n    return a\n",
+		"def f(a, /, *, b):\n    return b\n",
+		"def f(a, /, b=2, *args, **kw):\n    return b\n",
+		"g = lambda a, /, b: a + b",
 	}
-	if !strings.Contains(errs[0], "positional-only parameters") {
-		t.Fatalf("first error should name the unsupported syntax, got: %v", errs[0])
+	for _, src := range valid {
+		p := New(lexer.New(src))
+		p.ParseProgram()
+		if errs := p.Errors(); len(errs) > 0 {
+			t.Errorf("valid positional-only syntax %q should parse, got errors: %v", src, errs)
+		}
+	}
+
+	invalid := []struct {
+		src string
+		msg string
+	}{
+		{"def f(a, /, /):\n    return a\n", "'/' may appear at most once"},
+		{"def f(a, *, b, /):\n    return a\n", "'/' must precede '*'"},
+	}
+	for _, tc := range invalid {
+		p := New(lexer.New(tc.src))
+		p.ParseProgram()
+		errs := p.Errors()
+		if len(errs) == 0 {
+			t.Errorf("malformed positional-only syntax %q should report parser errors", tc.src)
+			continue
+		}
+		if !strings.Contains(errs[0], tc.msg) {
+			t.Errorf("error for %q should mention %q, got: %v", tc.src, tc.msg, errs[0])
+		}
+	}
+}
+
+// TestParsePositionalOnlyRecorded: the marker's position is captured on the
+// function literal so the evaluator can reject keyword calls.
+func TestParsePositionalOnlyRecorded(t *testing.T) {
+	p := New(lexer.New("def f(a, b, /, c):\n    return a\n"))
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parse errors: %v", p.Errors())
+	}
+	fn := prog.Statements[0].(*ast.FunctionStatement).Function
+	if got := fn.GetPositionalOnly(); got != 2 {
+		t.Fatalf("GetPositionalOnly() = %d, want 2", got)
+	}
+	if got := fn.GetKeywordOnlyStart(); got != -1 {
+		t.Fatalf("GetKeywordOnlyStart() = %d, want -1", got)
 	}
 }

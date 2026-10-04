@@ -271,6 +271,11 @@ Returns the number of items in a string, bytes, list, dict, or tuple.`,
 			if exc, ok := obj.(*object.Exception); ok && exc.ExceptionType != "" {
 				return object.NewString(exc.ExceptionType)
 			}
+			// Frozen sets are their own type name, unlike every other
+			// built-in value (which reports the UPPER_CASE object type).
+			if s, ok := obj.(*object.Set); ok && s.Frozen {
+				return object.NewString("frozenset")
+			}
 			return object.NewString(obj.Type().String())
 		},
 		HelpText: `type(obj) - Return the type of an object
@@ -1133,6 +1138,19 @@ Equivalent to (a // b, a % b) for integers.`,
 				}
 
 				checkType := strings.ToUpper(typeName)
+				// frozenset and set are distinct types: a frozen set is not a set.
+				if typeName == "frozenset" {
+					if s, ok := obj.(*object.Set); ok && s.Frozen {
+						return TRUE
+					}
+					continue
+				}
+				if typeName == "set" {
+					if s, ok := obj.(*object.Set); ok && !s.Frozen {
+						return TRUE
+					}
+					continue
+				}
 				switch checkType {
 				case "INT", "INTEGER":
 					checkType = "INTEGER"
@@ -1434,6 +1452,50 @@ Keyword arguments are added last and override keys from the mapping.`,
 
 With no argument, returns an empty tuple.
 Otherwise, returns a tuple containing the items of the iterable.`,
+	},
+	"frozenset": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if len(args) > 1 {
+				return errors.NewError("frozenset() takes at most 1 argument (%d given)", len(args))
+			}
+			if len(args) == 0 {
+				return object.NewFrozenSet()
+			}
+			// Elements must be hashable; evalSetAdd enforces that per
+			// element, exactly as Python rejects unhashable elements.
+			if s, ok := args[0].(*object.Set); ok {
+				c := s.Copy()
+				c.Frozen = true
+				return c
+			}
+			elements, ok, rerr := iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx))
+			if rerr != nil {
+				return rerr
+			}
+			if !ok {
+				return errors.NewTypeError("iterable", args[0].Type().String())
+			}
+			s := object.NewSet()
+			for _, e := range elements {
+				if err := evalSetAdd(ctx, s, e); err != nil {
+					return err
+				}
+			}
+			return s.Freeze()
+		},
+		HelpText: `frozenset([iterable]) - Create an immutable set
+
+Returns a set that cannot be modified: add/remove/update raise
+AttributeError. Frozen sets are hashable (by content), so they can be
+used as dict keys and set members, unlike regular sets.
+
+Elements must be hashable, exactly as for set literals.
+
+Example:
+  fs = frozenset([1, 2, 3])
+  2 in fs                     # True
+  d = {frozenset("ab"): 1}    # legal: hashable key
+  fs | {4}                    # frozenset({1, 2, 3, 4})`,
 	},
 	"set": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -1891,6 +1953,27 @@ Use with: raise Exception("error message")`,
 
 Raised when an operation receives an argument with an inappropriate value.
 Use with: raise ValueError("invalid value")`,
+	},
+	"OverflowError": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{
+				Message:       message,
+				ExceptionType: object.ExceptionTypeOverflowError,
+			}
+		},
+		HelpText: `OverflowError([message]) - Create an overflow error exception
+
+Raised when a result is too large to represent, such as a float integer
+ratio beyond int64. An ArithmeticError subclass.
+Use with: raise OverflowError("value too large")`,
 	},
 	"TypeError": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -2409,15 +2492,16 @@ func init() {
 
 	// Build reverse lookup for isinstance() to support bare type names
 	typeBuiltins = map[*object.Builtin]string{
-		builtins["int"]:   "int",
-		builtins["str"]:   "str",
-		builtins["float"]: "float",
-		builtins["bool"]:  "bool",
-		builtins["list"]:  "list",
-		builtins["dict"]:  "dict",
-		builtins["tuple"]: "tuple",
-		builtins["set"]:   "set",
-		builtins["bytes"]: "bytes",
+		builtins["int"]:       "int",
+		builtins["str"]:       "str",
+		builtins["float"]:     "float",
+		builtins["bool"]:      "bool",
+		builtins["list"]:      "list",
+		builtins["dict"]:      "dict",
+		builtins["tuple"]:     "tuple",
+		builtins["set"]:       "set",
+		builtins["frozenset"]: "frozenset",
+		builtins["bytes"]:     "bytes",
 	}
 
 	// Exception constructors (TypeError, ValueError, ...) are types for

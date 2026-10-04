@@ -36,6 +36,8 @@ var builtinMethodNames = map[object.ObjectType][]string{
 	},
 	object.BYTES_OBJ:       {"base64", "decode", "hex", "length"},
 	object.FLOAT_ARRAY_OBJ: {"shape", "tolist"},
+	object.INTEGER_OBJ:     {"bit_count", "bit_length", "is_integer"},
+	object.FLOAT_OBJ:       {"as_integer_ratio", "fromhex", "hex", "is_integer"},
 }
 
 // builtinMethodSet is builtinMethodNames indexed for lookup.
@@ -56,6 +58,7 @@ var builtinMethodSet = func() map[object.ObjectType]map[string]bool {
 var staticTypeMethods = map[object.ObjectType]map[string]object.Object{
 	object.DICT_OBJ:   {"fromkeys": &object.Dict{Pairs: map[string]object.DictPair{}}},
 	object.STRING_OBJ: {"maketrans": object.NewString("")},
+	object.FLOAT_OBJ:  {"fromhex": object.NewFloat(0)},
 }
 
 // hasBuiltinMethod reports whether a value of type t has the named method.
@@ -118,6 +121,7 @@ func attachTypeMethods() {
 	for typeName, t := range map[string]object.ObjectType{
 		"str": object.STRING_OBJ, "list": object.LIST_OBJ, "dict": object.DICT_OBJ,
 		"tuple": object.TUPLE_OBJ, "set": object.SET_OBJ, "bytes": object.BYTES_OBJ,
+		"int": object.INTEGER_OBJ, "float": object.FLOAT_OBJ,
 	} {
 		b := builtins[typeName]
 		if b == nil {
