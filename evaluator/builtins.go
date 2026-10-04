@@ -45,7 +45,8 @@ var (
 )
 
 var builtins = map[string]*object.Builtin{
-	"bytes": BytesBuiltin,
+	"bytes":    BytesBuiltin,
+	"sentinel": SentinelBuiltin,
 	"help": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return helpFunction(ctx, kwargs, args...)

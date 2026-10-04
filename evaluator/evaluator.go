@@ -5023,6 +5023,8 @@ func getTypeName(obj object.Object) string {
 		return "classmethod"
 	case object.FLOAT_ARRAY_OBJ:
 		return "FloatArray"
+	case object.SENTINEL_OBJ:
+		return "sentinel"
 	default:
 		return obj.Type().String()
 	}

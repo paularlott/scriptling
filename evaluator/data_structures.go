@@ -158,6 +158,20 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 			return object.NewString("<lambda>")
 		}
 		return attributeError(left, attr)
+	case object.SENTINEL_OBJ:
+		if !isDotAccess {
+			// Python: "'sentinel' object is not subscriptable"
+			return &object.Exception{
+				Message:       fmt.Sprintf("'%s' object is not subscriptable", getTypeName(left)),
+				ExceptionType: object.ExceptionTypeTypeError,
+				Raised:        true,
+			}
+		}
+		attr, _ := index.AsString()
+		if attr == "__name__" {
+			return object.NewString(left.(*object.Sentinel).Name)
+		}
+		return attributeError(left, attr)
 	}
 	if isDotAccess {
 		attr, _ := index.AsString()

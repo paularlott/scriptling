@@ -99,6 +99,10 @@ func IsHashable(obj Object) bool {
 		// Exceptions hash by identity (like a default Python object). Dict keys
 		// already accept them via evalHashKey; sets must agree.
 		return true
+	case *Sentinel:
+		// Sentinels hash by identity (PEP 661): a sentinel's whole purpose is
+		// uniqueness, so identity keys are exactly right.
+		return true
 	case *Tuple:
 		for _, e := range o.Elements {
 			if !IsHashable(e) {
@@ -266,6 +270,7 @@ const (
 	CLASSMETHOD_OBJ
 	FLOAT_ARRAY_OBJ
 	BYTES_OBJ
+	SENTINEL_OBJ
 )
 
 // String returns the string representation of the ObjectType
@@ -331,6 +336,8 @@ func (ot ObjectType) String() string {
 		return "FLOAT_ARRAY"
 	case BYTES_OBJ:
 		return "BYTES"
+	case SENTINEL_OBJ:
+		return "SENTINEL"
 	default:
 		return "UNKNOWN"
 	}
@@ -639,6 +646,40 @@ func (n *Null) AsDict() (map[string]Object, Object) { return nil, errMustBeDict 
 func (n *Null) CoerceString() (string, Object) { return n.Inspect(), nil }
 func (n *Null) CoerceInt() (int64, Object)     { return 0, nil }
 func (n *Null) CoerceFloat() (float64, Object) { return 0, nil }
+
+// Sentinel is a unique do-nothing value created by the sentinel() builtin
+// (PEP 661). Each call returns a distinct object that is equal only to
+// itself, so `value is MISSING` is the intended check. repr defaults to the
+// name, which is the point of the feature: a readable marker in logs and the
+// REPL instead of an opaque object address.
+type Sentinel struct {
+	Name string
+	// Repr overrides Inspect when non-empty; empty means "use Name".
+	Repr string
+}
+
+func NewSentinel(name, repr string) *Sentinel {
+	return &Sentinel{Name: name, Repr: repr}
+}
+
+func (s *Sentinel) Type() ObjectType { return SENTINEL_OBJ }
+func (s *Sentinel) Inspect() string {
+	if s.Repr != "" {
+		return s.Repr
+	}
+	return s.Name
+}
+
+func (s *Sentinel) AsString() (string, Object)          { return "", errMustBeString }
+func (s *Sentinel) AsInt() (int64, Object)              { return 0, errMustBeInteger }
+func (s *Sentinel) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
+func (s *Sentinel) AsBool() (bool, Object)              { return true, nil }
+func (s *Sentinel) AsList() ([]Object, Object)          { return nil, errMustBeList }
+func (s *Sentinel) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
+
+func (s *Sentinel) CoerceString() (string, Object) { return s.Inspect(), nil }
+func (s *Sentinel) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
+func (s *Sentinel) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 type ReturnValue struct {
 	Value Object
