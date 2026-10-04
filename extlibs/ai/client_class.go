@@ -271,6 +271,38 @@ Example:
   response = client.embedding("text-embedding-3-small", ["Hello", "World"])
   for emb in response.data:
     print(emb.embedding)`).
+		MethodWithHelp("decide", decideMethod, `decide(model, state, questions=, images=, keep_alive=) - Ask a decision model
+
+Runs a decision model (Ollama System One: clef-flash, clef, nimble, tev1)
+against a state and up to 64 named questions, in one response — no chat,
+no streaming. Three question types share the questions dict:
+
+  choice: pick from named options — criteria is a dict of 2-26 descriptions
+  noul:   yes/no probability — criteria optional ("false"/"true" descriptions)
+  score:  position on an ordered rubric — criteria is a list of 2-26
+          descriptions, lowest to highest
+
+Parameters:
+  model (str): Decision model name (e.g. "clef-flash"); the server rejects
+          non-decision models.
+  state (str, dict or list): The input the questions are judged against.
+  questions (dict, required): Named questions, each {"type": ..., "instructions": ..., "criteria": ...}.
+  images (list, optional): Base64 strings or bytes, shared by all questions
+          (needs a vision-capable model such as clef-flash).
+  keep_alive (str or int, optional): Model keep-alive, as for other Ollama calls.
+
+Returns:
+  dict: {"model": ..., "answers": {name: {"type", "choice"/"noul"/"score",
+  "probabilities", "confidence", ...}}, "usage": {"input_tokens", "output_tokens"}}
+
+Example:
+  result = client.decide("clef-flash", "Checkout returns 500s since 9am.",
+      questions={"label": {"type": "choice",
+                           "instructions": "Which label fits?",
+                           "criteria": {"bug": "Errors", "billing": "Payments"}},
+                 "urgent": {"type": "noul", "instructions": "Page a human?"}})
+  result["answers"]["label"]["choice"]      # "bug"
+  result["answers"]["urgent"]["noul"]       # 0.959`).
 		MethodWithHelp("ask", askMethod, `ask(model, messages, **kwargs) - Quick completion that returns text directly
 
 Creates a chat completion and returns just the text content, with thinking blocks automatically removed.

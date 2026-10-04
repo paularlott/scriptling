@@ -15,7 +15,7 @@ require (
 	github.com/paularlott/gossip v0.23.0
 	github.com/paularlott/jsonrpc v0.2.0
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.30.2
+	github.com/paularlott/mcp v0.31.0
 	github.com/paularlott/snapshotkv v0.6.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/valkey-io/valkey-go v1.0.78
