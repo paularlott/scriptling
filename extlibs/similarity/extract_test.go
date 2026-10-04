@@ -192,6 +192,23 @@ untouched = sim.extract("Just one line.", max_chars=5000) == "Just one line."
 		t.Fatalf("the off-topic sentence should go first: %q", short)
 	}
 
+	// Blank text gives an empty list, never None, so callers can iterate.
+	if _, err := p.Eval(`
+blank = sim.sentences("")
+spaces = sim.sentences("  \n \n")
+toks = sim.tokenize("")
+blank_ok = isinstance(blank, list) and len(blank) == 0
+spaces_ok = isinstance(spaces, list) and len(spaces) == 0
+toks_ok = isinstance(toks, list) and len(toks) == 0
+`); err != nil {
+		t.Fatalf("blank input eval failed: %v", err)
+	}
+	for _, name := range []string{"blank_ok", "spaces_ok", "toks_ok"} {
+		if get(name) != true {
+			t.Fatalf("%s: blank input must give an empty list, not None", name)
+		}
+	}
+
 	// Errors: wrong types are reported, not panics.
 	if _, err := p.Eval(`sim.extract(42)`); err == nil {
 		t.Fatal("extract(42) should be an error")

@@ -496,7 +496,8 @@ func objectListToUint32s(obj object.Object) ([]uint32, error) {
 }
 
 func tokenize(text string) []string {
-	var tokens []string
+	// Never nil: a script sees an empty list for blank text, not None.
+	tokens := []string{}
 	var buf strings.Builder
 	for _, r := range strings.ToLower(text) {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {

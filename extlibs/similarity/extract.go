@@ -16,7 +16,8 @@ import (
 // transcripts, chat logs and pasted output split one line per sentence. The
 // returned sentences are trimmed and never empty.
 func Sentences(text string) []string {
-	var out []string
+	// Never nil: a script sees an empty list for blank text, not None.
+	out := []string{}
 	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
 		for _, s := range splitLine(line) {
 			s = strings.TrimSpace(s)
