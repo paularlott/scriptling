@@ -401,7 +401,9 @@ func evalObjectsEqualChecked(ctx context.Context, a, b object.Object, env *objec
 			return false, nil
 		}
 	}
-	return objectsEqual(a, b), nil
+	// Containers compare by value, as Python's == does (the `in` operator
+	// already used deep equality; count/index/remove agree through here).
+	return objectsDeepEqual(a, b), nil
 }
 
 // isInstanceOperand reports whether obj is a class instance (and therefore
@@ -1845,6 +1847,17 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 //   - ok=false, envFn==nil: not applicable, caller should use normal resolution.
 
 func createInstance(ctx context.Context, class *object.Class, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	// Enum classes construct by value lookup, not instantiation.
+	if class.IsEnum {
+		if len(args) != 1 {
+			return &object.Exception{
+				Message:       fmt.Sprintf("%s() takes 1 argument (%d given)", class.Name, len(args)),
+				ExceptionType: object.ExceptionTypeTypeError,
+				Raised:        true,
+			}
+		}
+		return enumValueLookup(class, args[0])
+	}
 	instance := object.NewInstanceWithFields(class, make(map[string]object.Object))
 
 	// Call __init__ if it exists, walking the base class chain
@@ -1922,6 +1935,10 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 // applyUserFunctionDirect is a fast path for calling a 1-parameter function with
 // a single argument, bypassing slice allocation and the generic params path.
 func applyUserFunctionDirect(ctx context.Context, fn *object.Function, arg object.Object) object.Object {
+	if fn.GeneratorPlan != nil {
+		plan, _ := fn.GeneratorPlan.(*genPlan)
+		return newGenerator(ctx, fn, []object.Object{arg}, nil, fn.Env, plan)
+	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.Enter() {
 			return errors.NewCallDepthExceededError(int(cd.max))
@@ -1955,6 +1972,10 @@ func applyUserFunctionDirect(ctx context.Context, fn *object.Function, arg objec
 
 // applyUserFunction2 is a fast path for 2-parameter calls, avoiding slice allocation.
 func applyUserFunction2(ctx context.Context, fn *object.Function, a0, a1 object.Object) object.Object {
+	if fn.GeneratorPlan != nil {
+		plan, _ := fn.GeneratorPlan.(*genPlan)
+		return newGenerator(ctx, fn, []object.Object{a0, a1}, nil, fn.Env, plan)
+	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.Enter() {
 			return errors.NewCallDepthExceededError(int(cd.max))
@@ -1990,6 +2011,10 @@ func applyUserFunction2(ctx context.Context, fn *object.Function, a0, a1 object.
 
 // applyUserFunctionN is a fast path for N-parameter calls (N <= 3), using stack-allocated args.
 func applyUserFunctionN(ctx context.Context, fn *object.Function, args ...object.Object) object.Object {
+	if fn.GeneratorPlan != nil {
+		plan, _ := fn.GeneratorPlan.(*genPlan)
+		return newGenerator(ctx, fn, args, nil, fn.Env, plan)
+	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.Enter() {
 			return errors.NewCallDepthExceededError(int(cd.max))
@@ -2043,6 +2068,14 @@ func functionBody(fn *object.Function) object.EvalFn {
 }
 
 func applyUserFunction(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	// Generator functions construct a generator instead of running.
+	if fn.GeneratorPlan != nil {
+		plan, _ := fn.GeneratorPlan.(*genPlan)
+		if plan == nil {
+			return errors.NewError("generator function '%s' has no compiled plan", fn.Name)
+		}
+		return newGenerator(ctx, fn, args, keywords, env, plan)
+	}
 	// Check call depth to prevent stack overflow
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.Enter() {
@@ -3290,6 +3323,22 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 			return nativeBoolToBooleanObject(isTruthy(result))
 		}
 		return errors.NewTypeError("iterable", right.Type().String())
+	case *object.Class:
+		// Membership on an enum class: member in Color.
+		if container.IsEnum {
+			for _, m := range container.EnumMembers {
+				if m == left {
+					return TRUE
+				}
+				if member, ok := m.(*object.Instance); ok {
+					if mv, has := member.GetField("value"); has && mv.Inspect() == left.Inspect() {
+						return TRUE
+					}
+				}
+			}
+			return FALSE
+		}
+		return errors.NewTypeError("iterable", right.Type().String())
 	default:
 		return errors.NewTypeError("iterable", right.Type().String())
 	}
@@ -4484,6 +4533,16 @@ func instanceToIterator(ctx context.Context, inst *object.Instance, env *object.
 
 func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object) object.Object) object.Object {
 	switch o := obj.(type) {
+	case *object.Class:
+		// Enum classes iterate their members, in definition order.
+		if !o.IsEnum {
+			return errors.NewTypeError("iterable", obj.Type().String())
+		}
+		for _, m := range o.EnumMembers {
+			if err := fn(m); err != nil {
+				return err
+			}
+		}
 	case *object.List:
 		for _, el := range o.Elements {
 			if err := fn(el); err != nil {

@@ -337,6 +337,15 @@ func (p *Parser) parseStatementInner() ast.Statement {
 			p.nextToken()
 			return p.parseStatementInner()
 		}
+		// "yield" is a soft keyword statement: a name-only line that starts
+		// a statement and is not part of an assignment is a yield; Python
+		// reserves the word entirely, so an explicit yield-as-name use
+		// (yield = 5) still parses as an assignment for compatibility.
+		if p.curToken.Literal == "yield" &&
+			!p.peekTokenIs(token.ASSIGN) && !p.peekTokenIs(token.COMMA) && !p.isAugmentedAssign() &&
+			!p.peekTokenIs(token.DOT) && !p.peekTokenIs(token.LPAREN) && !p.peekTokenIs(token.LBRACKET) {
+			return p.parseYieldStatement()
+		}
 		if p.curToken.Literal == "match" && !p.peekTokenIs(token.ASSIGN) && !p.peekTokenIs(token.COMMA) && !p.peekTokenIs(token.COLON) && !p.peekTokenIs(token.WALRUS) && !p.isAugmentedAssign() && !p.peekTokenIs(token.LPAREN) && !p.peekTokenIs(token.DOT) && !p.peekTokenIs(token.LBRACKET) {
 			return p.parseMatchStatement()
 		}
@@ -820,24 +829,53 @@ func (p *Parser) parseExpressionStatement() ast.Statement {
 	return &ast.ExpressionStatement{Token: p.nodeLine(), Expression: expr}
 }
 
+// parseYieldStatement parses `yield` / `yield value` as a statement. Phase 1
+// generators support yields as statements only; a yield in expression
+// position still parses as a plain identifier reference and fails at compile.
+func (p *Parser) parseYieldStatement() ast.Statement {
+	stmt := &ast.YieldStatement{Token: p.nodeLine()}
+	// A bare yield (end of line) yields None.
+	if p.peekTokenIs(token.NEWLINE) || p.peekTokenIs(token.EOF) || p.peekTokenIs(token.DEDENT) || p.peekTokenIs(token.SEMICOLON) || p.skippedNewline {
+		return stmt
+	}
+	p.nextToken() // move to the value expression
+	stmt.Value = p.parseExpressionWithConditional()
+	return stmt
+}
+
 // parseAnnotatedTail finishes an annotated assignment after the target
 // expression has been parsed (count: int = 5, self.offset: float = 0.5,
-// d["k"]: str = ""). The annotation is parsed and discarded; a bare
-// annotation with no value is a runtime no-op.
+// d["k"]: str = ""). The annotation is parsed and recorded but never
+// evaluated; a bare annotation with no value is a runtime no-op outside
+// class bodies, where the name is kept as field metadata for @dataclass.
 func (p *Parser) parseAnnotatedTail(expr ast.Expression) ast.Statement {
 	p.nextToken() // consume :
 	p.nextToken() // move to the annotation expression
-	if p.parseExpression(LOWEST) == nil {
+	annotation := p.parseExpression(LOWEST)
+	if annotation == nil {
 		return nil
 	}
-	if !p.peekTokenIs(token.ASSIGN) {
-		return &ast.PassStatement{Token: p.nodeLine()}
+	target, ok := expr.(*ast.Identifier)
+	if !ok {
+		// Attribute/subscript annotation targets are not field metadata;
+		// behave as before (assign the value when present, else no-op).
+		if !p.peekTokenIs(token.ASSIGN) {
+			return &ast.PassStatement{Token: p.nodeLine()}
+		}
+		stmt := &ast.AssignStatement{Token: p.nodeLine(), Left: expr}
+		p.nextToken() // consume =
+		p.nextToken() // move to value
+		first := p.parseExpressionWithConditional()
+		stmt.Value = p.parseTuplePackingTail(p.nodeLine(), first)
+		return stmt
 	}
-	stmt := &ast.AssignStatement{Token: p.nodeLine(), Left: expr}
-	p.nextToken() // consume =
-	p.nextToken() // move to value
-	first := p.parseExpressionWithConditional()
-	stmt.Value = p.parseTuplePackingTail(p.nodeLine(), first)
+	stmt := &ast.AnnotatedAssignStatement{Token: p.nodeLine(), Target: target, Annotation: annotation}
+	if p.peekTokenIs(token.ASSIGN) {
+		p.nextToken() // consume =
+		p.nextToken() // move to value
+		first := p.parseExpressionWithConditional()
+		stmt.Value = p.parseTuplePackingTail(p.nodeLine(), first)
+	}
 	return stmt
 }
 

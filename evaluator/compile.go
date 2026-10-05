@@ -114,6 +114,14 @@ func compileNode(node ast.Node) object.EvalFn {
 		return func(ctx context.Context, env *object.Environment) object.Object {
 			return object.CONTINUE
 		}
+	case *ast.AnnotatedAssignStatement:
+		return compileAnnotatedAssign(n)
+	case *ast.YieldStatement:
+		// Safety net: the generator plan builder intercepts legal yields;
+		// one reaching ordinary compilation is out of place (phase 1).
+		return func(ctx context.Context, env *object.Environment) object.Object {
+			return errors.NewError("yield outside a generator function is not supported")
+		}
 	case *ast.PassStatement:
 		return func(ctx context.Context, env *object.Environment) object.Object {
 			return NULL
@@ -402,6 +410,29 @@ func compileAssign(n *ast.AssignStatement) object.EvalFn {
 			}
 		}
 		if err := assignToExpression(ctx, n.Left, val, env); err != nil {
+			return assignErrorToObject(err)
+		}
+		return NULL
+	}
+}
+
+// compileAnnotatedAssign compiles an annotated assignment: the annotation
+// is recorded on the AST (class bodies surface it to @dataclass) and never
+// evaluated; the value assigns as usual, or the statement is a no-op.
+func compileAnnotatedAssign(n *ast.AnnotatedAssignStatement) object.EvalFn {
+	if n.Value == nil {
+		return func(ctx context.Context, env *object.Environment) object.Object {
+			return NULL
+		}
+	}
+	value := compileExpr(n.Value)
+	target := n.Target
+	return func(ctx context.Context, env *object.Environment) object.Object {
+		val := value(ctx, env)
+		if propagates(val) {
+			return val
+		}
+		if err := assignToExpression(ctx, target, val, env); err != nil {
 			return assignErrorToObject(err)
 		}
 		return NULL
@@ -729,6 +760,10 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 		// Handle Iterator objects and Views
 		var iter *object.Iterator
 		switch o := iterableVal.(type) {
+		case *object.Class:
+			if o.IsEnum {
+				iter = object.NewIterator(sliceWalk(o.EnumMembers))
+			}
 		case *object.Iterator:
 			iter = o
 		case *object.Dict:
@@ -1690,7 +1725,17 @@ func compileFunctionStatement(n *ast.FunctionStatement) object.EvalFn {
 		decorators[i] = compileExpr(d)
 	}
 	name := n.Name.Value()
+	// Generator functions compile to a resumable plan instead of a body.
+	var plan *genPlan
+	var generatorPlan any
+	if containsYield(n.Function.Body) {
+		plan = buildGeneratorPlan(n.Function.Body)
+		generatorPlan = plan
+	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
+		if plan != nil && plan.invalid != "" {
+			return errors.NewError("cannot define generator '%s': %s", name, plan.invalid)
+		}
 		localSlots, localSlotNames := analyzeFunctionLocals(n)
 		resolved, fail := resolveDefaults(ctx, env, n.Function.Parameters, defaults)
 		if fail != nil {
@@ -1713,6 +1758,7 @@ func compileFunctionStatement(n *ast.FunctionStatement) object.EvalFn {
 			CompiledDefaults: defaults,
 			ResolvedDefaults: resolved,
 			CompilerOwned:    true,
+			GeneratorPlan:    generatorPlan,
 		}
 		var result object.Object = fn
 		for i := len(decorators) - 1; i >= 0; i-- {
@@ -3196,11 +3242,31 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 	}
 	name := n.Name.Value()
 
+	// Compile-time metadata in source order: annotated names (dataclass
+	// fields) and plain top-level assignment targets (enum members,
+	// dataclass defaults).
+	var annotatedNames, assignNames []string
+	for _, s := range n.Body.Statements {
+		switch st := s.(type) {
+		case *ast.AnnotatedAssignStatement:
+			annotatedNames = append(annotatedNames, st.Target.Value())
+			if st.Value != nil {
+				assignNames = append(assignNames, st.Target.Value())
+			}
+		case *ast.AssignStatement:
+			if ident, ok := st.Left.(*ast.Identifier); ok {
+				assignNames = append(assignNames, ident.Value())
+			}
+		}
+	}
+
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		class := &object.Class{
-			Name:    name,
-			Methods: make(map[string]object.Object),
-			Env:     env,
+			Name:        name,
+			Methods:     make(map[string]object.Object),
+			Env:         env,
+			FieldNames:  annotatedNames,
+			AssignNames: assignNames,
 		}
 
 		// Handle base class inheritance
@@ -3308,6 +3374,16 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 			class.Methods[mname] = val
 		})
 
+		// enum.Enum derivation: promote the class's plain assignments to
+		// singleton member instances, in source order.
+		if class.BaseClass != nil && (class.BaseClass.Name == "Enum" || class.BaseClass.Name == "IntEnum") {
+			class.IsEnum = true
+			class.IsIntEnum = class.BaseClass.Name == "IntEnum"
+			if err := buildEnumMembers(class); err != nil {
+				return err
+			}
+		}
+
 		env.Set(name, class)
 		var result object.Object = class
 		for i := len(decorators) - 1; i >= 0; i-- {
@@ -3324,5 +3400,18 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 			env.Set(name, result)
 		}
 		return result
+	}
+}
+
+// sliceWalk adapts a slice for NewIterator.
+func sliceWalk(elements []object.Object) func() (object.Object, bool) {
+	i := 0
+	return func() (object.Object, bool) {
+		if i >= len(elements) {
+			return nil, false
+		}
+		v := elements[i]
+		i++
+		return v, true
 	}
 }

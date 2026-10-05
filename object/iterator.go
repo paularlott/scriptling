@@ -62,6 +62,12 @@ func (it *Iterator) Len() (int64, bool) {
 // For dicts, returns the keys (like Python's list(dict)).
 func IterableToSlice(obj Object) ([]Object, bool) {
 	switch iter := obj.(type) {
+	case *Class:
+		// Enum classes iterate over their members, in definition order.
+		if iter.IsEnum {
+			return iter.EnumMembers, true
+		}
+		return nil, false
 	case *List:
 		return iter.Elements, true
 	case *Tuple:

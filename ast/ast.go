@@ -808,11 +808,41 @@ type FunctionLiteral struct {
 	overflow      *FuncOverflow
 	Body          *BlockStatement
 	HasNestedFunc bool
+	// HasYield marks a generator function (the body contains a yield
+	// statement): calls construct a generator instead of running the body.
+	HasYield bool
 
 	LocalSlots       map[string]int
 	LocalSlotNames   []string
 	ParamSlotIndexes []int
 }
+
+// AnnotatedAssignStatement is an annotated assignment (count: int = 5, or a
+// bare annotation with no value). The annotation itself is parsed and
+// recorded but never evaluated; the value, when present, assigns as usual.
+// In class bodies the names become ordered field metadata for @dataclass.
+type AnnotatedAssignStatement struct {
+	Token      LineInfo
+	Target     *Identifier
+	Annotation Expression // parsed, not evaluated
+	Value      Expression // nil for a bare annotation
+}
+
+func (as *AnnotatedAssignStatement) statementNode()       {}
+func (as *AnnotatedAssignStatement) TokenLiteral() string { return as.Target.TokenLiteral() }
+func (as *AnnotatedAssignStatement) Line() int            { return int(as.Token.Line) }
+
+// YieldStatement suspends a generator, producing Value (or None). Phase 1
+// supports yields as statements at the top level of a generator body or of a
+// single top-level loop in it.
+type YieldStatement struct {
+	Token LineInfo
+	Value Expression // nil yields None
+}
+
+func (ys *YieldStatement) statementNode()       {}
+func (ys *YieldStatement) TokenLiteral() string { return "yield" }
+func (ys *YieldStatement) Line() int            { return int(ys.Token.Line) }
 
 func (fl *FunctionLiteral) GetDefaultValues() map[string]Expression {
 	if fl.overflow == nil {

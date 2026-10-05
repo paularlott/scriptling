@@ -9,6 +9,73 @@ import (
 )
 
 var FunctoolsLibrary = object.NewLibrary(FunctoolsLibraryName, map[string]*object.Builtin{
+	"lru_cache": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			// Both decorator forms: @lru_cache (bare, the function as the
+			// first positional argument) and @lru_cache(maxsize=...) which
+			// returns the decorator.
+			if len(args) > 0 {
+				switch args[0].(type) {
+				case *object.Function, *object.LambdaFunction, *object.Builtin, *object.BoundMethod:
+					return newLRUCacheWrapper(args[0], 128)
+				}
+				if len(args) > 1 {
+					return errors.NewError("lru_cache() takes at most 1 argument")
+				}
+			}
+			maxsize := int64(128)
+			if v, ok := kwargs.Kwargs["maxsize"]; ok {
+				switch mv := v.(type) {
+				case *object.Integer:
+					maxsize = mv.IntValue()
+				case *object.Null:
+					maxsize = -1 // unbounded
+				default:
+					return errors.NewError("maxsize should be an integer or None")
+				}
+			} else if len(args) == 1 {
+				if iv, ok := args[0].(*object.Integer); ok {
+					maxsize = iv.IntValue()
+				} else if _, isNull := args[0].(*object.Null); isNull {
+					maxsize = -1
+				} else {
+					return errors.NewError("maxsize should be an integer or None")
+				}
+			}
+			// Decorator-with-args form: return the decorator.
+			return &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if len(args) != 1 {
+						return errors.NewError("lru_cache decorator requires 1 argument")
+					}
+					switch args[0].(type) {
+					case *object.Function, *object.LambdaFunction, *object.Builtin, *object.BoundMethod:
+						return newLRUCacheWrapper(args[0], maxsize)
+					}
+					return errors.NewTypeError("callable", args[0].Type().String())
+				},
+				HelpText: "lru_cache(maxsize) - decorator factory",
+			}
+		},
+		HelpText: `lru_cache(user_function) or lru_cache(maxsize=128) - Memoizing decorator
+
+Calls are cached by argument values; maxsize bounds the cache with
+least-recently-used eviction (maxsize=None is unbounded). Unhashable
+arguments bypass the cache, as in Python.`,
+	},
+	"cache": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return errors.NewError("cache() requires 1 argument")
+			}
+			switch args[0].(type) {
+			case *object.Function, *object.LambdaFunction, *object.Builtin, *object.BoundMethod:
+				return newLRUCacheWrapper(args[0], -1)
+			}
+			return errors.NewTypeError("callable", args[0].Type().String())
+		},
+		HelpText: `cache(user_function) - Unbounded memoizing decorator (lru_cache(maxsize=None))`,
+	},
 	"reduce": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 2 || len(args) > 3 {

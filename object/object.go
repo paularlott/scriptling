@@ -799,6 +799,11 @@ type Function struct {
 	// the evaluator may memoise into CompiledBody. Objects assembled elsewhere
 	// may be shared between trees and are never written after construction.
 	CompilerOwned bool
+	// GeneratorPlan is the evaluator's compiled resumable plan for a
+	// generator function (body contains yield; opaque here, a
+	// *evaluator.genPlan). Non-nil marks a generator: calling one
+	// constructs a generator instead of running the body.
+	GeneratorPlan any
 }
 
 func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
@@ -2405,8 +2410,20 @@ type Class struct {
 	// is not an exception. Set when the base is an exception constructor;
 	// inherited through BaseClass chains of user exception classes.
 	ExceptionBase string
-	cacheMu       sync.RWMutex
-	cache         map[string]classLookupCacheEntry
+	// IsEnum marks classes deriving from enum.Enum: construction looks up
+	// members by value and iteration yields the members, in EnumMembers
+	// order. IntEnum additionally compares equal to plain values.
+	IsEnum     bool
+	IsIntEnum  bool
+	EnumMembers []Object
+	// FieldNames lists the class body's annotated names in source order
+	// (@dataclass fields); AssignNames the plain top-level assignment
+	// targets (enum members, dataclass defaults). Compile-time metadata;
+	// values live in Methods.
+	FieldNames  []string
+	AssignNames []string
+	cacheMu     sync.RWMutex
+	cache       map[string]classLookupCacheEntry
 }
 
 func (c *Class) Type() ObjectType { return CLASS_OBJ }
