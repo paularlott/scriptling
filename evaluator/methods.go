@@ -381,13 +381,22 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 			return rerr
 		}
 		if pair, ok := dict.Pairs[key]; ok {
-			delete(dict.Pairs, key)
+			dict.Delete(key)
 			return pair.Value
 		}
 		if len(args) == 2 {
 			return args[1]
 		}
-		return errors.NewError("key '%s' not found", key)
+		// Python raises KeyError(key); its message is the key's repr.
+		rendered, rerr := renderConvertedValue(ctx, args[0], "r", env)
+		if rerr != nil {
+			return rerr
+		}
+		return &object.Exception{
+			Message:       rendered,
+			ExceptionType: object.ExceptionTypeKeyError,
+			Raised:        true,
+		}
 	case "update":
 		if len(args) > 1 {
 			return errors.NewError("update() takes at most 1 argument (%d given)", len(args))
@@ -400,9 +409,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(args) == 1 {
 			switch other := args[0].(type) {
 			case *object.Dict:
-				for k, v := range other.Pairs {
-					dict.Pairs[k] = v
-				}
+				dict.StoreFrom(other)
 			case *object.List:
 				for _, elem := range other.Elements {
 					var pair []object.Object
@@ -421,7 +428,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 					if rerr != nil {
 						return rerr
 					}
-					dict.Pairs[hk] = object.DictPair{Key: pair[0], Value: pair[1]}
+					dict.Store(hk, pair[0], pair[1])
 				}
 			default:
 				return errors.NewTypeError("DICT or LIST of pairs", args[0].Type().String())
@@ -435,7 +442,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(keywords) > 0 {
 			return errors.NewError("clear() does not accept keyword arguments")
 		}
-		dict.Pairs = make(map[string]object.DictPair)
+		dict.Clear()
 		return NULL
 	case "copy":
 		if err := errors.ExactArgs(args, 0); err != nil {
@@ -444,11 +451,10 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(keywords) > 0 {
 			return errors.NewError("copy() does not accept keyword arguments")
 		}
-		newPairs := make(map[string]object.DictPair, len(dict.Pairs))
-		for k, v := range dict.Pairs {
-			newPairs[k] = v
-		}
-		return &object.Dict{Pairs: newPairs}
+		copied := object.NewDictSized(len(dict.Pairs))
+		copied.DefaultFactory = dict.DefaultFactory
+		copied.StoreFrom(dict)
+		return copied
 	case "setdefault":
 		if len(args) < 1 || len(args) > 2 {
 			return errors.NewError("setdefault() takes 1-2 arguments (%d given)", len(args))
@@ -467,17 +473,25 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(args) == 2 {
 			defaultVal = args[1]
 		}
-		dict.Pairs[key] = object.DictPair{Key: args[0], Value: defaultVal}
+		dict.Store(key, args[0], defaultVal)
 		return defaultVal
 	case "popitem":
-		if err := errors.ExactArgs(args, 0); err != nil {
-			return err
+		// popitem(last=True): the newest pair, or the oldest with last=False
+		// (OrderedDict.popitem).
+		last, lerr := dictLastArg(args, keywords, 0, "popitem")
+		if lerr != nil {
+			return lerr
 		}
-		// Python pops the most recently inserted pair; scriptling dicts are
-		// unordered, so any pair may come out, but the remove-and-return
-		// contract holds.
-		for k, pair := range dict.Pairs {
-			delete(dict.Pairs, k)
+		var canonical string
+		var pair object.DictPair
+		var ok bool
+		if last {
+			canonical, pair, ok = dict.LastInserted()
+		} else {
+			canonical, pair, ok = dict.FirstInserted()
+		}
+		if ok {
+			dict.Delete(canonical)
 			return &object.Tuple{Elements: []object.Object{pair.Key, pair.Value}}
 		}
 		return &object.Exception{
@@ -485,6 +499,28 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 			ExceptionType: object.ExceptionTypeKeyError,
 			Raised:        true,
 		}
+	case "move_to_end":
+		// move_to_end(key, last=True): reposition an existing key at the end,
+		// or the front with last=False (OrderedDict.move_to_end).
+		if len(args) < 1 || len(args) > 2 {
+			return errors.NewError("move_to_end() takes 1-2 arguments (%d given)", len(args))
+		}
+		last, lerr := dictLastArg(args, keywords, 1, "move_to_end")
+		if lerr != nil {
+			return lerr
+		}
+		key, rerr := evalHashKeyChecked(ctx, args[0])
+		if rerr != nil {
+			return rerr
+		}
+		if !dict.MoveToEnd(key, last) {
+			rendered, rerr := renderConvertedValue(ctx, args[0], "r", env)
+			if rerr != nil {
+				return rerr
+			}
+			return &object.Exception{Message: rendered, ExceptionType: object.ExceptionTypeKeyError, Raised: true}
+		}
+		return NULL
 	case "fromkeys":
 		// dict.fromkeys(iterable[, value]) - create new dict with keys from iterable
 		if len(args) < 1 || len(args) > 2 {
@@ -635,7 +671,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 			return errors.NewError("pop() takes at most 1 argument (%d given)", len(args))
 		}
 		if len(list.Elements) == 0 {
-			return errors.NewError("pop from empty list")
+			return &object.Exception{Message: "pop from empty list", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 		}
 		idx := len(list.Elements) - 1
 		if len(args) == 1 {
@@ -648,7 +684,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 				idx = len(list.Elements) + idx
 			}
 			if idx < 0 || idx >= len(list.Elements) {
-				return errors.NewError("pop index out of range")
+				return &object.Exception{Message: "pop index out of range", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 			}
 		}
 		result := list.Elements[idx]
@@ -2599,4 +2635,27 @@ func bytesFields(data []byte) [][]byte {
 		out = [][]byte{}
 	}
 	return out
+}
+
+// dictLastArg reads the optional `last` flag of popitem/move_to_end: the
+// positional argument at index pos, or the last= keyword; default True.
+func dictLastArg(args []object.Object, keywords map[string]object.Object, pos int, method string) (bool, object.Object) {
+	last := true
+	given := false
+	if len(args) > pos {
+		last, given = isTruthy(args[pos]), true
+	}
+	for name, v := range keywords {
+		if name != "last" {
+			return false, errors.NewTypeErrorTagged("%s() got an unexpected keyword argument '%s'", method, name)
+		}
+		if given {
+			return false, errors.NewTypeErrorTagged("%s() got multiple values for argument 'last'", method)
+		}
+		last = isTruthy(v)
+	}
+	if method == "popitem" && len(args) > 1 {
+		return false, errors.NewTypeErrorTagged("popitem() takes at most 1 argument (%d given)", len(args))
+	}
+	return last, nil
 }

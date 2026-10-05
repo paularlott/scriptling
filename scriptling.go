@@ -347,7 +347,7 @@ func (p *Scriptling) loadLibraryWithDepth(ctx context.Context, name string, dept
 					libDict := lib.GetDict()
 					for k, v := range libDict.Pairs {
 						if _, exists := existingDict.Pairs[k]; !exists {
-							existingDict.Pairs[k] = v
+							existingDict.Store(k, v.Key, v.Value)
 						}
 					}
 					return nil
@@ -1155,7 +1155,7 @@ func (p *Scriptling) loadLibraryIntoEnv(ctx context.Context, name string, env *o
 			if existingDict, ok := existing.(*object.Dict); ok {
 				for k, v := range existingDict.Pairs {
 					if _, exists := libDict.Pairs[k]; !exists {
-						libDict.Pairs[k] = v
+						libDict.Store(k, v.Key, v.Value)
 					}
 				}
 			}

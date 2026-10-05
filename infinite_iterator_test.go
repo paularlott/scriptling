@@ -72,12 +72,27 @@ func TestFilterOverEndlessIteratorHonoursTimeout(t *testing.T) {
 	}
 }
 
+// Dicts are insertion-ordered, so walking two views of one dict together pairs
+// each key with its own value, as in Python.
+func TestZipOfDictViewsPairsKeysWithValues(t *testing.T) {
+	p := New()
+	stdlib.RegisterAll(p)
+	res, err := p.Eval(`d = {"b": 1, "a": 2, "c": 3}
+d["z"] = 4
+del d["a"]
+list(zip(d.keys(), d.values())) == list(d.items()) and list(zip(d.keys(), d.values())) == [("b", 1), ("c", 3), ("z", 4)]`)
+	if err != nil {
+		t.Fatalf("zip over dict views failed: %v", err)
+	}
+	if res.Inspect() != "True" {
+		t.Fatalf("zip(d.keys(), d.values()) did not pair in insertion order: %s", res.Inspect())
+	}
+}
+
 // Script-level behaviours CPython does not share, so they are checked here
 // rather than in the shared Python-compatible test script.
 func TestScriptlingOnlyErrors(t *testing.T) {
 	for script, want := range map[string]string{
-		`d = {"a": 1, "b": 2}
-list(zip(d.keys(), d.values()))`: "dict order is unspecified",
 		"x = r\"\"\"C:\\dir\\\"\"\"\nprint(1)": "unterminated string literal",
 		`x = "abc`:                             "unterminated string literal",
 	} {

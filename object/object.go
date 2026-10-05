@@ -2071,14 +2071,17 @@ func deepCopyDict(d *Dict) *Dict {
 	if d == nil {
 		return nil
 	}
-	pairs := make(map[string]DictPair, len(d.Pairs))
-	for k, v := range d.Pairs {
+	out := NewDictSized(len(d.Pairs))
+	out.DefaultFactory = d.DefaultFactory
+	for _, k := range d.OrderedKeys() {
+		v := d.Pairs[k]
 		if nested, ok := v.Value.(*Dict); ok {
 			v.Value = deepCopyDict(nested)
 		}
-		pairs[k] = v
+		out.Store(k, v.Key, v.Value)
 	}
-	return &Dict{Pairs: pairs, Module: d.Module}
+	out.Module = d.Module
+	return out
 }
 
 // ResetStore removes all keys from the environment store except those in keep.
@@ -2217,6 +2220,22 @@ func (t *Tuple) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 type Dict struct {
 	Pairs map[string]DictPair
+	// order lists canonical keys in insertion order, as Python dicts do. Each
+	// entry carries the sequence number of the pair it was made for, so Delete
+	// can be O(1): it only drops the Pairs entry, and a stale order entry
+	// (key gone, or re-inserted under a newer sequence) is skipped on read and
+	// swept by compact(). Pairs written directly (Go code that bypasses Store)
+	// have sequence 0 and no order entry; ordered reads place them first, in
+	// sorted order, so the result is deterministic.
+	order   []orderEntry
+	head    int // order[:head] is dead; deleting the oldest key just advances it
+	nextSeq uint64
+	stale   int // stale entries inside order[head:] (deleted pairs not at either end)
+	// DefaultFactory makes this a defaultdict: reading a missing key calls it
+	// (no arguments), stores the result under that key and returns it. A
+	// *Null factory (defaultdict(None)) behaves like a plain dict. nil for
+	// ordinary dicts.
+	DefaultFactory Object
 	// Module is the import name when this dict is a library module
 	// ("math", "scriptling.runtime.kv"), empty for an ordinary dict.
 	// Modules display as <module 'math'> and expose only their members.
@@ -2226,6 +2245,14 @@ type Dict struct {
 type DictPair struct {
 	Key   Object
 	Value Object
+	seq   uint64 // insertion sequence; 0 = written outside Store (order unknown)
+}
+
+// orderEntry records one insertion: the canonical key and the sequence number
+// its pair was stored under.
+type orderEntry struct {
+	key string
+	seq uint64
 }
 
 // StringKey returns the string representation of the key.
@@ -2240,12 +2267,330 @@ func (p DictPair) StringKey() string {
 
 // NewStringDict creates a Dict from string key-value pairs.
 // Usage: NewStringDict(map[string]Object{"key": value, ...})
+// A Go map has no order, so entries are inserted in sorted key order, which
+// makes the resulting dict deterministic.
 func NewStringDict(entries map[string]Object) *Dict {
-	pairs := make(map[string]DictPair, len(entries))
-	for k, v := range entries {
-		pairs[DictKey(&String{value: k})] = DictPair{Key: &String{value: k}, Value: v}
+	d := NewDictSized(len(entries))
+	keys := make([]string, 0, len(entries))
+	for k := range entries {
+		keys = append(keys, k)
 	}
-	return &Dict{Pairs: pairs}
+	sort.Strings(keys)
+	for _, k := range keys {
+		d.Store(DictKey(&String{value: k}), &String{value: k}, entries[k])
+	}
+	return d
+}
+
+// DefaultDictType is the collections.defaultdict constructor, registered by
+// the stdlib so isinstance(d, defaultdict) can recognise it. FactoryRepr
+// renders a default factory the way Python does (<class 'list'>); the
+// evaluator installs it. Both are nil until then.
+var (
+	DefaultDictType *Builtin
+	FactoryRepr     func(factory Object) string
+)
+
+// IsDefaultDict reports whether the dict was created by defaultdict().
+func (d *Dict) IsDefaultDict() bool { return d.DefaultFactory != nil }
+
+// NewDict returns an empty, insertion-ordered dict.
+func NewDict() *Dict {
+	return &Dict{Pairs: make(map[string]DictPair)}
+}
+
+// NewDictSized returns an empty, insertion-ordered dict with room for n pairs.
+func NewDictSized(n int) *Dict {
+	return &Dict{Pairs: make(map[string]DictPair, n), order: make([]orderEntry, 0, n)}
+}
+
+// Store inserts or updates key → value, extending the insertion order for
+// new keys (Python dict semantics: an existing key keeps its position and its
+// original key object). canonical must be the dict's hash key for key, as
+// used in Pairs (DictKey, or evalHashKeyChecked's result).
+func (d *Dict) Store(canonical string, key Object, value Object) {
+	if d.Pairs == nil {
+		d.Pairs = make(map[string]DictPair)
+	}
+	if old, exists := d.Pairs[canonical]; exists {
+		d.Pairs[canonical] = DictPair{Key: old.Key, Value: value, seq: old.seq}
+		return
+	}
+	d.nextSeq++
+	d.Pairs[canonical] = DictPair{Key: key, Value: value, seq: d.nextSeq}
+	d.order = append(d.order, orderEntry{key: canonical, seq: d.nextSeq})
+}
+
+// StoreFrom copies every pair from other into d, preserving other's
+// insertion order; later stores override earlier keys as in Python.
+func (d *Dict) StoreFrom(other *Dict) {
+	for _, k := range other.OrderedKeys() {
+		pair := other.Pairs[k]
+		d.Store(k, pair.Key, pair.Value)
+	}
+}
+
+// live reports whether an order entry still refers to a live pair.
+func (d *Dict) live(e orderEntry) (DictPair, bool) {
+	p, ok := d.Pairs[e.key]
+	return p, ok && p.seq == e.seq
+}
+
+// Delete removes a key. O(1) amortized: the order entry is left in place and
+// skipped as stale (a delete at the tail, as popitem does, trims it at once),
+// and compact() sweeps stale entries once they outnumber live ones. Deleting
+// an absent key is a no-op.
+func (d *Dict) Delete(canonical string) {
+	pair, ok := d.Pairs[canonical]
+	if !ok {
+		return
+	}
+	delete(d.Pairs, canonical)
+	if pair.seq == 0 {
+		return // never had an order entry
+	}
+	live := d.order[d.head:]
+	if n := len(live); n > 0 && live[n-1].seq == pair.seq {
+		// Newest key (popitem, LIFO): drop it, then any stale entries it hid.
+		d.order = d.order[:len(d.order)-1]
+		for len(d.order) > d.head {
+			if _, ok := d.live(d.order[len(d.order)-1]); ok {
+				break
+			}
+			d.order = d.order[:len(d.order)-1]
+			if d.stale > 0 {
+				d.stale--
+			}
+		}
+		return
+	}
+	if len(live) > 0 && live[0].seq == pair.seq {
+		// Oldest key (FIFO / LRU eviction): advance past it and any stale
+		// entries behind it.
+		d.head++
+		for d.head < len(d.order) {
+			if _, ok := d.live(d.order[d.head]); ok {
+				break
+			}
+			d.order[d.head] = orderEntry{}
+			d.head++
+			if d.stale > 0 {
+				d.stale--
+			}
+		}
+		d.order[d.head-1] = orderEntry{} // release the key string
+		if d.head == len(d.order) {
+			d.order, d.head, d.stale = d.order[:0], 0, 0 // emptied: reuse the slice
+			return
+		}
+		if d.head > 32 && d.head > len(d.order)/2 {
+			d.compact()
+		}
+		return
+	}
+	d.stale++
+	if d.stale > 32 && d.stale > len(d.Pairs) {
+		d.compact()
+	}
+}
+
+// compact rebuilds order from its live entries, dropping the dead prefix and
+// every stale entry.
+func (d *Dict) compact() {
+	kept := make([]orderEntry, 0, len(d.Pairs)+len(d.Pairs)/4+1)
+	for _, e := range d.order[d.head:] {
+		if _, live := d.live(e); live {
+			kept = append(kept, e)
+		}
+	}
+	d.order = kept
+	d.head = 0
+	d.stale = 0
+}
+
+// Clear removes every entry and the recorded insertion order. Use it instead
+// of replacing Pairs, which would leave stale order entries behind.
+func (d *Dict) Clear() {
+	d.Pairs = make(map[string]DictPair)
+	d.order = nil
+	d.head = 0
+	d.stale = 0
+}
+
+// ResetOrder forgets the recorded insertion order: every pair becomes
+// order-unknown (sequence 0), so ordered reads fall back to sorted keys.
+func (d *Dict) ResetOrder() {
+	for k, p := range d.Pairs {
+		p.seq = 0
+		d.Pairs[k] = p
+	}
+	d.order = nil
+	d.head = 0
+	d.stale = 0
+}
+
+// walk visits the pairs in insertion order, calling visit with each canonical
+// key and pair. Pairs whose order is unknown (written without Store) come
+// first in sorted key order. No pair is ever lost or repeated.
+func (d *Dict) walk(visit func(canonical string, p DictPair)) {
+	visited := 0
+	var unknown []string
+	if len(d.order)-d.head != len(d.Pairs) || d.stale > 0 {
+		for k, p := range d.Pairs {
+			if p.seq == 0 {
+				unknown = append(unknown, k)
+			}
+		}
+		sort.Strings(unknown)
+		for _, k := range unknown {
+			visit(k, d.Pairs[k])
+			visited++
+		}
+	}
+	for _, e := range d.order[d.head:] {
+		if p, live := d.live(e); live {
+			visit(e.key, p)
+			visited++
+		}
+	}
+	if visited < len(d.Pairs) {
+		// Defensive: pairs whose sequence has no order entry (e.g. order was
+		// dropped under them). Emit them rather than lose them.
+		seen := make(map[string]struct{}, visited)
+		d.walkSeen(seen)
+		var rest []string
+		for k := range d.Pairs {
+			if _, ok := seen[k]; !ok {
+				rest = append(rest, k)
+			}
+		}
+		sort.Strings(rest)
+		for _, k := range rest {
+			visit(k, d.Pairs[k])
+		}
+	}
+}
+
+func (d *Dict) walkSeen(seen map[string]struct{}) {
+	for k, p := range d.Pairs {
+		if p.seq == 0 {
+			seen[k] = struct{}{}
+		}
+	}
+	for _, e := range d.order[d.head:] {
+		if _, live := d.live(e); live {
+			seen[e.key] = struct{}{}
+		}
+	}
+}
+
+// OrderedKeys returns canonical keys in insertion order (pairs of unknown
+// order first, sorted). Mutating the dict while iterating the result is safe:
+// it is a snapshot.
+func (d *Dict) OrderedKeys() []string {
+	keys := make([]string, 0, len(d.Pairs))
+	d.walk(func(k string, _ DictPair) { keys = append(keys, k) })
+	return keys
+}
+
+// OrderedPairs returns the pairs in insertion order. Only order-visible reads
+// (iteration, repr, views, serialization) need this; lookups and equality stay
+// on Pairs directly.
+func (d *Dict) OrderedPairs() []DictPair {
+	pairs := make([]DictPair, 0, len(d.Pairs))
+	d.walk(func(_ string, p DictPair) { pairs = append(pairs, p) })
+	return pairs
+}
+
+// MoveToEnd repositions an existing key at the end (last) or the front of the
+// insertion order, as OrderedDict.move_to_end does, and reports whether the
+// key exists. O(1) amortized: the old order entry goes stale and the key gets
+// a fresh sequence number at its new position.
+func (d *Dict) MoveToEnd(canonical string, last bool) bool {
+	pair, ok := d.Pairs[canonical]
+	if !ok {
+		return false
+	}
+	live := d.order[d.head:]
+	if pair.seq != 0 && len(live) > 0 {
+		if last && live[len(live)-1].seq == pair.seq {
+			return true // already last
+		}
+		if !last && live[0].seq == pair.seq {
+			return true // already first
+		}
+	}
+	if pair.seq != 0 {
+		d.stale++ // its old entry no longer matches
+	}
+	d.nextSeq++
+	pair.seq = d.nextSeq
+	d.Pairs[canonical] = pair
+	entry := orderEntry{key: canonical, seq: pair.seq}
+	if last {
+		d.order = append(d.order, entry)
+	} else {
+		if d.head == 0 {
+			// Open a gap in front so repeated moves-to-front stay O(1) amortized.
+			gap := len(d.order)/2 + 8
+			grown := make([]orderEntry, gap+len(d.order), gap+len(d.order)+len(d.order)/2)
+			copy(grown[gap:], d.order)
+			d.order, d.head = grown, gap
+		}
+		d.head--
+		d.order[d.head] = entry
+	}
+	if d.stale > 32 && d.stale > len(d.Pairs) {
+		d.compact()
+	}
+	return true
+}
+
+// FirstInserted returns the oldest pair that is still live, with its
+// canonical key — what popitem(last=False) removes. Pairs of unknown order
+// are older than every ordered pair, so the result matches OrderedKeys.
+func (d *Dict) FirstInserted() (string, DictPair, bool) {
+	if len(d.order)-d.head != len(d.Pairs) || d.stale > 0 {
+		var first string
+		found := false
+		for k, p := range d.Pairs {
+			if p.seq == 0 && (!found || k < first) {
+				first, found = k, true
+			}
+		}
+		if found {
+			return first, d.Pairs[first], true
+		}
+	}
+	for _, e := range d.order[d.head:] {
+		if p, live := d.live(e); live {
+			return e.key, p, true
+		}
+	}
+	return "", DictPair{}, false
+}
+
+// LastInserted returns the most recently inserted pair that is still live,
+// with its canonical key — the pair Python's popitem() removes. Pairs of
+// unknown order are treated as older than every ordered pair, so the result
+// is consistent with OrderedKeys.
+func (d *Dict) LastInserted() (string, DictPair, bool) {
+	for i := len(d.order) - 1; i >= d.head; i-- {
+		if p, live := d.live(d.order[i]); live {
+			return d.order[i].key, p, true
+		}
+	}
+	var last string
+	found := false
+	for k, p := range d.Pairs {
+		if p.seq == 0 && (!found || k > last) {
+			last, found = k, true
+		}
+	}
+	if !found {
+		return "", DictPair{}, false
+	}
+	return last, d.Pairs[last], true
 }
 
 func (d *Dict) Type() ObjectType { return DICT_OBJ }
@@ -2276,7 +2621,8 @@ func (d *Dict) GetByString(name string) (DictPair, bool) {
 
 // SetByString sets a pair using a string key (convenience for attribute-style access).
 func (d *Dict) SetByString(name string, value Object) {
-	d.Pairs[DictStringKey(name)] = DictPair{Key: &String{value: name}, Value: value}
+	k := DictStringKey(name)
+	d.Store(k, &String{value: name}, value)
 }
 
 // HasByString checks if a string key exists in the dict.
@@ -2290,7 +2636,7 @@ func (d *Dict) DeleteByString(name string) bool {
 	k := DictStringKey(name)
 	_, ok := d.Pairs[k]
 	if ok {
-		delete(d.Pairs, k)
+		d.Delete(k)
 	}
 	return ok
 }
@@ -2413,8 +2759,8 @@ type Class struct {
 	// IsEnum marks classes deriving from enum.Enum: construction looks up
 	// members by value and iteration yields the members, in EnumMembers
 	// order. IntEnum additionally compares equal to plain values.
-	IsEnum     bool
-	IsIntEnum  bool
+	IsEnum      bool
+	IsIntEnum   bool
 	EnumMembers []Object
 	// FieldNames lists the class body's annotated names in source order
 	// (@dataclass fields); AssignNames the plain top-level assignment
@@ -2879,11 +3225,12 @@ func CloneObject(obj Object) Object {
 		}
 		return &Tuple{Elements: elems}
 	case *Dict:
-		pairs := make(map[string]DictPair, len(v.Pairs))
-		for k, p := range v.Pairs {
-			pairs[k] = DictPair{Key: CloneObject(p.Key), Value: CloneObject(p.Value)}
+		out := NewDict()
+		for _, k := range v.OrderedKeys() {
+			p := v.Pairs[k]
+			out.Store(k, CloneObject(p.Key), CloneObject(p.Value))
 		}
-		return &Dict{Pairs: pairs}
+		return out
 	case *Set:
 		elements := make(map[string]Object, len(v.Elements))
 		for k, e := range v.Elements {

@@ -58,7 +58,7 @@ print(json.dumps({"ok": False}))
 	if err != nil {
 		t.Fatalf("Error: %v", err)
 	}
-	want := "true\n{\"ok\":false}\n"
+	want := "true\n{\"ok\": false}\n"
 	if got := p.GetOutput(); got != want {
 		t.Errorf("json.dumps output = %q, want %q", got, want)
 	}

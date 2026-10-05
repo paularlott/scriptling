@@ -7,6 +7,7 @@ import (
 	"math"
 	"runtime"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -785,13 +786,9 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			if !ok {
 				return errors.NewTypeError("dict", right.Type().String())
 			}
-			merged := &object.Dict{Pairs: make(map[string]object.DictPair, len(l.Pairs)+len(r.Pairs))}
-			for k, v := range l.Pairs {
-				merged.Pairs[k] = v
-			}
-			for k, v := range r.Pairs {
-				merged.Pairs[k] = v
-			}
+			merged := object.NewDictSized(len(l.Pairs) + len(r.Pairs))
+			merged.StoreFrom(l)
+			merged.StoreFrom(r)
 			return merged
 		}
 	case *object.Set:
@@ -1852,7 +1849,7 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 		if rerr != nil {
 			return hashKeyAssignError(rerr)
 		}
-		o.Pairs[key] = object.DictPair{Key: index, Value: value}
+		o.Store(key, index, value)
 		return nil
 	case *object.Instance:
 		// For explicit bracket access (not dot), call __setitem__ if defined
@@ -2518,12 +2515,20 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 
 		// Set **kwargs dict if defined
 		if fp.kwargs != nil {
-			kwargsDict := &object.Dict{Pairs: make(map[string]object.DictPair, len(extraKwargs))}
-			for key, value := range extraKwargs {
-				kwargsDict.Pairs[object.DictKey(object.NewString(key))] = object.DictPair{
-					Key:   object.NewString(key),
-					Value: value,
-				}
+			// Call-site keyword order is not kept (keywords arrive as a map),
+			// so the dict is filled in sorted key order: deterministic rather
+			// than random per call.
+			kwargsDict := object.NewDictSized(len(extraKwargs))
+			var keyBuf [8]string
+			names := keyBuf[:0]
+			for key := range extraKwargs {
+				names = append(names, key)
+			}
+			if len(names) > 1 {
+				sort.Strings(names)
+			}
+			for _, key := range names {
+				kwargsDict.SetByString(key, extraKwargs[key])
 			}
 			env.Set(fp.kwargs.Value(), kwargsDict)
 		}
@@ -2545,7 +2550,7 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 	} else {
 		// No keywords - set empty **kwargs dict if defined
 		if fp.kwargs != nil {
-			env.Set(fp.kwargs.Value(), &object.Dict{Pairs: make(map[string]object.DictPair)})
+			env.Set(fp.kwargs.Value(), object.NewDict())
 		}
 
 		missing := func(i int) (object.Object, bool) {
@@ -4094,7 +4099,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			if _, ok := o.Pairs[key]; !ok {
 				return raisedAssignmentError(object.ExceptionTypeKeyError, index.Inspect())
 			}
-			delete(o.Pairs, key)
+			o.Delete(key)
 			return nil
 		case *object.Instance:
 			if !target.IsDotAccess {

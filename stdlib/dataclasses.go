@@ -417,9 +417,9 @@ func dataclassesAsDict(obj object.Object) object.Object {
 		}
 		return &object.Tuple{Elements: elems}
 	case *object.Dict:
-		d := &object.Dict{Pairs: make(map[string]object.DictPair, len(v.Pairs))}
-		for k, pair := range v.Pairs {
-			d.Pairs[k] = object.DictPair{Key: pair.Key, Value: dataclassesAsDict(pair.Value)}
+		d := object.NewDict()
+		for _, pair := range v.OrderedPairs() {
+			d.Store(object.DictKey(pair.Key), pair.Key, dataclassesAsDict(pair.Value))
 		}
 		return d
 	}

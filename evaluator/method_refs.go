@@ -26,7 +26,7 @@ var builtinMethodNames = map[object.ObjectType][]string{
 		"append", "clear", "copy", "count", "extend", "index", "insert", "pop", "remove", "reverse", "sort",
 	},
 	object.DICT_OBJ: {
-		"clear", "copy", "fromkeys", "get", "items", "keys", "pop", "setdefault", "update", "values",
+		"clear", "copy", "fromkeys", "get", "items", "keys", "move_to_end", "pop", "popitem", "setdefault", "update", "values",
 	},
 	object.TUPLE_OBJ: {"count", "index"},
 	object.SET_OBJ: {

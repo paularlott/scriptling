@@ -108,8 +108,8 @@ func TestImportStandardLibrary(t *testing.T) {
 	}
 
 	data, objErr := p.GetVar("data")
-	if objErr != nil || data != `{"key":"value"}` {
-		t.Errorf("expected {\"key\":\"value\"}, got %v", data)
+	if objErr != nil || data != `{"key": "value"}` {
+		t.Errorf("expected {\"key\": \"value\"}, got %v", data)
 	}
 }
 
@@ -1402,7 +1402,7 @@ again = json.dumps({"k": 2})`); err != nil {
 		if err != nil {
 			t.Fatalf("expected 'again' to be set after re-import, got error: %v", err)
 		}
-		if !strings.Contains(fmt.Sprintf("%v", v), `"k":2`) {
+		if !strings.Contains(fmt.Sprintf("%v", v), `"k": 2`) {
 			t.Errorf("expected again to serialise k=2, got %v", v)
 		}
 		// The pre-Reset globals must not leak across the reset boundary.

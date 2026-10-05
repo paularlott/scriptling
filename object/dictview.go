@@ -1,15 +1,13 @@
 package object
 
 // CreateIterator returns an iterator over the dict's keys.
-// In Python, iterating a dict yields its keys (same as dict.keys()).
+// In Python, iterating a dict yields its keys (same as dict.keys()), in
+// insertion order.
 func (d *Dict) CreateIterator() *Iterator {
 	// Snapshot keys at the moment iteration begins, like DictKeys does, so
 	// concurrent map writes can't corrupt the range. Deleted keys are skipped
 	// to mirror view semantics.
-	keys := make([]string, 0, len(d.Pairs))
-	for k := range d.Pairs {
-		keys = append(keys, k)
-	}
+	keys := d.OrderedKeys()
 
 	index := 0
 	return &Iterator{
@@ -53,12 +51,10 @@ func (dk *DictKeys) CreateIterator() *Iterator {
 	// To be truly dynamic/lazy, we'd need to iterate the map directly, but Go maps
 	// don't support safe concurrent modification/iteration easily without restart.
 	// However, "View" objects in Python reflect changes.
-	// Let's grab the keys at the moment CreateIterator is called.
+	// Let's grab the keys at the moment CreateIterator is called, in
+	// insertion order.
 
-	keys := make([]string, 0, len(dk.Dict.Pairs))
-	for k := range dk.Dict.Pairs {
-		keys = append(keys, k)
-	}
+	keys := dk.Dict.OrderedKeys()
 
 	index := 0
 	return &Iterator{
@@ -98,10 +94,7 @@ func (dv *DictValues) CoerceInt() (int64, Object)     { return 0, errMustBeInteg
 func (dv *DictValues) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 func (dv *DictValues) CreateIterator() *Iterator {
-	keys := make([]string, 0, len(dv.Dict.Pairs))
-	for k := range dv.Dict.Pairs {
-		keys = append(keys, k)
-	}
+	keys := dv.Dict.OrderedKeys()
 
 	index := 0
 	return &Iterator{
@@ -140,10 +133,7 @@ func (di *DictItems) CoerceInt() (int64, Object)     { return 0, errMustBeIntege
 func (di *DictItems) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 func (di *DictItems) CreateIterator() *Iterator {
-	keys := make([]string, 0, len(di.Dict.Pairs))
-	for k := range di.Dict.Pairs {
-		keys = append(keys, k)
-	}
+	keys := di.Dict.OrderedKeys()
 
 	index := 0
 	return &Iterator{

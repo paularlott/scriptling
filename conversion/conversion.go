@@ -3,22 +3,78 @@ package conversion
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
 
+// maxJSONDepth bounds nesting so a hostile document cannot exhaust the stack.
+const maxJSONDepth = 10000
+
 // ParseJSON parses a JSON string and returns a Scriptling object.
-// It uses UseNumber() to preserve large integers.
+// It uses UseNumber() to preserve large integers, and builds dicts in the
+// document's key order (as Python's json.loads does) rather than through a Go
+// map, whose iteration order is random.
 func ParseJSON(jsonStr string) (object.Object, error) {
-	var result interface{}
 	decoder := json.NewDecoder(strings.NewReader(jsonStr))
 	decoder.UseNumber()
-	if err := decoder.Decode(&result); err != nil {
+	return decodeJSONValue(decoder, 0)
+}
+
+// decodeJSONValue reads one JSON value from the token stream, keeping object
+// keys in document order. Duplicate keys keep the first position and the last
+// value, as in Python.
+func decodeJSONValue(dec *json.Decoder, depth int) (object.Object, error) {
+	tok, err := dec.Token()
+	if err != nil {
 		return nil, err
 	}
-	return FromGo(result), nil
+	delim, isDelim := tok.(json.Delim)
+	if !isDelim {
+		return FromGo(tok), nil
+	}
+	if depth >= maxJSONDepth {
+		return nil, fmt.Errorf("maximum JSON nesting depth exceeded")
+	}
+	switch delim {
+	case '{':
+		d := object.NewDict()
+		for dec.More() {
+			keyTok, err := dec.Token()
+			if err != nil {
+				return nil, err
+			}
+			key, ok := keyTok.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid object key %v", keyTok)
+			}
+			val, err := decodeJSONValue(dec, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			d.Store(object.DictStringKey(key), object.NewString(key), val)
+		}
+		if _, err := dec.Token(); err != nil { // closing }
+			return nil, err
+		}
+		return d, nil
+	case '[':
+		elements := []object.Object{}
+		for dec.More() {
+			val, err := decodeJSONValue(dec, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			elements = append(elements, val)
+		}
+		if _, err := dec.Token(); err != nil { // closing ]
+			return nil, err
+		}
+		return &object.List{Elements: elements}, nil
+	}
+	return nil, fmt.Errorf("unexpected JSON delimiter %q", delim)
 }
 
 // MustParseJSON parses a JSON string and returns a Scriptling object,
@@ -90,16 +146,24 @@ func FromGo(v interface{}) object.Object {
 		}
 		return &object.List{Elements: elements}
 	case map[string]interface{}:
-		pairs := make(map[string]object.DictPair, len(v))
-		for key, val := range v {
-			pairs[object.DictStringKey(key)] = object.DictPair{
-				Key:   object.NewString(key),
-				Value: FromGo(val),
-			}
+		// A Go map has no order; insert in sorted key order so the dict is
+		// deterministic (and ordered for later mutation).
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			keys = append(keys, key)
 		}
-		return &object.Dict{Pairs: pairs}
+		sort.Strings(keys)
+		d := object.NewDictSized(len(v))
+		for _, key := range keys {
+			d.Store(object.DictStringKey(key), object.NewString(key), FromGo(v[key]))
+		}
+		return d
 	case map[interface{}]interface{}:
-		pairs := make(map[string]object.DictPair, len(v))
+		type kv struct {
+			key string
+			val interface{}
+		}
+		items := make([]kv, 0, len(v))
 		for key, val := range v {
 			keyStr := ""
 			switch k := key.(type) {
@@ -108,12 +172,14 @@ func FromGo(v interface{}) object.Object {
 			default:
 				keyStr = fmt.Sprintf("%v", k)
 			}
-			pairs[object.DictStringKey(keyStr)] = object.DictPair{
-				Key:   object.NewString(keyStr),
-				Value: FromGo(val),
-			}
+			items = append(items, kv{keyStr, val})
 		}
-		return &object.Dict{Pairs: pairs}
+		sort.Slice(items, func(i, j int) bool { return items[i].key < items[j].key })
+		d := object.NewDictSized(len(items))
+		for _, it := range items {
+			d.Store(object.DictStringKey(it.key), object.NewString(it.key), FromGo(it.val))
+		}
+		return d
 	default:
 		// For unknown types, try to convert to JSON then parse
 		jsonBytes, err := json.Marshal(v)

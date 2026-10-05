@@ -2,6 +2,7 @@ package stdlib
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"github.com/paularlott/scriptling/errors"
@@ -10,150 +11,81 @@ import (
 
 // Counter class for counting elements
 
-// DefaultDict class for dicts with default factory behavior
-var DefaultDictClass = &object.Class{
-	Name: "DefaultDict",
-	Methods: map[string]object.Object{
-		"__init__": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				// __init__(self, default_factory) - Initialize defaultdict
-				if err := errors.ExactArgs(args, 2); err != nil {
+// defaultDictBuiltin is collections.defaultdict: an ordinary insertion-ordered
+// dict that carries a default factory. Reading a missing key calls the factory
+// with no arguments, stores the result and returns it; get(), `in`, pop() and
+// the rest never invoke it, as in Python.
+var defaultDictBuiltin = &object.Builtin{
+	Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		if len(args) > 2 {
+			return errors.NewTypeErrorTagged("defaultdict expected at most 2 arguments, got %d", len(args))
+		}
+		var factory object.Object = &object.Null{}
+		if len(args) > 0 {
+			factory = args[0]
+		}
+		switch factory.(type) {
+		case *object.Null, *object.Builtin, *object.Function, *object.LambdaFunction, *object.Class, *object.BoundMethod:
+		default:
+			return errors.NewTypeErrorTagged("first argument must be callable or None")
+		}
+		dd := object.NewDict()
+		dd.DefaultFactory = factory
+		if len(args) == 2 {
+			switch init := args[1].(type) {
+			case *object.Dict:
+				dd.StoreFrom(init)
+			case *object.List:
+				if err := defaultDictAddPairs(dd, init.Elements); err != nil {
 					return err
 				}
-				dd := args[0].(*object.Instance)
-				factory := args[1]
-
-				// Store factory
-				dd.SetField("__default_factory__", factory)
-				return &object.Null{}
-			},
-		},
-		"__getitem__": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				// __getitem__(self, key) - Get value with default creation
-				if err := errors.ExactArgs(args, 2); err != nil {
+			case *object.Tuple:
+				if err := defaultDictAddPairs(dd, init.Elements); err != nil {
 					return err
 				}
-				dd := args[0].(*object.Instance)
-				key := args[1].Inspect()
-
-				// Check if key exists
-				if value, exists := dd.GetField(key); exists {
-					return value
-				}
-
-				// Get factory
-				factory, hasFactory := dd.GetField("__default_factory__")
-				if !hasFactory {
-					return &object.Null{}
-				}
-
-				// Create default value based on factory
-				var defaultValue object.Object
-				switch f := factory.(type) {
-				case *object.Builtin:
-					// Call builtin with appropriate default arg
-					// For int(), float(), str(), list(), dict() we call with no args or default values
-					// Try calling with no args first (for list, dict constructors)
-					defaultValue = f.Fn(ctx, object.NewKwargs(nil))
-					if object.IsError(defaultValue) {
-						// If that fails, try with a default value (for int, float, str)
-						defaultValue = f.Fn(ctx, object.NewKwargs(nil), object.NewInteger(0))
-						if object.IsError(defaultValue) {
-							return defaultValue
-						}
-					}
-				case *object.String:
-					// Type name as string (for backward compatibility)
-					switch f.StringValue() {
-					case "int":
-						defaultValue = object.NewInteger(0)
-					case "float":
-						defaultValue = object.NewFloat(0)
-					case "str":
-						defaultValue = object.NewString("")
-					case "list":
-						defaultValue = &object.List{Elements: []object.Object{}}
-					case "dict":
-						defaultValue = &object.Dict{Pairs: make(map[string]object.DictPair)}
-					default:
-						return errors.NewError("unknown default factory type: %s", f.StringValue())
-					}
-				default:
-					return errors.NewError("default_factory must be a builtin function or type name")
-				}
-
-				// Store and return
-				dd.SetField(key, defaultValue)
-				return defaultValue
-			},
-			HelpText: `__getitem__(key) - Get value with default creation (supports d[key] syntax)`,
-		},
-		"__setitem__": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				// __setitem__(self, key, value) - Set value
-				if err := errors.ExactArgs(args, 3); err != nil {
-					return err
-				}
-				dd := args[0].(*object.Instance)
-				key := args[1].Inspect()
-				value := args[2]
-
-				dd.SetField(key, value)
-				return &object.Null{}
-			},
-			HelpText: `__setitem__(key, value) - Set value (supports d[key] = value syntax)`,
-		},
-		"__contains__": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				// __contains__(self, key) - key in d; entries are fields
-				if err := errors.ExactArgs(args, 2); err != nil {
-					return err
-				}
-				dd := args[0].(*object.Instance)
-				_, exists := dd.GetField(args[1].Inspect())
-				return object.NewBoolean(exists)
-			},
-			HelpText: `__contains__(key) - Support the ` + "`in`" + ` operator`,
-		},
-		"keys": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				// keys() - entry names, used by dict(defaultdict)
-				if err := errors.ExactArgs(args, 1); err != nil {
-					return err
-				}
-				dd := args[0].(*object.Instance)
-				names := []object.Object{}
-				dd.RangeFields(func(name string, _ object.Object) bool {
-					if !strings.HasPrefix(name, "__") {
-						names = append(names, object.NewString(name))
-					}
-					return true
-				})
-				return &object.List{Elements: names}
-			},
-			HelpText: `keys() - The mapping's keys`,
-		},
-		"__len__": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				// __len__(self) - Number of entries (internal dunder fields excluded)
-				if err := errors.ExactArgs(args, 1); err != nil {
-					return err
-				}
-				dd := args[0].(*object.Instance)
-				count := 0
-				dd.RangeFields(func(name string, _ object.Object) bool {
-					if !strings.HasPrefix(name, "__") {
-						count++
-					}
-					return true
-				})
-				return object.NewInteger(int64(count))
-			},
-			HelpText: `__len__() - Number of entries`,
-		},
+			default:
+				return errors.NewTypeError("dict or iterable of pairs", args[1].Type().String())
+			}
+		}
+		for _, name := range kwargs.Keys() {
+			dd.SetByString(name, kwargs.Get(name))
+		}
+		return dd
 	},
+	HelpText: `defaultdict([default_factory[, init]]) - dict with default values
+
+Reading a missing key calls default_factory() (no arguments), stores the
+result and returns it. default_factory may be a type (int, list, set, dict,
+float, str), a function or a lambda; None makes a plain dict that raises
+KeyError. init is an optional dict or list of (key, value) pairs.
+
+Example:
+  counts = defaultdict(int)
+  for w in words:
+      counts[w] += 1
+  groups = defaultdict(list)
+  groups[key].append(item)
+  nested = defaultdict(lambda: defaultdict(int))`,
 }
+
+func defaultDictAddPairs(dd *object.Dict, items []object.Object) object.Object {
+	for _, item := range items {
+		var pair []object.Object
+		switch p := item.(type) {
+		case *object.Tuple:
+			pair = p.Elements
+		case *object.List:
+			pair = p.Elements
+		}
+		if len(pair) != 2 {
+			return errors.NewValueError("dictionary update sequence element must be a (key, value) pair")
+		}
+		dd.Store(object.DictKey(pair[0]), pair[0], pair[1])
+	}
+	return nil
+}
+
+func init() { object.DefaultDictType = defaultDictBuiltin }
 
 // createCounterInstance creates a new Counter instance
 
@@ -177,40 +109,41 @@ Example:
 		HelpText: `most_common(counter[, n]) - Same as counter.most_common(n)`,
 	},
 
+	"defaultdict": defaultDictBuiltin,
+	"DefaultDict": defaultDictBuiltin,
+
 	"OrderedDict": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// OrderedDict([items]) - Dict that remembers insertion order
 			// Note: In modern Python (3.7+), regular dicts maintain order
 			// Scriptling dicts also maintain order, so this just creates a dict
-			od := &object.Dict{Pairs: make(map[string]object.DictPair)}
+			od := object.NewDict()
 
-			if len(args) == 0 {
-				return od
+			if len(args) > 1 {
+				return errors.NewTypeErrorTagged("OrderedDict expected at most 1 argument, got %d", len(args))
 			}
-			if err := errors.MaxArgs(args, 1); err != nil {
-				return err
+			// Initialize from a dict or a list/tuple of (key, value) pairs.
+			if len(args) == 1 {
+				switch arg := args[0].(type) {
+				case *object.List:
+					if err := defaultDictAddPairs(od, arg.Elements); err != nil {
+						return err
+					}
+				case *object.Tuple:
+					if err := defaultDictAddPairs(od, arg.Elements); err != nil {
+						return err
+					}
+				case *object.Dict:
+					od.StoreFrom(arg)
+				default:
+					return errors.NewTypeError("list of tuples or dict", args[0].Type().String())
+				}
 			}
-
-			// Initialize from list of tuples or dict
-			switch arg := args[0].(type) {
-			case *object.List:
-				for _, elem := range arg.Elements {
-					tuple, ok := elem.(*object.Tuple)
-					if !ok || len(tuple.Elements) != 2 {
-						return errors.NewError("OrderedDict() items must be (key, value) tuples")
-					}
-					key := object.DictKey(tuple.Elements[0])
-					od.Pairs[key] = object.DictPair{
-						Key:   tuple.Elements[0],
-						Value: tuple.Elements[1],
-					}
-				}
-			case *object.Dict:
-				for k, v := range arg.Pairs {
-					od.Pairs[k] = v
-				}
-			default:
-				return errors.NewTypeError("list of tuples or dict", args[0].Type().String())
+			// Keyword entries (call order is not kept, so they go in sorted order).
+			names := kwargs.Keys()
+			sort.Strings(names)
+			for _, name := range names {
+				od.SetByString(name, kwargs.Get(name))
 			}
 			return od
 		},
@@ -705,9 +638,7 @@ Example:
 			// Merge all dicts (first has priority)
 			for i := len(args) - 1; i >= 0; i-- {
 				d := args[i].(*object.Dict)
-				for k, v := range d.Pairs {
-					chainMap.Pairs[k] = v
-				}
+				chainMap.StoreFrom(d)
 			}
 
 			return chainMap
@@ -724,9 +655,7 @@ Example:
   cm["b"]  # 2 (from d2)`,
 	},
 }, map[string]object.Object{
-	"Counter":     CounterClass,
-	"DefaultDict": DefaultDictClass,
-	"defaultdict": DefaultDictClass,
+	"Counter": CounterClass,
 }, "Python-compatible collections library for specialized container datatypes")
 
 // createDequeInstance wraps elements in a Deque object with Python's deque

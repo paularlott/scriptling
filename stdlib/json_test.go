@@ -10,15 +10,24 @@ import (
 )
 
 // TestJSONDumpsIndent: indent accepts a number of spaces (the common idiom)
-// and a string used verbatim; 0 newline-separates; keys are always sorted.
+// and a string used verbatim; 0 newline-separates; the default separators are
+// Python's (", ", ": ") and keys keep the dict's insertion order unless
+// sort_keys=True.
 func TestJSONDumpsIndent(t *testing.T) {
 	dumps := JSONLibrary.Functions()["dumps"]
 	ctx := context.Background()
 
-	dump := func(v object.Object, indent object.Object) string {
+	dump := func(v object.Object, indent object.Object, sortKeys ...bool) string {
 		kwargs := object.NewKwargs(nil)
 		if indent != nil {
 			kwargs = object.NewKwargs(map[string]object.Object{"indent": indent})
+		}
+		if len(sortKeys) > 0 && sortKeys[0] {
+			merged := map[string]object.Object{"sort_keys": object.NewBoolean(true)}
+			for k, v := range kwargs.Kwargs {
+				merged[k] = v
+			}
+			kwargs = object.NewKwargs(merged)
 		}
 		result := dumps.Fn(ctx, kwargs, v)
 		s, ok := result.(*object.String)
@@ -45,11 +54,18 @@ func TestJSONDumpsIndent(t *testing.T) {
 	if got := dump(dict("a", 1), object.NewInteger(0)); got != "{\n\"a\": 1\n}" {
 		t.Errorf("zero indent: got %q", got)
 	}
-	if got := dump(dict("a", []any{1, 2}), nil); got != "{\"a\":[1,2]}" {
+	if got := dump(dict("a", []any{1, 2}), nil); got != `{"a": [1, 2]}` {
 		t.Errorf("no indent: got %q", got)
 	}
-	if got := dump(dict("b", 1, "a", 2), nil); got != "{\"a\":2,\"b\":1}" {
-		t.Errorf("keys sorted: got %q", got)
+	// Dicts keep insertion order unless sort_keys=True is passed.
+	ordered := object.NewDict()
+	ordered.SetByString("b", conversion.FromGo(1))
+	ordered.SetByString("a", conversion.FromGo(2))
+	if got := dump(ordered, nil); got != `{"b": 1, "a": 2}` {
+		t.Errorf("keys insertion-ordered: got %q", got)
+	}
+	if got := dump(ordered, nil, true); got != `{"a": 2, "b": 1}` {
+		t.Errorf("sort_keys: got %q", got)
 	}
 
 	// Negative indent is an error surfaced as a script error object.
@@ -76,14 +92,14 @@ func TestJSONDumpsFloats(t *testing.T) {
 	}
 
 	dict := func(pairs ...any) object.Object {
-		m := map[string]object.Object{}
+		d := object.NewDict()
 		for i := 0; i < len(pairs); i += 2 {
-			m[pairs[i].(string)] = conversion.FromGo(pairs[i+1])
+			d.SetByString(pairs[i].(string), conversion.FromGo(pairs[i+1]))
 		}
-		return object.NewStringDict(m)
+		return d
 	}
 
-	want := `{"a":2.0,"b":1e+20,"c":0.1,"d":[1.5,2]}`
+	want := `{"a": 2.0, "b": 1e+20, "c": 0.1, "d": [1.5, 2]}`
 	if got := dump(dict("a", 2.0, "b", 1e20, "c", 0.1, "d", []any{1.5, 2})); got != want {
 		t.Errorf("expected %s, got %s", want, got)
 	}
@@ -130,7 +146,7 @@ func TestJSONDumpsHandlesCyclicStructures(t *testing.T) {
 		key := object.NewString("self")
 		d.Pairs[object.DictKey(key)] = object.DictPair{Key: key, Value: d}
 		got := call(d)
-		want := "{\"self\":\"<cyclic reference>\"}"
+		want := `{"self": "<cyclic reference>"}`
 		if got != want {
 			t.Fatalf("dumps() = %q, want %q", got, want)
 		}
@@ -142,7 +158,7 @@ func TestJSONDumpsHandlesCyclicStructures(t *testing.T) {
 		key := object.NewString("k")
 		d.Pairs[object.DictKey(key)] = object.DictPair{Key: key, Value: l}
 		got := call(d)
-		want := "{\"k\":[\"<cyclic reference>\"]}"
+		want := `{"k": ["<cyclic reference>"]}`
 		if got != want {
 			t.Fatalf("dumps() = %q, want %q", got, want)
 		}
@@ -152,7 +168,7 @@ func TestJSONDumpsHandlesCyclicStructures(t *testing.T) {
 		shared := &object.List{Elements: []object.Object{object.NewInteger(1)}}
 		outer := &object.List{Elements: []object.Object{shared, shared}}
 		got := call(outer)
-		want := `[[1],[1]]`
+		want := `[[1], [1]]`
 		if got != want {
 			t.Fatalf("dumps() = %q, want %q (a DAG is not a cycle)", got, want)
 		}

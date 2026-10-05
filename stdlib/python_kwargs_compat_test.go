@@ -194,9 +194,9 @@ func TestHTMLEscapeQuote(t *testing.T) {
 // HTML-significant characters are not \u-escaped, matching Python.
 func TestJSONDumpsTuples(t *testing.T) {
 	checkCompat(t, [][2]string{
-		{`json.dumps((1, 2))`, "[1,2]"},
-		{`json.dumps({"a": (1, (2, "x"))})`, `{"a":[1,[2,"x"]]}`},
-		{`json.dumps([(1,), ()])`, "[[1],[]]"},
+		{`json.dumps((1, 2))`, "[1, 2]"},
+		{`json.dumps({"a": (1, (2, "x"))})`, `{"a": [1, [2, "x"]]}`},
+		{`json.dumps([(1,), ()])`, "[[1], []]"},
 		{`json.loads(json.dumps((1, 2)))`, "[1, 2]"},
 		{`json.dumps("<a&b>")`, `"<a&b>"`},
 	})

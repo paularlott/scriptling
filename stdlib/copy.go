@@ -63,11 +63,10 @@ func shallowCopy(obj object.Object) object.Object {
 		copy(elements, o.Elements)
 		return &object.List{Elements: elements}
 	case *object.Dict:
-		pairs := make(map[string]object.DictPair, len(o.Pairs))
-		for k, v := range o.Pairs {
-			pairs[k] = v
-		}
-		return &object.Dict{Pairs: pairs}
+		clone := object.NewDict()
+		clone.DefaultFactory = o.DefaultFactory
+		clone.StoreFrom(o)
+		return clone
 	case *object.Set:
 		return o.Copy()
 	case *object.Tuple:
@@ -153,15 +152,18 @@ func deepCopyDepth(ctx context.Context, obj object.Object, memo map[object.Objec
 		if c, ok := memo[obj]; ok {
 			return c
 		}
-		result := &object.Dict{Pairs: make(map[string]object.DictPair, len(v.Pairs))}
+		result := object.NewDict()
+		result.DefaultFactory = v.DefaultFactory
 		memo[obj] = result
 		// Keys are hashable, hence immutable; values may nest arbitrarily.
-		for k, p := range v.Pairs {
+		// The copy preserves the dict's insertion order.
+		for _, k := range v.OrderedKeys() {
+			p := v.Pairs[k]
 			copied := deepCopyDepth(ctx, p.Value, memo, depth-1)
 			if isCopyFailure(copied) {
 				return copied
 			}
-			result.Pairs[k] = object.DictPair{Key: p.Key, Value: copied}
+			result.Store(k, p.Key, copied)
 		}
 		return result
 	case *object.Set:

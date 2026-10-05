@@ -285,6 +285,9 @@ the class it was raised as (e.g. "ValueError"), not the generic "EXCEPTION".`,
 	},
 	"str": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if len(args) == 0 {
+				return object.NewString("") // str() is ''
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -310,6 +313,9 @@ For exceptions, returns just the exception message.`,
 	},
 	"int": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if len(args) == 0 && len(kwargs.Keys()) == 0 {
+				return object.NewInteger(0) // int() is 0
+			}
 			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
 			}
@@ -372,6 +378,9 @@ Examples: int("ff", 16) == 255, int("0b1010", 2) == 10, int("77", 8) == 63`,
 	},
 	"float": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if len(args) == 0 {
+				return object.NewFloat(0) // float() is 0.0
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -632,9 +641,6 @@ Default start is 0. Use list(enumerate(...)) to get a list.`,
 			if len(args) == 0 {
 				// Return empty iterator for no arguments
 				return object.NewZipIterator([]object.Object{})
-			}
-			if errObj := checkDictPairing("zip", args); errObj != nil {
-				return errObj
 			}
 			// Validate all arguments are iterable; instances run the iterator
 			// protocol (lazily — only __iter__ is called here).
@@ -1132,6 +1138,13 @@ Equivalent to (a // b, a % b) for integers.`,
 					continue
 				}
 
+				if b, ok := typeArg.(*object.Builtin); ok && b == object.DefaultDictType {
+					if d, isDict := obj.(*object.Dict); isDict && d.IsDefaultDict() {
+						return TRUE
+					}
+					continue
+				}
+
 				if b, ok := typeArg.(*object.Builtin); ok {
 					if excName, isExc := exceptionBuiltins[b]; isExc {
 						if exc, ok := obj.(*object.Exception); ok {
@@ -1267,15 +1280,18 @@ The argument must be a string of exactly one character.`,
 				return err
 			}
 			switch args[0].(type) {
-			case *object.List, *object.Tuple, *object.String, *object.Iterator, *object.FloatArray:
+			case *object.List, *object.Tuple, *object.String, *object.Iterator, *object.FloatArray,
+				*object.Dict, *object.DictKeys, *object.DictValues, *object.DictItems:
+				// Dicts and their views reverse insertion order (Python 3.8+).
 				return object.NewReversedIterator(args[0])
 			default:
-				return errors.NewTypeError("sequence (LIST, TUPLE, STRING, ITERATOR, FLOAT_ARRAY)", args[0].Type().String())
+				return errors.NewTypeError("sequence (LIST, TUPLE, STRING, ITERATOR, FLOAT_ARRAY, DICT)", args[0].Type().String())
 			}
 		},
 		HelpText: `reversed(seq) - Return a reversed iterator over the sequence
 
-Works with lists, tuples, strings, and iterators.
+Works with lists, tuples, strings, iterators, dicts and dict views (a dict
+reverses its insertion order).
 Use list(reversed(...)) to get a list.`,
 	},
 	"list": {
@@ -1340,13 +1356,13 @@ Otherwise, returns a list containing the items of the iterable.`,
 					if !ok {
 						return errors.NewTypeError("iterable", args[0].Type().String())
 					}
-					result := &object.Dict{Pairs: make(map[string]object.DictPair, len(keys))}
+					result := object.NewDict()
 					for _, key := range keys {
 						hk, rerr := evalHashKeyChecked(ctx, key)
 						if rerr != nil {
 							return rerr
 						}
-						result.Pairs[hk] = object.DictPair{Key: key, Value: value}
+						result.Store(hk, key, value)
 					}
 					return result
 				},
@@ -1356,15 +1372,12 @@ Values default to None. Called as dict.fromkeys(...)`,
 			},
 		},
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			result := &object.Dict{Pairs: make(map[string]object.DictPair)}
+			result := object.NewDict()
 			// Keyword arguments are applied last, so they override keys from
 			// the positional mapping, as in Python: dict({"a": 1}, a=2).
 			addKwargs := func() *object.Dict {
 				for _, key := range kwargs.Keys() {
-					result.Pairs[object.DictKey(object.NewString(key))] = object.DictPair{
-						Key:   object.NewString(key),
-						Value: kwargs.Get(key),
-					}
+					result.SetByString(key, kwargs.Get(key))
 				}
 				return result
 			}
@@ -1406,7 +1419,7 @@ Values default to None. Called as dict.fromkeys(...)`,
 						if herr != nil {
 							return herr
 						}
-						result.Pairs[hk] = object.DictPair{Key: k, Value: v}
+						result.Store(hk, k, v)
 					}
 					return addKwargs()
 				}
@@ -1424,10 +1437,8 @@ Values default to None. Called as dict.fromkeys(...)`,
 			}
 			switch iter := arg.(type) {
 			case *object.Dict:
-				// Copy existing dict
-				for k, v := range iter.Pairs {
-					result.Pairs[k] = v
-				}
+				// Copy existing dict, preserving its insertion order.
+				result.StoreFrom(iter)
 			case *object.List:
 				// List of [key, value] pairs
 				for _, elem := range iter.Elements {
@@ -1443,7 +1454,7 @@ Values default to None. Called as dict.fromkeys(...)`,
 					if len(pair) != 2 {
 						return errors.NewError("dictionary update sequence element must be [key, value] pair")
 					}
-					result.Pairs[object.DictKey(pair[0])] = object.DictPair{Key: pair[0], Value: pair[1]}
+					result.Store(object.DictKey(pair[0]), pair[0], pair[1])
 				}
 			default:
 				return errors.NewTypeError("DICT or LIST of pairs", arg.Type().String())
@@ -1759,10 +1770,7 @@ If default is provided, returns it when the attribute doesn't exist.`,
 				obj.InvalidateBoundMethod(name)
 				return NULL
 			case *object.Dict:
-				obj.Pairs[object.DictKey(object.NewString(name))] = object.DictPair{
-					Key:   object.NewString(name),
-					Value: args[2],
-				}
+				obj.SetByString(name, args[2])
 				return NULL
 			default:
 				return errors.NewError("'%s' object does not support attribute assignment", args[0].Type().String())
@@ -1794,7 +1802,7 @@ Only works on dict-like objects.`,
 			case *object.Dict:
 				dictKey := object.DictKey(object.NewString(name))
 				if _, ok := obj.Pairs[dictKey]; ok {
-					delete(obj.Pairs, dictKey)
+					obj.Delete(dictKey)
 					return NULL
 				}
 				return errors.NewError("dictionary has no key '%s'", name)
@@ -1966,11 +1974,10 @@ Checks the full inheritance chain. issubclass(C, C) is True.`,
 				copy(newElems, o.Elements)
 				return &object.List{Elements: newElems}
 			case *object.Dict:
-				newPairs := make(map[string]object.DictPair, len(o.Pairs))
-				for k, v := range o.Pairs {
-					newPairs[k] = v
-				}
-				return &object.Dict{Pairs: newPairs}
+				copied := object.NewDictSized(len(o.Pairs))
+				copied.DefaultFactory = o.DefaultFactory
+				copied.StoreFrom(o)
+				return copied
 			case *object.Set:
 				return o.Copy()
 			case *object.Tuple:
@@ -2628,6 +2635,23 @@ func init() {
 		builtins["bytes"]:     "bytes",
 	}
 
+	// defaultdict reprs name their factory as Python does: <class 'list'>.
+	object.FactoryRepr = func(factory object.Object) string {
+		switch f := factory.(type) {
+		case *object.Builtin:
+			if name, ok := typeBuiltins[f]; ok {
+				return "<class '" + name + "'>"
+			}
+		case *object.Class:
+			return "<class '" + f.Name + "'>"
+		case *object.Function:
+			return fmt.Sprintf("<function %s at %p>", f.Name, f)
+		case *object.LambdaFunction:
+			return fmt.Sprintf("<function <lambda> at %p>", f)
+		}
+		return factory.Inspect()
+	}
+
 	// Exception constructors (TypeError, ValueError, ...) are types for
 	// isinstance(), matched with the same hierarchy as except clauses.
 	// Base classes of the hierarchy (see exceptionParents) for except
@@ -2771,28 +2795,6 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 	return &object.List{Elements: elements}
 }
 
-// checkDictPairing rejects two or more dicts or dict views walked in step.
-// Scriptling dict order is unspecified and can differ between two walks of
-// the same dict, so zip(d.keys(), d.values()) could silently pair the wrong
-// items.
-func checkDictPairing(name string, args []object.Object) object.Object {
-	dicts := 0
-	for _, arg := range args {
-		switch arg.(type) {
-		case *object.Dict, *object.DictKeys, *object.DictValues, *object.DictItems:
-			dicts++
-		}
-	}
-	if dicts < 2 {
-		return nil
-	}
-	return &object.Exception{
-		Message:       fmt.Sprintf("%s() cannot walk two dicts or dict views together because dict order is unspecified; use d.items() or sorted(d)", name),
-		ExceptionType: object.ExceptionTypeTypeError,
-		Raised:        true,
-	}
-}
-
 // hasIteratorArg reports whether any argument is a lazy iterator, which map()
 // and filter() must pull from lazily (it may be infinite) rather than
 // collect up front.
@@ -2904,11 +2906,6 @@ func mapFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 		return errors.NewError("map() requires at least 2 arguments")
 	}
 	fn := args[0]
-	if len(args) > 2 {
-		if errObj := checkDictPairing("map", args[1:]); errObj != nil {
-			return errObj
-		}
-	}
 	if hasIteratorArg(args[1:]) {
 		env := GetEnvFromContext(ctx)
 		return lazyApply(ctx, args[1:], func(items []object.Object) (object.Object, bool) {

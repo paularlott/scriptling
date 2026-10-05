@@ -732,12 +732,10 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 		// unpack and discard. Only the 2-variable form qualifies; everything else
 		// (1 var, 3+ vars, non-DictItems) falls through to the generic path.
 		if di, ok := iterableVal.(*object.DictItems); ok && len(n.Variables) == 2 {
-			// Snapshot keys so body mutations (e.g. del d[k]) can't corrupt the
-			// range, matching DictItems.CreateIterator's view semantics.
-			keys := make([]string, 0, len(di.Dict.Pairs))
-			for k := range di.Dict.Pairs {
-				keys = append(keys, k)
-			}
+			// Snapshot keys (in insertion order) so body mutations (e.g. del
+			// d[k]) can't corrupt the range, matching DictItems.CreateIterator's
+			// view semantics.
+			keys := di.Dict.OrderedKeys()
 			cc := newContextChecker(ctx)
 			for _, key := range keys {
 				pair, ok := di.Dict.Pairs[key]
@@ -1972,9 +1970,9 @@ func compileDictLiteral(n *ast.DictLiteral) object.EvalFn {
 	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		if len(pairKeys) == 0 {
-			return &object.Dict{Pairs: make(map[string]object.DictPair)}
+			return object.NewDict()
 		}
-		pairs := make(map[string]object.DictPair, len(pairKeys))
+		result := object.NewDictSized(len(pairKeys))
 
 		for i := range pairKeys {
 			// A nil key marks a {**mapping} entry: merge its pairs in
@@ -1985,9 +1983,7 @@ func compileDictLiteral(n *ast.DictLiteral) object.EvalFn {
 					return mv
 				}
 				if md, isDict := mv.(*object.Dict); isDict {
-					for k, pair := range md.Pairs {
-						pairs[k] = pair
-					}
+					result.StoreFrom(md)
 					continue
 				}
 				// Mapping instances (defaultdict, Counter, ...): copy via
@@ -2017,7 +2013,7 @@ func compileDictLiteral(n *ast.DictLiteral) object.EvalFn {
 							if herr != nil {
 								return herr
 							}
-							pairs[hk] = object.DictPair{Key: k, Value: v}
+							result.Store(hk, k, v)
 						}
 						continue
 					}
@@ -2038,10 +2034,10 @@ func compileDictLiteral(n *ast.DictLiteral) object.EvalFn {
 			if raised != nil {
 				return raised
 			}
-			pairs[hk] = object.DictPair{Key: key, Value: value}
+			result.Store(hk, key, value)
 		}
 
-		return &object.Dict{Pairs: pairs}
+		return result
 	}
 }
 
@@ -2237,12 +2233,7 @@ func applyAugmentedOp(ctx context.Context, op ast.Op, currentVal, newVal object.
 	if op == ast.OpBitOrEq {
 		if cur, ok := currentVal.(*object.Dict); ok {
 			if r, ok := newVal.(*object.Dict); ok {
-				if cur.Pairs == nil {
-					cur.Pairs = make(map[string]object.DictPair, len(r.Pairs))
-				}
-				for k, v := range r.Pairs {
-					cur.Pairs[k] = v
-				}
+				cur.StoreFrom(r)
 				return nil, true, nil
 			}
 		}
@@ -2785,7 +2776,7 @@ func compileDictComprehension(n *ast.DictComprehension) object.EvalFn {
 	src := newCompSource(n.Iterable, n.Variables, len(n.AdditionalClauses))
 
 	return func(ctx context.Context, env *object.Environment) object.Object {
-		result := &object.Dict{Pairs: make(map[string]object.DictPair)}
+		result := object.NewDict()
 		runBody := func(compEnv *object.Environment) object.Object {
 			if cond != nil {
 				c := cond(ctx, compEnv)
@@ -2813,7 +2804,7 @@ func compileDictComprehension(n *ast.DictComprehension) object.EvalFn {
 				if rerr != nil {
 					return rerr
 				}
-				result.Pairs[hk] = object.DictPair{Key: k, Value: v}
+				result.Store(hk, k, v)
 				return nil
 			}
 			if len(clauses) > 0 {
@@ -2821,7 +2812,7 @@ func compileDictComprehension(n *ast.DictComprehension) object.EvalFn {
 			}
 			return emit()
 		}
-		if err := src.run(ctx, env, func(size int) { result.Pairs = make(map[string]object.DictPair, size) }, runBody); err != nil {
+		if err := src.run(ctx, env, func(size int) { result = object.NewDictSized(size) }, runBody); err != nil {
 			return err
 		}
 		return result

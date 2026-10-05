@@ -130,6 +130,13 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 				if pair, exists := left.(*object.Dict).GetByString(name.StringValue()); exists {
 					return pair.Value
 				}
+				// defaultdict exposes its factory as an attribute.
+				if dd := left.(*object.Dict); dd.DefaultFactory != nil && name.StringValue() == "default_factory" {
+					if _, none := dd.DefaultFactory.(*object.Null); none {
+						return NULL
+					}
+					return dd.DefaultFactory
+				}
 				// Modules expose only their members, not dict methods.
 				if left.(*object.Dict).Module == "" {
 					if method := builtinMethodRef(left, name.StringValue()); method != nil {
@@ -484,6 +491,17 @@ func evalDictIndexExpression(ctx context.Context, dict, index object.Object) obj
 
 	pair, ok := dictObject.Pairs[key]
 	if !ok {
+		// defaultdict: call the factory, store the result, return it.
+		if f := dictObject.DefaultFactory; f != nil {
+			if _, none := f.(*object.Null); !none {
+				val := applyFunctionWithContext(ctx, f, nil, nil, GetEnvFromContext(ctx))
+				if propagates(val) {
+					return val
+				}
+				dictObject.Store(key, index, val)
+				return val
+			}
+		}
 		keyMsg := index.Inspect()
 		if ks, ok := index.(*object.String); ok {
 			keyMsg = object.ReprString(ks.StringValue())

@@ -104,27 +104,27 @@ func IterableToSlice(obj Object) ([]Object, bool) {
 		}
 		return elements, true
 	case *Dict:
-		// For dicts, return keys (like Python's list(dict))
+		// For dicts, return keys (like Python's list(dict)), in insertion order
 		elements := make([]Object, 0, len(iter.Pairs))
-		for _, p := range iter.Pairs {
+		for _, p := range iter.OrderedPairs() {
 			elements = append(elements, p.Key)
 		}
 		return elements, true
 	case *DictKeys:
 		elements := make([]Object, 0, len(iter.Dict.Pairs))
-		for _, p := range iter.Dict.Pairs {
+		for _, p := range iter.Dict.OrderedPairs() {
 			elements = append(elements, p.Key)
 		}
 		return elements, true
 	case *DictValues:
 		elements := make([]Object, 0, len(iter.Dict.Pairs))
-		for _, p := range iter.Dict.Pairs {
+		for _, p := range iter.Dict.OrderedPairs() {
 			elements = append(elements, p.Value)
 		}
 		return elements, true
 	case *DictItems:
 		elements := make([]Object, 0, len(iter.Dict.Pairs))
-		for _, p := range iter.Dict.Pairs {
+		for _, p := range iter.Dict.OrderedPairs() {
 			elements = append(elements, &Tuple{Elements: []Object{p.Key, p.Value}})
 		}
 		return elements, true
