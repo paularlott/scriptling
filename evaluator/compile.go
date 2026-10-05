@@ -199,14 +199,15 @@ func compileDefaults(defaults map[string]ast.Expression) map[string]object.EvalF
 // resolveDefaults evaluates each parameter default once, in parameter order,
 // at definition time, as Python does: the default is bound to the value the
 // expression produces when the def runs, not re-evaluated against a possibly
-// mutated defining scope at call time. The second return is non-nil when a
-// default raises and must propagate out of the definition.
-func resolveDefaults(ctx context.Context, env *object.Environment, parameters []*ast.Identifier, compiled map[string]object.EvalFn) (map[string]object.Object, object.Object) {
+// mutated defining scope at call time. The result is index-aligned with
+// parameters; nil marks a parameter without a default. The second return is
+// non-nil when a default raises and must propagate out of the definition.
+func resolveDefaults(ctx context.Context, env *object.Environment, parameters []*ast.Identifier, compiled map[string]object.EvalFn) ([]object.Object, object.Object) {
 	if len(compiled) == 0 {
 		return nil, nil
 	}
-	out := make(map[string]object.Object, len(compiled))
-	for _, param := range parameters {
+	out := make([]object.Object, len(parameters))
+	for i, param := range parameters {
 		fn, ok := compiled[param.Value()]
 		if !ok {
 			continue
@@ -215,7 +216,7 @@ func resolveDefaults(ctx context.Context, env *object.Environment, parameters []
 		if propagates(val) {
 			return nil, val
 		}
-		out[param.Value()] = val
+		out[i] = val
 	}
 	return out, nil
 }

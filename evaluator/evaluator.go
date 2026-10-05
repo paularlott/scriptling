@@ -2068,13 +2068,14 @@ func (fp *funcParams) evalDefault(ctx context.Context, name string, defaultExpr 
 	return compileExpr(defaultExpr)(ctx, fp.parentEnv)
 }
 
-// defaultFor returns the value a parameter's default binds, or ok=false when
-// the parameter has no default. Compiler-created functions carry the value
-// resolved once at definition time (Python semantics); anything else falls
-// back to evaluating the expression in the defining scope now.
-func (fp *funcParams) defaultFor(ctx context.Context, name string) (object.Object, bool) {
-	if v, ok := fp.resolvedDefaults[name]; ok {
-		return v, true
+// defaultFor returns the value the parameter at index idx binds when its
+// argument is omitted, or ok=false when it has no default. Compiler-created
+// functions carry values resolved once at definition time (Python semantics),
+// index-aligned with parameters; anything else falls back to evaluating the
+// expression in the defining scope now.
+func (fp *funcParams) defaultFor(ctx context.Context, idx int, name string) (object.Object, bool) {
+	if fp.resolvedDefaults != nil && fp.resolvedDefaults[idx] != nil {
+		return fp.resolvedDefaults[idx], true
 	}
 	if expr, ok := fp.defaultValues[name]; ok {
 		return fp.evalDefault(ctx, name, expr), true
@@ -2087,7 +2088,7 @@ type funcParams struct {
 	parameters       []*ast.Identifier
 	defaultValues    map[string]ast.Expression
 	compiledDefaults map[string]object.EvalFn
-	resolvedDefaults map[string]object.Object
+	resolvedDefaults []object.Object
 	variadic         *ast.Identifier
 	kwargs           *ast.Identifier
 	keywordOnlyStart int
@@ -2245,7 +2246,7 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 		// Check for missing arguments and apply defaults
 		for pi, param := range fp.parameters {
 			if !isParamSet(pi, param.Value()) {
-				if defaultVal, ok := fp.defaultFor(ctx, param.Value()); ok {
+				if defaultVal, ok := fp.defaultFor(ctx, pi, param.Value()); ok {
 					if object.IsError(defaultVal) || isRaised(defaultVal) {
 						return nil, defaultVal
 					}
@@ -2266,7 +2267,7 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 			// No keywords - check for missing required arguments
 			for i := numArgs; i < numParams; i++ {
 				param := fp.parameters[i]
-				if defaultVal, ok := fp.defaultFor(ctx, param.Value()); ok {
+				if defaultVal, ok := fp.defaultFor(ctx, i, param.Value()); ok {
 					if object.IsError(defaultVal) || isRaised(defaultVal) {
 						return nil, defaultVal
 					}

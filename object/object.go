@@ -784,10 +784,11 @@ type Function struct {
 	// walk the AST.
 	CompiledDefaults map[string]EvalFn
 	// ResolvedDefaults holds the VALUE of each default, evaluated once at
-	// definition time in the defining scope, as Python does. Calls that fill
-	// in a default bind this value instead of re-evaluating the expression
-	// against the (possibly mutated) defining scope.
-	ResolvedDefaults map[string]Object
+	// definition time in the defining scope, as Python does. Index i aligns
+	// with Parameters[i]; a nil slot means the parameter has no default. A
+	// slice rather than a map: one allocation per definition, and the call
+	// path already walks parameters by index.
+	ResolvedDefaults []Object
 	// CompiledBody memoises the body closure, which is compiled on the first
 	// call and cached on Body, the AST node. The evaluator fills it in only
 	// when CompilerOwned is set.
@@ -837,8 +838,9 @@ type LambdaFunction struct {
 	// walk the AST.
 	CompiledDefaults map[string]EvalFn
 	// ResolvedDefaults holds the VALUE of each default, evaluated once at
-	// definition time in the defining scope, as Python does.
-	ResolvedDefaults map[string]Object
+	// definition time in the defining scope, as Python does. Index i aligns
+	// with Parameters[i]; a nil slot means the parameter has no default.
+	ResolvedDefaults []Object
 }
 
 func (lf *LambdaFunction) Type() ObjectType { return LAMBDA_OBJ }
