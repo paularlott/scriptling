@@ -351,6 +351,12 @@ For exceptions, returns just the exception message.`,
 					return &object.Error{Message: "int() can't convert non-string with explicit base", ExceptionType: object.ExceptionTypeTypeError}
 				}
 				return object.NewInteger(int64(arg.FloatValue()))
+			case *object.Boolean:
+				// bool is an int subclass: int(True) == 1.
+				if hasBase {
+					return &object.Error{Message: "int() can't convert non-string with explicit base", ExceptionType: object.ExceptionTypeTypeError}
+				}
+				return object.NewInteger(boolToInt64(arg.BoolValue()))
 			case *object.String:
 				return parseIntLiteral(arg.StringValue(), base)
 			default:
@@ -374,6 +380,8 @@ Examples: int("ff", 16) == 255, int("0b1010", 2) == 10, int("77", 8) == 63`,
 				return arg
 			case *object.Integer:
 				return object.NewFloat(float64(arg.IntValue()))
+			case *object.Boolean:
+				return object.NewFloat(float64(boolToInt64(arg.BoolValue())))
 			case *object.String:
 				return parseFloatLiteral(arg.StringValue())
 			default:
@@ -432,6 +440,10 @@ Converts an integer, string, or float to a float.`,
 			floatSum := startFloat
 
 			for _, elem := range elements {
+				if b, isBool := elem.(*object.Boolean); isBool {
+					// bool is an int subclass: sum(x > 2 for x in xs) counts matches.
+					elem = object.NewInteger(boolToInt64(b.BoolValue()))
+				}
 				switch v := elem.(type) {
 				case *object.Integer:
 					if hasFloat {
@@ -3786,4 +3798,12 @@ func isCallableObject(obj object.Object) bool {
 		return ok
 	}
 	return false
+}
+
+// boolToInt64 is Python's int(bool): True is 1, False is 0.
+func boolToInt64(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }

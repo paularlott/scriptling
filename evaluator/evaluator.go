@@ -1402,23 +1402,29 @@ func formatPercentValue(ctx context.Context, spec string, conversion byte, val o
 		}
 		return fmt.Sprintf(spec[:len(spec)-1]+"d", intVal), nil
 	case 'f':
-		floatVal, err := val.AsFloat()
+		floatVal, err := percentFloatArg(val)
 		if err != nil {
 			return "", errors.NewTypeErrorTagged("%%%c format: a number is required, not %s", conversion, val.Type().String())
 		}
 		return fmt.Sprintf(spec[:len(spec)-1]+"f", floatVal), nil
 	case 'e', 'E':
-		floatVal, err := val.AsFloat()
+		floatVal, err := percentFloatArg(val)
 		if err != nil {
 			return "", errors.NewTypeErrorTagged("%%%c format: a number is required, not %s", conversion, val.Type().String())
 		}
 		return fmt.Sprintf(spec[:len(spec)-1]+string(conversion), floatVal), nil
 	case 'g', 'G':
-		floatVal, err := val.AsFloat()
+		floatVal, err := percentFloatArg(val)
 		if err != nil {
 			return "", errors.NewTypeErrorTagged("%%%c format: a number is required, not %s", conversion, val.Type().String())
 		}
-		return fmt.Sprintf(spec[:len(spec)-1]+string(conversion), floatVal), nil
+		goSpec := spec[:len(spec)-1]
+		if !strings.Contains(goSpec, ".") {
+			// Python's %g defaults to 6 significant digits (Go's is the
+			// shortest round-trip form).
+			goSpec += ".6"
+		}
+		return fmt.Sprintf(goSpec+string(conversion), floatVal), nil
 	case 'x':
 		intVal, err := val.AsInt()
 		if err != nil {
@@ -4382,6 +4388,40 @@ func assignUnpackTargets(ctx context.Context, targets []ast.Expression, value ob
 		}
 		elements = elems
 	}
+	// A starred target ((a, *rest) = ...) collects the surplus into a list.
+	starIdx := -1
+	for i, target := range targets {
+		if _, ok := target.(*ast.StarredElement); ok {
+			if starIdx >= 0 {
+				return raisedAssignmentError(object.ExceptionTypeTypeError, "multiple starred expressions in assignment")
+			}
+			starIdx = i
+		}
+	}
+	if starIdx >= 0 {
+		after := len(targets) - starIdx - 1
+		if len(elements) < starIdx+after {
+			return raisedAssignmentError(object.ExceptionTypeValueError,
+				fmt.Sprintf("not enough values to unpack (expected at least %d, got %d)", starIdx+after, len(elements)))
+		}
+		for i := 0; i < starIdx; i++ {
+			if err := assignToExpression(ctx, targets[i], elements[i], env); err != nil {
+				return err
+			}
+		}
+		restEnd := len(elements) - after
+		rest := make([]object.Object, restEnd-starIdx)
+		copy(rest, elements[starIdx:restEnd])
+		if err := assignToExpression(ctx, targets[starIdx].(*ast.StarredElement).Value, &object.List{Elements: rest}, env); err != nil {
+			return err
+		}
+		for i := 0; i < after; i++ {
+			if err := assignToExpression(ctx, targets[starIdx+1+i], elements[restEnd+i], env); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if len(elements) != len(targets) {
 		if len(elements) > len(targets) {
 			return raisedAssignmentError(object.ExceptionTypeValueError,
@@ -4488,11 +4528,19 @@ func setForVariables(variables []ast.Expression, value object.Object, env *objec
 	case *object.List:
 		elements = v.Elements
 	default:
-		return fmt.Errorf("cannot unpack non-tuple/list value")
+		// Any other iterable unpacks per iteration too: for a, b in ["xy"].
+		elems, ok := object.IterableToSlice(value)
+		if !ok {
+			return raisedAssignmentError(object.ExceptionTypeTypeError, fmt.Sprintf("cannot unpack non-iterable %s object", value.Type().String()))
+		}
+		elements = elems
 	}
 
-	if len(elements) != len(variables) {
-		return fmt.Errorf("cannot unpack %d values into %d variables", len(elements), len(variables))
+	if len(elements) > len(variables) {
+		return raisedAssignmentError(object.ExceptionTypeValueError, fmt.Sprintf("too many values to unpack (expected %d, got %d)", len(variables), len(elements)))
+	}
+	if len(elements) < len(variables) {
+		return raisedAssignmentError(object.ExceptionTypeValueError, fmt.Sprintf("not enough values to unpack (expected %d, got %d)", len(variables), len(elements)))
 	}
 
 	for i, varExpr := range variables {
@@ -4503,6 +4551,53 @@ func setForVariables(variables []ast.Expression, value object.Object, env *objec
 	return nil
 }
 
+// setForTargets assigns a nested for-loop target group. Groups containing a
+// starred name (for a, (b, *c) in ...) collect the surplus into a list; the
+// plain flat case stays on the setForVariables hot path.
+func setForTargets(variables []ast.Expression, value object.Object, env *object.Environment) error {
+	for starIdx, varExpr := range variables {
+		if _, ok := varExpr.(*ast.StarredElement); !ok {
+			continue
+		}
+		var elements []object.Object
+		switch v := value.(type) {
+		case *object.Tuple:
+			elements = v.Elements
+		case *object.List:
+			elements = v.Elements
+		default:
+			elems, ok := object.IterableToSlice(value)
+			if !ok {
+				return raisedAssignmentError(object.ExceptionTypeTypeError, fmt.Sprintf("cannot unpack non-iterable %s object", value.Type().String()))
+			}
+			elements = elems
+		}
+		star := varExpr.(*ast.StarredElement)
+		after := len(variables) - starIdx - 1
+		if len(elements) < starIdx+after {
+			return raisedAssignmentError(object.ExceptionTypeValueError, fmt.Sprintf("not enough values to unpack (expected at least %d, got %d)", starIdx+after, len(elements)))
+		}
+		for i := 0; i < starIdx; i++ {
+			if err := setForVariable(variables[i], elements[i], env); err != nil {
+				return err
+			}
+		}
+		restEnd := len(elements) - after
+		rest := make([]object.Object, restEnd-starIdx)
+		copy(rest, elements[starIdx:restEnd])
+		if err := setForVariable(star.Value, &object.List{Elements: rest}, env); err != nil {
+			return err
+		}
+		for i := 0; i < after; i++ {
+			if err := setForVariable(variables[starIdx+1+i], elements[restEnd+i], env); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return setForVariables(variables, value, env)
+}
+
 // setForVariable assigns a single for-loop target expression to a value.
 // Supports identifiers and nested tuple/list unpacking, e.g. for a, (b, c) in ...
 func setForVariable(varExpr ast.Expression, value object.Object, env *object.Environment) error {
@@ -4511,9 +4606,9 @@ func setForVariable(varExpr ast.Expression, value object.Object, env *object.Env
 		setIdentifierFast(target, value, env)
 		return nil
 	case *ast.TupleLiteral:
-		return setForVariables(target.Elements, value, env)
+		return setForTargets(target.Elements, value, env)
 	case *ast.ListLiteral:
-		return setForVariables(target.Elements, value, env)
+		return setForTargets(target.Elements, value, env)
 	default:
 		return fmt.Errorf("for loop variables must be identifiers")
 	}
@@ -5121,7 +5216,8 @@ func formatWithSpec(obj object.Object, spec string) (string, object.Object) {
 					formatted = strconv.FormatFloat(floatVal, 'g', precision, 64)
 				}
 			} else {
-				formatted = strconv.FormatFloat(floatVal, 'g', -1, 64)
+				// No precision: Python's default of 6 significant digits.
+				formatted = strconv.FormatFloat(floatVal, 'g', 6, 64)
 				if typeChar == 'G' {
 					formatted = strings.ToUpper(formatted)
 				}
@@ -5584,4 +5680,13 @@ func getTypeName(obj object.Object) string {
 	default:
 		return obj.Type().String()
 	}
+}
+
+// percentFloatArg converts a %f/%e/%g operand to float64; bool counts as an
+// int (True is 1.0), as in Python.
+func percentFloatArg(val object.Object) (float64, object.Object) {
+	if b, ok := val.(*object.Boolean); ok {
+		return float64(boolToInt64(b.BoolValue())), nil
+	}
+	return val.AsFloat()
 }

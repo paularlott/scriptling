@@ -94,7 +94,7 @@ hyphenated form.`,
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
-			nsStr, err := args[0].AsString()
+			nsStr, err := uuidStringOf(args[0])
 			if err != nil {
 				return err
 			}
@@ -115,7 +115,7 @@ hyphenated form.`,
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
-			nsStr, err := args[0].AsString()
+			nsStr, err := uuidStringOf(args[0])
 			if err != nil {
 				return err
 			}

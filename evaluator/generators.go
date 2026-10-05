@@ -389,7 +389,7 @@ func generatorNext(ctx context.Context, g *object.Instance, env *object.Environm
 			}
 			if err := setForVariables(it.targets, elem, genv); err != nil {
 				finish()
-				return errors.NewError("%s", err.Error())
+				return assignErrorToObject(err)
 			}
 		case genWhile:
 			st.cursor = idx + 1

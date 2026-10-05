@@ -199,7 +199,37 @@ func callSuperMethod(ctx context.Context, super *object.Super, method string, ar
 		}
 	}
 
+	if res := callObjectDefault(super.Instance, method, args, keywords); res != nil {
+		return res
+	}
 	return attributeError(super, method)
+}
+
+// callObjectDefault supplies Python's `object` base-class methods for a
+// super() call that no user base class handles: super().__init__() in a class
+// whose base defines no __init__, and super().__repr__/__str__/__eq__/__ne__.
+// Returns nil when method is not one of them.
+func callObjectDefault(self object.Object, method string, args []object.Object, keywords map[string]object.Object) object.Object {
+	switch method {
+	case "__init__":
+		// object.__init__ takes only self; extra arguments are a TypeError.
+		if len(args) > 0 || len(keywords) > 0 {
+			return errors.NewTypeErrorTagged("object.__init__() takes exactly one argument (the instance to initialize)")
+		}
+		return NULL
+	case "__repr__", "__str__":
+		return object.NewString(self.Inspect())
+	case "__eq__", "__ne__":
+		if len(args) != 1 {
+			return errors.NewTypeErrorTagged("expected 1 argument, got %d", len(args))
+		}
+		same := args[0] == self
+		if method == "__ne__" {
+			same = !same
+		}
+		return nativeBoolToBooleanObject(same)
+	}
+	return nil
 }
 
 // prependSelf returns args with self inserted at the front.

@@ -77,6 +77,7 @@ type Parser struct {
 	curToken       token.Token
 	peekToken      token.Token
 	skippedNewline bool // true if a NEWLINE was skipped between curToken and peekToken
+	skippedSemi    bool // true if the skipped separator was a ';' with no NEWLINE (a;b on one line)
 	parenDepth     int  // track parenthesis depth for multiline support
 
 	nestedFuncStack []bool // stack: one bool per active function parse, true if body contains nested func/lambda/class
@@ -178,6 +179,7 @@ func (p *Parser) nextToken() {
 	p.curToken = p.peekToken
 	p.peekToken = p.l.NextToken()
 	p.skippedNewline = false
+	p.skippedSemi = false
 
 	// Track parenthesis depth based on the token we just consumed (curToken)
 	if p.curToken.Type == token.LPAREN || p.curToken.Type == token.LBRACKET || p.curToken.Type == token.LBRACE {
@@ -189,10 +191,17 @@ func (p *Parser) nextToken() {
 	}
 
 	// Skip NEWLINE and SEMICOLON tokens (always skip these at top level too)
+	sawNewline, sawSemi := false, false
 	for p.peekToken.Type == token.NEWLINE || p.peekToken.Type == token.SEMICOLON {
 		p.skippedNewline = true
+		if p.peekToken.Type == token.NEWLINE {
+			sawNewline = true
+		} else {
+			sawSemi = true
+		}
 		p.peekToken = p.l.NextToken()
 	}
+	p.skippedSemi = sawSemi && !sawNewline
 
 	// When inside parentheses, also skip INDENT and DEDENT tokens
 	// This allows multiline function calls, list literals, dict literals, etc.
@@ -952,6 +961,17 @@ func (p *Parser) parseConditionalExpression(trueExpr ast.Expression) ast.Express
 // This is now just a wrapper that calls parseExpression with LOWEST precedence
 // The actual conditional expression handling is done via the registered infix parser
 func (p *Parser) parseExpressionWithConditional() ast.Expression {
+	// A leading * starts an unpacked element of an implicit tuple:
+	// x = *t, 3 / return *a, b. parseTuplePackingTail rejects a lone *t.
+	if p.curTokenIs(token.ASTERISK) {
+		tok := p.nodeLine()
+		p.nextToken()
+		inner := p.parseExpression(LOWEST)
+		if inner == nil {
+			return nil
+		}
+		return &ast.StarredElement{Token: tok, Value: inner}
+	}
 	return p.parseExpression(LOWEST)
 }
 
@@ -959,6 +979,9 @@ func (p *Parser) parseExpressionWithConditional() ast.Expression {
 // tok is the token to use for the TupleLiteral node.
 func (p *Parser) parseTuplePackingTail(tok ast.LineInfo, first ast.Expression) ast.Expression {
 	if !p.peekTokenIs(token.COMMA) {
+		if _, starred := first.(*ast.StarredElement); starred {
+			p.errors = append(p.errors, fmt.Sprintf("line %d: can't use starred expression here", p.curToken.Line))
+		}
 		return first
 	}
 	elements := make([]ast.Expression, 1, 4)
@@ -1450,11 +1473,24 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 		return &ast.TupleLiteral{Elements: nil}
 	}
 
-	firstExp := p.parseExpression(LOWEST_PRECEDENCE)
+	// A leading *iterable makes this a tuple display: (*t,), (*a, *b).
+	startedWithStar := p.curTokenIs(token.ASTERISK)
+	var firstExp ast.Expression
+	if startedWithStar {
+		p.nextToken()
+		firstExp = &ast.StarredElement{Token: p.nodeLine(), Value: p.parseExpression(LOWEST_PRECEDENCE)}
+	} else {
+		firstExp = p.parseExpression(LOWEST_PRECEDENCE)
+	}
 
 	// Check if this is a generator expression (similar to list comprehension)
-	if p.peekTokenIs(token.FOR) {
+	if !startedWithStar && p.peekTokenIs(token.FOR) {
 		return p.parseGeneratorExpression(firstExp)
+	}
+
+	if startedWithStar && !p.peekTokenIs(token.COMMA) {
+		p.errors = append(p.errors, fmt.Sprintf("line %d: cannot use starred expression here", p.curToken.Line))
+		return nil
 	}
 
 	// Check if this is a tuple (has comma)
@@ -1469,6 +1505,11 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 				break
 			}
 			p.nextToken()
+			if p.curTokenIs(token.ASTERISK) {
+				p.nextToken()
+				elements = append(elements, &ast.StarredElement{Token: p.nodeLine(), Value: p.parseExpression(LOWEST_PRECEDENCE)})
+				continue
+			}
 			elements = append(elements, p.parseExpression(LOWEST_PRECEDENCE))
 		}
 
@@ -1681,6 +1722,15 @@ func (p *Parser) parseBlockStatement() *ast.BlockStatement {
 		stmt := p.parseStatement()
 		if stmt != nil {
 			block.Statements = append(block.Statements, stmt)
+		}
+		// "if c: a; b" — every ;-separated statement on the line belongs to
+		// the block, as in Python's simple_stmt list. (nextToken swallows the
+		// separators, so skippedSemi records that a ';' joined the next one.)
+		for p.skippedSemi && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.DEDENT) {
+			p.nextToken()
+			if next := p.parseStatement(); next != nil {
+				block.Statements = append(block.Statements, next)
+			}
 		}
 		return block
 	}
@@ -1921,6 +1971,21 @@ func (p *Parser) skipAnnotation() bool {
 	return p.parseExpression(LOWEST) != nil
 }
 
+// parseForTarget parses one for-loop target: a name, a nested group, or a
+// starred name (for a, *rest in ...) that collects the surplus into a list.
+func (p *Parser) parseForTarget() ast.Expression {
+	if p.curTokenIs(token.ASTERISK) {
+		tok := p.nodeLine()
+		p.nextToken()
+		inner := p.parseExpression(EQUALS)
+		if inner == nil {
+			return nil
+		}
+		return &ast.StarredElement{Token: tok, Value: inner}
+	}
+	return p.parseExpression(EQUALS)
+}
+
 func (p *Parser) parseForStatement() *ast.ForStatement {
 	stmt := &ast.ForStatement{Token: p.nodeLine()}
 
@@ -1928,12 +1993,21 @@ func (p *Parser) parseForStatement() *ast.ForStatement {
 
 	// Parse the variable list (can be single or multiple separated by commas)
 	stmt.Variables = make([]ast.Expression, 0, 2)
-	stmt.Variables = append(stmt.Variables, p.parseExpression(EQUALS))
+	stmt.Variables = append(stmt.Variables, p.parseForTarget())
 
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken() // consume comma
 		p.nextToken() // move to next expression
-		stmt.Variables = append(stmt.Variables, p.parseExpression(EQUALS))
+		stmt.Variables = append(stmt.Variables, p.parseForTarget())
+	}
+
+	// for a, *rest in ...: keep the flat-target loop path star-free by
+	// presenting the whole target list as one nested group.
+	for _, v := range stmt.Variables {
+		if _, starred := v.(*ast.StarredElement); starred {
+			stmt.Variables = []ast.Expression{&ast.TupleLiteral{Elements: stmt.Variables}}
+			break
+		}
 	}
 
 	if !p.expectPeek(token.IN) {

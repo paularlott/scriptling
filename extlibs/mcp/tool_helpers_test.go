@@ -877,43 +877,51 @@ func TestRunToolScriptDirectReturn(t *testing.T) {
 		expected string
 	}{
 		{
-			name:     "string return",
-			code:     `def f(): return "hello world"; f()`,
+			name: "string return",
+			code: `def f(): return "hello world"
+f()`,
 			expected: "hello world",
 		},
 		{
-			name:     "integer return",
-			code:     `def f(): return 42; f()`,
+			name: "integer return",
+			code: `def f(): return 42
+f()`,
 			expected: "42",
 		},
 		{
-			name:     "float return",
-			code:     `def f(): return 3.14; f()`,
+			name: "float return",
+			code: `def f(): return 3.14
+f()`,
 			expected: "3.14",
 		},
 		{
-			name:     "boolean true return",
-			code:     `def f(): return True; f()`,
+			name: "boolean true return",
+			code: `def f(): return True
+f()`,
 			expected: "true",
 		},
 		{
-			name:     "boolean false return",
-			code:     `def f(): return False; f()`,
+			name: "boolean false return",
+			code: `def f(): return False
+f()`,
 			expected: "false",
 		},
 		{
-			name:     "dict return as JSON",
-			code:     `def f(): return {"a": 1, "b": 2}; f()`,
+			name: "dict return as JSON",
+			code: `def f(): return {"a": 1, "b": 2}
+f()`,
 			expected: `{"a":1,"b":2}`,
 		},
 		{
-			name:     "list return as JSON",
-			code:     `def f(): return [1, 2, 3]; f()`,
+			name: "list return as JSON",
+			code: `def f(): return [1, 2, 3]
+f()`,
 			expected: "[1,2,3]",
 		},
 		{
-			name:     "nested dict return",
-			code:     `def f(): return {"data": {"name": "test", "count": 42}}; f()`,
+			name: "nested dict return",
+			code: `def f(): return {"data": {"name": "test", "count": 42}}
+f()`,
 			expected: `{"data":{"count":42,"name":"test"}}`,
 		},
 	}
@@ -946,7 +954,8 @@ func TestRunToolScriptNullReturn(t *testing.T) {
 	mcp.RegisterToolHelpers(sl)
 
 	// Script that returns None explicitly
-	code := `def f(): return None; f()`
+	code := `def f(): return None
+f()`
 
 	response, exitCode, err := mcp.RunToolScript(context.Background(), sl, code, nil)
 

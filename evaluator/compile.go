@@ -819,7 +819,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 				}
 
 				if err := setForVariables(n.Variables, element, env); err != nil {
-					return errors.NewError("%s", err.Error())
+					return assignErrorToObject(err)
 				}
 
 				var act loopAction
@@ -857,7 +857,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 						copy(rowData, o.Data[off:off+cols])
 						element := object.NewFloatArray1D(rowData)
 						if err := setForVariables(n.Variables, element, env); err != nil {
-							return errors.NewError("%s", err.Error())
+							return assignErrorToObject(err)
 						}
 						var act loopAction
 						act, result = loopResult(body(ctx, env))
@@ -878,7 +878,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 					}
 					element := object.NewFloat(v)
 					if err := setForVariables(n.Variables, element, env); err != nil {
-						return errors.NewError("%s", err.Error())
+						return assignErrorToObject(err)
 					}
 					var act loopAction
 					act, result = loopResult(body(ctx, env))
@@ -901,7 +901,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 
 					element := object.NewString(string(char))
 					if err := setForVariables(n.Variables, element, env); err != nil {
-						return errors.NewError("%s", err.Error())
+						return assignErrorToObject(err)
 					}
 
 					var act loopAction
@@ -925,7 +925,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 
 					element := object.NewInteger(int64(b))
 					if err := setForVariables(n.Variables, element, env); err != nil {
-						return errors.NewError("%s", err.Error())
+						return assignErrorToObject(err)
 					}
 
 					var act loopAction
@@ -951,7 +951,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 				}
 
 				if err := setForVariables(n.Variables, element, env); err != nil {
-					return errors.NewError("%s", err.Error())
+					return assignErrorToObject(err)
 				}
 
 				var act loopAction
@@ -1892,12 +1892,36 @@ func compileListLiteral(n *ast.ListLiteral) object.EvalFn {
 
 func compileTupleLiteral(n *ast.TupleLiteral) object.EvalFn {
 	elements := compileExprs(n.Elements)
+	starred := make([]bool, len(n.Elements))
+	for i, e := range n.Elements {
+		_, starred[i] = e.(*ast.StarredElement)
+	}
+	hasStar := hasTrue(starred)
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		vals := evalCompiledExpressions(ctx, env, elements)
 		if isPropagatedError(vals) {
 			return vals[0]
 		}
-		return &object.Tuple{Elements: vals}
+		if !hasStar {
+			return &object.Tuple{Elements: vals}
+		}
+		// Splice starred elements' iterables into place: (1, *xs, 4).
+		out := make([]object.Object, 0, len(vals))
+		for i, v := range vals {
+			if !starred[i] {
+				out = append(out, v)
+				continue
+			}
+			elems, ok, rerr := iterableToSliceChecked(ctx, v, env)
+			if rerr != nil {
+				return rerr
+			}
+			if !ok {
+				return errors.NewTypeErrorTagged("argument after * must be an iterable, not %s", getTypeName(v))
+			}
+			out = append(out, elems...)
+		}
+		return &object.Tuple{Elements: out}
 	}
 }
 
@@ -2560,7 +2584,7 @@ func evalCompiledAdditionalClauses(ctx context.Context, clauses []compiledClause
 	}
 	return iterateObject(ctx, iterable, func(element object.Object) object.Object {
 		if err := setForVariables(c.variables, element, env); err != nil {
-			return errors.NewError("%s", err.Error())
+			return assignErrorToObject(err)
 		}
 		if c.condition != nil {
 			cond := c.condition(ctx, env)
@@ -2644,7 +2668,7 @@ func (s *compSource) run(ctx context.Context, env *object.Environment, sized fun
 		compEnv = object.NewEnclosedEnvironment(env)
 		step = func(element object.Object) object.Object {
 			if err := setForVariables(s.variables, element, compEnv); err != nil {
-				return errors.NewError("%s", err.Error())
+				return assignErrorToObject(err)
 			}
 			return body(compEnv)
 		}
@@ -3460,6 +3484,10 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 		// failing attribute expression or a security violation in the body is not
 		// silently swallowed). After the body runs, the names it bound in the class
 		// environment become class attributes.
+		// ownDefs records names this class body defines with `def`, so promotion
+		// below skips them but still lets plain assignments shadow inherited
+		// attributes (class C(A): kind = "cat").
+		ownDefs := make(map[string]struct{})
 		for i, s := range n.Body.Statements {
 			if fnStmt, ok := s.(*ast.FunctionStatement); ok {
 				// The compiled def closure builds the function, applies its
@@ -3469,8 +3497,10 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 				if propagates(obj) {
 					return obj
 				}
+				ownDefs[fnStmt.Name.Value()] = struct{}{}
 				switch m := obj.(type) {
 				case *object.Function:
+					ownDefs[m.Name] = struct{}{}
 					class.Methods[m.Name] = m
 				case *object.Property:
 					class.Methods[fnStmt.Name.Value()] = m
@@ -3498,7 +3528,7 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 			if mname == "__class__" {
 				return
 			}
-			if _, isMethod := class.Methods[mname]; isMethod {
+			if _, isOwnDef := ownDefs[mname]; isOwnDef {
 				return
 			}
 			class.Methods[mname] = val
