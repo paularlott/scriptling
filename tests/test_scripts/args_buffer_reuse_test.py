@@ -8,7 +8,7 @@
 
 failures = 0
 
-# (1) Capture *args across many calls. The returned list is a copy (varargs
+# (1) Capture *args across many calls. The returned tuple is a copy (varargs
 #     binding copies), so every snapshot must keep its own values even though the
 #     underlying call buffers are reused.
 def capture(*args):
@@ -19,7 +19,7 @@ for i in range(300):
     snapshots.append(capture(i, i * 10, i * 100))
 
 for i, s in enumerate(snapshots):
-    if s != [i, i * 10, i * 100]:
+    if s != (i, i * 10, i * 100):
         failures += 1
         if failures <= 3:
             print("FAIL snapshot", i, "got", s)

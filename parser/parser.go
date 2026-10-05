@@ -1488,13 +1488,17 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 
 func (p *Parser) parseCallExpression(function ast.Expression) ast.Expression {
 	exp := &ast.CallExpression{Function: function}
-	args, keywords, argsUnpack, kwargsUnpack := p.parseCallArguments()
+	var unpackAt []int
+	args, keywords, argsUnpack, kwargsUnpack := p.parseCallArguments(&unpackAt)
 	exp.Arguments = args
 	exp.SetOverflow(keywords, argsUnpack, kwargsUnpack)
+	exp.SetArgsUnpackAt(unpackAt, len(args))
 	return exp
 }
 
-func (p *Parser) parseCallArguments() ([]ast.Expression, map[string]ast.Expression, []ast.Expression, ast.Expression) {
+// parseCallArguments parses a call's argument list. unpackAt receives, for each
+// *unpack, the count of positional arguments written before it.
+func (p *Parser) parseCallArguments(unpackAt *[]int) ([]ast.Expression, map[string]ast.Expression, []ast.Expression, ast.Expression) {
 	var args []ast.Expression
 	var keywords map[string]ast.Expression
 	var argsUnpack []ast.Expression
@@ -1531,6 +1535,7 @@ func (p *Parser) parseCallArguments() ([]ast.Expression, map[string]ast.Expressi
 				return nil, nil, nil, nil
 			}
 			p.nextToken() // move to expression
+			*unpackAt = append(*unpackAt, len(args))
 			argsUnpack = append(argsUnpack, p.parseExpression(LOWEST))
 			if p.peekTokenIs(token.COMMA) {
 				p.nextToken() // consume comma
@@ -2624,9 +2629,11 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 				Receiver: left,
 				Method:   methodName,
 			}
-			args, keywords, argsUnpack, kwargsUnpack := p.parseCallArguments()
+			var unpackAt []int
+			args, keywords, argsUnpack, kwargsUnpack := p.parseCallArguments(&unpackAt)
 			methodCall.Arguments = args
 			methodCall.SetOverflow(keywords, argsUnpack, kwargsUnpack)
+			methodCall.SetArgsUnpackAt(unpackAt, len(args))
 			return methodCall
 		}
 

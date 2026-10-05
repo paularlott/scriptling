@@ -1953,7 +1953,10 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 		o.Data[i] = f
 		return nil
 	}
-	return fmt.Errorf("cannot assign to index")
+	// Immutable or non-subscriptable targets (tuple, str, bytes, ...) raise a
+	// catchable TypeError, as in Python.
+	return raisedAssignmentError(object.ExceptionTypeTypeError,
+		fmt.Sprintf("'%s' object does not support item assignment", getTypeName(obj)))
 }
 
 // tryEvalFastBuiltinCall handles fast-path builtin calls (len, type, str, etc.).
@@ -2411,19 +2414,18 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 	// Check for extra positional arguments
 	if numArgs > positionalLimit {
 		if fp.variadic != nil {
-			// Collect extra arguments into a list. Copy so the varargs list
-			// doesn't alias the caller's args buffer (which may be reused).
+			// Collect extra arguments into a tuple, as Python's *args. Copy so
+			// it doesn't alias the caller's args buffer (which may be reused).
 			varArgs := make([]object.Object, numArgs-positionalLimit)
 			copy(varArgs, args[positionalLimit:])
-			list := &object.List{Elements: varArgs}
-			env.Set(fp.variadic.Value(), list)
+			env.Set(fp.variadic.Value(), &object.Tuple{Elements: varArgs})
 		} else {
 			minArgs := positionalLimit
 			return nil, errors.NewArgumentError(numArgs, minArgs)
 		}
 	} else if fp.variadic != nil {
-		// No extra arguments, set variadic to empty list
-		env.Set(fp.variadic.Value(), &object.List{Elements: []object.Object{}})
+		// No extra arguments, set variadic to an empty tuple
+		env.Set(fp.variadic.Value(), &object.Tuple{Elements: []object.Object{}})
 	}
 
 	// Handle keyword arguments if present
@@ -2482,8 +2484,17 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 			}
 
 			// A '/' marker makes the parameters before it positional-only:
-			// naming one by keyword is Python's TypeError.
+			// naming one by keyword cannot bind the parameter. With **kwargs
+			// the keyword lands in the dict instead (Python semantics);
+			// without it, naming one is Python's TypeError.
 			if paramIdx < fp.positionalOnly {
+				if fp.kwargs != nil {
+					if extraKwargs == nil {
+						extraKwargs = make(map[string]object.Object, len(keywords))
+					}
+					extraKwargs[key] = value
+					continue
+				}
 				return nil, &object.Exception{
 					Message:       fmt.Sprintf("got some positional-only arguments passed as keyword arguments: '%s'", key),
 					ExceptionType: object.ExceptionTypeTypeError,
@@ -2531,21 +2542,38 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 			env.Set(fp.kwargs.Value(), &object.Dict{Pairs: make(map[string]object.DictPair)})
 		}
 
+		missing := func(i int) (object.Object, bool) {
+			param := fp.parameters[i]
+			if defaultVal, ok := fp.defaultFor(ctx, i, param.Value()); ok {
+				if object.IsError(defaultVal) || isRaised(defaultVal) {
+					return defaultVal, false
+				}
+				env.Set(param.Value(), defaultVal)
+				return nil, false
+			}
+			return nil, true
+		}
+		// A required keyword-only argument missing without keywords gets
+		// Python's specific message; other arities the generic one.
+		if fp.keywordOnlyStart > 0 && numArgs >= fp.keywordOnlyStart-1 {
+			for pi := fp.keywordOnlyStart - 1; pi < numParams; pi++ {
+				if _, isMissing := missing(pi); isMissing {
+					return nil, errors.NewTypeErrorTagged("missing 1 required keyword-only argument: '%s'", fp.parameters[pi].Value())
+				}
+			}
+		}
 		if numArgs < numParams {
 			// No keywords - check for missing required arguments
 			for i := numArgs; i < numParams; i++ {
-				param := fp.parameters[i]
-				if defaultVal, ok := fp.defaultFor(ctx, i, param.Value()); ok {
-					if object.IsError(defaultVal) || isRaised(defaultVal) {
-						return nil, defaultVal
-					}
-					env.Set(param.Value(), defaultVal)
-				} else {
+				if _, isMissing := missing(i); isMissing {
 					minArgs := numParams - len(fp.defaultValues)
 					return nil, errors.NewArgumentError(numArgs, minArgs)
 				}
 			}
 		}
+		// Keyword-only parameters with enough positional args present are
+		// covered by the keyword-only loop above (numArgs >= keywordOnlyStart-1
+		// includes numArgs >= numParams after varargs collected the extras).
 	}
 
 	return env, nil

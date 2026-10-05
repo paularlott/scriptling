@@ -989,6 +989,11 @@ type CallOverflow struct {
 	Keywords     map[string]Expression
 	ArgsUnpack   []Expression
 	KwargsUnpack Expression
+	// ArgsUnpackAt[i] is the number of positional arguments written before
+	// ArgsUnpack[i]. It is nil when every unpack comes after all positional
+	// arguments (f(a, *xs)), the common case; set only for calls such as
+	// f(*xs, b) where order matters.
+	ArgsUnpackAt []int
 }
 
 type CallExpression struct {
@@ -1052,6 +1057,24 @@ func (ce *CallExpression) SetOverflow(keywords map[string]Expression, argsUnpack
 		ArgsUnpack:   argsUnpack,
 		KwargsUnpack: kwargsUnpack,
 	}
+}
+
+// GetArgsUnpackAt returns, per *unpack, how many positional arguments precede
+// it, or nil when all unpacks follow every positional argument.
+func (ce *CallExpression) GetArgsUnpackAt() []int {
+	if ce.overflow == nil {
+		return nil
+	}
+	return ce.overflow.ArgsUnpackAt
+}
+
+// SetArgsUnpackAt records unpack positions; call after SetOverflow. A nil or
+// all-trailing list is dropped so the common case stays untouched.
+func (ce *CallExpression) SetArgsUnpackAt(at []int, positional int) {
+	if ce.overflow == nil || !unpackOutOfOrder(at, positional) {
+		return
+	}
+	ce.overflow.ArgsUnpackAt = at
 }
 
 func (ce *CallExpression) HasOverflow() bool {
@@ -1118,6 +1141,24 @@ func (mce *MethodCallExpression) SetOverflow(keywords map[string]Expression, arg
 		ArgsUnpack:   argsUnpack,
 		KwargsUnpack: kwargsUnpack,
 	}
+}
+
+// GetArgsUnpackAt returns, per *unpack, how many positional arguments precede
+// it, or nil when all unpacks follow every positional argument.
+func (mce *MethodCallExpression) GetArgsUnpackAt() []int {
+	if mce.overflow == nil {
+		return nil
+	}
+	return mce.overflow.ArgsUnpackAt
+}
+
+// SetArgsUnpackAt records unpack positions; call after SetOverflow. A nil or
+// all-trailing list is dropped so the common case stays untouched.
+func (mce *MethodCallExpression) SetArgsUnpackAt(at []int, positional int) {
+	if mce.overflow == nil || !unpackOutOfOrder(at, positional) {
+		return
+	}
+	mce.overflow.ArgsUnpackAt = at
 }
 
 func (mce *MethodCallExpression) HasOverflow() bool {
@@ -1699,3 +1740,14 @@ type OrPattern struct {
 func (op *OrPattern) expressionNode()      {}
 func (op *OrPattern) TokenLiteral() string { return "|" }
 func (op *OrPattern) Line() int            { return lineOfExprSlice(op.Patterns) }
+
+// unpackOutOfOrder reports whether any *unpack is followed by a positional
+// argument, i.e. needs interleaving rather than appending.
+func unpackOutOfOrder(at []int, positional int) bool {
+	for _, a := range at {
+		if a != positional {
+			return true
+		}
+	}
+	return false
+}

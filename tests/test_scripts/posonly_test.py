@@ -30,8 +30,8 @@ assert raises_type_error(lambda: g(a=1, b=2))
 def h(x, /, y=2, *args, z, **kw):
     return (x, y, args, z, kw)
 
-assert h(1, z=3) == (1, 2, [], 3, {})
-assert h(1, 9, 8, 7, z=3, w=4) == (1, 9, [8, 7], 3, {"w": 4})
+assert h(1, z=3) == (1, 2, (), 3, {})
+assert h(1, 9, 8, 7, z=3, w=4) == (1, 9, (8, 7), 3, {"w": 4})
 assert raises_type_error(lambda: h(x=1, z=3))
 
 # A bare * after / keeps later parameters keyword-only: positional calls
@@ -54,7 +54,8 @@ def k(a, /, **kw):
     return kw
 
 assert k(1, b=2) == {"b": 2}
-assert raises_type_error(lambda: k(1, a=2))
+# A positional-only name used as a keyword lands in **kw, as in Python.
+assert k(1, a=2) == {"a": 2}
 assert raises_type_error(lambda: k(a=1))
 
 # Lambdas support the marker too
@@ -81,3 +82,32 @@ def plain(a, b):
 assert plain(b=2, a=5) == 3
 
 True
+
+# Keyword-only defaults are filled even when no keywords are passed and the
+# positional count reaches the parameter count (a bug: x leaked outer scope).
+def kw_fill(a, b, *args, x=5, y=6):
+    return (a, b, args, x, y)
+
+assert kw_fill(1, 2, 3, 4) == (1, 2, (3, 4), 5, 6)
+assert kw_fill(1, 2) == (1, 2, (), 5, 6)
+
+x = 111
+def kw_no_leak(*args, x=5):
+    return x
+assert kw_no_leak(1, 2, 3) == 5
+
+def bare_star_default(a, *, b=2):
+    return (a, b)
+assert bare_star_default(1) == (1, 2)
+
+def required_kwonly(a, *, b):
+    return b
+try:
+    required_kwonly(1)
+    assert False, "expected TypeError"
+except TypeError as e:
+    assert "required keyword-only argument" in str(e)
+
+def all_params(a, *args, k=7, **kw):
+    return (a, args, k, kw)
+assert all_params(1, 2, 3) == (1, (2, 3), 7, {})

@@ -1320,6 +1320,7 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 	argFns := compileExprs(n.Arguments)
 	kwFns := compileKeywordMap(n.GetKeywords())
 	unpackFns := compileExprs(n.GetArgsUnpack())
+	unpackAt := n.GetArgsUnpackAt()
 	var kwargsUnpackFn object.EvalFn
 	if e := n.GetKwargsUnpack(); e != nil {
 		kwargsUnpackFn = compileExpr(e)
@@ -1337,15 +1338,27 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 			}
 		}
 
-		args := evalCompiledCallArgs(ctx, env, argFns)
-		if isPropagatedError(args) {
-			return args[0]
+		var args []object.Object
+		if unpackAt != nil {
+			// Out-of-order unpacks (f(*xs, b)): arguments evaluate in
+			// source order, positionals and unpacks interleaved, as Python
+			// does. The result is a fresh slice (not pooled).
+			var errObj object.Object
+			args, errObj = mergeUnpackedArgsInOrder(ctx, env, argFns, unpackFns, unpackAt)
+			if errObj != nil {
+				return errObj
+			}
+		} else {
+			args = evalCompiledCallArgs(ctx, env, argFns)
+			if isPropagatedError(args) {
+				return args[0]
+			}
+			// args is borrowed from the per-root arg-buffer free-list; release it on
+			// every return path from here. (If *unpack append below grows args into a
+			// fresh backing, the original pooled buffer is still released correctly; the
+			// grown backing is simply not pooled — a rare case.)
+			defer object.ReleaseArgs(env, args)
 		}
-		// args is borrowed from the per-root arg-buffer free-list; release it on
-		// every return path from here. (If *unpack append below grows args into a
-		// fresh backing, the original pooled buffer is still released correctly; the
-		// grown backing is simply not pooled — a rare case.)
-		defer object.ReleaseArgs(env, args)
 
 		var keywords map[string]object.Object
 		if len(kwFns) > 0 {
@@ -1359,16 +1372,12 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 			}
 		}
 
-		for _, unpackFn := range unpackFns {
-			argsVal := unpackFn(ctx, env)
-			if propagates(argsVal) {
-				return argsVal
+		if len(unpackFns) > 0 && unpackAt == nil {
+			var errObj object.Object
+			args, errObj = appendUnpackedArgs(ctx, env, args, unpackFns)
+			if errObj != nil {
+				return errObj
 			}
-			unpacked, err := unpackArgsFromIterable(ctx, argsVal, env)
-			if err != nil {
-				return err
-			}
-			args = append(args, unpacked...)
 		}
 
 		if kwargsUnpackFn != nil {
@@ -1489,6 +1498,7 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 	argFns := compileExprs(n.Arguments)
 	kwFns := compileKeywordMap(n.GetKeywords())
 	unpackFns := compileExprs(n.GetArgsUnpack())
+	unpackAt := n.GetArgsUnpackAt()
 	var kwargsUnpackFn object.EvalFn
 	if e := n.GetKwargsUnpack(); e != nil {
 		kwargsUnpackFn = compileExpr(e)
@@ -1557,16 +1567,22 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 		}
 
 		// Handle *args unpacking (supports multiple)
-		for _, unpackFn := range unpackFns {
-			argsVal := unpackFn(ctx, env)
-			if propagates(argsVal) {
-				return argsVal
+		if len(unpackFns) > 0 {
+			if unpackAt != nil {
+				// Out-of-order unpacks: evaluate in source order (see the
+				// call-site twin in compileCall).
+				var errObj object.Object
+				args, errObj = mergeUnpackedArgsInOrder(ctx, env, argFns, unpackFns, unpackAt)
+				if errObj != nil {
+					return errObj
+				}
+			} else {
+				var errObj object.Object
+				args, errObj = appendUnpackedArgs(ctx, env, args, unpackFns)
+				if errObj != nil {
+					return errObj
+				}
 			}
-			unpacked, err := unpackArgsFromIterable(ctx, argsVal, env)
-			if err != nil {
-				return err
-			}
-			args = append(args, unpacked...)
 		}
 
 		// Handle **kwargs unpacking
@@ -3538,4 +3554,63 @@ func hasTrue(s []bool) bool {
 		}
 	}
 	return false
+}
+
+// appendUnpackedArgs evaluates each trailing *unpack (every unpack follows
+// all positional arguments) and appends its items to args.
+func appendUnpackedArgs(ctx context.Context, env *object.Environment, args []object.Object, unpackFns []object.EvalFn) ([]object.Object, object.Object) {
+	for _, unpackFn := range unpackFns {
+		argsVal := unpackFn(ctx, env)
+		if propagates(argsVal) {
+			return args, argsVal
+		}
+		unpacked, err := unpackArgsFromIterable(ctx, argsVal, env)
+		if err != nil {
+			return args, err
+		}
+		args = append(args, unpacked...)
+	}
+	return args, nil
+}
+
+// mergeUnpackedArgsInOrder evaluates a call's arguments in source order —
+// positionals and *unpacks interleaved — for calls such as f(*xs, b) where
+// an unpack precedes positional arguments. unpackAt[i] is how many
+// positional arguments were written before unpack i, so f(*xs, b) yields
+// xs's items then b, as in Python, with side effects running left to right.
+func mergeUnpackedArgsInOrder(ctx context.Context, env *object.Environment, argFns []object.EvalFn, unpackFns []object.EvalFn, unpackAt []int) ([]object.Object, object.Object) {
+	merged := make([]object.Object, 0, len(argFns)+len(unpackFns))
+	next := 0 // positional arguments already evaluated
+	for i, unpackFn := range unpackFns {
+		at := unpackAt[i]
+		if at > len(argFns) {
+			at = len(argFns)
+		}
+		for next < at {
+			v := argFns[next](ctx, env)
+			if propagates(v) {
+				return merged, v
+			}
+			merged = append(merged, v)
+			next++
+		}
+		argsVal := unpackFn(ctx, env)
+		if propagates(argsVal) {
+			return merged, argsVal
+		}
+		unpacked, err := unpackArgsFromIterable(ctx, argsVal, env)
+		if err != nil {
+			return merged, err
+		}
+		merged = append(merged, unpacked...)
+	}
+	for next < len(argFns) {
+		v := argFns[next](ctx, env)
+		if propagates(v) {
+			return merged, v
+		}
+		merged = append(merged, v)
+		next++
+	}
+	return merged, nil
 }
