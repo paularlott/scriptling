@@ -331,12 +331,60 @@ Example:
 			var ntClass *object.Class
 			methods := make(map[string]object.Object)
 
-			// __init__ method - stores fields as instance attributes
+			// defaults=(...) applies to the rightmost fields, as in Python.
+			var defaults []object.Object
+			if d := kwargs.Get("defaults"); d != nil {
+				switch dv := d.(type) {
+				case *object.List:
+					defaults = dv.Elements
+				case *object.Tuple:
+					defaults = dv.Elements
+				case *object.Null:
+				default:
+					return errors.NewTypeError("list or tuple", d.Type().String())
+				}
+				if len(defaults) > len(fieldNames) {
+					return errors.NewTypeErrorTagged("Got more default values than field names")
+				}
+			}
+
+			// __init__ method - stores fields as instance attributes. Values
+			// come positionally, by keyword (P(x=1, y=2)) or from defaults.
 			methods["__init__"] = &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) != len(fieldNames)+1 {
-						return errors.NewArgumentError(len(args), len(fieldNames)+1)
+					positional := args[1:]
+					if len(positional) > len(fieldNames) {
+						return errors.NewTypeErrorTagged("%s() takes %d positional arguments but %d were given", typename.StringValue(), len(fieldNames), len(positional))
 					}
+					values := make([]object.Object, len(fieldNames))
+					copy(values, positional)
+					for name, v := range kwargs.Kwargs {
+						idx := -1
+						for i, fn := range fieldNames {
+							if fn == name {
+								idx = i
+								break
+							}
+						}
+						if idx < 0 {
+							return errors.NewTypeErrorTagged("%s() got an unexpected keyword argument '%s'", typename.StringValue(), name)
+						}
+						if values[idx] != nil {
+							return errors.NewTypeErrorTagged("%s() got multiple values for argument '%s'", typename.StringValue(), name)
+						}
+						values[idx] = v
+					}
+					for i := range values {
+						if values[i] != nil {
+							continue
+						}
+						if di := i - (len(fieldNames) - len(defaults)); di >= 0 {
+							values[i] = defaults[di]
+							continue
+						}
+						return errors.NewTypeErrorTagged("%s() missing required argument: '%s'", typename.StringValue(), fieldNames[i])
+					}
+					args = append([]object.Object{args[0]}, values...)
 					nt := args[0].(*object.Instance)
 					// Store field values directly as instance fields
 					for i, name := range fieldNames {
@@ -370,6 +418,13 @@ Example:
 						return err
 					}
 					nt := args[0].(*object.Instance)
+					if sl, ok := args[1].(*object.Slice); ok {
+						vals := make([]object.Object, len(fieldNames))
+						for i, name := range fieldNames {
+							vals[i], _ = nt.GetField(name)
+						}
+						return &object.Tuple{Elements: sliceElements(vals, sl)}
+					}
 					if idx, ok := args[1].(*object.Integer); ok {
 						// Positional access, like a tuple: p[0], p[-1],
 						// IndexError out of range.
@@ -502,49 +557,117 @@ Example:
 				HelpText: `_asdict() - Return fields as a dict`,
 			}
 
-			// Named tuples compare by value, as tuples do.
+			// fieldValues returns a namedtuple instance's values in field order.
+			fieldValues := func(nt *object.Instance) []object.Object {
+				vals := make([]object.Object, len(fieldNames))
+				for i, name := range fieldNames {
+					v, _ := nt.GetField(name)
+					if v == nil {
+						v = &object.Null{}
+					}
+					vals[i] = v
+				}
+				return vals
+			}
+			// otherValues extracts comparable values from a namedtuple
+			// instance or a plain tuple.
+			otherValues := func(o object.Object) ([]object.Object, bool) {
+				switch ov := o.(type) {
+				case *object.Tuple:
+					return ov.Elements, true
+				case *object.Instance:
+					if tn, has := ov.GetField("__typename__"); has && tn != nil {
+						if fs, ok := ov.GetField("__fields__"); ok {
+							if ft, ok := fs.(*object.Tuple); ok {
+								vals := make([]object.Object, len(ft.Elements))
+								for i, f := range ft.Elements {
+									vals[i], _ = ov.GetField(f.(*object.String).StringValue())
+								}
+								return vals, true
+							}
+						}
+					}
+				}
+				return nil, false
+			}
+
+			// Named tuples compare by value, as tuples do (and equal a plain
+			// tuple with the same values).
 			methods["__eq__"] = &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					if len(args) != 2 {
 						return errors.NewArgumentError(len(args), 2)
 					}
-					a, okA := args[0].(*object.Instance)
-					b, okB := args[1].(*object.Instance)
-					if !okA || !okB {
+					ov, ok := otherValues(args[1])
+					if !ok || len(ov) != len(fieldNames) {
 						return object.NewBoolean(false)
 					}
-					for _, name := range fieldNames {
-						av, aok := a.GetField(name)
-						bv, bok := b.GetField(name)
-						if !aok || !bok || av.Inspect() != bv.Inspect() {
+					for i, av := range fieldValues(args[0].(*object.Instance)) {
+						if av.Inspect() != ov[i].Inspect() {
 							return object.NewBoolean(false)
 						}
 					}
 					return object.NewBoolean(true)
 				},
-					HelpText: `__eq__(other) - Compare field values`,
-				}
+				HelpText: `__eq__(other) - Compare field values`,
+			}
 
-				// ...and hash by content, as tuples do (consistent with __eq__).
-				methods["__hash__"] = &object.Builtin{
+			// Ordering is tuple (lexicographic) ordering over the values.
+			orderMethod := func(name string, keep func(cmp int) bool) object.Object {
+				return &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-						if err := errors.ExactArgs(args, 1); err != nil {
-							return err
+						if len(args) != 2 {
+							return errors.NewArgumentError(len(args), 2)
 						}
-						nt := args[0].(*object.Instance)
-						h := uint64(14695981039346656037)
-						for _, name := range fieldNames {
-							if v, exists := nt.GetField(name); exists {
-								for _, c := range v.Inspect() {
-									h ^= uint64(c)
-									h *= 1099511628211
-								}
+						ov, ok := otherValues(args[1])
+						if !ok {
+							return errors.NewTypeErrorTagged("'%s' not supported between instances of '%s' and '%s'", name, typename.StringValue(), args[1].Type().String())
+						}
+						cmp, okc := compareSequences(fieldValues(args[0].(*object.Instance)), ov)
+						if !okc {
+							return errors.NewTypeErrorTagged("'%s' not supported between values of incomparable types in '%s'", name, typename.StringValue())
+						}
+						return object.NewBoolean(keep(cmp))
+					},
+					HelpText: name + "(other) - Tuple ordering over the field values",
+				}
+			}
+			methods["__lt__"] = orderMethod("<", func(c int) bool { return c < 0 })
+			methods["__le__"] = orderMethod("<=", func(c int) bool { return c <= 0 })
+			methods["__gt__"] = orderMethod(">", func(c int) bool { return c > 0 })
+			methods["__ge__"] = orderMethod(">=", func(c int) bool { return c >= 0 })
+
+			// Named tuples are immutable: field writes raise AttributeError
+			// (shares the marker frozen dataclasses use).
+			methods["__frozen__"] = object.NewBoolean(true)
+
+			// P._fields on the class itself, as in Python.
+			classFields := make([]object.Object, len(fieldNames))
+			for i, name := range fieldNames {
+				classFields[i] = object.NewString(name)
+			}
+			methods["_fields"] = &object.Tuple{Elements: classFields}
+
+			// ...and hash by content, as tuples do (consistent with __eq__).
+			methods["__hash__"] = &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.ExactArgs(args, 1); err != nil {
+						return err
+					}
+					nt := args[0].(*object.Instance)
+					h := uint64(14695981039346656037)
+					for _, name := range fieldNames {
+						if v, exists := nt.GetField(name); exists {
+							for _, c := range v.Inspect() {
+								h ^= uint64(c)
+								h *= 1099511628211
 							}
 						}
-						return object.NewInteger(int64(h))
-					},
-					HelpText: `__hash__() - Hash by field values`,
-				}
+					}
+					return object.NewInteger(int64(h))
+				},
+				HelpText: `__hash__() - Hash by field values`,
+			}
 
 			ntClass = &object.Class{
 				Name:    typename.StringValue(),
@@ -851,4 +974,95 @@ func reprValue(v object.Object) string {
 		return q + s.StringValue() + q
 	}
 	return v.Inspect()
+}
+
+// sliceElements applies Python slice semantics (start/end/step, negative
+// indices, clamping) to a value list.
+func sliceElements(vals []object.Object, sl *object.Slice) []object.Object {
+	n := int64(len(vals))
+	step := int64(1)
+	if sl.Step != nil {
+		step = sl.Step.IntValue()
+	}
+	if step == 0 {
+		return nil
+	}
+	clamp := func(v *object.Integer, def, lo, hi int64) int64 {
+		if v == nil {
+			return def
+		}
+		i := v.IntValue()
+		if i < 0 {
+			i += n
+		}
+		if i < lo {
+			i = lo
+		}
+		if i > hi {
+			i = hi
+		}
+		return i
+	}
+	out := []object.Object{}
+	if step > 0 {
+		for i := clamp(sl.Start, 0, 0, n); i < clamp(sl.End, n, 0, n); i += step {
+			out = append(out, vals[i])
+		}
+	} else {
+		for i := clamp(sl.Start, n-1, -1, n-1); i > clamp(sl.End, -1, -1, n-1); i += step {
+			out = append(out, vals[i])
+		}
+	}
+	return out
+}
+
+// compareValues orders two scalar or tuple values like Python (numbers
+// numerically across int/float, strings lexicographically, tuples
+// element-wise); ok is false for incomparable types.
+func compareValues(a, b object.Object) (int, bool) {
+	if af, err := a.AsFloat(); err == nil {
+		if _, isStr := a.(*object.String); !isStr {
+			if bf, err := b.AsFloat(); err == nil {
+				if _, isStr := b.(*object.String); !isStr {
+					switch {
+					case af < bf:
+						return -1, true
+					case af > bf:
+						return 1, true
+					}
+					return 0, true
+				}
+			}
+		}
+	}
+	as, aok := a.(*object.String)
+	bs, bok := b.(*object.String)
+	if aok && bok {
+		return strings.Compare(as.StringValue(), bs.StringValue()), true
+	}
+	at, aok := a.(*object.Tuple)
+	bt, bok := b.(*object.Tuple)
+	if aok && bok {
+		return compareSequences(at.Elements, bt.Elements)
+	}
+	return 0, false
+}
+
+func compareSequences(a, b []object.Object) (int, bool) {
+	for i := 0; i < len(a) && i < len(b); i++ {
+		c, ok := compareValues(a[i], b[i])
+		if !ok {
+			return 0, false
+		}
+		if c != 0 {
+			return c, true
+		}
+	}
+	switch {
+	case len(a) < len(b):
+		return -1, true
+	case len(a) > len(b):
+		return 1, true
+	}
+	return 0, true
 }

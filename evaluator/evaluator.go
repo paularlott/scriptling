@@ -1709,9 +1709,18 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 }
 
 // unpackArgsFromIterable unpacks an iterable object into a slice of arguments
-func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Object) {
+func unpackArgsFromIterable(ctx context.Context, argsVal object.Object, env *object.Environment) ([]object.Object, object.Object) {
 	var unpacked []object.Object
 	switch val := argsVal.(type) {
+	case *object.Instance:
+		elems, ok, rerr := iterableToSliceChecked(ctx, val, env)
+		if rerr != nil {
+			return nil, rerr
+		}
+		if !ok {
+			return nil, errors.NewTypeErrorTagged("argument after * must be iterable, not %s", argsVal.Type())
+		}
+		unpacked = elems
 	case *object.List:
 		unpacked = val.Elements
 	case *object.Tuple:
@@ -1780,7 +1789,7 @@ func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Obje
 			unpacked = append(unpacked, elem)
 		}
 	default:
-		return nil, errors.NewError("argument after * must be iterable, not %s", argsVal.Type())
+		return nil, errors.NewTypeErrorTagged("argument after * must be iterable, not %s", argsVal.Type())
 	}
 	return unpacked, nil
 }
@@ -3430,7 +3439,24 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 			}
 			return nativeBoolToBooleanObject(isTruthy(result))
 		}
-		return errors.NewTypeError("iterable", right.Type().String())
+		// No __contains__: fall back to iterating via __iter__, as Python does.
+		elems, ok, rerr := iterableToSliceChecked(ctx, container, env)
+		if rerr != nil {
+			return rerr
+		}
+		if !ok {
+			return errors.NewTypeError("iterable", right.Type().String())
+		}
+		for _, e := range elems {
+			eq, rerr := evalObjectsEqualChecked(ctx, left, e, env)
+			if rerr != nil {
+				return rerr
+			}
+			if eq {
+				return TRUE
+			}
+		}
+		return FALSE
 	case *object.Class:
 		// Membership on an enum class: member in Color.
 		if container.IsEnum {

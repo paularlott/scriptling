@@ -1364,7 +1364,7 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 			if propagates(argsVal) {
 				return argsVal
 			}
-			unpacked, err := unpackArgsFromIterable(argsVal)
+			unpacked, err := unpackArgsFromIterable(ctx, argsVal, env)
 			if err != nil {
 				return err
 			}
@@ -1562,7 +1562,7 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 			if propagates(argsVal) {
 				return argsVal
 			}
-			unpacked, err := unpackArgsFromIterable(argsVal)
+			unpacked, err := unpackArgsFromIterable(ctx, argsVal, env)
 			if err != nil {
 				return err
 			}

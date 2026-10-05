@@ -521,6 +521,17 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
 		}
+		if inst, isInst := args[0].(*object.Instance); isInst {
+			elems, ok, rerr := iterableToSliceChecked(ctx, inst, env)
+			if rerr != nil {
+				return rerr
+			}
+			if !ok {
+				return errors.NewTypeError("iterable", inst.Type().String())
+			}
+			list.Elements = append(list.Elements, elems...)
+			return NULL
+		}
 		elements, err := args[0].AsList()
 		if err != nil {
 			return errors.ParameterError("iterable", err)
