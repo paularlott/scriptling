@@ -26,10 +26,11 @@ func ParseJSON(jsonStr string) (object.Object, error) {
 func MustParseJSON(jsonStr string) object.Object {
 	result, err := ParseJSON(jsonStr)
 	if err != nil {
-		// Python's json.JSONDecodeError subclasses ValueError, so except
-		// ValueError must catch it.
+		// Python's json.JSONDecodeError subclasses ValueError; the
+		// exception hierarchy maps JSONDecodeError→ValueError, so both
+		// `except ValueError` and `except json.JSONDecodeError` catch it.
 		decodeErr := errors.NewError("JSONDecodeError: %s", err.Error())
-		decodeErr.ExceptionType = object.ExceptionTypeValueError
+		decodeErr.ExceptionType = "JSONDecodeError"
 		return decodeErr
 	}
 	return result

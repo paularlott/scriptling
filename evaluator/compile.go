@@ -2756,6 +2756,73 @@ func compileAssert(n *ast.AssertStatement) object.EvalFn {
 	}
 }
 
+// exceptionClassChain returns the except-matching chain for a user exception
+// class: its own name, its user-class ancestors, and the built-in exception
+// type they derive from. class MyError(ValueError) yields ["MyError",
+// "ValueError"]; class D(MyError) yields ["D", "MyError", "ValueError"].
+func exceptionClassChain(cls *object.Class) []string {
+	var chain []string
+	for c := cls; c != nil; c = c.BaseClass {
+		chain = append(chain, c.Name)
+	}
+	if cls.ExceptionBase != "" {
+		base := cls.ExceptionBase
+		if len(chain) == 0 || chain[len(chain)-1] != base {
+			chain = append(chain, base)
+		}
+	}
+	return chain
+}
+
+// exceptionFromClassInstance converts a user exception class instance to the
+// raised built-in exception form. The message follows Python's Exception
+// str(): the single constructor argument, the repr of several, or "". The
+// second/third returns are the type chain and the constructor args.
+func exceptionFromClassInstance(ctx context.Context, inst *object.Instance, env *object.Environment) (*object.Exception, []string, []object.Object) {
+	if inst.Class == nil || inst.Class.ExceptionBase == "" {
+		return nil, nil, nil
+	}
+	var args []object.Object
+	if argsField, ok := inst.GetField("args"); ok {
+		if t, ok := argsField.(*object.Tuple); ok {
+			args = t.Elements
+		}
+	}
+	message := ""
+	switch len(args) {
+	case 0:
+	case 1:
+		message = args[0].Inspect()
+		if s, ok := args[0].(*object.String); ok {
+			message = s.StringValue()
+		}
+	default:
+		// Python str() of a multi-arg exception is the repr of the args
+		// tuple: strings carry their quotes.
+		parts := make([]string, 0, len(args))
+		for _, a := range args {
+			rendered, rerr := renderConvertedValue(ctx, a, "r", env)
+			if rerr != nil {
+				parts = append(parts, a.Inspect())
+			} else {
+				parts = append(parts, rendered)
+			}
+		}
+		message = "(" + strings.Join(parts, ", ") + ")"
+	}
+	// A user-defined __str__ overrides the args-derived message.
+	if _, hasStr := inst.Class.Methods["__str__"]; hasStr {
+		if rendered, rerr := renderConvertedValue(ctx, inst, "s", env); rerr == nil {
+			message = rendered
+		}
+	}
+	return &object.Exception{
+		Message:        message,
+		ExceptionType:  inst.Class.Name,
+		OriginInstance: inst,
+	}, exceptionClassChain(inst.Class), args
+}
+
 func compileRaise(n *ast.RaiseStatement) object.EvalFn {
 	var message object.EvalFn
 	if n.Message != nil {
@@ -2774,6 +2841,18 @@ func compileRaise(n *ast.RaiseStatement) object.EvalFn {
 				exc.Raised = true
 				return exc
 			}
+			// Raising an instance of a user exception class
+			// (class MyError(Exception): ... raise MyError("boom")) converts
+			// to the built-in exception form, carrying the class chain so
+			// `except ValueError` and isinstance still match.
+			if inst, ok := msg.(*object.Instance); ok {
+				if exc, chain, args := exceptionFromClassInstance(ctx, inst, env); exc != nil {
+					exc.Raised = true
+					exc.TypeChain = chain
+					exc.Args = args
+					return exc
+				}
+			}
 			// Python allows `raise ValueError` — the class without a call: the
 			// exception is instantiated with no arguments. Recognized by the raise
 			// operand being an identifier naming a builtin exception constructor
@@ -2791,6 +2870,12 @@ func compileRaise(n *ast.RaiseStatement) object.EvalFn {
 						}
 					}
 				}
+			}
+			// A user exception CLASS without a call: raise MyError.
+			if cls, ok := msg.(*object.Class); ok && cls.ExceptionBase != "" {
+				exc := &object.Exception{ExceptionType: cls.Name, TypeChain: exceptionClassChain(cls)}
+				exc.Raised = true
+				return exc
 			}
 			// Python 3 doesn't support raise "string", only raise Exception("string")
 			return errors.NewError("exceptions must derive from BaseException")
@@ -3125,15 +3210,46 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 			if propagates(baseClassObj) {
 				return baseClassObj
 			}
-			baseClass, ok := baseClassObj.(*object.Class)
-			if !ok {
-				return errors.NewError("base class is not a class type, got %s", baseClassObj.Type())
-			}
-			class.BaseClass = baseClass
+			// class MyError(ValueError): deriving from a built-in exception
+			// constructor makes this a user exception class.
+			if baseBuiltin, isBuiltin := baseClassObj.(*object.Builtin); isBuiltin {
+				if excName, isExc := exceptionBuiltins[baseBuiltin]; isExc {
+					class.ExceptionBase = excName
+					// Store constructor args so raise/`e.args` can use them,
+					// as Python's Exception.__init__ does.
+					class.Methods["__init__"] = &object.Builtin{
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+							if len(args) < 1 {
+								return errors.NewError("__init__ requires self")
+							}
+							inst, ok := args[0].(*object.Instance)
+							if !ok {
+								return errors.NewError("__init__ requires instance as first argument")
+							}
+							rest := make([]object.Object, 0, len(args)-1)
+							rest = append(rest, args[1:]...)
+							inst.SetField("args", &object.Tuple{Elements: rest})
+							return NULL
+						},
+					}
+				} else {
+					return errors.NewError("base class is not a class type, got %s", baseClassObj.Type())
+				}
+			} else {
+				baseClass, ok := baseClassObj.(*object.Class)
+				if !ok {
+					return errors.NewError("base class is not a class type, got %s", baseClassObj.Type())
+				}
+				class.BaseClass = baseClass
+				// User exception classes inherit their exception-ness.
+				if baseClass.ExceptionBase != "" {
+					class.ExceptionBase = baseClass.ExceptionBase
+				}
 
-			// Copy methods from base class
-			for mname, method := range baseClass.Methods {
-				class.Methods[mname] = method
+				// Copy methods from base class
+				for mname, method := range baseClass.Methods {
+					class.Methods[mname] = method
+				}
 			}
 		}
 

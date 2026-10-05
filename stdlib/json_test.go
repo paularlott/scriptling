@@ -89,8 +89,9 @@ func TestJSONDumpsFloats(t *testing.T) {
 	}
 }
 
-// TestJSONDecodeErrorIsValueError: bad JSON raises a ValueError-typed error
-// so except ValueError catches it (Python's JSONDecodeError subclasses it).
+// TestJSONDecodeErrorIsValueError: bad JSON raises a JSONDecodeError-typed
+// error (Python's own classification); the exception hierarchy maps
+// JSONDecodeError→ValueError, so except ValueError catches it too.
 func TestJSONDecodeErrorIsValueError(t *testing.T) {
 	loads := JSONLibrary.Functions()["loads"]
 	result := loads.Fn(context.Background(), object.NewKwargs(nil), object.NewString("{bad"))
@@ -98,8 +99,12 @@ func TestJSONDecodeErrorIsValueError(t *testing.T) {
 	if !ok {
 		t.Fatalf("loads returned %s: %s", result.Type(), result.Inspect())
 	}
-	if err.ExceptionType != object.ExceptionTypeValueError {
-		t.Errorf("expected ValueError classification, got %q", err.ExceptionType)
+	if err.ExceptionType != "JSONDecodeError" {
+		t.Errorf("expected JSONDecodeError classification, got %q", err.ExceptionType)
+	}
+	// The module exposes the type so `except json.JSONDecodeError:` resolves.
+	if JSONLibrary.Constants()["JSONDecodeError"] == nil {
+		t.Error("json library does not expose JSONDecodeError")
 	}
 }
 

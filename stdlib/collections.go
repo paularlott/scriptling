@@ -444,8 +444,29 @@ Example:
 					}
 					return object.NewBoolean(true)
 				},
-				HelpText: `__eq__(other) - Compare field values`,
-			}
+					HelpText: `__eq__(other) - Compare field values`,
+				}
+
+				// ...and hash by content, as tuples do (consistent with __eq__).
+				methods["__hash__"] = &object.Builtin{
+					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+						if err := errors.ExactArgs(args, 1); err != nil {
+							return err
+						}
+						nt := args[0].(*object.Instance)
+						h := uint64(14695981039346656037)
+						for _, name := range fieldNames {
+							if v, exists := nt.GetField(name); exists {
+								for _, c := range v.Inspect() {
+									h ^= uint64(c)
+									h *= 1099511628211
+								}
+							}
+						}
+						return object.NewInteger(int64(h))
+					},
+					HelpText: `__hash__() - Hash by field values`,
+				}
 
 			ntClass = &object.Class{
 				Name:    typename.StringValue(),

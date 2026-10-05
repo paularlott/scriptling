@@ -162,7 +162,7 @@ Returns the value of the environment variable key if it exists, None if not set 
 					entries, readErr = os.ReadDir(path)
 				})
 				if readErr != nil {
-					return errors.NewError("cannot read directory: %s", readErr.Error())
+					return pathErrorException("cannot read directory", readErr)
 				}
 
 				elements := make([]object.Object, len(entries))
@@ -235,7 +235,7 @@ matching read_file(); the Python-canonical API is pathlib.Path.read_bytes().`,
 				var openErr error
 				object.RunBlocking(ctx, func() { f, openErr = os.Open(path) })
 				if openErr != nil {
-					return errors.NewError("cannot open file: %s", openErr.Error())
+					return pathErrorException("cannot open file", openErr)
 				}
 
 				scanner := bufio.NewScanner(f)

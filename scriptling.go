@@ -1406,7 +1406,11 @@ func (p *Scriptling) handleResult(result object.Object, contextMsg string) (obje
 		if !obj.Raised {
 			return obj, nil
 		}
-		// Other exceptions
+		// Other exceptions. An empty message (raise ValueError) still names
+		// the type, as Python's traceback does.
+		if obj.Message == "" && obj.ExceptionType != "" {
+			return obj, fmt.Errorf("%s", obj.ExceptionType)
+		}
 		return obj, fmt.Errorf("%s", obj.Message)
 
 	default:

@@ -11,7 +11,8 @@ import (
 
 // evalHashKeyChecked is like evalHashKey but surfaces a raise/error from a
 // user-defined __hash__ instead of silently falling back to the identity hash.
-// The second return is non-nil exactly when __hash__ raised or errored.
+// The second return is non-nil exactly when __hash__ raised or errored, or the
+// value is unhashable (Python's TypeError: unhashable type).
 func evalHashKeyChecked(ctx context.Context, obj object.Object) (string, object.Object) {
 	if inst, ok := obj.(*object.Instance); ok {
 		if _, hasHash := inst.Class.Methods["__hash__"]; hasHash && hashInstanceFn != nil {
@@ -26,7 +27,33 @@ func evalHashKeyChecked(ctx context.Context, obj object.Object) (string, object.
 			return "", &object.Exception{Message: "__hash__ method should return an integer", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
 		}
 	}
+	if !hashableAsKey(obj) {
+		return "", &object.Exception{
+			Message:       fmt.Sprintf("unhashable type: '%s'", getTypeName(obj)),
+			ExceptionType: object.ExceptionTypeTypeError,
+			Raised:        true,
+		}
+	}
 	return object.DictKey(obj), nil
+}
+
+// hashableAsKey reports whether obj may serve as a dict key / set member.
+// object.IsHashable is the strict content-hashability allowlist (used by
+// sentinel machinery); dict and set keys additionally accept anything Python
+// identity-hashes by default: plain instances, classes, functions. As in
+// Python, an instance that defines __eq__ without __hash__ is unhashable.
+func hashableAsKey(obj object.Object) bool {
+	switch o := obj.(type) {
+	case *object.Instance:
+		if _, hasEq := o.Class.Methods["__eq__"]; hasEq {
+			_, hasHash := o.Class.Methods["__hash__"]
+			return hasHash
+		}
+		return true
+	case *object.Class, *object.Function, *object.LambdaFunction, *object.Builtin:
+		return true
+	}
+	return object.IsHashable(obj)
 }
 
 // evalSetAdd adds obj to set s, using __hash__ for instances.
@@ -55,7 +82,7 @@ func iterableToSet(ctx context.Context, obj object.Object, env *object.Environme
 }
 
 func evalSetAdd(ctx context.Context, s *object.Set, obj object.Object) object.Object {
-	if !object.IsHashable(obj) {
+	if !hashableAsKey(obj) {
 		return &object.Exception{Message: "unhashable type: '" + obj.Type().String() + "'", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
 	}
 	hk, raised := evalHashKeyChecked(ctx, obj)
@@ -204,6 +231,38 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 	}
 	if isDotAccess {
 		attr, _ := index.AsString()
+		// Strings are scriptling's type representation (type(e) returns the
+		// type name), so `.__name__` on one resolves the type(e).__name__
+		// idiom: the name itself.
+		if s, ok := left.(*object.String); ok && attr == "__name__" {
+			return s
+		}
+		if exc, ok := left.(*object.Exception); ok {
+			switch attr {
+			case "args":
+				args := exc.Args
+				if args == nil {
+					args = []object.Object{}
+					if exc.Message != "" {
+						args = []object.Object{object.NewString(exc.Message)}
+					}
+				}
+				return &object.Tuple{Elements: args}
+			case "__name__":
+				name := exc.ExceptionType
+				if name == "" {
+					name = "Exception"
+				}
+				return object.NewString(name)
+			}
+			// Custom attributes of the user exception instance the raise
+			// converted from (e.code for a class storing it in __init__).
+			if exc.OriginInstance != nil {
+				if v, exists := exc.OriginInstance.GetField(attr); exists {
+					return v
+				}
+			}
+		}
 		if method := builtinMethodRef(left, attr); method != nil {
 			return method
 		}

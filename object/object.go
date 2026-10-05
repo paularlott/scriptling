@@ -2338,6 +2338,18 @@ type Exception struct {
 	Message       string
 	ExceptionType string // Exception type for identification (e.g., "SystemExit", "ValueError", etc.)
 	Code          int    // Exit code for SystemExit; ignored for other exception types
+	// Args holds the constructor arguments for exceptions built from user
+	// exception classes, so `e.args` matches Python.
+	Args []Object
+	// TypeChain names the user exception class hierarchy a custom exception
+	// was raised through (["MyError", "ValueError"] for
+	// class MyError(ValueError)), so except clauses and isinstance match
+	// base classes of user exception classes.
+	TypeChain []string
+	// OriginInstance keeps the user exception class instance a raise
+	// converted from, so custom attributes and methods (e.code) remain
+	// reachable on the caught exception.
+	OriginInstance *Instance
 	// Raised distinguishes an exception that is actively propagating (produced
 	// by a `raise` or by an operation that failed) from one that is merely a
 	// value (constructed via `ValueError("x")`, bound by `except ... as e`, or
@@ -2388,8 +2400,13 @@ type Class struct {
 	BaseClass *Class // optional parent class for inheritance
 	Methods   map[string]Object
 	Env       *Environment
-	cacheMu   sync.RWMutex
-	cache     map[string]classLookupCacheEntry
+	// ExceptionBase names the built-in exception type this class derives
+	// from ("ValueError" for class MyError(ValueError)); "" means the class
+	// is not an exception. Set when the base is an exception constructor;
+	// inherited through BaseClass chains of user exception classes.
+	ExceptionBase string
+	cacheMu       sync.RWMutex
+	cache         map[string]classLookupCacheEntry
 }
 
 func (c *Class) Type() ObjectType { return CLASS_OBJ }

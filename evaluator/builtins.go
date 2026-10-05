@@ -1111,6 +1111,12 @@ Equivalent to (a // b, a % b) for integers.`,
 							}
 						}
 					}
+					// A user exception class matches its raised exceptions.
+					if exc, ok := obj.(*object.Exception); ok && class.ExceptionBase != "" {
+						if matchesNamedExceptionTypeChain(exc.ExceptionType, class.Name, exc.TypeChain) {
+							return TRUE
+						}
+					}
 					continue
 				}
 
@@ -1121,7 +1127,7 @@ Equivalent to (a // b, a % b) for integers.`,
 							if actual == "" {
 								actual = "Exception"
 							}
-							if matchesNamedExceptionType(actual, excName) {
+							if matchesNamedExceptionTypeChain(actual, excName, exc.TypeChain) {
 								return TRUE
 							}
 						}
@@ -1578,6 +1584,13 @@ For other objects, returns the same as str().`,
 					return hashInstanceFn(ctx, inst)
 				}
 			}
+			if !hashableAsKey(args[0]) {
+				return &object.Exception{
+					Message:       fmt.Sprintf("unhashable type: '%s'", getTypeName(args[0])),
+					ExceptionType: object.ExceptionTypeTypeError,
+					Raised:        true,
+				}
+			}
 			// FNV-1a hash algorithm - fast and good distribution
 			str := args[0].Inspect()
 			const (
@@ -1945,6 +1958,7 @@ Tuples and scalars are returned as-is (they are immutable).`,
 			return &object.Exception{
 				Message:       message,
 				ExceptionType: object.ExceptionTypeException,
+				Args:          append([]object.Object{}, args...),
 			}
 		},
 		HelpText: `Exception([message]) - Create a generic exception
@@ -1965,6 +1979,7 @@ Use with: raise Exception("error message")`,
 			return &object.Exception{
 				Message:       message,
 				ExceptionType: object.ExceptionTypeValueError,
+				Args:          append([]object.Object{}, args...),
 			}
 		},
 		HelpText: `ValueError([message]) - Create a value error exception
@@ -1985,6 +2000,7 @@ Use with: raise ValueError("invalid value")`,
 			return &object.Exception{
 				Message:       message,
 				ExceptionType: object.ExceptionTypeOverflowError,
+				Args:          append([]object.Object{}, args...),
 			}
 		},
 		HelpText: `OverflowError([message]) - Create an overflow error exception
@@ -2006,6 +2022,7 @@ Use with: raise OverflowError("value too large")`,
 			return &object.Exception{
 				Message:       message,
 				ExceptionType: object.ExceptionTypeTypeError,
+				Args:          append([]object.Object{}, args...),
 			}
 		},
 		HelpText: `TypeError([message]) - Create a type error exception
@@ -2026,6 +2043,7 @@ Use with: raise TypeError("wrong type")`,
 			return &object.Exception{
 				Message:       message,
 				ExceptionType: object.ExceptionTypeNameError,
+				Args:          append([]object.Object{}, args...),
 			}
 		},
 		HelpText: `NameError([message]) - Create a name error exception
@@ -2046,6 +2064,7 @@ Use with: raise NameError("name not defined")`,
 			return &object.Exception{
 				Message:       message,
 				ExceptionType: object.ExceptionTypeImportError,
+				Args:          append([]object.Object{}, args...),
 			}
 		},
 		HelpText: `ImportError([message]) - Create an import error exception
@@ -2066,6 +2085,7 @@ Use with: raise ImportError("module not found")`,
 			return &object.Exception{
 				Message:       message,
 				ExceptionType: object.ExceptionTypeStopIteration,
+				Args:          append([]object.Object{}, args...),
 			}
 		},
 		HelpText: `StopIteration([message]) - Signal end of iteration
@@ -2083,7 +2103,7 @@ Use with: raise StopIteration()`,
 					message = args[0].Inspect()
 				}
 			}
-			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeRuntimeError}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeRuntimeError, Args: append([]object.Object{}, args...)}
 		},
 		HelpText: `RuntimeError([message]) - Create a runtime error exception`,
 	},
@@ -2097,7 +2117,7 @@ Use with: raise StopIteration()`,
 					message = args[0].Inspect()
 				}
 			}
-			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeZeroDivisionError}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeZeroDivisionError, Args: append([]object.Object{}, args...)}
 		},
 		HelpText: `ZeroDivisionError([message]) - Create a zero division error exception`,
 	},
@@ -2111,7 +2131,7 @@ Use with: raise StopIteration()`,
 					message = args[0].Inspect()
 				}
 			}
-			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeIndexError}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeIndexError, Args: append([]object.Object{}, args...)}
 		},
 		HelpText: `IndexError([message]) - Create an index error exception`,
 	},
@@ -2125,38 +2145,38 @@ Use with: raise StopIteration()`,
 					message = args[0].Inspect()
 				}
 			}
-			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeKeyError}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeKeyError, Args: append([]object.Object{}, args...)}
 		},
 		HelpText: `KeyError([message]) - Create a key error exception`,
 	},
-		"AttributeError": {
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				message := ""
-				if len(args) > 0 {
-					if str, err := args[0].AsString(); err == nil {
-						message = str
-					} else {
-						message = args[0].Inspect()
-					}
+	"AttributeError": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
 				}
-				return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeAttributeError}
-			},
-			HelpText: `AttributeError([message]) - Create an attribute error exception`,
+			}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeAttributeError, Args: append([]object.Object{}, args...)}
 		},
-		"AssertionError": {
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				message := ""
-				if len(args) > 0 {
-					if str, err := args[0].AsString(); err == nil {
-						message = str
-					} else {
-						message = args[0].Inspect()
-					}
+		HelpText: `AttributeError([message]) - Create an attribute error exception`,
+	},
+	"AssertionError": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
 				}
-				return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeAssertionError}
-			},
-			HelpText: `AssertionError([message]) - Create an assertion error exception`,
+			}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeAssertionError, Args: append([]object.Object{}, args...)}
 		},
+		HelpText: `AssertionError([message]) - Create an assertion error exception`,
+	},
 	"OSError": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			message := ""
@@ -2167,7 +2187,7 @@ Use with: raise StopIteration()`,
 					message = args[0].Inspect()
 				}
 			}
-			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeOSError}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeOSError, Args: append([]object.Object{}, args...)}
 		},
 		HelpText: `OSError([message]) - Create an OS error exception`,
 	},
@@ -2540,13 +2560,22 @@ func init() {
 	// Exception constructors (TypeError, ValueError, ...) are types for
 	// isinstance(), matched with the same hierarchy as except clauses.
 	// Base classes of the hierarchy (see exceptionParents) for except
-	// clauses, isinstance() and raise.
-	for _, name := range []string{"BaseException", "LookupError", "ArithmeticError"} {
+	// clauses, isinstance() and raise, plus the OSError family and other
+	// named types Python code references.
+	for _, name := range []string{
+		"BaseException", "LookupError", "ArithmeticError",
+		"FileNotFoundError", "FileExistsError", "IsADirectoryError",
+		"NotADirectoryError", "TimeoutError", "ConnectionError",
+		"ModuleNotFoundError", "RecursionError", "NotImplementedError",
+		"UnicodeError", "UnicodeDecodeError", "UnicodeEncodeError",
+		"KeyboardInterrupt", "JSONDecodeError", "AssertionError",
+	} {
 		builtins[name] = exceptionConstructor(name)
 	}
 	exceptionBuiltins = make(map[*object.Builtin]string)
 	for name, b := range builtins {
-		if name == "Exception" || name == "BaseException" || name == "StopIteration" || strings.HasSuffix(name, "Error") {
+		if name == "Exception" || name == "BaseException" || name == "StopIteration" || name == "KeyboardInterrupt" ||
+			strings.HasSuffix(name, "Error") || strings.HasSuffix(name, "Exception") {
 			exceptionBuiltins[b] = name
 		}
 	}
@@ -2564,7 +2593,7 @@ func exceptionConstructor(name string) *object.Builtin {
 					message = args[0].Inspect()
 				}
 			}
-			return &object.Exception{Message: message, ExceptionType: name}
+			return &object.Exception{Message: message, ExceptionType: name, Args: append([]object.Object{}, args...)}
 		},
 		HelpText: name + "([message]) - Create a " + name + " exception",
 	}

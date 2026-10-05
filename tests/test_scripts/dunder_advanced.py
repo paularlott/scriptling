@@ -104,12 +104,21 @@ assert len(s) == 2  # p1 and p2 deduplicate
 s.add(p2)
 assert len(s) == 2  # still 2
 
-# unhashable instance (no __hash__) still raises TypeError in set
+# plain instances are identity-hashable by default, as in Python
 class NoHash:
     pass
 
+plain = NoHash()
+assert len({plain, plain}) == 1
+assert {plain: "v"}[plain] == "v"
+
+# __eq__ without __hash__ makes instances unhashable, as in Python
+class EqNoHash:
+    def __eq__(self, other):
+        return True
+
 try:
-    bad = {NoHash()}
+    bad = {EqNoHash()}
     assert False, "expected TypeError"
 except TypeError:
     pass

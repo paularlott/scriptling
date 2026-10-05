@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/paularlott/scriptling/ast"
@@ -776,78 +777,78 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			}
 			return merged
 		}
-		case *object.Set:
-			// Set algebra operators. Both operands must be sets (matching Python);
-			// for iterable operands use the .intersection()/.union()/etc. methods.
-			switch operator {
-			case ast.OpBitAnd:
-				if r, ok := right.(*object.Set); ok {
-					return l.Intersection(r)
-				}
-				return errors.NewTypeError("set", right.Type().String())
-			case ast.OpBitOr:
-				if r, ok := right.(*object.Set); ok {
-					return l.Union(r)
-				}
-				return errors.NewTypeError("set", right.Type().String())
-			case ast.OpSub:
-				if r, ok := right.(*object.Set); ok {
-					return l.Difference(r)
-				}
-				return errors.NewTypeError("set", right.Type().String())
-			case ast.OpBitXor:
-				if r, ok := right.(*object.Set); ok {
-					return l.SymmetricDifference(r)
-				}
-				return errors.NewTypeError("set", right.Type().String())
-			case ast.OpLt, ast.OpLte, ast.OpGt, ast.OpGte, ast.OpEq, ast.OpNeq:
-				// Python set comparisons are subset/superset tests, by content.
-				r, ok := right.(*object.Set)
-				if !ok {
-					if operator == ast.OpEq {
-						return FALSE
-					}
-					if operator == ast.OpNeq {
-						return TRUE
-					}
-					return errors.NewTypeError("set", right.Type().String())
-				}
-				subset := len(l.Elements) <= len(r.Elements)
-				if subset {
-					for k := range l.Elements {
-						if !r.ContainsKeyed(k) {
-							subset = false
-							break
-						}
-					}
-				}
-				superset := len(r.Elements) <= len(l.Elements)
-				if superset {
-					for k := range r.Elements {
-						if !l.ContainsKeyed(k) {
-							superset = false
-							break
-						}
-					}
-				}
-				var b bool
-				switch operator {
-				case ast.OpLt:
-					b = subset && len(l.Elements) < len(r.Elements)
-				case ast.OpLte:
-					b = subset
-				case ast.OpGt:
-					b = superset && len(r.Elements) < len(l.Elements)
-				case ast.OpGte:
-					b = superset
-				case ast.OpEq:
-					b = subset && superset
-				default: // OpNeq
-					b = !(subset && superset)
-				}
-				return nativeBoolToBooleanObject(b)
+	case *object.Set:
+		// Set algebra operators. Both operands must be sets (matching Python);
+		// for iterable operands use the .intersection()/.union()/etc. methods.
+		switch operator {
+		case ast.OpBitAnd:
+			if r, ok := right.(*object.Set); ok {
+				return l.Intersection(r)
 			}
+			return errors.NewTypeError("set", right.Type().String())
+		case ast.OpBitOr:
+			if r, ok := right.(*object.Set); ok {
+				return l.Union(r)
+			}
+			return errors.NewTypeError("set", right.Type().String())
+		case ast.OpSub:
+			if r, ok := right.(*object.Set); ok {
+				return l.Difference(r)
+			}
+			return errors.NewTypeError("set", right.Type().String())
+		case ast.OpBitXor:
+			if r, ok := right.(*object.Set); ok {
+				return l.SymmetricDifference(r)
+			}
+			return errors.NewTypeError("set", right.Type().String())
+		case ast.OpLt, ast.OpLte, ast.OpGt, ast.OpGte, ast.OpEq, ast.OpNeq:
+			// Python set comparisons are subset/superset tests, by content.
+			r, ok := right.(*object.Set)
+			if !ok {
+				if operator == ast.OpEq {
+					return FALSE
+				}
+				if operator == ast.OpNeq {
+					return TRUE
+				}
+				return errors.NewTypeError("set", right.Type().String())
+			}
+			subset := len(l.Elements) <= len(r.Elements)
+			if subset {
+				for k := range l.Elements {
+					if !r.ContainsKeyed(k) {
+						subset = false
+						break
+					}
+				}
+			}
+			superset := len(r.Elements) <= len(l.Elements)
+			if superset {
+				for k := range r.Elements {
+					if !l.ContainsKeyed(k) {
+						superset = false
+						break
+					}
+				}
+			}
+			var b bool
+			switch operator {
+			case ast.OpLt:
+				b = subset && len(l.Elements) < len(r.Elements)
+			case ast.OpLte:
+				b = subset
+			case ast.OpGt:
+				b = superset && len(r.Elements) < len(l.Elements)
+			case ast.OpGte:
+				b = superset
+			case ast.OpEq:
+				b = subset && superset
+			default: // OpNeq
+				b = !(subset && superset)
+			}
+			return nativeBoolToBooleanObject(b)
 		}
+	}
 
 	if rb, ok := right.(*object.Boolean); ok {
 		if operator >= ast.OpAdd && operator <= ast.OpNeq {
@@ -2671,6 +2672,26 @@ func nestedSpecEvalFn(text string) object.EvalFn {
 	return fn
 }
 
+// isIdentifierLikeName reports whether s is shaped like a bare identifier
+// (letter/underscore first, then letters, digits or underscores), so a nested
+// format field holding it is treated as a name lookup rather than a
+// expression to parse ("2" and "w+1" are not identifier-like).
+func isIdentifierLikeName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if r == '_' || unicode.IsLetter(r) {
+			continue
+		}
+		if i > 0 && unicode.IsDigit(r) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func expandNestedSpecFields(ctx context.Context, spec string, env *object.Environment) (string, object.Object) {
 	if !strings.Contains(spec, "{") {
 		return spec, nil
@@ -2697,11 +2718,11 @@ func expandNestedSpecFields(ctx context.Context, spec string, env *object.Enviro
 		val, ok := env.Get(name)
 		if !ok {
 			// Python allows any expression in a nested spec field
-			// (f"{x:>{width + 1}}"), not just names. A bare identifier that
-			// resolved to nothing stays the original not-defined error.
-			// The bare-identifier check needs the parse, so probe with a
-			// cheap lexical test first: identifiers have no operators.
-			if !strings.ContainsAny(name, " +-*/%<>=!&|^~()[]{},:.") {
+			// (f"{x:>{width + 1}}", f"{x:>{2}}"), not just names. A bare
+			// identifier that resolved to nothing stays the original
+			// not-defined error; anything else (operators, leading digits)
+			// parses as an expression.
+			if isIdentifierLikeName(name) {
 				return "", errors.NewError("nested format field '%s' is not defined", name)
 			}
 			fn := nestedSpecEvalFn(name)
@@ -3450,11 +3471,13 @@ func errorExceptionType(err *object.Error) string {
 func matchesExceptionType(exception object.Object, exceptTypeExpr ast.Expression, env *object.Environment) bool {
 	// Get the exception type string
 	var exceptionType string
+	var chain []string
 	if exc, ok := exception.(*object.Exception); ok {
 		exceptionType = exc.ExceptionType
 		if exceptionType == "" {
 			exceptionType = "Exception" // Default to Exception if not set
 		}
+		chain = exc.TypeChain
 	} else if _, ok := exception.(*object.Error); ok {
 		// Errors are treated as generic exceptions
 		exceptionType = "Exception"
@@ -3462,7 +3485,7 @@ func matchesExceptionType(exception object.Object, exceptTypeExpr ast.Expression
 		return false
 	}
 
-	return matchesExceptionTypeExpr(exceptionType, exceptTypeExpr, env)
+	return matchesExceptionTypeExpr(exceptionType, exceptTypeExpr, env, chain)
 }
 
 // evalExceptTypeSideEffects evaluates the parts of an except-type expression
@@ -3501,7 +3524,7 @@ func evalExceptTypeSideEffects(ctx context.Context, expr ast.Expression, env *ob
 	}
 }
 
-func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expression, env *object.Environment) bool {
+func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expression, env *object.Environment, chain []string) bool {
 	switch expr := exceptTypeExpr.(type) {
 	case *ast.Identifier:
 		// A name bound to an exception type or a tuple of them (E = KeyError,
@@ -3509,27 +3532,27 @@ func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expressio
 		// match by name.
 		if env != nil {
 			if val, ok := env.Get(expr.Value()); ok {
-				if matched, isType := matchesExceptionValue(exceptionType, val); isType {
+				if matched, isType := matchesExceptionValue(exceptionType, val, chain); isType {
 					return matched
 				}
 			}
 		}
-		return matchesNamedExceptionType(exceptionType, expr.Value())
+		return matchesNamedExceptionTypeChain(exceptionType, expr.Value(), chain)
 	case *ast.IndexExpression:
 		// Handle dotted names like requests.HTTPError — match on the last component
 		dotted := buildDottedName(expr)
 		parts := strings.Split(dotted, ".")
-		return matchesNamedExceptionType(exceptionType, parts[len(parts)-1])
+		return matchesNamedExceptionTypeChain(exceptionType, parts[len(parts)-1], chain)
 	case *ast.TupleLiteral:
 		for _, elem := range expr.Elements {
-			if matchesExceptionTypeExpr(exceptionType, elem, env) {
+			if matchesExceptionTypeExpr(exceptionType, elem, env, chain) {
 				return true
 			}
 		}
 		return false
 	case *ast.ListLiteral:
 		for _, elem := range expr.Elements {
-			if matchesExceptionTypeExpr(exceptionType, elem, env) {
+			if matchesExceptionTypeExpr(exceptionType, elem, env, chain) {
 				return true
 			}
 		}
@@ -3542,14 +3565,14 @@ func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expressio
 // matchesExceptionValue matches an exception against a value used as an
 // except type: an exception type, or a tuple of them. isType is false when
 // val is neither.
-func matchesExceptionValue(exceptionType string, val object.Object) (matched, isType bool) {
+func matchesExceptionValue(exceptionType string, val object.Object, chain []string) (matched, isType bool) {
 	switch v := val.(type) {
 	case *object.Builtin:
 		name, ok := exceptionBuiltins[v]
-		return ok && matchesNamedExceptionType(exceptionType, name), ok
+		return ok && matchesNamedExceptionTypeChain(exceptionType, name, chain), ok
 	case *object.Tuple:
 		for _, elem := range v.Elements {
-			m, ok := matchesExceptionValue(exceptionType, elem)
+			m, ok := matchesExceptionValue(exceptionType, elem, chain)
 			if !ok {
 				return false, false
 			}
@@ -3584,6 +3607,13 @@ var exceptionParents = map[string]string{
 }
 
 func matchesNamedExceptionType(exceptionType, expectedType string) bool {
+	return matchesNamedExceptionTypeChain(exceptionType, expectedType, nil)
+}
+
+// matchesNamedExceptionTypeChain is matchesNamedExceptionType, additionally
+// walking a user exception class's TypeChain: except ValueError must catch
+// an exception raised as class MyError(ValueError).
+func matchesNamedExceptionTypeChain(exceptionType, expectedType string, chain []string) bool {
 	switch expectedType {
 	case "BaseException":
 		return true
@@ -3594,6 +3624,13 @@ func matchesNamedExceptionType(exceptionType, expectedType string) bool {
 	for t := exceptionType; t != ""; t = exceptionParents[t] {
 		if t == expectedType {
 			return true
+		}
+	}
+	for _, c := range chain {
+		for t := c; t != ""; t = exceptionParents[t] {
+			if t == expectedType {
+				return true
+			}
 		}
 	}
 	return false

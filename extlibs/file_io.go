@@ -2,17 +2,63 @@ package extlibs
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/object"
 )
+
+// pathErrorException converts a Go filesystem error into the matching
+// Python OSError-family exception so `except FileNotFoundError:` and friends
+// catch file-operation failures: ENOENT→FileNotFoundError, EEXIST→
+// FileExistsError, EACCES/EPIPE→PermissionError, EISDIR→IsADirectoryError,
+// ENOTDIR→NotADirectoryError, anything else→OSError. what prefixes the
+// message ("cannot read file: ...").
+func pathErrorException(what string, err error) object.Object {
+	excType := object.ExceptionTypeOSError
+	if errno, ok := err.(syscall.Errno); ok {
+		switch errno {
+		case syscall.ENOENT:
+			excType = "FileNotFoundError"
+		case syscall.EEXIST:
+			excType = "FileExistsError"
+		case syscall.EACCES, syscall.EPERM:
+			excType = object.ExceptionTypePermissionError
+		case syscall.EISDIR:
+			excType = "IsADirectoryError"
+		case syscall.ENOTDIR:
+			excType = "NotADirectoryError"
+		}
+	} else if pe, ok := err.(*os.PathError); ok {
+		if errno, ok := pe.Err.(syscall.Errno); ok {
+			switch errno {
+			case syscall.ENOENT:
+				excType = "FileNotFoundError"
+			case syscall.EEXIST:
+				excType = "FileExistsError"
+			case syscall.EACCES, syscall.EPERM:
+				excType = object.ExceptionTypePermissionError
+			case syscall.EISDIR:
+				excType = "IsADirectoryError"
+			case syscall.ENOTDIR:
+				excType = "NotADirectoryError"
+			}
+		}
+	}
+	return &object.Exception{
+		Message:       fmt.Sprintf("%s: %s", what, err.Error()),
+		ExceptionType: excType,
+		Raised:        true,
+	}
+}
 
 func normalizeFileIOAllowedPaths(config fssecurity.Config) fssecurity.Config {
 	if config.AllowedPaths == nil {
@@ -70,7 +116,7 @@ func readFileBytes(ctx context.Context, config fssecurity.Config, path string) (
 	var err error
 	object.RunBlocking(ctx, func() { content, err = os.ReadFile(path) })
 	if err != nil {
-		return nil, errors.NewError("cannot read file: %s", err.Error())
+		return nil, pathErrorException("cannot read file", err)
 	}
 	return content, nil
 }
@@ -82,7 +128,7 @@ func writeFileBytes(ctx context.Context, config fssecurity.Config, path string, 
 	var err error
 	object.RunBlocking(ctx, func() { err = os.WriteFile(path, data, mode) })
 	if err != nil {
-		return errors.NewError("cannot write file: %s", err.Error())
+		return pathErrorException("cannot write file", err)
 	}
 	return &object.Null{}
 }
@@ -102,7 +148,7 @@ func appendFileBytes(ctx context.Context, config fssecurity.Config, path string,
 		_, err = f.Write(data)
 	})
 	if err != nil {
-		return errors.NewError("cannot append to file: %s", err.Error())
+		return pathErrorException("cannot append to file", err)
 	}
 	return &object.Null{}
 }
@@ -135,7 +181,7 @@ func readFileBytesAt(ctx context.Context, config fssecurity.Config, path string,
 		n, err = file.ReadAt(buf, offset)
 	})
 	if err != nil && n == 0 {
-		return nil, errors.NewError("read_bytes: cannot read file: %s", err.Error())
+		return nil, pathErrorException("read_bytes: cannot read file", err)
 	}
 	return buf[:n], nil
 }

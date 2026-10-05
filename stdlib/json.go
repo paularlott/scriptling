@@ -104,7 +104,24 @@ Parses a JSON string and returns the corresponding Scriptling object.`,
 Converts a Scriptling object to its JSON string representation.
 Optional indent parameter for pretty-printing.`,
 	},
-}, nil, "JSON encoding and decoding library")
+}, map[string]object.Object{
+	// json.JSONDecodeError: a ValueError subclass, as in Python, so
+	// `except json.JSONDecodeError:` matches parse failures.
+	"JSONDecodeError": &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{Message: message, ExceptionType: "JSONDecodeError"}
+		},
+		HelpText: `JSONDecodeError([message]) - Create a JSON decode error`,
+	},
+}, "JSON encoding and decoding library")
 
 // pyFloat marshals with Python's json module float spellings: repr-style
 // numbers ("2.0", "1e+20") and Infinity/-Infinity/NaN for non-finites, which

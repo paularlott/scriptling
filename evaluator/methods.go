@@ -755,6 +755,35 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 // actually need in glue scripts.
 func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
 	switch method {
+	case "join":
+		// b"-".join([b"a", b"b"]): concatenate an iterable of bytes.
+		if err := errors.ExactArgs(args, 1); err != nil {
+			return err
+		}
+		elements, ok, rerr := iterableToSliceChecked(ctx, args[0], env)
+		if rerr != nil {
+			return rerr
+		}
+		if !ok {
+			return errors.NewTypeError("iterable of bytes", args[0].Type().String())
+		}
+		total := len(b.BytesValue()) * max(0, len(elements)-1)
+		for _, elem := range elements {
+			bb, isBytes := elem.(*object.Bytes)
+			if !isBytes {
+				return errors.NewTypeErrorTagged("sequence item: expected bytes, got %s", elem.Type().String())
+			}
+			total += len(bb.BytesValue())
+		}
+		out := make([]byte, 0, total)
+		sep := b.BytesValue()
+		for i, elem := range elements {
+			if i > 0 {
+				out = append(out, sep...)
+			}
+			out = append(out, elem.(*object.Bytes).BytesValue()...)
+		}
+		return object.NewBytes(out)
 	case "split":
 		// Python bytes.split(sep=None, maxsplit=-1): whitespace runs when
 		// no separator, else byte-separator occurrences.
@@ -872,14 +901,22 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err := errors.MaxArgs(args, 2); err != nil {
 			return err
 		}
-		// If no argument, split on whitespace
-		if len(args) == 0 {
-			parts := strings.Fields(str.StringValue())
-			elements := make([]object.Object, len(parts))
-			for i, part := range parts {
-				elements[i] = object.NewString(part)
+		// No separator, or an explicit None: split on whitespace runs.
+		if len(args) == 0 || args[0].Type() == object.NULL_OBJ {
+			maxsplit := int64(-1)
+			if len(args) == 2 {
+				n, err := args[1].AsInt()
+				if err != nil {
+					return errors.ParameterError("maxsplit", err)
+				}
+				maxsplit = n
 			}
-			return &object.List{Elements: elements}
+			elements := whitespaceSplit(str.StringValue(), maxsplit)
+			list := &object.List{Elements: make([]object.Object, len(elements))}
+			for i, part := range elements {
+				list.Elements[i] = object.NewString(part)
+			}
+			return list
 		}
 		// With separator argument
 		sep, errObj := args[0].AsString()
@@ -2458,6 +2495,43 @@ func rsplitFields(s string, maxsplit int64) []string {
 	}
 	if head := strings.TrimRightFunc(s[:end], unicode.IsSpace); head != "" {
 		fields = append([]string{head}, fields...)
+	}
+	return fields
+}
+
+// whitespaceSplit is split(None, maxsplit): whitespace-run fields, limited
+// to maxsplit from the left, with the remainder keeping its original text
+// ("a  b  c".split(None, 1) == ["a", "b  c"]).
+func whitespaceSplit(s string, maxsplit int64) []string {
+	if maxsplit < 0 {
+		return strings.Fields(s)
+	}
+	var fields []string
+	i := 0
+	for i < len(s) {
+		for i < len(s) {
+			r, size := utf8.DecodeRuneInString(s[i:])
+			if !unicode.IsSpace(r) {
+				break
+			}
+			i += size
+		}
+		if i >= len(s) {
+			break
+		}
+		if int64(len(fields)) == maxsplit {
+			fields = append(fields, s[i:])
+			return fields
+		}
+		start := i
+		for i < len(s) {
+			r, size := utf8.DecodeRuneInString(s[i:])
+			if unicode.IsSpace(r) {
+				break
+			}
+			i += size
+		}
+		fields = append(fields, s[start:i])
 	}
 	return fields
 }
