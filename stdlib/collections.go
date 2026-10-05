@@ -292,12 +292,15 @@ Example:
 						nt.SetField(name, args[i+1])
 					}
 					nt.SetField("__typename__", typename)
-					// Store field names for reference
+					// Store field names for reference, under both the
+					// internal name and Python's public p._fields.
 					fieldNameObjs := make([]object.Object, len(fieldNames))
 					for i, name := range fieldNames {
 						fieldNameObjs[i] = object.NewString(name)
 					}
-					nt.SetField("__fields__", &object.Tuple{Elements: fieldNameObjs})
+					fieldsTuple := &object.Tuple{Elements: fieldNameObjs}
+					nt.SetField("__fields__", fieldsTuple)
+					nt.SetField("_fields", fieldsTuple)
 					// Precompute the display form (the __str_repr__ idiom
 					// datetime uses) so print() shows P(x=1, y='hi').
 					parts := make([]string, 0, len(fieldNames))

@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -343,4 +344,72 @@ func TestLiveDecisionOllama(t *testing.T) {
 		t.Errorf("noul = %v", noul)
 	}
 	t.Logf("live result: %s", result.Inspect())
+}
+
+// TestDecideQuestionCountBounds: 1-64 questions accepted, 65 rejected —
+// the limits come from the endpoint contract and fail before any HTTP.
+func TestDecideQuestionCountBounds(t *testing.T) {
+	instance := newDecisionInstance(t, "http://127.0.0.1:1")
+
+	makeQuestions := func(n int) object.Object {
+		qs := make(map[string]object.Object, n)
+		for i := 0; i < n; i++ {
+			qs[fmt.Sprintf("q%d", i)] = object.NewStringDict(map[string]object.Object{
+				"type":         object.NewString("noul"),
+				"instructions": object.NewString("yes?"),
+			})
+		}
+		return object.NewStringDict(qs)
+	}
+
+	r := decideMethod(instance, context.Background(), object.NewKwargs(map[string]object.Object{
+		"questions": makeQuestions(64),
+	}), "clef-flash", "state")
+	// Validation passes; the dead address then (correctly) fails the call,
+	// so only a validation rejection is an error here.
+	if r.Type() == object.ERROR_OBJ && strings.Contains(r.Inspect(), "1 to 64") {
+		t.Errorf("64 questions should validate, got %s", r.Inspect())
+	}
+
+	r = decideMethod(instance, context.Background(), object.NewKwargs(map[string]object.Object{
+		"questions": makeQuestions(65),
+	}), "clef-flash", "state")
+	if r.Type() != object.ERROR_OBJ || !strings.Contains(r.Inspect(), "1 to 64") {
+		t.Errorf("65 questions should be rejected, got %s", r.Inspect())
+	}
+}
+
+// TestDecideCriteriaBounds: 2-26 options/levels accepted, 27 rejected.
+func TestDecideCriteriaBounds(t *testing.T) {
+	instance := newDecisionInstance(t, "http://127.0.0.1:1")
+
+	makeCriteria := func(n int) object.Object {
+		opts := make(map[string]object.Object, n)
+		for i := 0; i < n; i++ {
+			opts[fmt.Sprintf("o%d", i)] = object.NewString("desc")
+		}
+		return object.NewStringDict(opts)
+	}
+
+	question := func(criteria object.Object) object.Object {
+		return object.NewStringDict(map[string]object.Object{
+			"type":         object.NewString("choice"),
+			"instructions": object.NewString("pick"),
+			"criteria":     criteria,
+		})
+	}
+
+	r := decideMethod(instance, context.Background(), object.NewKwargs(map[string]object.Object{
+		"questions": object.NewStringDict(map[string]object.Object{"q": question(makeCriteria(26))}),
+	}), "clef-flash", "state")
+	if r.Type() == object.ERROR_OBJ && strings.Contains(r.Inspect(), "2 to 26") {
+		t.Errorf("26 options should validate, got %s", r.Inspect())
+	}
+
+	r = decideMethod(instance, context.Background(), object.NewKwargs(map[string]object.Object{
+		"questions": object.NewStringDict(map[string]object.Object{"q": question(makeCriteria(27))}),
+	}), "clef-flash", "state")
+	if r.Type() != object.ERROR_OBJ || !strings.Contains(r.Inspect(), "2 to 26") {
+		t.Errorf("27 options should be rejected, got %s", r.Inspect())
+	}
 }

@@ -75,3 +75,11 @@ assert "as_integer_ratio" in dir(2.5)
 assert getattr(5, "bit_count")() == 2
 
 True
+
+# OverflowError is an ArithmeticError: parent handlers catch it
+try:
+    (5e-324).as_integer_ratio()
+    caught = "none"
+except ArithmeticError:
+    caught = "arithmetic"
+assert caught == "arithmetic"

@@ -9,12 +9,15 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/parser"
 )
 
 var (
@@ -875,12 +878,20 @@ func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object
 		return object.NewInteger(leftVal ^ rightVal)
 	case ast.OpLShift:
 		if rightVal < 0 {
-			return errors.NewError("negative shift count")
+			return &object.Exception{
+				Message:       "negative shift count",
+				ExceptionType: object.ExceptionTypeValueError,
+				Raised:        true,
+			}
 		}
 		return object.NewInteger(leftVal << uint64(rightVal))
 	case ast.OpRShift:
 		if rightVal < 0 {
-			return errors.NewError("negative shift count")
+			return &object.Exception{
+				Message:       "negative shift count",
+				ExceptionType: object.ExceptionTypeValueError,
+				Raised:        true,
+			}
 		}
 		return object.NewInteger(leftVal >> uint64(rightVal))
 	case ast.OpLt:
@@ -2483,6 +2494,32 @@ func strInstanceChecked(ctx context.Context, inst *object.Instance, env *object.
 // value of that name in env, rendered via str semantics. Nested fields are
 // the common plain-variable form; anything else is left untouched for
 // formatWithSpec to render literally.
+// nestedSpecCache memoizes compiled nested spec-field expressions by their
+// source text, so a hot f-string like f"{x:>{w + 1}}" does not re-parse and
+// re-compile on every evaluation. Bounded: beyond nestedSpecCacheMax entries
+// (dynamic format strings could otherwise grow it without limit) further
+// expressions compile per call.
+var nestedSpecCache sync.Map // string -> object.EvalFn
+
+const nestedSpecCacheMax = 1024
+
+var nestedSpecCacheSize atomic.Int64
+
+func nestedSpecEvalFn(text string) object.EvalFn {
+	if cached, ok := nestedSpecCache.Load(text); ok {
+		return cached.(object.EvalFn)
+	}
+	expr := parser.ParseExpressionString(text)
+	if expr == nil {
+		return nil
+	}
+	fn := compileExpr(expr)
+	if nestedSpecCacheSize.Load() < nestedSpecCacheMax && nestedSpecCacheSize.Add(1) <= nestedSpecCacheMax {
+		nestedSpecCache.Store(text, fn)
+	}
+	return fn
+}
+
 func expandNestedSpecFields(ctx context.Context, spec string, env *object.Environment) (string, object.Object) {
 	if !strings.Contains(spec, "{") {
 		return spec, nil
@@ -2508,7 +2545,22 @@ func expandNestedSpecFields(ctx context.Context, spec string, env *object.Enviro
 		}
 		val, ok := env.Get(name)
 		if !ok {
-			return "", errors.NewError("nested format field '%s' is not defined", name)
+			// Python allows any expression in a nested spec field
+			// (f"{x:>{width + 1}}"), not just names. A bare identifier that
+			// resolved to nothing stays the original not-defined error.
+			// The bare-identifier check needs the parse, so probe with a
+			// cheap lexical test first: identifiers have no operators.
+			if !strings.ContainsAny(name, " +-*/%<>=!&|^~()[]{},:.") {
+				return "", errors.NewError("nested format field '%s' is not defined", name)
+			}
+			fn := nestedSpecEvalFn(name)
+			if fn == nil {
+				return "", errors.NewError("nested format field '%s' is not defined", name)
+			}
+			val = fn(ctx, env)
+			if propagates(val) {
+				return "", val
+			}
 		}
 		rendered, rerr := renderConvertedValue(ctx, val, "s", env)
 		if rerr != nil {

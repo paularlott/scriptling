@@ -2093,6 +2093,21 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 			return errObj
 		}
 		return nativeBoolToBooleanObject(set.IsSubset(other))
+	case "isdisjoint":
+		// Python: true when the two sets share no element.
+		if err := errors.ExactArgs(args, 1); err != nil {
+			return err
+		}
+		other, errObj := iterableToSet(ctx, args[0], env)
+		if errObj != nil {
+			return errObj
+		}
+		for key := range set.Elements {
+			if other.ContainsKeyed(key) {
+				return FALSE
+			}
+		}
+		return TRUE
 	case "issuperset":
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err

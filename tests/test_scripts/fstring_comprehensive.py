@@ -74,3 +74,16 @@ large_format = f"{large_num:02d}"
 assert large_format == "12345"  # width smaller than number
 
 True
+# Nested format spec fields take any expression, not just names (Python)
+w = 4
+assert f"{7:>{w + 1}}" == "    7"
+assert f"{7:>{min(w, 6)}}" == "   7"
+assert f"{'x':>{2 < 3 < 5 and 6}}" == "     x"
+pad = 2
+assert f"{123:0{pad + 3}d}" == "00123"
+try:
+    f"{7:>{undefined_name}}"
+    raised = False
+except Exception:
+    raised = True
+assert raised

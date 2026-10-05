@@ -31,8 +31,8 @@ var builtinMethodNames = map[object.ObjectType][]string{
 	object.TUPLE_OBJ: {"count", "index"},
 	object.SET_OBJ: {
 		"add", "clear", "copy", "difference", "difference_update", "discard", "intersection",
-		"intersection_update", "issubset", "issuperset", "pop", "remove", "symmetric_difference",
-		"symmetric_difference_update", "union", "update",
+		"intersection_update", "isdisjoint", "issubset", "issuperset", "pop", "remove",
+		"symmetric_difference", "symmetric_difference_update", "union", "update",
 	},
 	object.BYTES_OBJ:       {"base64", "decode", "hex", "length"},
 	object.FLOAT_ARRAY_OBJ: {"shape", "tolist"},

@@ -13,9 +13,9 @@ models answer; they never generate text.
 ## Run
 
 ```sh
-../../bin/scriptling example.py
+../../../bin/scriptling example.py
 # or explicitly:
-../../bin/scriptling example.py http://localhost:11434 clef-flash
+../../../bin/scriptling example.py http://localhost:11434 clef-flash
 ```
 
 ## What it shows

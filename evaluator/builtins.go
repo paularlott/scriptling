@@ -792,10 +792,9 @@ With no argument, returns False.`,
 				}
 				return num
 			case *object.Float:
-				if num.FloatValue() < 0 {
-					return object.NewFloat(-num.FloatValue())
-				}
-				return num
+				// math.Abs rather than a < 0 branch: -0.0 < 0 is false in
+				// IEEE comparisons, so the branch would keep negative zero.
+				return object.NewFloat(math.Abs(num.FloatValue()))
 			default:
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}

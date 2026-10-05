@@ -822,8 +822,11 @@ func (p *Parser) parseConditionalExpression(trueExpr ast.Expression) ast.Express
 		return nil
 	}
 	p.nextToken() // move to false expression
-	// Parse false expression with CONDITIONAL precedence to handle nested conditionals
-	falseExpr := p.parseExpression(CONDITIONAL)
+	// Parse the false expression one level looser than the conditional
+	// itself: a following `if` continues into the else branch, making
+	// a if c1 else b if c2 else d right-associative, as in Python
+	// (a if c1 else (b if c2 else d)).
+	falseExpr := p.parseExpression(CONDITIONAL - 1)
 	return &ast.ConditionalExpression{
 		TrueExpr:  trueExpr,
 		Condition: condition,
@@ -1168,6 +1171,13 @@ func parseExpressionString(input string) ast.Expression {
 	p := New(lexer.New(input))
 	expr := p.parseExpression(LOWEST)
 	return expr
+}
+
+// ParseExpressionString parses a standalone expression, for callers that
+// evaluate text assembled at runtime (f-string nested format fields).
+// Returns nil for invalid input.
+func ParseExpressionString(input string) ast.Expression {
+	return parseExpressionString(input)
 }
 
 func (p *Parser) parseBoolean() ast.Expression {
