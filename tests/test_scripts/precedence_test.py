@@ -79,3 +79,8 @@ assert _raises_type_error(lambda: -[1, 2])
 assert _raises_type_error(lambda: -None)
 assert _raises_type_error(lambda: ~"x")
 assert _raises_type_error(lambda: ~2.5)
+
+# bool is an int: -True is -1 and ~True is -2, as in Python
+assert -True == -1
+assert -False == 0
+assert ~True == -2

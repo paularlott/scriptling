@@ -461,6 +461,13 @@ func evalMinusPrefixOperatorExpression(right object.Object) object.Object {
 		return object.NewInteger(-right.IntValue())
 	case *object.Float:
 		return object.NewFloat(-right.FloatValue())
+	case *object.Boolean:
+		// bool is an int in Python: -True is -1
+		v := int64(0)
+		if right.BoolValue() {
+			v = 1
+		}
+		return object.NewInteger(-v)
 	default:
 		// Python: TypeError: bad operand type for unary -: 'str'
 		return &object.Exception{
@@ -475,6 +482,12 @@ func evalBitwiseNotOperatorExpression(right object.Object) object.Object {
 	switch right := right.(type) {
 	case *object.Integer:
 		return object.NewInteger(^right.IntValue())
+	case *object.Boolean:
+		v := int64(0)
+		if right.BoolValue() {
+			v = 1
+		}
+		return object.NewInteger(^v)
 	default:
 		return &object.Exception{
 			Message:       fmt.Sprintf("bad operand type for unary ~: '%s'", getTypeName(right)),

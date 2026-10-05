@@ -1085,12 +1085,12 @@ func compileChainedComparison(n *ast.ChainedComparison) object.EvalFn {
 	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		left := first(ctx, env)
-		if object.IsError(left) {
+		if propagates(left) {
 			return left
 		}
 		for _, l := range links {
 			right := l.fn(ctx, env)
-			if object.IsError(right) {
+			if propagates(right) {
 				return right
 			}
 			// Integer fast path for ordering/equality links — the loop-guard

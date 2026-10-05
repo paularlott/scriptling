@@ -81,4 +81,30 @@ for i in range(5):
 assert 0 <= 0 < 1
 assert not (0 <= 5 < 5)
 
+# Raised exceptions from any operand position propagate, not get compared
+d = {}
+try:
+    1 < d["missing"] < 3
+    raised = "no-raise"
+except KeyError:
+    raised = "KeyError"
+assert raised == "KeyError"
+
+try:
+    d["missing"] < 3 < 5
+    raised = "no-raise"
+except KeyError:
+    raised = "KeyError"
+assert raised == "KeyError"
+
+# Chains under not, in f-strings, in comprehension conditions
+assert (not 1 < 2 < 3) is False
+assert f"{1 < 2 < 3}" == "True"
+assert [x for x in range(6) if 0 < x < 3] == [1, 2]
+
+# Walrus as the first operand binds through the node
+z = 0
+assert (z := 1) < 2 < 3
+assert z == 1
+
 True
