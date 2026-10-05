@@ -420,6 +420,21 @@ func objectsDeepEqual(a, b object.Object) bool {
 		// ("INTEGER" vs int) name the same type.
 		return typeBridgeEqual(a, b)
 	}
+	// Instances with a Go-native __eq__ (dataclasses, namedtuples, enums)
+	// compare by value even nested in containers. Script-level __eq__
+	// needs an evaluation context and is only dispatched by the checked
+	// top-level comparison.
+	if aInst, ok := a.(*object.Instance); ok {
+		if method, has := aInst.Class.Methods["__eq__"]; has {
+			if eqFn, isBuiltin := method.(*object.Builtin); isBuiltin {
+				if r, ok := eqFn.Fn(context.Background(), object.NewKwargs(nil), a, b).(*object.Boolean); ok {
+					return r.BoolValue()
+				}
+				return false
+			}
+		}
+		return a == b
+	}
 	switch av := a.(type) {
 	case *object.Integer:
 		return av.IntValue() == b.(*object.Integer).IntValue()
@@ -870,7 +885,13 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			}
 			return FALSE
 		}
-		return nativeBoolToBooleanObject(objectsDeepEqual(left, right))
+		// The checked comparison dispatches __eq__ on instances (also
+		// inside containers) and falls back to structural equality.
+		eq, rerr := evalObjectsEqualChecked(ctx, left, right, env)
+		if rerr != nil {
+			return rerr
+		}
+		return nativeBoolToBooleanObject(eq)
 	case ast.OpNeq:
 		if la, ok := left.(*object.FloatArray); ok {
 			if ra, ok := right.(*object.FloatArray); ok {
@@ -878,7 +899,11 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			}
 			return TRUE
 		}
-		return nativeBoolToBooleanObject(!objectsDeepEqual(left, right))
+		eq, rerr := evalObjectsEqualChecked(ctx, left, right, env)
+		if rerr != nil {
+			return rerr
+		}
+		return nativeBoolToBooleanObject(!eq)
 	default:
 		return newUnsupportedOperandError(operator, left, right)
 	}
@@ -929,14 +954,60 @@ func newUnsupportedOperandError(operator ast.Op, left, right object.Object) obje
 	return err
 }
 
+// intOverflowError is the catchable OverflowError for int64-bound arithmetic
+// that leaves the representable range: Python would compute a big int, so a
+// silent wraparound (the old behaviour) is a wrong answer with no error.
+func intOverflowError(op string) object.Object {
+	err := errors.NewError("integer arithmetic result too large for int64 (%s); scriptling ints are 64-bit", op)
+	err.ExceptionType = object.ExceptionTypeOverflowError
+	return err
+}
+
+// checked int64 arithmetic: each returns (result, true) or (_, false) on overflow.
+func addOv(a, b int64) (int64, bool) {
+	s := a + b
+	if (a > 0 && b > 0 && s < 0) || (a < 0 && b < 0 && s >= 0) {
+		return 0, false
+	}
+	return s, true
+}
+
+func subOv(a, b int64) (int64, bool) {
+	d := a - b
+	if (a >= 0 && b < 0 && d < 0) || (a < 0 && b > 0 && d > 0) {
+		return 0, false
+	}
+	return d, true
+}
+
+func mulOv(a, b int64) (int64, bool) {
+	if a == 0 || b == 0 {
+		return 0, true
+	}
+	p := a * b
+	if p/b != a || (a == -1 && b == math.MinInt64) || (b == -1 && a == math.MinInt64) {
+		return 0, false
+	}
+	return p, true
+}
+
 func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object.Object {
 	switch operator {
 	case ast.OpAdd:
-		return object.NewInteger(leftVal + rightVal)
+		if s, ok := addOv(leftVal, rightVal); ok {
+			return object.NewInteger(s)
+		}
+		return intOverflowError("+")
 	case ast.OpSub:
-		return object.NewInteger(leftVal - rightVal)
+		if d, ok := subOv(leftVal, rightVal); ok {
+			return object.NewInteger(d)
+		}
+		return intOverflowError("-")
 	case ast.OpMul:
-		return object.NewInteger(leftVal * rightVal)
+		if p, ok := mulOv(leftVal, rightVal); ok {
+			return object.NewInteger(p)
+		}
+		return intOverflowError("*")
 	case ast.OpDiv:
 		if rightVal == 0 {
 			return errors.NewZeroDivisionError()
@@ -948,6 +1019,9 @@ func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object
 		}
 		// Python floors toward negative infinity; Go truncates toward zero,
 		// so adjust when the signs differ and the division is inexact.
+		if leftVal == math.MinInt64 && rightVal == -1 {
+			return intOverflowError("//")
+		}
 		q := leftVal / rightVal
 		if leftVal%rightVal != 0 && (leftVal < 0) != (rightVal < 0) {
 			q--
@@ -957,18 +1031,33 @@ func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object
 		if rightVal < 0 {
 			return evalFloatInfixValues(ast.OpPow, float64(leftVal), float64(rightVal))
 		}
-		if rightVal > 63 || (leftVal > 1 && rightVal > 40) || (leftVal < -1 && rightVal > 40) {
-			return object.NewFloat(math.Pow(float64(leftVal), float64(rightVal)))
-		}
+		// Compute with overflow checks; leaving int64 raises instead of
+		// silently degrading to a float (Python computes the exact big int).
 		result := int64(1)
 		base := leftVal
 		exp := rightVal
+		overflow := false
 		for exp > 0 {
 			if exp%2 == 1 {
-				result *= base
+				var ok bool
+				result, ok = mulOv(result, base)
+				if !ok {
+					overflow = true
+					break
+				}
 			}
-			base *= base
+			if exp > 1 {
+				var ok bool
+				base, ok = mulOv(base, base)
+				if !ok {
+					overflow = true
+					break
+				}
+			}
 			exp /= 2
+		}
+		if overflow {
+			return intOverflowError("**")
 		}
 		return object.NewInteger(result)
 	case ast.OpMod:
@@ -996,7 +1085,20 @@ func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object
 				Raised:        true,
 			}
 		}
-		return object.NewInteger(leftVal << uint64(rightVal))
+		if rightVal < 64 {
+			if leftVal > 0 && leftVal > (math.MaxInt64>>uint(rightVal)) {
+				return intOverflowError("<<")
+			}
+			if leftVal < 0 && leftVal < (math.MinInt64>>uint(rightVal)) {
+				return intOverflowError("<<")
+			}
+			return object.NewInteger(leftVal << uint64(rightVal))
+		}
+		// Shift counts >= 64: only zero stays representable.
+		if leftVal == 0 {
+			return object.NewInteger(0)
+		}
+		return intOverflowError("<<")
 	case ast.OpRShift:
 		if rightVal < 0 {
 			return &object.Exception{
@@ -1752,6 +1854,12 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 			}
 		}
 		if key, ok := index.(*object.String); ok {
+			// Frozen dataclasses refuse field writes after construction
+			// (Python's FrozenInstanceError, an AttributeError subclass).
+			if _, frozen := o.Class.Methods["__frozen__"]; frozen {
+				return raisedAssignmentError("FrozenInstanceError",
+					fmt.Sprintf("cannot assign to field '%s'", key.StringValue()))
+			}
 			// Check class hierarchy for a property descriptor before writing to Fields
 			if p := findPropertyInClass(key.StringValue(), o.Class); p != nil {
 				if p.Setter == nil {
@@ -3652,6 +3760,7 @@ var exceptionParents = map[string]string{
 	"RecursionError":                      "RuntimeError",
 	"NotImplementedError":                 "RuntimeError",
 	"UnicodeError":                        "ValueError",
+	"FrozenInstanceError":                 "AttributeError",
 	"JSONDecodeError":                     "ValueError",
 }
 

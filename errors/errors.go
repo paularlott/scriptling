@@ -96,9 +96,13 @@ func NewTypeError(expected, got string) *object.Error {
 	return &object.Error{Message: fmt.Sprintf("%s: expected %s, got %s", ErrTypeError, expected, got)}
 }
 
-// NewArgumentError creates an argument error
+// NewArgumentError creates an argument error, tagged TypeError so
+// `except TypeError:` catches it (Python raises TypeError for arity).
 func NewArgumentError(got, want int) *object.Error {
-	return &object.Error{Message: fmt.Sprintf("%s: got %d arguments, want %d", ErrArgumentError, got, want)}
+	return &object.Error{
+		Message:       fmt.Sprintf("%s: got %d arguments, want %d", ErrArgumentError, got, want),
+		ExceptionType: object.ExceptionTypeTypeError,
+	}
 }
 
 // NewIdentifierError creates a name-not-defined error, Python-shaped so

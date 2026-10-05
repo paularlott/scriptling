@@ -116,6 +116,24 @@ var DefaultDictClass = &object.Class{
 			},
 			HelpText: `__contains__(key) - Support the ` + "`in`" + ` operator`,
 		},
+		"keys": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				// keys() - entry names, used by dict(defaultdict)
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				dd := args[0].(*object.Instance)
+				names := []object.Object{}
+				dd.RangeFields(func(name string, _ object.Object) bool {
+					if !strings.HasPrefix(name, "__") {
+						names = append(names, object.NewString(name))
+					}
+					return true
+				})
+				return &object.List{Elements: names}
+			},
+			HelpText: `keys() - The mapping's keys`,
+		},
 		"__len__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				// __len__(self) - Number of entries (internal dunder fields excluded)
@@ -363,6 +381,32 @@ Example:
 					return &object.Null{}
 				},
 				HelpText: `__getitem__(key) - Get field value (supports nt[key] syntax)`,
+			}
+
+			// Iterating a named tuple yields its field values, so
+			// tuple unpacking (x, y = p) works as in Python.
+			methods["__iter__"] = &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					nt := args[0].(*object.Instance)
+					values := make([]object.Object, 0, len(fieldNames))
+					for _, name := range fieldNames {
+						if v, exists := nt.GetField(name); exists {
+							values = append(values, v)
+						} else {
+							values = append(values, &object.Null{})
+						}
+					}
+					i := 0
+					return object.NewIterator(func() (object.Object, bool) {
+						if i >= len(values) {
+							return nil, false
+						}
+						v := values[i]
+						i++
+						return v, true
+					})
+				},
+				HelpText: `__iter__() - Iterate field values`,
 			}
 
 			// __repr__ renders Python's "Typename(field=value, ...)".

@@ -834,6 +834,11 @@ func (p *Parser) parseExpressionStatement() ast.Statement {
 // position still parses as a plain identifier reference and fails at compile.
 func (p *Parser) parseYieldStatement() ast.Statement {
 	stmt := &ast.YieldStatement{Token: p.nodeLine()}
+	// `yield from` delegation is not supported in phase 1 generators.
+	if p.peekTokenIs(token.FROM) {
+		p.errors = append(p.errors, "yield from is not supported yet (delegate manually: for item in it: yield item)")
+		return nil
+	}
 	// A bare yield (end of line) yields None.
 	if p.peekTokenIs(token.NEWLINE) || p.peekTokenIs(token.EOF) || p.peekTokenIs(token.DEDENT) || p.peekTokenIs(token.SEMICOLON) || p.skippedNewline {
 		return stmt
@@ -1960,7 +1965,13 @@ func (p *Parser) parseListLiteral() ast.Expression {
 	}
 
 	p.nextToken()
-	firstExpr := p.parseExpression(LOWEST)
+	var firstExpr ast.Expression
+	if p.curTokenIs(token.ASTERISK) {
+		p.nextToken()
+		firstExpr = &ast.StarredElement{Token: p.nodeLine(), Value: p.parseExpression(LOWEST)}
+	} else {
+		firstExpr = p.parseExpression(LOWEST)
+	}
 
 	// Check if this is a list comprehension
 	if p.peekTokenIs(token.FOR) {
@@ -1977,6 +1988,11 @@ func (p *Parser) parseListLiteral() ast.Expression {
 			break
 		}
 		p.nextToken()
+		if p.curTokenIs(token.ASTERISK) {
+			p.nextToken()
+			elements = append(elements, &ast.StarredElement{Token: p.nodeLine(), Value: p.parseExpression(LOWEST)})
+			continue
+		}
 		elements = append(elements, p.parseExpression(LOWEST))
 	}
 
@@ -2217,7 +2233,34 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 			return dict
 		}
 
-		first := p.parseExpression(LOWEST)
+		// {**mapping, ...} unpacks another mapping's pairs in place.
+		if p.curTokenIs(token.POW) {
+			p.nextToken()
+			dict.Pairs = append(dict.Pairs, ast.DictPairLiteral{
+				Key:   nil, // nil key: unpack Value's pairs
+				Value: p.parseExpression(LOWEST),
+			})
+			p.skipWhitespace()
+			if !p.peekTokenIs(token.COMMA) {
+				break
+			}
+			p.nextToken()
+			p.skipWhitespace()
+			if p.peekTokenIs(token.RBRACE) {
+				break
+			}
+			p.nextToken()
+			continue
+		}
+
+		var first ast.Expression
+		if p.curTokenIs(token.ASTERISK) {
+			// {*iterable, ...}: a set literal with unpacking.
+			p.nextToken()
+			first = &ast.StarredElement{Token: p.nodeLine(), Value: p.parseExpression(LOWEST)}
+		} else {
+			first = p.parseExpression(LOWEST)
+		}
 
 		// Peek past whitespace to determine dict vs set
 		p.skipWhitespace()
@@ -2357,6 +2400,11 @@ func (p *Parser) parseSetLiteralFrom(_ ast.LineInfo, first ast.Expression) ast.E
 		for p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.INDENT) || p.curTokenIs(token.DEDENT) {
 			p.nextToken()
 		}
+		if p.curTokenIs(token.ASTERISK) {
+			p.nextToken()
+			set.Elements = append(set.Elements, &ast.StarredElement{Token: p.nodeLine(), Value: p.parseExpression(LOWEST)})
+			continue
+		}
 		set.Elements = append(set.Elements, p.parseExpression(LOWEST))
 	}
 
@@ -2431,6 +2479,15 @@ func (p *Parser) parseRaiseStatement() *ast.RaiseStatement {
 	if !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.SEMICOLON) && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.DEDENT) {
 		p.nextToken()
 		stmt.Message = p.parseExpression(LOWEST)
+		// `raise X from cause`: the cause is parsed (and evaluated for its
+		// effects); exception chaining itself is not modelled yet.
+		if p.peekTokenIs(token.FROM) {
+			p.nextToken() // consume from
+			if !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.DEDENT) {
+				p.nextToken()
+				stmt.Cause = p.parseExpression(LOWEST)
+			}
+		}
 	}
 
 	return stmt

@@ -244,6 +244,16 @@ func init() {
 			},
 			HelpText: "__next__() - Resume the generator to the next yield",
 		},
+		"send": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				return &object.Exception{
+					Message:       "generator.send() is not supported yet (scriptling generators yield values only)",
+					ExceptionType: "NotImplementedError",
+					Raised:        true,
+				}
+			},
+			HelpText: "send(value) - Not supported yet",
+		},
 		"close": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) < 1 {

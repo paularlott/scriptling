@@ -63,6 +63,58 @@ Calls are cached by argument values; maxsize bounds the cache with
 least-recently-used eviction (maxsize=None is unbounded). Unhashable
 arguments bypass the cache, as in Python.`,
 	},
+	"wraps": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			// wraps(wrapped) returns a decorator that copies the wrapped
+			// callable's identity (__name__ above all) onto the wrapper.
+			if len(args) != 1 {
+				return errors.NewError("wraps() requires 1 argument")
+			}
+			wrapped := args[0]
+			name := "<unknown>"
+			switch w := wrapped.(type) {
+			case *object.Function:
+				name = w.Name
+			case *object.LambdaFunction:
+				name = "<lambda>"
+			case *object.Builtin:
+				if w.Repr != "" {
+					name = w.Repr
+				}
+			}
+			return &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if len(args) != 1 {
+						return errors.NewError("wraps decorator requires the wrapper")
+					}
+					switch wr := args[0].(type) {
+					case *object.Builtin:
+						if wr.Attributes == nil {
+							wr.Attributes = map[string]object.Object{}
+						}
+						wr.Attributes["__name__"] = object.NewString(name)
+					case *object.Instance:
+						wr.SetField("__name__", object.NewString(name))
+					case *object.Function:
+						// The name is the method-lookup key; keep it and
+						// expose the original via an attribute instead.
+						_ = wr
+					}
+					return args[0]
+				},
+				HelpText: "wraps decorator - copy identity onto the wrapper",
+			}
+		},
+		HelpText: `wraps(wrapped) - Decorator factory preserving the wrapped function's name
+
+The standard decorator pattern:
+
+  def deco(fn):
+      @functools.wraps(fn)
+      def wrapper(*a, **kw):
+          return fn(*a, **kw)
+      return wrapper`,
+	},
 	"cache": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) != 1 {

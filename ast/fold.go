@@ -239,7 +239,9 @@ func foldExpression(expr Expression) Expression {
 
 	case *DictLiteral:
 		for i, pair := range e.Pairs {
-			e.Pairs[i].Key = foldExpression(pair.Key)
+			if pair.Key != nil {
+				e.Pairs[i].Key = foldExpression(pair.Key)
+			}
 			e.Pairs[i].Value = foldExpression(pair.Value)
 		}
 
@@ -406,6 +408,14 @@ func tryFoldInfix(op Op, left, right Expression) Expression {
 			return &IntegerLiteral{Value: lint.Value ^ rint.Value}
 		case OpLShift:
 			if rint.Value >= 0 && rint.Value < 64 {
+				// Don't fold a shift that leaves int64: the runtime raises
+				// OverflowError where Python would compute a big int.
+				if lint.Value > 0 && lint.Value > (math.MaxInt64>>uint(rint.Value)) {
+					return nil
+				}
+				if lint.Value < 0 && lint.Value < (math.MinInt64>>uint(rint.Value)) {
+					return nil
+				}
 				return &IntegerLiteral{Value: lint.Value << rint.Value}
 			}
 		case OpRShift:
@@ -419,14 +429,26 @@ func tryFoldInfix(op Op, left, right Expression) Expression {
 	if lIsInt && rIsInt {
 		switch op {
 		case OpAdd:
+			if s := lint.Value + rint.Value; (lint.Value > 0 && rint.Value > 0 && s < 0) || (lint.Value < 0 && rint.Value < 0 && s >= 0) {
+				return nil // overflow: runtime raises
+			}
 			return &IntegerLiteral{Value: lint.Value + rint.Value}
 		case OpSub:
+			if d := lint.Value - rint.Value; (lint.Value >= 0 && rint.Value < 0 && d < 0) || (lint.Value < 0 && rint.Value > 0 && d > 0) {
+				return nil
+			}
 			return &IntegerLiteral{Value: lint.Value - rint.Value}
 		case OpMul:
+			if mulOverflows64(lint.Value, rint.Value) {
+				return nil // overflow: runtime raises
+			}
 			return &IntegerLiteral{Value: lint.Value * rint.Value}
 		case OpFloorDiv:
 			if rint.Value == 0 {
 				return nil
+			}
+			if lint.Value == math.MinInt64 && rint.Value == -1 {
+				return nil // overflow: runtime raises
 			}
 			return &IntegerLiteral{Value: floorDivInt(lint.Value, rint.Value)}
 		case OpMod:
@@ -627,4 +649,16 @@ func safeIPow(base int64, exp int64) Expression {
 		}
 	}
 	return &IntegerLiteral{Value: result}
+}
+
+// mulOverflows64 reports whether a*b leaves the int64 range.
+func mulOverflows64(a, b int64) bool {
+	if a == 0 || b == 0 {
+		return false
+	}
+	if a == -1 && b == math.MinInt64 || b == -1 && a == math.MinInt64 {
+		return true
+	}
+	p := a * b
+	return p/b != a
 }

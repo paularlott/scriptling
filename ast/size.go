@@ -555,7 +555,9 @@ func (e *estimator) walkExpression(expr Expression) {
 		}
 		e.total += cap(n.Pairs) * sizeOfDictPairSliceElem
 		for _, pair := range n.Pairs {
-			e.walkExpression(pair.Key)
+			if pair.Key != nil {
+				e.walkExpression(pair.Key)
+			}
 			e.walkExpression(pair.Value)
 		}
 	case *SetLiteral:

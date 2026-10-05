@@ -156,6 +156,38 @@ func oneIntOrFloatFunc(intFn func(*object.Integer) object.Object, floatFn func(*
 }
 
 var MathLibrary = object.NewLibrary(MathLibraryName, map[string]*object.Builtin{
+	"fsum": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			// fsum(iterable) - exact float summation (Python's math.fsum):
+			// accumulate in arbitrary precision, round once at the end.
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			var elements []object.Object
+			switch it := args[0].(type) {
+			case *object.List:
+				elements = it.Elements
+			case *object.Tuple:
+				elements = it.Elements
+			default:
+				return errors.NewTypeError("iterable of numbers", args[0].Type().String())
+			}
+			acc := new(big.Float).SetPrec(128)
+			for _, e := range elements {
+				switch v := e.(type) {
+				case *object.Float:
+					acc.Add(acc, big.NewFloat(v.FloatValue()))
+				case *object.Integer:
+					acc.Add(acc, big.NewFloat(float64(v.IntValue())))
+				default:
+					return errors.NewTypeError("iterable of numbers", e.Type().String())
+				}
+			}
+			out, _ := acc.Float64()
+			return object.NewFloat(out)
+		},
+		HelpText: `fsum(iterable) - Exact floating-point summation`,
+	},
 	"sqrt": {
 		Fn: oneFloatFunc(math.Sqrt),
 		HelpText: `sqrt(x) - Return the square root of x

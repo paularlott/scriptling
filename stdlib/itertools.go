@@ -113,27 +113,77 @@ func checkKwargs(fname string, kwargs object.Kwargs, allowed ...string) object.O
 var ItertoolsLibrary = object.NewLibrary(ItertoolsLibraryName, map[string]*object.Builtin{
 	"chain": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			// chain(*iterables) - Chain multiple iterables together
-			result := []object.Object{}
+			// chain(*iterables) - Chain multiple iterables together. With any
+			// iterator or instance input the result is a LAZY iterator (as in
+			// Python), so chaining an endless generator is safe; plain
+			// list/tuple/string inputs keep the materialized list.
+			lazy := false
+			srcs := make([]func() (object.Object, bool), 0, len(args))
 			for _, arg := range args {
 				switch a := arg.(type) {
 				case *object.List:
-					result = append(result, a.Elements...)
+					next, _ := object.IterSource(a)
+					srcs = append(srcs, next)
 				case *object.Tuple:
-					result = append(result, a.Elements...)
+					next, _ := object.IterSource(a)
+					srcs = append(srcs, next)
 				case *object.String:
-					for _, ch := range a.StringValue() {
-						result = append(result, object.NewString(string(ch)))
-					}
+					next, _ := object.IterSource(a)
+					srcs = append(srcs, next)
+				case *object.Iterator:
+					lazy = true
+					srcs = append(srcs, a.Next)
 				default:
-					elems, errObj := collectIterable(ctx, arg)
+					it, errObj := instanceAsIterator(ctx, arg)
 					if errObj != nil {
 						return errObj
 					}
-					result = append(result, elems...)
+					if it == nil {
+						elems, cerr := collectIterable(ctx, arg)
+						if cerr != nil {
+							return cerr
+						}
+						l := &object.List{Elements: elems}
+						next, _ := object.IterSource(l)
+						srcs = append(srcs, next)
+						continue
+					}
+					lazy = true
+					srcs = append(srcs, it.Next)
 				}
 			}
-			return &object.List{Elements: result}
+			if !lazy {
+				result := []object.Object{}
+				for _, next := range srcs {
+					for {
+						v, more := next()
+						if !more {
+							break
+						}
+						result = append(result, v)
+					}
+				}
+				return &object.List{Elements: result}
+			}
+			cur := 0
+			mkIter := object.NewIterator
+			for _, arg := range args {
+				if isEndless(arg) {
+					mkIter = object.NewInfiniteIterator
+					break
+				}
+			}
+			return mkIter(func() (object.Object, bool) {
+				for cur < len(srcs) {
+					v, more := srcs[cur]()
+					if !more {
+						cur++
+						continue
+					}
+					return v, true
+				}
+				return nil, false
+			})
 		},
 		HelpText: `chain(*iterables) - Chain multiple iterables together
 
@@ -197,8 +247,17 @@ Example:
 			}
 			// An iterator input is consumed lazily, saving each element for
 			// the replay passes (Python semantics), so cycle(count()) or a
-			// generator works without materializing it up front.
-			if src, isIter := args[0].(*object.Iterator); isIter && len(args) == 1 {
+			// generator works without materializing it up front. Instances
+			// (generators, user iterables) convert lazily too.
+			cycleArg := args[0]
+			if _, isIter := cycleArg.(*object.Iterator); !isIter && len(args) == 1 {
+				if it, errObj := instanceAsIterator(ctx, cycleArg); errObj != nil {
+					return errObj
+				} else if it != nil {
+					cycleArg = it
+				}
+			}
+			if src, isIter := cycleArg.(*object.Iterator); isIter && len(args) == 1 {
 				// Pull the first element now: an empty source gives an empty
 				// cycle (list(cycle(iter([]))) is []), anything else is
 				// endless. The element is still yielded first.
@@ -359,7 +418,17 @@ next(), zip(), enumerate() or itertools.islice.`,
 			// Iterator inputs stay lazy, so islice over an endless iterator
 			// does not collect it. Like Python, every element up to the
 			// last one taken is pulled, so a raise there propagates.
-			if iter, isIter := args[0].(*object.Iterator); isIter {
+			// Generators and user iterables convert lazily too (never
+			// materialized): islice over an endless generator must be safe.
+			iterTarget := args[0]
+			if _, isIter := iterTarget.(*object.Iterator); !isIter {
+				if it, errObj := instanceAsIterator(ctx, iterTarget); errObj != nil {
+					return errObj
+				} else if it != nil {
+					iterTarget = it
+				}
+			}
+			if iter, isIter := iterTarget.(*object.Iterator); isIter {
 				pos := int64(0)
 				done := false
 				next := func() (object.Object, bool) {
@@ -423,8 +492,17 @@ Example:
 				return errors.NewTypeError("callable", pred.Type().String())
 			}
 			// Pull lazily: takewhile over an infinite iterator (count(),
-			// cycle()) must stop at the first false predicate, as in Python.
-			next, ok := object.IterSource(args[1])
+			// cycle(), a generator) must stop at the first false predicate,
+			// as in Python. Instances convert without materializing.
+			srcArg := args[1]
+			if _, isIter := srcArg.(*object.Iterator); !isIter {
+				if it, errObj := instanceAsIterator(ctx, srcArg); errObj != nil {
+					return errObj
+				} else if it != nil {
+					srcArg = it
+				}
+			}
+			next, ok := object.IterSource(srcArg)
 			if !ok {
 				return notIterableError(args[1])
 			}
@@ -468,33 +546,93 @@ Example:
 			if !isCallable(pred) {
 				return errors.NewTypeError("callable", pred.Type().String())
 			}
-			var elements []object.Object
-			switch a := args[1].(type) {
-			case *object.List:
-				elements = a.Elements
-			case *object.Tuple:
-				elements = a.Elements
-			default:
-				elems, errObj := collectIterable(ctx, args[1])
-				if errObj != nil {
-					return errObj
+			// Pull lazily (generators and iterators never materialize).
+			// With a lazy source the result is a LAZY iterator (as in
+			// Python): dropping stops at the first false predicate and the
+			// tail streams, so dropwhile over an endless generator is safe;
+			// plain inputs keep the materialized list.
+			srcArg := args[1]
+			lazy := false
+			if _, isIter := srcArg.(*object.Iterator); isIter {
+				lazy = true
+			} else if it, errObj := instanceAsIterator(ctx, srcArg); errObj != nil {
+				return errObj
+			} else if it != nil {
+				srcArg = it
+				lazy = true
+			}
+			next, ok := object.IterSource(srcArg)
+			if !ok {
+				return notIterableError(args[1])
+			}
+			runTail := func(emit func(object.Object) object.Object) object.Object {
+				dropping := true
+				for {
+					if err := ctx.Err(); err != nil {
+						return errors.NewError("%s", err.Error())
+					}
+					elem, more := next()
+					if !more {
+						return nil
+					}
+					if object.IsPropagating(elem) {
+						return elem
+					}
+					if dropping {
+						res := callCallable(ctx, pred, elem)
+						if object.IsError(res) || res.Type() == object.EXCEPTION_OBJ {
+							return res
+						}
+						if isTruthy(res) {
+							continue
+						}
+						dropping = false
+					}
+					if errObj := emit(elem); errObj != nil {
+						return errObj
+					}
 				}
-				elements = elems
+			}
+			if lazy {
+				// Stateful pull: the dropping flag persists across calls,
+				// so each next() resumes exactly where the last stopped.
+				dropping := true
+				mkIter := object.NewIterator
+				if isEndless(srcArg) {
+					mkIter = object.NewInfiniteIterator
+				}
+				return mkIter(func() (object.Object, bool) {
+					for {
+						if err := ctx.Err(); err != nil {
+							return errors.NewError("%s", err.Error()), true
+						}
+						elem, more := next()
+						if !more {
+							return nil, false
+						}
+						if object.IsPropagating(elem) {
+							return elem, true
+						}
+						if dropping {
+							res := callCallable(ctx, pred, elem)
+							if object.IsError(res) || res.Type() == object.EXCEPTION_OBJ {
+								return res, true
+							}
+							if isTruthy(res) {
+								continue
+							}
+							dropping = false
+						}
+						return elem, true
+					}
+				})
 			}
 			result := []object.Object{}
-			dropping := true
-			for _, elem := range elements {
-				if dropping {
-					res := callCallable(ctx, pred, elem)
-					if object.IsError(res) || res.Type() == object.EXCEPTION_OBJ {
-						return res
-					}
-					if isTruthy(res) {
-						continue
-					}
-					dropping = false
-				}
-				result = append(result, elem)
+			if errObj := runTail(func(v object.Object) object.Object {
+				result = append(result, v)
+				return nil
+			}); errObj != nil {
+				return errObj
 			}
 			return &object.List{Elements: result}
 		},
@@ -520,46 +658,99 @@ Example:
 				}
 			}
 
-			// Convert all arguments to slices
-			iterables := make([][]object.Object, len(args))
-			maxLen := 0
-			for i, arg := range args {
+			// With any iterator or instance input the result is a LAZY
+			// iterator (as in Python), so zip_longest over an endless
+			// generator streams instead of collecting; plain inputs keep
+			// the materialized list.
+			lazy := false
+			srcs := make([]func() (object.Object, bool), 0, len(args))
+			for _, arg := range args {
 				switch a := arg.(type) {
 				case *object.List:
-					iterables[i] = a.Elements
+					next, _ := object.IterSource(a)
+					srcs = append(srcs, next)
 				case *object.Tuple:
-					iterables[i] = a.Elements
+					next, _ := object.IterSource(a)
+					srcs = append(srcs, next)
 				case *object.String:
-					chars := []object.Object{}
-					for _, ch := range a.StringValue() {
-						chars = append(chars, object.NewString(string(ch)))
-					}
-					iterables[i] = chars
+					next, _ := object.IterSource(a)
+					srcs = append(srcs, next)
+				case *object.Iterator:
+					lazy = true
+					srcs = append(srcs, a.Next)
 				default:
-					elems, errObj := collectIterable(ctx, arg)
+					it, errObj := instanceAsIterator(ctx, arg)
 					if errObj != nil {
 						return errObj
 					}
-					iterables[i] = elems
-				}
-				if len(iterables[i]) > maxLen {
-					maxLen = len(iterables[i])
+					if it == nil {
+						elems, cerr := collectIterable(ctx, arg)
+						if cerr != nil {
+							return cerr
+						}
+						l := &object.List{Elements: elems}
+						next, _ := object.IterSource(l)
+						srcs = append(srcs, next)
+						continue
+					}
+					lazy = true
+					srcs = append(srcs, it.Next)
 				}
 			}
-
-			result := []object.Object{}
-			for j := 0; j < maxLen; j++ {
-				tuple := make([]object.Object, len(iterables))
-				for i, iter := range iterables {
-					if j < len(iter) {
-						tuple[i] = iter[j]
+			if !lazy {
+				result := []object.Object{}
+				for {
+					if err := ctx.Err(); err != nil {
+						return errors.NewError("%s", err.Error())
+					}
+					tuple := make([]object.Object, len(srcs))
+					any := false
+					for i, next := range srcs {
+						v, more := next()
+						if more {
+							if object.IsPropagating(v) {
+								return v
+							}
+							tuple[i] = v
+							any = true
+						} else {
+							tuple[i] = fillvalue
+						}
+					}
+					if !any {
+						break
+					}
+					result = append(result, &object.Tuple{Elements: tuple})
+				}
+				return &object.List{Elements: result}
+			}
+			mkIter := object.NewIterator
+			for _, arg := range args {
+				if isEndless(arg) {
+					mkIter = object.NewInfiniteIterator
+					break
+				}
+			}
+			return mkIter(func() (object.Object, bool) {
+				tuple := make([]object.Object, len(srcs))
+				any := false
+				for i, next := range srcs {
+					v, more := next()
+					if more {
+						if object.IsPropagating(v) {
+							return v, true
+						}
+						tuple[i] = v
+						any = true
 					} else {
 						tuple[i] = fillvalue
 					}
 				}
-				result = append(result, &object.Tuple{Elements: tuple})
-			}
-			return &object.List{Elements: result}
+				if !any {
+					return nil, false
+				}
+				return &object.Tuple{Elements: tuple}, true
+			})
 		},
 		HelpText: `zip_longest(*iterables, fillvalue=None) - Zip iterables, filling shorter ones
 
@@ -912,6 +1103,9 @@ Example:
 			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
 			}
+			// Instances and iterators convert lazily (never materialized):
+			// accumulate over a generator pulls one element per step.
+			srcArg := args[0]
 			var elements []object.Object
 			switch a := args[0].(type) {
 			case *object.List:
@@ -919,11 +1113,34 @@ Example:
 			case *object.Tuple:
 				elements = a.Elements
 			default:
-				elems, errObj := collectIterable(ctx, args[0])
-				if errObj != nil {
+				if it, errObj := instanceAsIterator(ctx, srcArg); errObj != nil {
 					return errObj
+				} else if it != nil {
+					srcArg = it
 				}
-				elements = elems
+				if it, isIter := srcArg.(*object.Iterator); isIter {
+					elems := []object.Object{}
+					for {
+						if err := ctx.Err(); err != nil {
+							return errors.NewError("%s", err.Error())
+						}
+						v, more := it.Next()
+						if !more {
+							break
+						}
+						if object.IsPropagating(v) {
+							return v
+						}
+						elems = append(elems, v)
+					}
+					elements = elems
+				} else {
+					elems, errObj := collectIterable(ctx, args[0])
+					if errObj != nil {
+						return errObj
+					}
+					elements = elems
+				}
 			}
 
 			if err := checkKwargs("accumulate", kwargs, "func", "initial"); err != nil {
@@ -1073,12 +1290,28 @@ Example:
 				return err
 			}
 			// Pull lazily so an infinite selector (or data) iterator such as
-			// itertools.cycle stops with the shorter input, as in Python.
-			data, dataOK := object.IterSource(args[0])
+			// itertools.cycle stops with the shorter input, as in Python;
+			// instances (generators) convert without materializing.
+			dataArg, selArg := args[0], args[1]
+			for i, a := range []object.Object{dataArg, selArg} {
+				if _, isIter := a.(*object.Iterator); isIter {
+					continue
+				}
+				if it, errObj := instanceAsIterator(ctx, a); errObj != nil {
+					return errObj
+				} else if it != nil {
+					if i == 0 {
+						dataArg = it
+					} else {
+						selArg = it
+					}
+				}
+			}
+			data, dataOK := object.IterSource(dataArg)
 			if !dataOK {
 				return notIterableError(args[0])
 			}
-			selectors, selOK := object.IterSource(args[1])
+			selectors, selOK := object.IterSource(selArg)
 			if !selOK {
 				return notIterableError(args[1])
 			}

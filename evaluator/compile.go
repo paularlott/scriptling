@@ -38,6 +38,13 @@ func compileNode(node ast.Node) object.EvalFn {
 	case *ast.ForStatement:
 		return compileFor(n)
 	case *ast.Identifier:
+		if n.Value() == "yield" {
+			// `yield` parses as a name in expression position (it is a
+			// soft keyword); using it as one is always a mistake here.
+			return func(ctx context.Context, env *object.Environment) object.Object {
+				return errors.NewError("yield expressions are not supported (yield works as a statement in generator functions)")
+			}
+		}
 		return func(ctx context.Context, env *object.Environment) object.Object {
 			return evalIdentifier(n, env)
 		}
@@ -116,6 +123,10 @@ func compileNode(node ast.Node) object.EvalFn {
 		}
 	case *ast.AnnotatedAssignStatement:
 		return compileAnnotatedAssign(n)
+	case *ast.StarredElement:
+		// Inside a display: the display's compilation splices the iterable;
+		// compiling the element itself just evaluates the inner value.
+		return compileExpr(n.Value)
 	case *ast.YieldStatement:
 		// Safety net: the generator plan builder intercepts legal yields;
 		// one reaching ordinary compilation is out of place (phase 1).
@@ -1831,12 +1842,35 @@ func evalCompiledExpressions(ctx context.Context, env *object.Environment, fns [
 
 func compileListLiteral(n *ast.ListLiteral) object.EvalFn {
 	elements := compileExprs(n.Elements)
+	starred := make([]bool, len(n.Elements))
+	for i, e := range n.Elements {
+		_, starred[i] = e.(*ast.StarredElement)
+	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		vals := evalCompiledExpressions(ctx, env, elements)
 		if isPropagatedError(vals) {
 			return vals[0]
 		}
-		return &object.List{Elements: vals}
+		if !hasTrue(starred) {
+			return &object.List{Elements: vals}
+		}
+		// Splice starred elements' iterables into place.
+		out := make([]object.Object, 0, len(vals))
+		for i, v := range vals {
+			if !starred[i] {
+				out = append(out, v)
+				continue
+			}
+			elems, ok, rerr := iterableToSliceChecked(ctx, v, env)
+			if rerr != nil {
+				return rerr
+			}
+			if !ok {
+				return errors.NewTypeErrorTagged("argument after * must be an iterable, not %s", getTypeName(v))
+			}
+			out = append(out, elems...)
+		}
+		return &object.List{Elements: out}
 	}
 }
 
@@ -1853,13 +1887,32 @@ func compileTupleLiteral(n *ast.TupleLiteral) object.EvalFn {
 
 func compileSetLiteral(n *ast.SetLiteral) object.EvalFn {
 	elements := compileExprs(n.Elements)
+	starred := make([]bool, len(n.Elements))
+	for i, e := range n.Elements {
+		_, starred[i] = e.(*ast.StarredElement)
+	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		vals := evalCompiledExpressions(ctx, env, elements)
 		if isPropagatedError(vals) {
 			return vals[0]
 		}
 		s := object.NewSet()
-		for _, elem := range vals {
+		for i, elem := range vals {
+			if starred[i] {
+				elems, ok, rerr := iterableToSliceChecked(ctx, elem, env)
+				if rerr != nil {
+					return rerr
+				}
+				if !ok {
+					return errors.NewTypeErrorTagged("argument after * must be an iterable, not %s", getTypeName(elem))
+				}
+				for _, e := range elems {
+					if err := evalSetAdd(ctx, s, e); err != nil {
+						return err
+					}
+				}
+				continue
+			}
 			if err := evalSetAdd(ctx, s, elem); err != nil {
 				return err
 			}
@@ -1872,7 +1925,9 @@ func compileDictLiteral(n *ast.DictLiteral) object.EvalFn {
 	pairKeys := make([]object.EvalFn, len(n.Pairs))
 	pairValues := make([]object.EvalFn, len(n.Pairs))
 	for i, pairNode := range n.Pairs {
-		pairKeys[i] = compileExpr(pairNode.Key)
+		if pairNode.Key != nil {
+			pairKeys[i] = compileExpr(pairNode.Key)
+		}
 		pairValues[i] = compileExpr(pairNode.Value)
 	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
@@ -1882,6 +1937,53 @@ func compileDictLiteral(n *ast.DictLiteral) object.EvalFn {
 		pairs := make(map[string]object.DictPair, len(pairKeys))
 
 		for i := range pairKeys {
+			// A nil key marks a {**mapping} entry: merge its pairs in
+			// place, so later entries still override earlier ones.
+			if n.Pairs[i].Key == nil {
+				mv := pairValues[i](ctx, env)
+				if propagates(mv) {
+					return mv
+				}
+				if md, isDict := mv.(*object.Dict); isDict {
+					for k, pair := range md.Pairs {
+						pairs[k] = pair
+					}
+					continue
+				}
+				// Mapping instances (defaultdict, Counter, ...): copy via
+				// keys() + __getitem__, as dict(mapping) does.
+				if mInst, isInst := mv.(*object.Instance); isInst {
+					if _, hasKeys := mInst.Class.LookupMember("keys"); hasKeys {
+						keysObj := callDunderMethodFn(ctx, mInst, "keys", nil, env)
+						if propagates(keysObj) {
+							return keysObj
+						}
+						keys, ok, rerr := iterableToSliceChecked(ctx, keysObj, env)
+						if rerr != nil {
+							return rerr
+						}
+						if !ok {
+							return errors.NewTypeErrorTagged("argument after ** must be a mapping, not %s", getTypeName(mv))
+						}
+						for _, k := range keys {
+							v := callDunderMethodFn(ctx, mInst, "__getitem__", []object.Object{k}, env)
+							if v == nil {
+								return errors.NewTypeErrorTagged("mapping with __getitem__, got %s", getTypeName(mv))
+							}
+							if propagates(v) {
+								return v
+							}
+							hk, herr := evalHashKeyChecked(ctx, k)
+							if herr != nil {
+								return herr
+							}
+							pairs[hk] = object.DictPair{Key: k, Value: v}
+						}
+						continue
+					}
+				}
+				return errors.NewTypeErrorTagged("argument after ** must be a dict, not %s", getTypeName(mv))
+			}
 			key := pairKeys[i](ctx, env)
 			if propagates(key) {
 				return key
@@ -2874,7 +2976,19 @@ func compileRaise(n *ast.RaiseStatement) object.EvalFn {
 	if n.Message != nil {
 		message = compileExpr(n.Message)
 	}
+	var cause object.EvalFn
+	if n.Cause != nil {
+		cause = compileExpr(n.Cause)
+	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
+		if cause != nil {
+			// `raise X from e`: evaluate the cause expression for its
+			// effects; chaining is not modelled (phase 1).
+			c := cause(ctx, env)
+			if propagates(c) {
+				return c
+			}
+		}
 		if message != nil {
 			msg := message(ctx, env)
 			if object.IsError(msg) {
@@ -3414,4 +3528,14 @@ func sliceWalk(elements []object.Object) func() (object.Object, bool) {
 		i++
 		return v, true
 	}
+}
+
+// hasTrue reports whether any bool in s is true.
+func hasTrue(s []bool) bool {
+	for _, v := range s {
+		if v {
+			return true
+		}
+	}
+	return false
 }

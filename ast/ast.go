@@ -835,6 +835,17 @@ func (as *AnnotatedAssignStatement) Line() int            { return int(as.Token.
 // YieldStatement suspends a generator, producing Value (or None). Phase 1
 // supports yields as statements at the top level of a generator body or of a
 // single top-level loop in it.
+// StarredElement is an unpacking element inside a list or set display:
+// [*rest, 3] / {*items, 4}. Evaluation splices the iterable's elements.
+type StarredElement struct {
+	Token LineInfo
+	Value Expression
+}
+
+func (se *StarredElement) expressionNode()      {}
+func (se *StarredElement) TokenLiteral() string { return "*" }
+func (se *StarredElement) Line() int            { return int(se.Token.Line) }
+
 type YieldStatement struct {
 	Token LineInfo
 	Value Expression // nil yields None
@@ -1439,6 +1450,9 @@ func (ts *TryStatement) Line() int            { return int(ts.Token.Line) }
 type RaiseStatement struct {
 	Token   LineInfo
 	Message Expression
+	// Cause is the `from e` part of `raise X from e`: parsed and evaluated
+	// for its effects; exception chaining is not modelled yet.
+	Cause Expression
 }
 
 func (rs *RaiseStatement) statementNode()       {}

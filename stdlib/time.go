@@ -10,9 +10,21 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
+// processStart anchors time.monotonic(): Go monotonic reading since start.
+var processStart = time.Now()
+
+
 var startTime = time.Now()
 
 var TimeLibrary = object.NewLibrary(TimeLibraryName, map[string]*object.Builtin{
+	"monotonic": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			// monotonic() - seconds on a clock that never goes backwards
+			// (Go's monotonic reading since process start).
+			return object.NewFloat(time.Since(processStart).Seconds())
+		},
+		HelpText: `monotonic() - Monotonic clock in seconds`,
+	},
 	"now": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return object.NewString(time.Now().Format("2006-01-02T15:04:05.999999"))

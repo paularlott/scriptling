@@ -1608,6 +1608,41 @@ For other objects, returns the same as str().`,
 
 Returns an integer hash value for the object using FNV-1a algorithm.`,
 	},
+	"vars": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			// vars() - the current scope's bindings as a dict (module
+			// globals); vars(obj) - an instance's fields.
+			if len(args) > 1 {
+				return errors.NewError("vars() takes 0 or 1 arguments (%d given)", len(args))
+			}
+			if len(args) == 1 {
+				inst, ok := args[0].(*object.Instance)
+				if !ok {
+					return errors.NewTypeError("instance", args[0].Type().String())
+				}
+				d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+				inst.RangeFields(func(name string, v object.Object) bool {
+					if !strings.HasPrefix(name, "__") {
+						d.SetByString(name, v)
+					}
+					return true
+				})
+				return d
+			}
+			env := GetEnvFromContext(ctx)
+			if env == nil {
+				return &object.Dict{Pairs: make(map[string]object.DictPair)}
+			}
+			d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+			env.EachLocal(func(name string, v object.Object) {
+				if v != nil && !strings.HasPrefix(name, "__") {
+					d.SetByString(name, v)
+				}
+			})
+			return d
+		},
+		HelpText: `vars() or vars(object) - Bindings of the current scope or an instance's fields`,
+	},
 	"id": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.ExactArgs(args, 1); err != nil {
@@ -2239,6 +2274,30 @@ func compareObjectsCtx(ctx context.Context, a, b object.Object, env *object.Envi
 			return 1, nil
 		}
 	}
+	// Instances without __lt__/__gt__ are unorderable, as in Python: a
+	// silent 0 here used to leave sorted() unsorted instead of raising.
+	if _, isInst := a.(*object.Instance); isInst {
+		_, hasLt := a.(*object.Instance).Class.Methods["__lt__"]
+		_, hasGt := a.(*object.Instance).Class.Methods["__gt__"]
+		if !hasLt && !hasGt {
+			return 0, &object.Exception{
+				Message:       fmt.Sprintf("'<' not supported between instances of '%s' and '%s'", getTypeName(a), getTypeName(b)),
+				ExceptionType: object.ExceptionTypeTypeError,
+				Raised:        true,
+			}
+		}
+	}
+	if _, isInst := b.(*object.Instance); isInst {
+		_, hasLt := b.(*object.Instance).Class.Methods["__lt__"]
+		_, hasGt := b.(*object.Instance).Class.Methods["__gt__"]
+		if !hasLt && !hasGt {
+			return 0, &object.Exception{
+				Message:       fmt.Sprintf("'<' not supported between instances of '%s' and '%s'", getTypeName(a), getTypeName(b)),
+				ExceptionType: object.ExceptionTypeTypeError,
+				Raised:        true,
+			}
+		}
+	}
 	return compareObjects(a, b), nil
 }
 
@@ -2569,6 +2628,7 @@ func init() {
 		"ModuleNotFoundError", "RecursionError", "NotImplementedError",
 		"UnicodeError", "UnicodeDecodeError", "UnicodeEncodeError",
 		"KeyboardInterrupt", "JSONDecodeError", "AssertionError",
+		"FrozenInstanceError",
 	} {
 		builtins[name] = exceptionConstructor(name)
 	}

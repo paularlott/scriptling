@@ -1,6 +1,8 @@
 package evaluator
 
 import (
+	"math"
+
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/object"
 )
@@ -70,14 +72,26 @@ func evalIntOperand(node ast.Expression, env *object.Environment) (int64, bool) 
 func applyIntFastOp(op ast.Op, l, r int64) (int64, bool) {
 	switch op {
 	case ast.OpAdd:
-		return l + r, true
+		if s, ok := addOv(l, r); ok {
+			return s, true
+		}
+		return 0, false // overflow: the normal path raises OverflowError
 	case ast.OpSub:
-		return l - r, true
+		if d, ok := subOv(l, r); ok {
+			return d, true
+		}
+		return 0, false
 	case ast.OpMul:
-		return l * r, true
+		if p, ok := mulOv(l, r); ok {
+			return p, true
+		}
+		return 0, false
 	case ast.OpFloorDiv:
 		if r == 0 {
 			return 0, false
+		}
+		if l == math.MinInt64 && r == -1 {
+			return 0, false // overflow: the normal path raises
 		}
 		q := l / r
 		if l%r != 0 && (l < 0) != (r < 0) {
@@ -100,7 +114,13 @@ func applyIntFastOp(op ast.Op, l, r int64) (int64, bool) {
 	case ast.OpBitXor:
 		return l ^ r, true
 	case ast.OpLShift:
-		if r < 0 {
+		if r < 0 || r >= 64 {
+			return 0, false
+		}
+		if l > 0 && l > (math.MaxInt64>>uint(r)) {
+			return 0, false
+		}
+		if l < 0 && l < (math.MinInt64>>uint(r)) {
 			return 0, false
 		}
 		return l << uint64(r), true
