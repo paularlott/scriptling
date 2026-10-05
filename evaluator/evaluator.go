@@ -1866,6 +1866,10 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 			}
 		}
 		if key, ok := index.(*object.String); ok {
+			if key.StringValue() == "__dict__" {
+				return raisedAssignmentError(object.ExceptionTypeAttributeError,
+					"assigning to __dict__ is not supported; update it in place (obj.__dict__.update(...)) or use setattr()")
+			}
 			// Frozen dataclasses refuse field writes after construction
 			// (Python's FrozenInstanceError, an AttributeError subclass).
 			if _, frozen := o.Class.Methods["__frozen__"]; frozen {

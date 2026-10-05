@@ -389,3 +389,143 @@ func TestDeepCopyDictKeepsOrder(t *testing.T) {
 		t.Fatalf("copy order = %s, want %s", got, want)
 	}
 }
+
+func fieldNamesOf(inst *Instance) []string {
+	var out []string
+	inst.RangeFields(func(name string, _ Object) bool {
+		out = append(out, name)
+		return true
+	})
+	return out
+}
+
+// TestInstanceFieldsKeepAssignmentOrder: fields past the inline ones used to
+// iterate in random map order; deletes used to swap-remove. Both must follow
+// assignment order, so vars(obj) / obj.__dict__ match Python.
+func TestInstanceFieldsKeepAssignmentOrder(t *testing.T) {
+	names := []string{"z", "a", "m", "q", "r", "s", "t", "u", "b"}
+	for run := 0; run < 20; run++ {
+		inst := &Instance{Class: &Class{Name: "C"}}
+		for i, n := range names {
+			inst.SetField(n, NewInteger(int64(i)))
+		}
+		inst.SetField("a", NewInteger(99)) // update keeps position
+		if got := fieldNamesOf(inst); fmt.Sprint(got) != fmt.Sprint(names) {
+			t.Fatalf("run %d: order = %v, want %v", run, got, names)
+		}
+	}
+	// Deleting from the inline part, the middle and the overflow part keeps
+	// the remaining order, and a later field still appends last.
+	inst := &Instance{Class: &Class{Name: "C"}}
+	model := append([]string{}, names...)
+	for i, n := range names {
+		inst.SetField(n, NewInteger(int64(i)))
+	}
+	for _, del := range []string{"z", "r", "b", "m"} {
+		inst.DeleteField(del)
+		for i, n := range model {
+			if n == del {
+				model = append(model[:i], model[i+1:]...)
+				break
+			}
+		}
+		if got := fieldNamesOf(inst); fmt.Sprint(got) != fmt.Sprint(model) {
+			t.Fatalf("after deleting %s: order = %v, want %v", del, got, model)
+		}
+		inst.DeleteField("not-there") // no-op
+	}
+	inst.SetField("last", NewInteger(1))
+	model = append(model, "last")
+	if got := fieldNamesOf(inst); fmt.Sprint(got) != fmt.Sprint(model) {
+		t.Fatalf("after append: order = %v, want %v", got, model)
+	}
+	if inst.FieldCount() != len(model) {
+		t.Fatalf("FieldCount = %d, want %d", inst.FieldCount(), len(model))
+	}
+	for _, n := range model {
+		if _, ok := inst.GetField(n); !ok {
+			t.Fatalf("field %s lost", n)
+		}
+	}
+}
+
+// TestInstanceFieldsRandomOpsMatchModel drives SetField/DeleteField at random
+// against a slice model, across the inline/overflow boundary.
+func TestInstanceFieldsRandomOpsMatchModel(t *testing.T) {
+	for seed := int64(1); seed <= 30; seed++ {
+		rng := rand.New(rand.NewSource(seed))
+		inst := &Instance{Class: &Class{Name: "C"}}
+		var model []string
+		vals := map[string]int{}
+		for step := 0; step < 600; step++ {
+			n := fmt.Sprintf("f%d", rng.Intn(14))
+			if rng.Intn(100) < 60 {
+				if _, ok := vals[n]; !ok {
+					model = append(model, n)
+				}
+				vals[n] = step
+				inst.SetField(n, NewInteger(int64(step)))
+			} else {
+				if _, ok := vals[n]; ok {
+					delete(vals, n)
+					for i, m := range model {
+						if m == n {
+							model = append(model[:i], model[i+1:]...)
+							break
+						}
+					}
+				}
+				inst.DeleteField(n)
+			}
+			if got := fieldNamesOf(inst); fmt.Sprint(got) != fmt.Sprint(model) {
+				t.Fatalf("seed %d step %d: order = %v, want %v", seed, step, got, model)
+			}
+			for _, m := range model {
+				v, ok := inst.GetField(m)
+				if !ok || int(v.(*Integer).IntValue()) != vals[m] {
+					t.Fatalf("seed %d step %d: field %s wrong", seed, step, m)
+				}
+			}
+		}
+	}
+}
+
+// TestDictOwnerWriteThrough: a dict linked to an instance (obj.__dict__) writes
+// stores, deletes and clears through to the instance's fields; copies are not
+// linked, and non-string keys stay in the view only.
+func TestDictOwnerWriteThrough(t *testing.T) {
+	inst := &Instance{Class: &Class{Name: "C"}}
+	inst.SetField("a", NewInteger(1))
+	view := NewDict()
+	view.SetByString("a", NewInteger(1))
+	view.LinkOwner(inst)
+
+	view.SetByString("b", NewInteger(2))
+	view.Store(DictKey(NewString("a")), NewString("a"), NewInteger(10))
+	if v, _ := inst.GetField("b"); v == nil || v.(*Integer).IntValue() != 2 {
+		t.Fatal("new key did not write through")
+	}
+	if v, _ := inst.GetField("a"); v.(*Integer).IntValue() != 10 {
+		t.Fatal("update did not write through")
+	}
+	view.Store(DictKey(NewInteger(5)), NewInteger(5), NewInteger(5)) // not an attribute name
+	if inst.FieldCount() != 2 {
+		t.Fatalf("non-string key leaked into the instance: %v", fieldNamesOf(inst))
+	}
+	view.DeleteByString("a")
+	if inst.HasField("a") {
+		t.Fatal("delete did not write through")
+	}
+
+	unlinked := NewDictSized(2)
+	unlinked.StoreFrom(view)
+	unlinked.SetByString("zzz", NewInteger(1))
+	if inst.HasField("zzz") {
+		t.Fatal("a copy must not be linked to the instance")
+	}
+
+	view.Clear()
+	if inst.FieldCount() != 0 {
+		t.Fatalf("clear left fields: %v", fieldNamesOf(inst))
+	}
+}

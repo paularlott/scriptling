@@ -178,14 +178,14 @@ func (r *reprRenderer) container(obj Object) {
 		}
 		r.out.WriteByte(')')
 	case *Dict:
-		if o.DefaultFactory != nil {
+		if o.Factory() != nil {
 			r.out.WriteString("defaultdict(")
-			if _, none := o.DefaultFactory.(*Null); none {
+			if _, none := o.Factory().(*Null); none {
 				r.out.WriteString("None")
 			} else if FactoryRepr != nil {
-				r.out.WriteString(FactoryRepr(o.DefaultFactory))
+				r.out.WriteString(FactoryRepr(o.Factory()))
 			} else {
-				r.out.WriteString(o.DefaultFactory.Inspect())
+				r.out.WriteString(o.Factory().Inspect())
 			}
 			r.out.WriteString(", ")
 		}
@@ -201,7 +201,7 @@ func (r *reprRenderer) container(obj Object) {
 			i++
 		}
 		r.out.WriteByte('}')
-		if o.DefaultFactory != nil {
+		if o.Factory() != nil {
 			r.out.WriteByte(')')
 		}
 	case *Set:

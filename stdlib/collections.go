@@ -30,7 +30,7 @@ var defaultDictBuiltin = &object.Builtin{
 			return errors.NewTypeErrorTagged("first argument must be callable or None")
 		}
 		dd := object.NewDict()
-		dd.DefaultFactory = factory
+		dd.SetFactory(factory)
 		if len(args) == 2 {
 			switch init := args[1].(type) {
 			case *object.Dict:

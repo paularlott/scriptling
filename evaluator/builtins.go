@@ -1643,14 +1643,7 @@ Returns an integer hash value for the object using FNV-1a algorithm.`,
 				if !ok {
 					return errors.NewTypeError("instance", args[0].Type().String())
 				}
-				d := &object.Dict{Pairs: make(map[string]object.DictPair)}
-				inst.RangeFields(func(name string, v object.Object) bool {
-					if !strings.HasPrefix(name, "__") {
-						d.SetByString(name, v)
-					}
-					return true
-				})
-				return d
+				return instanceDictView(inst)
 			}
 			env := GetEnvFromContext(ctx)
 			if env == nil {
@@ -1975,7 +1968,7 @@ Checks the full inheritance chain. issubclass(C, C) is True.`,
 				return &object.List{Elements: newElems}
 			case *object.Dict:
 				copied := object.NewDictSized(len(o.Pairs))
-				copied.DefaultFactory = o.DefaultFactory
+				copied.SetFactory(o.Factory())
 				copied.StoreFrom(o)
 				return copied
 			case *object.Set:

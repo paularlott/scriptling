@@ -2072,7 +2072,7 @@ func deepCopyDict(d *Dict) *Dict {
 		return nil
 	}
 	out := NewDictSized(len(d.Pairs))
-	out.DefaultFactory = d.DefaultFactory
+	out.SetFactory(d.Factory())
 	for _, k := range d.OrderedKeys() {
 		v := d.Pairs[k]
 		if nested, ok := v.Value.(*Dict); ok {
@@ -2231,11 +2231,9 @@ type Dict struct {
 	head    int // order[:head] is dead; deleting the oldest key just advances it
 	nextSeq uint64
 	stale   int // stale entries inside order[head:] (deleted pairs not at either end)
-	// DefaultFactory makes this a defaultdict: reading a missing key calls it
-	// (no arguments), stores the result under that key and returns it. A
-	// *Null factory (defaultdict(None)) behaves like a plain dict. nil for
-	// ordinary dicts.
-	DefaultFactory Object
+	// extra holds the rarely used attachments (default factory, owning
+	// instance) behind one pointer, so an ordinary dict pays 8 bytes for them.
+	extra *dictExtra
 	// Module is the import name when this dict is a library module
 	// ("math", "scriptling.runtime.kv"), empty for an ordinary dict.
 	// Modules display as <module 'math'> and expose only their members.
@@ -2282,6 +2280,45 @@ func NewStringDict(entries map[string]Object) *Dict {
 	return d
 }
 
+// dictExtra carries optional dict behaviour; nil for an ordinary dict.
+type dictExtra struct {
+	// factory makes the dict a defaultdict: reading a missing key calls it
+	// (no arguments), stores the result and returns it. A *Null factory
+	// (defaultdict(None)) behaves like a plain dict.
+	factory Object
+	// owner links an instance's __dict__ / vars() view to the instance:
+	// writes to the dict write through to the instance's fields.
+	owner *Instance
+}
+
+// Factory returns the defaultdict factory, or nil for an ordinary dict.
+func (d *Dict) Factory() Object {
+	if d.extra == nil {
+		return nil
+	}
+	return d.extra.factory
+}
+
+// SetFactory makes the dict a defaultdict with the given factory (nil clears it).
+func (d *Dict) SetFactory(f Object) {
+	if f == nil && d.extra == nil {
+		return
+	}
+	if d.extra == nil {
+		d.extra = &dictExtra{}
+	}
+	d.extra.factory = f
+}
+
+// LinkOwner makes writes to this dict write through to inst's fields, as
+// obj.__dict__ does in Python. Copies of the dict are not linked.
+func (d *Dict) LinkOwner(inst *Instance) {
+	if d.extra == nil {
+		d.extra = &dictExtra{}
+	}
+	d.extra.owner = inst
+}
+
 // DefaultDictType is the collections.defaultdict constructor, registered by
 // the stdlib so isinstance(d, defaultdict) can recognise it. FactoryRepr
 // renders a default factory the way Python does (<class 'list'>); the
@@ -2292,7 +2329,7 @@ var (
 )
 
 // IsDefaultDict reports whether the dict was created by defaultdict().
-func (d *Dict) IsDefaultDict() bool { return d.DefaultFactory != nil }
+func (d *Dict) IsDefaultDict() bool { return d.Factory() != nil }
 
 // NewDict returns an empty, insertion-ordered dict.
 func NewDict() *Dict {
@@ -2314,11 +2351,25 @@ func (d *Dict) Store(canonical string, key Object, value Object) {
 	}
 	if old, exists := d.Pairs[canonical]; exists {
 		d.Pairs[canonical] = DictPair{Key: old.Key, Value: value, seq: old.seq}
+		d.writeThrough(old.Key, value)
 		return
 	}
 	d.nextSeq++
 	d.Pairs[canonical] = DictPair{Key: key, Value: value, seq: d.nextSeq}
 	d.order = append(d.order, orderEntry{key: canonical, seq: d.nextSeq})
+	d.writeThrough(key, value)
+}
+
+// writeThrough applies a Store to the owning instance (an obj.__dict__ view).
+// Only string keys name attributes; others stay in the view alone.
+func (d *Dict) writeThrough(key, value Object) {
+	if d.extra == nil || d.extra.owner == nil {
+		return
+	}
+	if name, ok := key.(*String); ok {
+		d.extra.owner.SetField(name.value, value)
+		d.extra.owner.InvalidateBoundMethod(name.value)
+	}
 }
 
 // StoreFrom copies every pair from other into d, preserving other's
@@ -2346,6 +2397,12 @@ func (d *Dict) Delete(canonical string) {
 		return
 	}
 	delete(d.Pairs, canonical)
+	if d.extra != nil && d.extra.owner != nil {
+		if name, ok := pair.Key.(*String); ok {
+			d.extra.owner.DeleteField(name.value)
+			d.extra.owner.InvalidateBoundMethod(name.value)
+		}
+	}
 	if pair.seq == 0 {
 		return // never had an order entry
 	}
@@ -2411,6 +2468,14 @@ func (d *Dict) compact() {
 // Clear removes every entry and the recorded insertion order. Use it instead
 // of replacing Pairs, which would leave stale order entries behind.
 func (d *Dict) Clear() {
+	if d.extra != nil && d.extra.owner != nil {
+		for _, pair := range d.Pairs {
+			if name, ok := pair.Key.(*String); ok {
+				d.extra.owner.DeleteField(name.value)
+				d.extra.owner.InvalidateBoundMethod(name.value)
+			}
+		}
+	}
 	d.Pairs = make(map[string]DictPair)
 	d.order = nil
 	d.head = 0
@@ -2844,6 +2909,9 @@ type Instance struct {
 	inlineVals [inlineFieldCap]Object
 	inlineLen  int
 	overflow   map[string]Object
+	// overflowOrder lists the overflow keys in insertion order, so field order
+	// (vars(obj), obj.__dict__) follows assignment order past the inline fields.
+	overflowOrder []string
 
 	NativeData       any
 	boundMethodCache map[string]boundMethodCacheEntry
@@ -2939,25 +3007,48 @@ func (i *Instance) SetField(name string, val Object) {
 		i.overflow = make(map[string]Object)
 	}
 	i.overflow[name] = val
+	if i.overflowOrder == nil {
+		i.overflowOrder = make([]string, 0, 8) // one allocation for the common case
+	}
+	i.overflowOrder = append(i.overflowOrder, name)
 }
 
 // DeleteField removes the named field if present.
 func (i *Instance) DeleteField(name string) {
 	for n := 0; n < i.inlineLen; n++ {
 		if i.inlineKeys[n] == name {
-			// Swap-remove: move the last inline entry into the gap. Field order
-			// is unspecified, so this is fine and avoids shifting.
+			// Shift left to keep insertion order, then refill the freed inline
+			// slot with the oldest overflow field so inline fields always come
+			// before overflow fields in order.
+			copy(i.inlineKeys[n:i.inlineLen-1], i.inlineKeys[n+1:i.inlineLen])
+			copy(i.inlineVals[n:i.inlineLen-1], i.inlineVals[n+1:i.inlineLen])
 			last := i.inlineLen - 1
-			i.inlineKeys[n] = i.inlineKeys[last]
-			i.inlineVals[n] = i.inlineVals[last]
 			i.inlineKeys[last] = ""
 			i.inlineVals[last] = nil
 			i.inlineLen--
+			if len(i.overflowOrder) > 0 {
+				k := i.overflowOrder[0]
+				v := i.overflow[k]
+				delete(i.overflow, k)
+				i.overflowOrder = i.overflowOrder[1:]
+				i.inlineKeys[i.inlineLen] = k
+				i.inlineVals[i.inlineLen] = v
+				i.inlineLen++
+			}
 			return
 		}
 	}
 	if i.overflow != nil {
+		if _, ok := i.overflow[name]; !ok {
+			return
+		}
 		delete(i.overflow, name)
+		for n, k := range i.overflowOrder {
+			if k == name {
+				i.overflowOrder = append(i.overflowOrder[:n], i.overflowOrder[n+1:]...)
+				break
+			}
+		}
 	}
 }
 
@@ -2972,17 +3063,19 @@ func (i *Instance) FieldCount() int {
 	return i.inlineLen + len(i.overflow)
 }
 
-// RangeFields calls fn for each set field. Iteration order is unspecified and
-// stops early if fn returns false.
+// RangeFields calls fn for each set field in insertion order (the order the
+// fields were first assigned) and stops early if fn returns false.
 func (i *Instance) RangeFields(fn func(name string, val Object) bool) {
 	for n := 0; n < i.inlineLen; n++ {
 		if !fn(i.inlineKeys[n], i.inlineVals[n]) {
 			return
 		}
 	}
-	for k, v := range i.overflow {
-		if !fn(k, v) {
-			return
+	for _, k := range i.overflowOrder {
+		if v, ok := i.overflow[k]; ok {
+			if !fn(k, v) {
+				return
+			}
 		}
 	}
 }

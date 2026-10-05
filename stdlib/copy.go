@@ -64,7 +64,7 @@ func shallowCopy(obj object.Object) object.Object {
 		return &object.List{Elements: elements}
 	case *object.Dict:
 		clone := object.NewDict()
-		clone.DefaultFactory = o.DefaultFactory
+		clone.SetFactory(o.Factory())
 		clone.StoreFrom(o)
 		return clone
 	case *object.Set:
@@ -153,7 +153,7 @@ func deepCopyDepth(ctx context.Context, obj object.Object, memo map[object.Objec
 			return c
 		}
 		result := object.NewDict()
-		result.DefaultFactory = v.DefaultFactory
+		result.SetFactory(v.Factory())
 		memo[obj] = result
 		// Keys are hashable, hence immutable; values may nest arbitrarily.
 		// The copy preserves the dict's insertion order.

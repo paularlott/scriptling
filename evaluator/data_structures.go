@@ -131,11 +131,11 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 					return pair.Value
 				}
 				// defaultdict exposes its factory as an attribute.
-				if dd := left.(*object.Dict); dd.DefaultFactory != nil && name.StringValue() == "default_factory" {
-					if _, none := dd.DefaultFactory.(*object.Null); none {
+				if dd := left.(*object.Dict); dd.Factory() != nil && name.StringValue() == "default_factory" {
+					if _, none := dd.Factory().(*object.Null); none {
 						return NULL
 					}
-					return dd.DefaultFactory
+					return dd.Factory()
 				}
 				// Modules expose only their members, not dict methods.
 				if left.(*object.Dict).Module == "" {
@@ -492,7 +492,7 @@ func evalDictIndexExpression(ctx context.Context, dict, index object.Object) obj
 	pair, ok := dictObject.Pairs[key]
 	if !ok {
 		// defaultdict: call the factory, store the result, return it.
-		if f := dictObject.DefaultFactory; f != nil {
+		if f := dictObject.Factory(); f != nil {
 			if _, none := f.(*object.Null); !none {
 				val := applyFunctionWithContext(ctx, f, nil, nil, GetEnvFromContext(ctx))
 				if propagates(val) {
@@ -606,11 +606,32 @@ func evalInstanceIndexExpression(ctx context.Context, instance, index object.Obj
 	if field == "__class__" {
 		return inst.Class
 	}
+	if field == "__dict__" {
+		return instanceDictView(inst)
+	}
 	// As in Python, __getattr__ is consulted only when normal lookup fails.
 	if getattr, ok := inst.Class.LookupMember("__getattr__"); ok {
 		return applyFunctionWithContext(ctx, getattr, []object.Object{instance, index}, nil, nil)
 	}
 	return attributeError(inst, field)
+}
+
+// instanceDictView returns an instance's attributes as a dict in assignment
+// order, linked to the instance: writes to it (update, d[k] = v, del, pop,
+// setdefault, clear) write through to the fields, as obj.__dict__ does in
+// Python. It is a fresh snapshot per access, so reads are always current;
+// a reference kept across later attribute changes does not see them.
+// Internal markers (names that start and end with "__") are not attributes.
+func instanceDictView(inst *object.Instance) *object.Dict {
+	d := object.NewDictSized(inst.FieldCount())
+	inst.RangeFields(func(name string, v object.Object) bool {
+		if !(len(name) > 4 && strings.HasPrefix(name, "__") && strings.HasSuffix(name, "__")) {
+			d.SetByString(name, v)
+		}
+		return true
+	})
+	d.LinkOwner(inst)
+	return d
 }
 
 func evalClassIndexExpression(class, index object.Object) object.Object {

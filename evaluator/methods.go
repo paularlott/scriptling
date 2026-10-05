@@ -452,7 +452,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 			return errors.NewError("copy() does not accept keyword arguments")
 		}
 		copied := object.NewDictSized(len(dict.Pairs))
-		copied.DefaultFactory = dict.DefaultFactory
+		copied.SetFactory(dict.Factory())
 		copied.StoreFrom(dict)
 		return copied
 	case "setdefault":
