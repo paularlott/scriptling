@@ -555,8 +555,8 @@ func init() {
 						if err != nil {
 							return err
 						}
-						// Return difference in seconds as float
-						return object.NewFloat(lt.Sub(rt).Seconds())
+						// Python: datetime - datetime is a timedelta
+						return createTimedeltaInstance(lt.Sub(rt).Seconds())
 					}
 					newTime := lt.Add(time.Duration(-seconds * float64(time.Second)))
 					return createDatetimeInstance(newTime)
@@ -719,8 +719,8 @@ func init() {
 						if err != nil {
 							return err
 						}
-						// Return difference in days as integer
-						return object.NewInteger(int64(lt.Sub(rt).Hours() / 24))
+						// Python: date - date is a timedelta (whole days)
+						return createTimedeltaInstance(lt.Sub(rt).Seconds())
 					default:
 						return errors.NewTypeError("date instance or number", args[1].Type().String())
 					}
@@ -1159,6 +1159,12 @@ var TimedeltaClass = &object.Class{
 			},
 			HelpText: "__str__() - Return the Python-style duration string",
 		},
+		"__lt__": timedeltaCompare("<"),
+		"__gt__": timedeltaCompare(">"),
+		"__le__": timedeltaCompare("<="),
+		"__ge__": timedeltaCompare(">="),
+		"__eq__": timedeltaCompare("=="),
+		"__ne__": timedeltaCompare("!="),
 	},
 }
 
@@ -1172,3 +1178,57 @@ var DatetimeLibrary = object.NewLibrary(DatetimeLibraryName,
 	nil,
 	"Date and time manipulation library.",
 )
+
+// timedeltaCompare builds a comparison dunder for timedeltas: both operands
+// compare by their _total seconds; the right side may be a timedelta or a
+// number of seconds, matching how the arithmetic dunders accept both.
+func timedeltaCompare(op string) *object.Builtin {
+	return &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.MinArgs(args, 2); err != nil {
+				return err
+			}
+			left, ok := args[0].(*object.Instance)
+			if !ok {
+				return errors.NewTypeError("timedelta instance", args[0].Type().String())
+			}
+			lt, ok := left.Field("_total").(*object.Float)
+			if !ok {
+				return errors.NewTypeError("timedelta instance", args[0].Type().String())
+			}
+			var rt float64
+			switch v := args[1].(type) {
+			case *object.Float:
+				rt = v.FloatValue()
+			case *object.Integer:
+				rt = float64(v.IntValue())
+			case *object.Instance:
+				total, ok := v.Field("_total").(*object.Float)
+				if !ok {
+					return errors.NewTypeError("timedelta or number", args[1].Type().String())
+				}
+				rt = total.FloatValue()
+			default:
+				return errors.NewTypeError("timedelta or number", args[1].Type().String())
+			}
+			l, r := lt.FloatValue(), rt
+			var result bool
+			switch op {
+			case "<":
+				result = l < r
+			case ">":
+				result = l > r
+			case "<=":
+				result = l <= r
+			case ">=":
+				result = l >= r
+			case "==":
+				result = l == r
+			case "!=":
+				result = l != r
+			}
+			return object.NewBoolean(result)
+		},
+		HelpText: "Compare two timedeltas (or a timedelta and a number of seconds)",
+	}
+}

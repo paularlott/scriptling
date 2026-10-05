@@ -2,6 +2,7 @@ package stdlib
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"strings"
 
@@ -71,8 +72,8 @@ var URLParseLibrary = object.NewLibrary(URLParseLibraryName, map[string]*object.
 				return err
 			}
 
-			// Optional safe parameter (characters not to encode)
-			safe := ""
+			// Optional safe parameter; Python's default keeps '/' unencoded.
+			safe := "/"
 			if len(args) == 2 {
 				safe, err = args[1].AsString()
 				if err != nil {
@@ -554,15 +555,18 @@ var URLLibLibrary = object.NewLibrary(URLLibLibraryName, nil, nil, "URL handling
 
 // urlQuote encodes a string for URL, with optional safe characters
 func urlQuote(s string, safe string) string {
+	// Python's quote: everything outside [A-Za-z0-9._~-] plus the safe
+	// characters becomes %XX (uppercase hex), byte-wise over UTF-8. Go's
+	// PathEscape is not equivalent (it leaves path-legal characters such
+	// as '=' unescaped).
 	var result strings.Builder
-	for _, c := range s {
+	for _, b := range []byte(s) {
+		c := rune(b)
 		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
 			c == '-' || c == '_' || c == '.' || c == '~' || strings.ContainsRune(safe, c) {
-			result.WriteRune(c)
-		} else if c == ' ' {
-			result.WriteString("%20")
+			result.WriteByte(b)
 		} else {
-			result.WriteString(url.PathEscape(string(c)))
+			result.WriteString(fmt.Sprintf("%%%02X", b))
 		}
 	}
 	return result.String()

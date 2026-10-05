@@ -1,6 +1,7 @@
 package evaluator
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
@@ -736,6 +737,42 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 // actually need in glue scripts.
 func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
 	switch method {
+	case "split":
+		// Python bytes.split(sep=None, maxsplit=-1): whitespace runs when
+		// no separator, else byte-separator occurrences.
+		if len(args) > 2 {
+			return errors.NewError("split() takes at most 2 arguments (%d given)", len(args))
+		}
+		data := b.BytesValue()
+		maxSplit := -1
+		if len(args) == 2 {
+			if n, err := args[1].AsInt(); err == nil {
+				maxSplit = int(n)
+			}
+		}
+		var parts [][]byte
+		if len(args) == 0 || args[0].Type() == object.NULL_OBJ {
+			parts = bytesFields(data)
+		} else {
+			sepObj, ok := args[0].(*object.Bytes)
+			if !ok {
+				return errors.NewTypeError("bytes", args[0].Type().String())
+			}
+			sep := sepObj.BytesValue()
+			if len(sep) == 0 {
+				return errors.NewError("empty separator")
+			}
+			if maxSplit < 0 {
+				parts = bytes.Split(data, sep)
+			} else {
+				parts = bytes.SplitN(data, sep, maxSplit+1)
+			}
+		}
+		elems := make([]object.Object, len(parts))
+		for i, p := range parts {
+			elems[i] = object.NewBytes(p)
+		}
+		return &object.List{Elements: elems}
 	case "decode":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
@@ -2342,4 +2379,28 @@ func rsplitFields(s string, maxsplit int64) []string {
 		fields = append([]string{head}, fields...)
 	}
 	return fields
+}
+
+// bytesFields splits data on runs of ASCII whitespace, like Python's
+// bytes.split() with no separator.
+func bytesFields(data []byte) [][]byte {
+	var out [][]byte
+	start := -1
+	for i, c := range data {
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f' {
+			if start >= 0 {
+				out = append(out, data[start:i])
+				start = -1
+			}
+		} else if start < 0 {
+			start = i
+		}
+	}
+	if start >= 0 {
+		out = append(out, data[start:])
+	}
+	if out == nil {
+		out = [][]byte{}
+	}
+	return out
 }

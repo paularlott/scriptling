@@ -37,6 +37,13 @@ func bytesConstructorFn(ctx context.Context, kwargs object.Kwargs, args ...objec
 		return errors.NewError("bytes() takes at most 2 arguments (%d given)", len(args))
 	}
 	switch v := args[0].(type) {
+	case *object.Integer:
+		// Python bytes(n) is n zero bytes.
+		n := v.IntValue()
+		if n < 0 {
+			return errors.NewError("negative count in bytes(): %d", n)
+		}
+		return object.NewBytes(make([]byte, n))
 	case *object.String:
 		encoding := "utf-8"
 		if len(args) == 2 {

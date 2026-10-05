@@ -87,9 +87,12 @@ Example:
 			}
 
 			var fn *object.Function
+			var lambda *object.LambdaFunction
 			var builtin *object.Builtin
 			if f, ok := args[0].(*object.Function); ok {
 				fn = f
+			} else if l, ok := args[0].(*object.LambdaFunction); ok {
+				lambda = l
 			} else if b, ok := args[0].(*object.Builtin); ok {
 				builtin = b
 			} else {
@@ -124,6 +127,13 @@ Example:
 							return errors.NewError("evaluator not available in context")
 						}
 						return eval.CallFunction(ctx, fn, allArgs, allKwargs)
+					}
+					if lambda != nil {
+						eval := evaliface.FromContext(ctx)
+						if eval == nil {
+							return errors.NewError("evaluator not available in context")
+						}
+						return eval.CallObjectFunction(ctx, lambda, allArgs, allKwargs, nil)
 					}
 					return builtin.Fn(ctx, object.NewKwargs(allKwargs), allArgs...)
 				},

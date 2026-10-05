@@ -3,7 +3,7 @@ import base64
 # Test base64 encoding
 text = "Hello, World!"
 encoded = base64.b64encode(text)
-assert encoded == "SGVsbG8sIFdvcmxkIQ=="
+assert encoded == bytes("SGVsbG8sIFdvcmxkIQ==")  # bytes, like Python
 
 # Test base64 decoding — b64decode now returns a Bytes value
 decoded = base64.b64decode(encoded)

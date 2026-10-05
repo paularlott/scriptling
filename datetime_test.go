@@ -210,10 +210,10 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 		`, true},
 
 		// comparisons and subtraction are instant based
-		{"datetime subtraction seconds", `
+		{"datetime subtraction timedelta", `
 			a = datetime.datetime.strptime("2024-01-15T10:00:00", "%Y-%m-%dT%H:%M:%S")
 			b = datetime.datetime.strptime("2024-01-15T09:00:00", "%Y-%m-%dT%H:%M:%S")
-			result = a - b
+			result = (a - b).total_seconds()
 		`, 3600.0},
 		{"datetime minus seconds int", `
 			s = datetime.datetime.strptime("2024-01-15T10:00:00", "%Y-%m-%dT%H:%M:%S")
@@ -258,7 +258,7 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 			result = datetime.date(2024, 1, 15).isoformat()
 		`, "2024-01-15"},
 		{"date subtraction days", `
-			result = datetime.date(2024, 1, 22) - datetime.date(2024, 1, 15)
+			result = (datetime.date(2024, 1, 22) - datetime.date(2024, 1, 15)).days
 		`, int64(7)},
 		{"date addition", `
 			result = datetime.date(2024, 1, 15) + 7 == datetime.date(2024, 1, 22)

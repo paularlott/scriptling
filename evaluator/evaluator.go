@@ -4606,7 +4606,12 @@ func formatWithSpec(obj object.Object, spec string) (string, object.Object) {
 			}
 		} else if intVal, err := obj.AsInt(); err == nil {
 			if zero && width > 0 {
-				formatted = formatZeroPaddedInt(intVal, width)
+				// The sign counts toward the width: +06d on 42 is +00042.
+				padWidth := width
+				if intVal >= 0 && (sign == '+' || sign == ' ') {
+					padWidth--
+				}
+				formatted = formatZeroPaddedInt(intVal, padWidth)
 				formatted = applySign(formatted, intVal >= 0, sign)
 			} else {
 				formatted = strconv.FormatInt(intVal, 10)

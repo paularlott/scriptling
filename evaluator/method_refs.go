@@ -34,7 +34,7 @@ var builtinMethodNames = map[object.ObjectType][]string{
 		"intersection_update", "isdisjoint", "issubset", "issuperset", "pop", "remove",
 		"symmetric_difference", "symmetric_difference_update", "union", "update",
 	},
-	object.BYTES_OBJ:       {"base64", "decode", "hex", "length"},
+	object.BYTES_OBJ:       {"base64", "decode", "hex", "length", "split"},
 	object.FLOAT_ARRAY_OBJ: {"shape", "tolist"},
 	object.INTEGER_OBJ:     {"bit_count", "bit_length", "is_integer"},
 	object.FLOAT_OBJ:       {"as_integer_ratio", "fromhex", "hex", "is_integer"},
