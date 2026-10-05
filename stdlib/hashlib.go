@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/hex"
 	"hash"
 
@@ -26,6 +27,12 @@ func hashConstructor(alg string) func() hash.Hash {
 	switch alg {
 	case "sha256":
 		return sha256.New
+	case "sha512":
+		return sha512.New
+	case "sha384":
+		return sha512.New384
+	case "sha224":
+		return sha256.New224
 	case "sha1":
 		return sha1.New
 	case "md5":
@@ -36,7 +43,9 @@ func hashConstructor(alg string) func() hash.Hash {
 
 func hashBlockSize(alg string) int {
 	switch alg {
-	case "sha256", "sha1", "md5":
+	case "sha512", "sha384":
+		return 128
+	case "sha256", "sha224", "sha1", "md5":
 		return 64
 	}
 	return 0
@@ -251,6 +260,15 @@ Returns a hash object. Call .hexdigest() or .digest() to get the result.`)
 
 var HashlibLibrary = object.NewLibrary(HashlibLibraryName, map[string]*object.Builtin{
 	"sha256": HashlibSHA256Builtin,
-	"sha1":   HashlibSHA1Builtin,
-	"md5":    HashlibMD5Builtin,
+	"sha512": makeHashBuiltin("sha512", `sha512([data]) - Create a SHA-512 hash object
+
+With data, hashes it immediately; without, call .update() then .hexdigest().`),
+	"sha384": makeHashBuiltin("sha384", `sha384([data]) - Create a SHA-384 hash object
+
+With data, hashes it immediately; without, call .update() then .hexdigest().`),
+	"sha224": makeHashBuiltin("sha224", `sha224([data]) - Create a SHA-224 hash object
+
+With data, hashes it immediately; without, call .update() then .hexdigest().`),
+	"sha1": HashlibSHA1Builtin,
+	"md5":  HashlibMD5Builtin,
 }, nil, "Cryptographic hash functions library")
