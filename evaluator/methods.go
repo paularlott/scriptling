@@ -38,7 +38,9 @@ func fastStringUpper(s string) string {
 	// correctly even when they appear after an ASCII lowercase letter.
 	for i := 0; i < len(s); i++ {
 		if s[i] >= 0x80 {
-			return strings.ToUpper(s)
+			// Go maps case 1:1, so ß stays ß; Python's full case mapping
+			// uppercases it to SS.
+			return strings.ReplaceAll(strings.ToUpper(s), "ß", "SS")
 		}
 	}
 	// Pure ASCII fast path.
@@ -774,21 +776,51 @@ func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args [
 		}
 		return &object.List{Elements: elems}
 	case "decode":
-		if err := errors.ExactArgs(args, 0); err != nil {
-			return err
+		// Python signature: decode(encoding="utf-8", errors="strict"),
+		// positional or keyword.
+		if len(args) > 2 {
+			return errors.NewError("decode() takes at most 2 arguments (%d given)", len(args))
 		}
 		encoding := "utf-8"
-		if keywords != nil {
+		errorsMode := "strict"
+		if len(args) >= 1 {
+			s, err := args[0].AsString()
+			if err != nil {
+				return err
+			}
+			encoding = s
+		} else if keywords != nil {
 			if encObj, ok := keywords["encoding"]; ok {
-				if s, err := encObj.AsString(); err == nil {
-					encoding = s
+				s, err := encObj.AsString()
+				if err != nil {
+					return err
 				}
+				encoding = s
 			}
 		}
-		if encoding != "utf-8" && encoding != "utf8" {
-			return errors.NewError("bytes.decode: unsupported encoding %q (only utf-8 is supported)", encoding)
+		if len(args) >= 2 {
+			s, err := args[1].AsString()
+			if err != nil {
+				return err
+			}
+			errorsMode = s
+		} else if keywords != nil {
+			if errObj, ok := keywords["errors"]; ok {
+				s, err := errObj.AsString()
+				if err != nil {
+					return err
+				}
+				errorsMode = s
+			}
 		}
-		return object.NewString(string(b.BytesValue()))
+		if errorsMode != "strict" && errorsMode != "ignore" && errorsMode != "replace" {
+			return errors.NewError("decode: unknown error handler %q (use strict, ignore or replace)", errorsMode)
+		}
+		decoded, errObj := decodeBytes(b.BytesValue(), encoding, errorsMode)
+		if errObj != nil {
+			return errObj
+		}
+		return object.NewString(decoded)
 	case "hex":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
@@ -1660,38 +1692,50 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		return str
 	case "encode":
-		if len(args) > 1 {
-			return errors.NewError("encode() takes at most 1 argument (%d given)", len(args))
+		// Python signature: encode(encoding="utf-8", errors="strict").
+		if len(args) > 2 {
+			return errors.NewError("encode() takes at most 2 arguments (%d given)", len(args))
 		}
 		encoding := "utf-8"
-		if len(args) == 1 {
+		errorsMode := "strict"
+		if len(args) >= 1 {
 			enc, errObj := args[0].AsString()
 			if errObj != nil {
 				return errors.ParameterError("encoding", errObj)
 			}
 			encoding = enc
-		}
-		switch encoding {
-		case "utf-8", "utf8":
-			return object.NewBytesFromString(str.StringValue())
-		case "ascii":
-			for _, r := range str.StringValue() {
-				if r > 127 {
-					return &object.Exception{
-						Message:       "'ascii' codec can't encode character '" + string(r) + "': ordinal not in range(128)",
-						ExceptionType: object.ExceptionTypeValueError,
-						Raised:        true,
-					}
+		} else if keywords != nil {
+			if encObj, ok := keywords["encoding"]; ok {
+				enc, errObj := encObj.AsString()
+				if errObj != nil {
+					return errors.ParameterError("encoding", errObj)
 				}
-			}
-			return object.NewBytesFromString(str.StringValue())
-		default:
-			return &object.Exception{
-				Message:       "unknown encoding: " + encoding,
-				ExceptionType: object.ExceptionTypeValueError,
-				Raised:        true,
+				encoding = enc
 			}
 		}
+		if len(args) >= 2 {
+			em, errObj := args[1].AsString()
+			if errObj != nil {
+				return errors.ParameterError("errors", errObj)
+			}
+			errorsMode = em
+		} else if keywords != nil {
+			if emObj, ok := keywords["errors"]; ok {
+				em, errObj := emObj.AsString()
+				if errObj != nil {
+					return errors.ParameterError("errors", errObj)
+				}
+				errorsMode = em
+			}
+		}
+		if errorsMode != "strict" && errorsMode != "ignore" && errorsMode != "replace" {
+			return errors.NewError("encode: unknown error handler %q (use strict, ignore or replace)", errorsMode)
+		}
+		out, errObj := encodeStr(str.StringValue(), encoding, errorsMode)
+		if errObj != nil {
+			return errObj
+		}
+		return object.NewBytes(out)
 	case "expandtabs":
 		tabsize := 8
 		if len(args) > 1 {

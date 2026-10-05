@@ -407,6 +407,19 @@ Creates a directory and all parent directories as needed.`,
 				if errObj := checkPathSecurity(o.config, dst); errObj != nil {
 					return errObj
 				}
+				// Defense in depth: a link whose (existing) target resolves
+				// outside the allowed set is denied at creation too, even
+				// though reads through it would already be caught by
+				// symlink resolution. Dangling targets cannot be resolved
+				// and are allowed.
+				if o.config.AllowedPaths != nil {
+					absSrc, err := filepath.Abs(src)
+					if err == nil {
+						if resolved := fssecurity.ResolveExistingPrefix(filepath.Clean(absSrc)); resolved != "" && !o.config.IsPathAllowed(resolved) {
+							return errors.NewPermissionError("access denied: symlink target '%s' is outside allowed directories", src)
+						}
+					}
+				}
 				absDst, _ := filepath.Abs(dst)
 				if err := os.Symlink(src, absDst); err != nil {
 					return errors.NewError("symlink: %s", err.Error())
@@ -642,6 +655,34 @@ Returns the directory component of a pathname.`,
 				}}
 			},
 			HelpText: `split(path) - Split path into (directory, filename) tuple`,
+		},
+		"commonprefix": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				list, errObj := args[0].AsList()
+				if errObj != nil {
+					return errObj
+				}
+				if len(list) == 0 {
+					return object.NewString("")
+				}
+				prefix := list[0].Inspect()
+				for _, item := range list[1:] {
+					s := item.Inspect()
+					for !strings.HasPrefix(s, prefix) {
+						prefix = prefix[:len(prefix)-1]
+						if prefix == "" {
+							return object.NewString("")
+						}
+					}
+				}
+				return object.NewString(prefix)
+			},
+			HelpText: `commonprefix(list) - Longest common leading path component
+
+Returns the longest prefix common to all paths in the list, character-wise as in Python.`,
 		},
 		"splitext": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

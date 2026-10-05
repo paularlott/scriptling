@@ -387,7 +387,14 @@ func globMatches(ctx context.Context, config fssecurity.Config, pattern, rootDir
 	if !recursive {
 		effective = strings.ReplaceAll(pattern, "**", "*")
 	}
-	matches, _ := filepath.Glob(filepath.Join(rootDir, effective))
+	// An absolute pattern must not be joined onto the root: Join would drop
+	// the leading slash. An empty root (implicit, absolute pattern) is
+	// skipped for the same reason.
+	globPath := effective
+	if !filepath.IsAbs(effective) {
+		globPath = filepath.Join(rootDir, effective)
+	}
+	matches, _ := filepath.Glob(globPath)
 
 	filtered := make([]string, 0, len(matches))
 	for _, match := range matches {
@@ -527,7 +534,11 @@ func globRecursive(ctx context.Context, config fssecurity.Config, pattern, rootD
 		suffixPart = parts[1]
 	}
 
-	prefix := strings.TrimSuffix(filepath.Join(rootDir, prefixPart), string(filepath.Separator))
+	prefix := filepath.Join(rootDir, prefixPart)
+	if filepath.IsAbs(prefixPart) {
+		prefix = prefixPart
+	}
+	prefix = strings.TrimSuffix(prefix, string(filepath.Separator))
 	suffix := strings.TrimPrefix(suffixPart, string(filepath.Separator))
 
 	prefixMatches, _ := filepath.Glob(prefix)
@@ -549,7 +560,18 @@ func globRecursive(ctx context.Context, config fssecurity.Config, pattern, rootD
 		var matches []string
 		switch {
 		case suffix == "":
-			matches = append(matches, base)
+			// Python's '**' with an empty suffix yields the pattern root
+			// with a trailing separator (glob('/x/**') starts '/x/'), while
+			// descendant directories come without one.
+			for _, r := range roots {
+				if r == base {
+					matches = append(matches, base+string(filepath.Separator))
+					break
+				}
+			}
+			if len(matches) == 0 {
+				matches = append(matches, base)
+			}
 		case strings.Contains(suffix, string(filepath.Separator)):
 			for _, m := range globOrEmpty(filepath.Join(base, suffix)) {
 				if !config.IsPathAllowed(m) {
@@ -602,9 +624,16 @@ func globRecursiveMulti(ctx context.Context, config fssecurity.Config, pattern, 
 
 	var roots []string
 	if firstStar <= 0 {
-		roots = []string{rootDir}
+		if rootDir == "" {
+			roots = []string{"."}
+		} else {
+			roots = []string{rootDir}
+		}
 	} else {
 		prefixPath := filepath.Join(rootDir, filepath.Join(patSegs[:firstStar]...))
+		if filepath.IsAbs(patSegs[0]) {
+			prefixPath = filepath.Join(patSegs[:firstStar]...)
+		}
 		prefixMatches, _ := filepath.Glob(prefixPath)
 		if len(prefixMatches) == 0 {
 			prefixMatches = []string{prefixPath}

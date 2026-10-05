@@ -1887,6 +1887,20 @@ func compileSlice(n *ast.SliceExpression) object.EvalFn {
 		}
 
 		switch obj := leftVal.(type) {
+		case *object.Instance:
+			// Python hands the slice object to __getitem__; the compiled
+			// fast path for builtin sequences does not apply here.
+			sliceObj := &object.Slice{Start: nil, End: nil, Step: nil}
+			if hasStart {
+				sliceObj.Start = object.NewInteger(start)
+			}
+			if hasEnd {
+				sliceObj.End = object.NewInteger(end)
+			}
+			if hasStep {
+				sliceObj.Step = object.NewInteger(step)
+			}
+			return evalIndexExpression(ctx, obj, sliceObj, false)
 		case *object.List:
 			return sliceList(obj.Elements, start, end, step, hasStart, hasEnd, hasStep)
 		case *object.Tuple:

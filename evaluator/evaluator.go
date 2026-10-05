@@ -438,9 +438,21 @@ func evalPrefixExpression(ctx context.Context, operator ast.Op, right object.Obj
 	switch operator {
 	case ast.OpNot:
 		return evalNotOperatorExpression(ctx, right, env)
-	case ast.OpSub:
-		return evalMinusPrefixOperatorExpression(right)
-	case ast.OpBitNot:
+	case ast.OpSub, ast.OpBitNot:
+		// Instances dispatch unary - to __neg__ and ~ to __invert__, as in
+		// Python, before the built-in type error applies.
+		if inst, ok := right.(*object.Instance); ok {
+			name := "__neg__"
+			if operator == ast.OpBitNot {
+				name = "__invert__"
+			}
+			if result := callDunderMethodFn(ctx, inst, name, nil, env); result != nil {
+				return result
+			}
+		}
+		if operator == ast.OpSub {
+			return evalMinusPrefixOperatorExpression(right)
+		}
 		return evalBitwiseNotOperatorExpression(right)
 	default:
 		return errors.NewError("%s: %s%s", errors.ErrUnknownOperator, operator, right.Type())

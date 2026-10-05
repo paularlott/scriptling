@@ -785,6 +785,12 @@ With no argument, returns False.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
+			if inst, ok := args[0].(*object.Instance); ok {
+				env := GetEnvFromContext(ctx)
+				if result := callDunderMethodFn(ctx, inst, "__abs__", nil, env); result != nil {
+					return result
+				}
+			}
 			switch num := args[0].(type) {
 			case *object.Integer:
 				if num.IntValue() < 0 {
@@ -1169,6 +1175,8 @@ Equivalent to (a // b, a % b) for integers.`,
 					checkType = "FUNCTION"
 				case "NONE", "NULL", "NONETYPE":
 					checkType = "NULL"
+				case "SLICE":
+					checkType = "SLICE"
 				}
 				if objType == checkType {
 					return TRUE
@@ -2502,6 +2510,7 @@ func init() {
 		builtins["list"]:      "list",
 		builtins["dict"]:      "dict",
 		builtins["tuple"]:     "tuple",
+		builtins["slice"]:     "slice",
 		builtins["set"]:       "set",
 		builtins["frozenset"]: "frozenset",
 		builtins["bytes"]:     "bytes",

@@ -47,7 +47,7 @@ func (c *Config) IsPathAllowed(path string) bool {
 	// This prevents symlink attacks where a symlink inside allowed dirs
 	// points to a location outside allowed dirs.
 	// Note: EvalSymlinks also cleans the path and makes it absolute
-	realPath := resolveExistingPrefix(absPath)
+	realPath := ResolveExistingPrefix(absPath)
 
 	// Check if the real path starts with any of the allowed paths
 	for _, allowedPath := range c.AllowedPaths {
@@ -56,7 +56,7 @@ func (c *Config) IsPathAllowed(path string) bool {
 		// it has been created): otherwise the two sides can disagree about
 		// how far a shared prefix like /tmp -> /private/tmp on macOS has
 		// been resolved, and an entirely legitimate path is denied.
-		realAllowed := resolveExistingPrefix(filepath.Clean(allowedPath))
+		realAllowed := ResolveExistingPrefix(filepath.Clean(allowedPath))
 
 		// Ensure allowed path ends with separator for proper prefix matching
 		// This prevents /allowed matching /allowed-other
@@ -91,7 +91,9 @@ func (c *Config) IsPathAllowed(path string) bool {
 // component is actually a symlink that escapes the allowed directories.
 // Walking to the nearest existing ancestor closes both gaps at every depth,
 // not just one level.
-func resolveExistingPrefix(absPath string) string {
+// ResolveExistingPrefix resolves the longest existing prefix of absPath
+// through symlinks; it is exported for os.symlink target validation.
+func ResolveExistingPrefix(absPath string) string {
 	if real, err := filepath.EvalSymlinks(absPath); err == nil {
 		return real
 	}

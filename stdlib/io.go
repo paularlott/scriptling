@@ -180,6 +180,30 @@ var stringIOClass = &object.Class{
 			},
 			HelpText: `readline() - Read one line (including newline) from current position`,
 		},
+		"readlines": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				_, data, errObj := sioSelf(args, "readlines")
+				if errObj != nil {
+					return errObj
+				}
+				content := data.buf.String()
+				if data.pos >= len(content) {
+					return &object.List{Elements: []object.Object{}}
+				}
+				rest := content[data.pos:]
+				lines := strings.SplitAfter(rest, "\n")
+				if len(lines) > 0 && lines[len(lines)-1] == "" {
+					lines = lines[:len(lines)-1]
+				}
+				elems := make([]object.Object, len(lines))
+				for i, ln := range lines {
+					elems[i] = object.NewString(ln)
+				}
+				data.pos = len(content)
+				return &object.List{Elements: elems}
+			},
+			HelpText: `readlines() - Read all remaining lines (including newlines) as a list`,
+		},
 		"seek": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				_, data, errObj := sioSelf(args, "seek")
