@@ -162,6 +162,52 @@ except ValueError as e:
 (a, b) = (1, (2, 3), 4)[0:2]
 assert a == 1 and b == (2, 3)
 
+# --- Chained assignment with any target shape -------------------------------
+# Python: (target_list "=")+ value — every target gets the value, evaluated once.
+(a, b) = c = (1, 2)
+assert a == 1 and b == 2 and c == (1, 2)
+
+a = (b, c) = (1, 2)
+assert a == (1, 2) and b == 1 and c == 2
+
+a, b = c, d = 1, 2
+assert (a, b, c, d) == (1, 2, 1, 2)
+
+x = [0]
+x[0] = y = 5
+assert x == [5] and y == 5
+
+p = q = r = 9
+assert (p, q, r) == (9, 9, 9)
+
+(a, b) = c = d = (3, 4)
+assert (a, b, c, d) == (3, 4, (3, 4), (3, 4))
+
+n = (o, (s2, t)) = (1, (2, 3))
+assert n == (1, (2, 3)) and (o, s2, t) == (1, 2, 3)
+
+dd = {}
+dd["k"] = e = 4
+assert dd == {"k": 4} and e == 4
+
+x = [0]
+x[0] = (yy, zz) = (5, 6)
+assert x == [(5, 6)] and yy == 5 and zz == 6
+
+# The shared value is evaluated exactly once
+cell = {"n": 0}
+def once_fn():
+    cell["n"] = cell["n"] + 1
+    return cell["n"] * 10
+
+u = v = once_fn()
+assert (u, v, cell["n"]) == (10, 10, 1)
+
+# Mutable value is shared by every target, as in Python
+s1 = s2b = [7]
+s1.append(8)
+assert s2b == [7, 8]
+
 # --- For-loop tuple targets (regression pin) --------------------------------
 pairs = {"ab": (1, 2)}
 for k, (v1, v2) in pairs.items():

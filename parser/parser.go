@@ -381,31 +381,10 @@ func (p *Parser) parseAssignStatement() *ast.AssignStatement {
 
 	p.nextToken()
 
-	// Handle chained assignment: a = b = 5
-	// Peek ahead: if we have IDENT = ... then parse the inner assignment first
-	if p.curTokenIs(token.IDENT) && p.peekTokenIs(token.ASSIGN) {
-		inner := p.parseAssignStatement()
-		if inner == nil {
-			return nil
-		}
-		// The value of the outer assignment is the same as the inner's value
-		stmt.Value = inner.Value
-		// Wrap as a block: evaluate inner first, then assign same value to outer
-		// We do this by making the value a ChainedAssign expression
-		// Simplest approach: store inner as a preceding statement via a sequence
-		// Actually: just assign inner.Value to both. Return a synthetic block.
-		// For simplicity, return the inner statement and let the outer be a separate assign.
-		// We need both to execute, so use the existing AST by returning a sequence.
-		// The cleanest approach without new AST nodes: evaluate inner, use its value.
-		stmt.Value = inner.Value
-		// We need inner to also execute. Embed it as a ChainedAssign.
-		// Since we don't have a sequence node, we'll add a Chained field to AssignStatement.
-		stmt.Chained = inner
-		return stmt
-	}
-
+	// The value may chain: a = b = 5, a = (b, c) = (1, 2). parseAssignValue
+	// detects another '=' after the candidate value and links the chain.
 	first := p.parseExpressionWithConditional()
-	stmt.Value = p.parseTuplePackingTail(stmt.Token, first)
+	stmt.Value, stmt.Chained = p.parseAssignValue(stmt.Token, first)
 
 	return stmt
 }
@@ -499,10 +478,12 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 
 	if complex {
 		firstValue := p.parseExpressionWithConditional()
+		value, chained := p.parseAssignValue(p.nodeLine(), firstValue)
 		return &ast.AssignStatement{
-			Token: p.nodeLine(),
-			Left:  &ast.TupleLiteral{Elements: elements},
-			Value: p.parseTuplePackingTail(p.nodeLine(), firstValue),
+			Token:   p.nodeLine(),
+			Left:    &ast.TupleLiteral{Elements: elements},
+			Value:   value,
+			Chained: chained,
 		}
 	}
 
@@ -522,6 +503,20 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 		value := &ast.TupleLiteral{
 			Elements: values,
 		}
+		return p.multipleAssignOrChain(names, starredIndex, value)
+	}
+
+	// Single value (must be a tuple/list to unpack)
+	return p.multipleAssignOrChain(names, starredIndex, firstValue)
+}
+
+// multipleAssignOrChain finishes a flat multiple-assignment after its value
+// has been parsed. A following '=' makes that value the next link's target
+// list (a, b = c, d = 1, 2): the statement becomes a chained assignment over
+// tuple targets, since MultipleAssignStatement carries no chain. Starred
+// targets cannot chain — the tuple-target path has no starred support.
+func (p *Parser) multipleAssignOrChain(names []*ast.Identifier, starredIndex int, value ast.Expression) ast.Statement {
+	if !p.peekTokenIs(token.ASSIGN) {
 		return &ast.MultipleAssignStatement{
 			Token:        names[0].Token,
 			Names:        names,
@@ -529,13 +524,24 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 			StarredIndex: starredIndex,
 		}
 	}
-
-	// Single value (must be a tuple/list to unpack)
-	return &ast.MultipleAssignStatement{
-		Token:        names[0].Token,
-		Names:        names,
-		Value:        firstValue,
-		StarredIndex: starredIndex,
+	if starredIndex != -1 {
+		p.errors = append(p.errors, "starred unpacking cannot be chained")
+		return nil
+	}
+	inner := &ast.AssignStatement{Token: p.nodeLine(), Left: value}
+	p.nextToken() // consume =
+	p.nextToken() // move to value
+	first := p.parseExpressionWithConditional()
+	inner.Value, inner.Chained = p.parseAssignValue(p.nodeLine(), first)
+	targets := make([]ast.Expression, len(names))
+	for i, name := range names {
+		targets[i] = name
+	}
+	return &ast.AssignStatement{
+		Token:   names[0].Token,
+		Left:    &ast.TupleLiteral{Elements: targets},
+		Value:   inner.Value,
+		Chained: inner,
 	}
 }
 
@@ -786,7 +792,7 @@ func (p *Parser) parseExpressionStatement() ast.Statement {
 		p.nextToken() // consume =
 		p.nextToken() // move to value
 		first := p.parseExpressionWithConditional()
-		stmt.Value = p.parseTuplePackingTail(p.nodeLine(), first)
+		stmt.Value, stmt.Chained = p.parseAssignValue(p.nodeLine(), first)
 		return stmt
 	}
 	if isAugmentedAssignToken(p.peekToken.Type) {
@@ -808,7 +814,7 @@ func (p *Parser) parseExpressionStatement() ast.Statement {
 		p.nextToken() // consume =
 		p.nextToken() // move to value
 		first := p.parseExpressionWithConditional()
-		stmt.Value = p.parseTuplePackingTail(p.nodeLine(), first)
+		stmt.Value, stmt.Chained = p.parseAssignValue(p.nodeLine(), first)
 		return stmt
 	}
 	return &ast.ExpressionStatement{Token: p.nodeLine(), Expression: expr}
@@ -923,6 +929,26 @@ func (p *Parser) parseTuplePackingTail(tok ast.LineInfo, first ast.Expression) a
 		elements = append(elements, p.parseExpressionWithConditional())
 	}
 	return &ast.TupleLiteral{Elements: elements}
+}
+
+// parseAssignValue finishes the right-hand side of an assignment after the
+// first value expression has been parsed. That expression may itself turn out
+// to be the next target of a chained assignment — the c in (a, b) = c = (1, 2)
+// — in which case the chain is built here and the shared value (evaluated
+// once, as in Python) is returned along with the chain's first link.
+func (p *Parser) parseAssignValue(tok ast.LineInfo, first ast.Expression) (ast.Expression, *ast.AssignStatement) {
+	value := p.parseTuplePackingTail(tok, first)
+	if !p.peekTokenIs(token.ASSIGN) {
+		return value, nil
+	}
+	inner := &ast.AssignStatement{Token: p.nodeLine(), Left: value}
+	p.nextToken() // consume =
+	p.nextToken() // move to value
+	next := p.parseExpressionWithConditional()
+	innerValue, deeper := p.parseAssignValue(p.nodeLine(), next)
+	inner.Value = innerValue
+	inner.Chained = deeper
+	return innerValue, inner
 }
 
 func (p *Parser) noPrefixParseFnError(t token.TokenType) {
