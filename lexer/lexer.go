@@ -622,7 +622,11 @@ func (l *Lexer) readNumber() (string, bool) {
 	for isDigit(l.ch) || (l.ch == '_' && isDigit(l.peekChar())) {
 		l.readChar()
 	}
-	if l.ch == '.' && isDigit(l.peekChar()) {
+	if l.ch == '.' && (isDigit(l.peekChar()) || l.peekChar() == 'e' || l.peekChar() == 'E' || !isIdContinue(l.peekChar())) {
+		// A dot after the digits makes a float: 1.5, the trailing-dot form
+		// 1. (Python's 1.0), and 1.e2. A dot followed by another
+		// identifier character cannot occur in valid syntax (attribute
+		// access needs parens: (1).bit_length()).
 		isFloat = true
 		l.readChar()
 		for isDigit(l.ch) || (l.ch == '_' && isDigit(l.peekChar())) {
@@ -873,4 +877,9 @@ func isDigit(ch byte) bool {
 
 func isHexDigit(ch byte) bool {
 	return isDigit(ch) || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')
+}
+
+// isIdContinue reports whether c can continue an identifier.
+func isIdContinue(c byte) bool {
+	return c == '_' || isLetter(c) || isDigit(c)
 }

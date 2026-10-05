@@ -370,6 +370,25 @@ Example:
 						return err
 					}
 					nt := args[0].(*object.Instance)
+					if idx, ok := args[1].(*object.Integer); ok {
+						// Positional access, like a tuple: p[0], p[-1],
+						// IndexError out of range.
+						i := int(idx.IntValue())
+						if i < 0 {
+							i += len(fieldNames)
+						}
+						if i < 0 || i >= len(fieldNames) {
+							return &object.Exception{
+								Message:       "tuple index out of range",
+								ExceptionType: object.ExceptionTypeIndexError,
+								Raised:        true,
+							}
+						}
+						if v, exists := nt.GetField(fieldNames[i]); exists {
+							return v
+						}
+						return &object.Null{}
+					}
 					key := args[1].Inspect()
 					// Don't expose internal fields
 					if key == "__typename__" || key == "__fields__" {
@@ -378,9 +397,24 @@ Example:
 					if value, exists := nt.GetField(key); exists {
 						return value
 					}
-					return &object.Null{}
+					return &object.Exception{
+						Message:       "tuple index out of range",
+						ExceptionType: object.ExceptionTypeIndexError,
+						Raised:        true,
+					}
 				},
 				HelpText: `__getitem__(key) - Get field value (supports nt[key] syntax)`,
+			}
+
+			// A named tuple's length is its field count, as a tuple's is.
+			methods["__len__"] = &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.ExactArgs(args, 1); err != nil {
+						return err
+					}
+					return object.NewInteger(int64(len(fieldNames)))
+				},
+				HelpText: `__len__() - The field count`,
 			}
 
 			// Iterating a named tuple yields its field values, so

@@ -126,6 +126,33 @@ assert list(p) == [3, 4]
 assert .5 + .25 == 0.75
 assert [.5, 1.5] == [0.5, 1.5]
 
+# --- namedtuples behave like tuples ---------------------------------------------------
+P3 = namedtuple("P3", ["x", "y"])
+q = P3(10, 20)
+assert q[0] == 10 and q[1] == 20 and q[-1] == 20 and q[-2] == 10
+assert len(q) == 2
+assert list(q) == [10, 20] and tuple(q) == (10, 20)
+a1, b1 = q
+assert (a1, b1) == (10, 20)
+try:
+    q[5]
+    assert False, "expected IndexError"
+except IndexError:
+    pass
+try:
+    q[-3]
+    assert False, "expected IndexError"
+except IndexError:
+    pass
+assert q["x"] == 10  # field lookup kept as an extension
+
+# --- float literal forms ---------------------------------------------------------------
+assert .5 + .25 == 0.75
+assert 1. == 1.0 and 1.e2 == 100.0 and 1.5e2 == 150.0
+assert 2.e-1 == 0.2
+assert [1., .25] == [1.0, 0.25]
+assert (5).bit_length() == 3  # parenthesised attribute access still works
+
 # --- functools.wraps / vars / math.fsum / time.monotonic --------------------------
 import functools
 import math
