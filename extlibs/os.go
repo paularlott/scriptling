@@ -128,6 +128,15 @@ Returns the value of the environment variable key if it exists, None if not set 
 			},
 			HelpText: `getcwd() - Get current working directory`,
 		},
+		"getpid": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 0); err != nil {
+					return err
+				}
+				return object.NewInteger(int64(os.Getpid()))
+			},
+			HelpText: `getpid() - Get the current process id`,
+		},
 		"listdir": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if err := errors.MaxArgs(args, 1); err != nil {
@@ -614,11 +623,14 @@ the link itself is checked, not the target it points to.`,
 				if err != nil {
 					return err
 				}
-				return object.NewString(filepath.Base(path))
+				// Python's posixpath.basename: everything after the last
+				// slash, so a trailing slash yields "" (filepath.Base
+				// returns the last component instead).
+				return object.NewString(path[strings.LastIndex(path, "/")+1:])
 			},
 			HelpText: `basename(path) - Get the base name of a path
 
-Returns the final component of a pathname.`,
+Returns the final component of a pathname. A trailing slash yields "".`,
 		},
 		"dirname": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -629,7 +641,14 @@ Returns the final component of a pathname.`,
 				if err != nil {
 					return err
 				}
-				return object.NewString(filepath.Dir(path))
+				// Python's posixpath.dirname: everything up to and including
+				// the last slash, with trailing slashes stripped unless the
+				// whole head is slashes; no slash at all yields "".
+				head := path[:strings.LastIndex(path, "/")+1]
+				if head != "" && head != strings.Repeat("/", len(head)) {
+					head = strings.TrimRight(head, "/")
+				}
+				return object.NewString(head)
 			},
 			HelpText: `dirname(path) - Get the directory name of a path
 
@@ -693,8 +712,23 @@ Returns the longest prefix common to all paths in the list, character-wise as in
 				if err != nil {
 					return err
 				}
-				ext := filepath.Ext(path)
-				root := path[:len(path)-len(ext)]
+				// Python's posixpath.splitext: the extension starts at the
+				// last dot of the final component, but only when the stem
+				// has a non-dot character — ".bashrc" is all extension,
+				// "a/.hidden" has none.
+				sepIndex := strings.LastIndex(path, "/")
+				dotIndex := strings.LastIndex(path, ".")
+				root, ext := path, ""
+				if dotIndex > sepIndex {
+					i := sepIndex + 1
+					for i < dotIndex {
+						if path[i] != '.' {
+							root, ext = path[:dotIndex], path[dotIndex:]
+							break
+						}
+						i++
+					}
+				}
 				return &object.Tuple{Elements: []object.Object{
 					object.NewString(root),
 					object.NewString(ext),

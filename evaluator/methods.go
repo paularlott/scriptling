@@ -439,6 +439,22 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		}
 		dict.Pairs[key] = object.DictPair{Key: args[0], Value: defaultVal}
 		return defaultVal
+	case "popitem":
+		if err := errors.ExactArgs(args, 0); err != nil {
+			return err
+		}
+		// Python pops the most recently inserted pair; scriptling dicts are
+		// unordered, so any pair may come out, but the remove-and-return
+		// contract holds.
+		for k, pair := range dict.Pairs {
+			delete(dict.Pairs, k)
+			return &object.Tuple{Elements: []object.Object{pair.Key, pair.Value}}
+		}
+		return &object.Exception{
+			Message:       "popitem(): dictionary is empty",
+			ExceptionType: object.ExceptionTypeKeyError,
+			Raised:        true,
+		}
 	case "fromkeys":
 		// dict.fromkeys(iterable[, value]) - create new dict with keys from iterable
 		if len(args) < 1 || len(args) > 2 {
@@ -636,7 +652,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 				return NULL
 			}
 		}
-		return errors.NewError("value not in list")
+		return errors.NewValueError("list.remove(x): x not in list")
 	case "clear":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
@@ -1250,12 +1266,12 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			end = len(str.StringValue())
 		}
 		if start > end {
-			return errors.NewError("substring not found")
+			return errors.NewValueError("substring not found")
 		}
 		searchStr := str.StringValue()[start:end]
 		idx := strings.LastIndex(searchStr, substr)
 		if idx == -1 {
-			return errors.NewError("substring not found")
+			return errors.NewValueError("substring not found")
 		}
 		return object.NewInteger(int64(start + idx))
 	case "index":
@@ -1298,12 +1314,12 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			end = len(str.StringValue())
 		}
 		if start > end {
-			return errors.NewError("substring not found")
+			return errors.NewValueError("substring not found")
 		}
 		searchStr := str.StringValue()[start:end]
 		idx := strings.Index(searchStr, substr)
 		if idx == -1 {
-			return errors.NewError("substring not found")
+			return errors.NewValueError("substring not found")
 		}
 		return object.NewInteger(int64(start + idx))
 	case "count":
@@ -1360,6 +1376,10 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		return object.NewString(result)
 	case "isdigit":
+		// Python's isdigit covers the Unicode decimal digits (category Nd)
+		// plus digit-like characters; Nd is the practical core (Arabic-Indic,
+		// Devanagari, fullwidth, ...). Superscripts like '²' are Numeric_Type
+		// Digit, which Go does not expose — they report False here.
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
@@ -1367,7 +1387,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return FALSE
 		}
 		for _, ch := range str.StringValue() {
-			if ch < '0' || ch > '9' {
+			if !unicode.IsDigit(ch) {
 				return FALSE
 			}
 		}
@@ -1380,7 +1400,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return FALSE
 		}
 		for _, ch := range str.StringValue() {
-			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')) {
+			if !unicode.IsLetter(ch) {
 				return FALSE
 			}
 		}
@@ -1393,24 +1413,24 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return FALSE
 		}
 		for _, ch := range str.StringValue() {
-			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) {
+			if !unicode.IsLetter(ch) && !unicode.IsNumber(ch) {
 				return FALSE
 			}
 		}
 		return TRUE
-	case "isspace":
-		if err := errors.ExactArgs(args, 0); err != nil {
-			return err
-		}
-		if len(str.StringValue()) == 0 {
-			return FALSE
-		}
-		for _, ch := range str.StringValue() {
-			if ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r' && ch != '\v' && ch != '\f' {
+		case "isspace":
+			if err := errors.ExactArgs(args, 0); err != nil {
+				return err
+			}
+			if len(str.StringValue()) == 0 {
 				return FALSE
 			}
-		}
-		return TRUE
+			for _, ch := range str.StringValue() {
+				if !unicode.IsSpace(ch) {
+					return FALSE
+				}
+			}
+			return TRUE
 	case "isupper":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
@@ -1870,7 +1890,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		return TRUE
 	case "isdecimal":
-		// Returns True if all characters are decimal digits (0-9)
+		// Decimal digits are exactly Unicode category Nd.
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
@@ -1878,7 +1898,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return FALSE
 		}
 		for _, ch := range str.StringValue() {
-			if ch < '0' || ch > '9' {
+			if !unicode.IsDigit(ch) {
 				return FALSE
 			}
 		}
@@ -2074,7 +2094,16 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 			return rerr
 		}
 		if !set.ContainsKeyed(key) {
-			return errors.NewError("KeyError: %s", args[0].Inspect())
+			// Python's KeyError message is the repr of the missing key.
+			rendered, rerr := renderConvertedValue(ctx, args[0], "r", env)
+			if rerr != nil {
+				return rerr
+			}
+			return &object.Exception{
+				Message:       rendered,
+				ExceptionType: object.ExceptionTypeKeyError,
+				Raised:        true,
+			}
 		}
 		delete(set.Elements, key)
 		return NULL
@@ -2093,7 +2122,11 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 			return err
 		}
 		if len(set.Elements) == 0 {
-			return errors.NewError("pop from an empty set")
+			return &object.Exception{
+				Message:       "pop from an empty set",
+				ExceptionType: object.ExceptionTypeKeyError,
+				Raised:        true,
+			}
 		}
 		// Go map iteration order is random, which matches Python's arbitrary pop
 		for k, elem := range set.Elements {

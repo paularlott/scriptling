@@ -60,6 +60,17 @@ func NewValueError(format string, args ...interface{}) *object.Error {
 	}
 }
 
+// NewTypeErrorTagged creates a type error tagged so that `except TypeError:`
+// matches it — for the TypeError classes CPython raises where the generic
+// NewTypeError(expected, got) message shape does not fit ("not enough
+// arguments for format string", wrong value type for a % conversion, ...).
+func NewTypeErrorTagged(format string, args ...interface{}) *object.Error {
+	return &object.Error{
+		Message:       fmt.Sprintf(format, args...),
+		ExceptionType: object.ExceptionTypeTypeError,
+	}
+}
+
 // NewTimeoutError creates a timeout error
 func NewTimeoutError() *object.Error {
 	return &object.Error{Message: ErrTimeout}

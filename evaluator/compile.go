@@ -2739,9 +2739,18 @@ func compileAssert(n *ast.AssertStatement) object.EvalFn {
 				}
 				msg = msgVal.Inspect()
 			} else {
+				// No custom message: str(e) stays useful uncaught by naming
+				// the exception, as Python's traceback does.
 				msg = "AssertionError"
 			}
-			return &object.Error{Message: fmt.Sprintf("AssertionError at line %d: %s", n.Token.Line, msg)}
+			// AssertionError, catchable by `except AssertionError` like any
+			// Python exception; position is carried on the error object.
+			return &object.Error{
+				Message:       msg,
+				ExceptionType: object.ExceptionTypeAssertionError,
+				Line:          int(n.Token.Line),
+				File:          GetSourceFileFromContext(ctx),
+			}
 		}
 		return NULL
 	}

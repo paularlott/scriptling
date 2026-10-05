@@ -119,8 +119,13 @@ func TestRandomChoiceEmpty(t *testing.T) {
 	kwargs := object.NewKwargs(nil)
 
 	result := fn.Fn(ctx, kwargs, &object.List{Elements: []object.Object{}})
-	if _, ok := result.(*object.Error); !ok {
-		t.Errorf("choice() on empty list should return error, got %T", result)
+	// IndexError, catchable by `except IndexError:` as in Python.
+	exc, ok := result.(*object.Exception)
+	if !ok {
+		t.Fatalf("choice() on empty list returned %T, want Exception", result)
+	}
+	if exc.ExceptionType != object.ExceptionTypeIndexError {
+		t.Errorf("choice() on empty list exception type = %q, want IndexError", exc.ExceptionType)
 	}
 }
 

@@ -191,6 +191,7 @@ const (
 	ExceptionTypeKeyError          = "KeyError"
 	ExceptionTypeAttributeError    = "AttributeError"
 	ExceptionTypeOSError           = "OSError"
+	ExceptionTypeAssertionError    = "AssertionError"
 	ExceptionTypeGeneric           = "" // Default for legacy compatibility
 )
 

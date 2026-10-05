@@ -172,6 +172,35 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 			return object.NewString(left.(*object.Sentinel).Name)
 		}
 		return attributeError(left, attr)
+	case object.SLICE_OBJ:
+		if !isDotAccess {
+			return &object.Exception{
+				Message:       "'slice' object is not subscriptable",
+				ExceptionType: object.ExceptionTypeTypeError,
+				Raised:        true,
+			}
+		}
+		attr, _ := index.AsString()
+		if sl, ok := left.(*object.Slice); ok {
+			switch attr {
+			case "start":
+				if sl.Start != nil {
+					return sl.Start
+				}
+				return NULL
+			case "stop":
+				if sl.End != nil {
+					return sl.End
+				}
+				return NULL
+			case "step":
+				if sl.Step != nil {
+					return sl.Step
+				}
+				return NULL
+			}
+		}
+		return attributeError(left, attr)
 	}
 	if isDotAccess {
 		attr, _ := index.AsString()

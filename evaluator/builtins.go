@@ -1178,6 +1178,13 @@ Equivalent to (a // b, a % b) for integers.`,
 				case "SLICE":
 					checkType = "SLICE"
 				}
+				// bool is a subclass of int in Python, and scriptling
+				// Booleans already behave as ints in arithmetic.
+				if checkType == "INTEGER" {
+					if _, ok := obj.(*object.Boolean); ok {
+						return TRUE
+					}
+				}
 				if objType == checkType {
 					return TRUE
 				}
@@ -2122,20 +2129,34 @@ Use with: raise StopIteration()`,
 		},
 		HelpText: `KeyError([message]) - Create a key error exception`,
 	},
-	"AttributeError": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			message := ""
-			if len(args) > 0 {
-				if str, err := args[0].AsString(); err == nil {
-					message = str
-				} else {
-					message = args[0].Inspect()
+		"AttributeError": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				message := ""
+				if len(args) > 0 {
+					if str, err := args[0].AsString(); err == nil {
+						message = str
+					} else {
+						message = args[0].Inspect()
+					}
 				}
-			}
-			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeAttributeError}
+				return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeAttributeError}
+			},
+			HelpText: `AttributeError([message]) - Create an attribute error exception`,
 		},
-		HelpText: `AttributeError([message]) - Create an attribute error exception`,
-	},
+		"AssertionError": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				message := ""
+				if len(args) > 0 {
+					if str, err := args[0].AsString(); err == nil {
+						message = str
+					} else {
+						message = args[0].Inspect()
+					}
+				}
+				return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeAssertionError}
+			},
+			HelpText: `AssertionError([message]) - Create an assertion error exception`,
+		},
 	"OSError": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			message := ""
@@ -3481,7 +3502,7 @@ func minMaxFunctionImpl(ctx context.Context, kwargs object.Kwargs, wantMax bool,
 					if hasDefault {
 						return defaultVal
 					}
-					return errors.NewError("%s() arg is an empty sequence", name)
+					return errors.NewValueError("%s() arg is an empty sequence", name)
 				}
 				best := fa.Data[0]
 				for _, v := range fa.Data[1:] {
@@ -3500,7 +3521,7 @@ func minMaxFunctionImpl(ctx context.Context, kwargs object.Kwargs, wantMax bool,
 				if hasDefault {
 					return defaultVal
 				}
-				return errors.NewError("%s() arg is an empty sequence", name)
+				return errors.NewValueError("%s() arg is an empty sequence", name)
 			}
 			args = elements
 		}

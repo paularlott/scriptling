@@ -104,6 +104,36 @@ var DefaultDictClass = &object.Class{
 			},
 			HelpText: `__setitem__(key, value) - Set value (supports d[key] = value syntax)`,
 		},
+		"__contains__": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				// __contains__(self, key) - key in d; entries are fields
+				if err := errors.ExactArgs(args, 2); err != nil {
+					return err
+				}
+				dd := args[0].(*object.Instance)
+				_, exists := dd.GetField(args[1].Inspect())
+				return object.NewBoolean(exists)
+			},
+			HelpText: `__contains__(key) - Support the ` + "`in`" + ` operator`,
+		},
+		"__len__": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				// __len__(self) - Number of entries (internal dunder fields excluded)
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				dd := args[0].(*object.Instance)
+				count := 0
+				dd.RangeFields(func(name string, _ object.Object) bool {
+					if !strings.HasPrefix(name, "__") {
+						count++
+					}
+					return true
+				})
+				return object.NewInteger(int64(count))
+			},
+			HelpText: `__len__() - Number of entries`,
+		},
 	},
 }
 
@@ -277,7 +307,10 @@ Example:
 				return errors.NewTypeError("list, tuple, or string", args[1].Type().String())
 			}
 
-			// Create a NamedTuple class
+			// Create a NamedTuple class. ntClass is declared before the
+			// method closures that reference it (_replace) and assigned once
+			// the method map is complete.
+			var ntClass *object.Class
 			methods := make(map[string]object.Object)
 
 			// __init__ method - stores fields as instance attributes
@@ -346,7 +379,75 @@ Example:
 				},
 			}
 
-			ntClass := &object.Class{
+			// _replace(**changes) returns a new instance with the named
+			// fields replaced; the original is untouched, as in Python.
+			methods["_replace"] = &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					nt := args[0].(*object.Instance)
+					fields := nt.FieldsSnapshot()
+					for name, v := range kwargs.Kwargs {
+						known := false
+						for _, fn := range fieldNames {
+							if fn == name {
+								known = true
+								break
+							}
+						}
+						if !known {
+							return errors.NewValueError("Got unexpected field names: %s", name)
+						}
+						fields[name] = v
+					}
+					// Recompute the precomputed display form for the new values.
+					parts := make([]string, 0, len(fieldNames))
+					for _, name := range fieldNames {
+						parts = append(parts, name+"="+reprValue(fields[name]))
+					}
+					fields["__str_repr__"] = object.NewString(typename.StringValue() + "(" + strings.Join(parts, ", ") + ")")
+					return object.NewInstanceWithFields(ntClass, fields)
+				},
+				HelpText: `_replace(**changes) - Return a new instance with fields replaced`,
+			}
+
+			// _asdict() returns the fields as a dict.
+			methods["_asdict"] = &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					nt := args[0].(*object.Instance)
+					d := &object.Dict{Pairs: make(map[string]object.DictPair, len(fieldNames))}
+					for _, name := range fieldNames {
+						if v, exists := nt.GetField(name); exists {
+							d.SetByString(name, v)
+						}
+					}
+					return d
+				},
+				HelpText: `_asdict() - Return fields as a dict`,
+			}
+
+			// Named tuples compare by value, as tuples do.
+			methods["__eq__"] = &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if len(args) != 2 {
+						return errors.NewArgumentError(len(args), 2)
+					}
+					a, okA := args[0].(*object.Instance)
+					b, okB := args[1].(*object.Instance)
+					if !okA || !okB {
+						return object.NewBoolean(false)
+					}
+					for _, name := range fieldNames {
+						av, aok := a.GetField(name)
+						bv, bok := b.GetField(name)
+						if !aok || !bok || av.Inspect() != bv.Inspect() {
+							return object.NewBoolean(false)
+						}
+					}
+					return object.NewBoolean(true)
+				},
+				HelpText: `__eq__(other) - Compare field values`,
+			}
+
+			ntClass = &object.Class{
 				Name:    typename.StringValue(),
 				Methods: methods,
 			}

@@ -300,7 +300,10 @@ func nativeBoolToBooleanObject(input bool) *object.Boolean {
 
 func objectsEqual(a, b object.Object) bool {
 	if a.Type() != b.Type() {
-		return false
+		// type() reports type names as strings ("INTEGER") while int, str,
+		// ... are builtins; `type(x) is int` / `type(x) == int` — a Python
+		// idiom — must bridge the two representations.
+		return typeBridgeEqual(a, b)
 	}
 	switch av := a.(type) {
 	case *object.Integer:
@@ -318,6 +321,52 @@ func objectsEqual(a, b object.Object) bool {
 	default:
 		return a == b // Reference equality for complex types
 	}
+}
+
+// normalizeTypeName folds a scriptling/Python type name ("int", "STR",
+// "NoneType", "INTEGER") onto its canonical object-type string.
+func normalizeTypeName(name string) string {
+	switch strings.ToUpper(name) {
+	case "INT":
+		return "INTEGER"
+	case "STR":
+		return "STRING"
+	case "BOOL":
+		return "BOOLEAN"
+	case "NONE", "NONETYPE":
+		return "NULL"
+	default:
+		return strings.ToUpper(name)
+	}
+}
+
+// typeBridgeEqual reports whether a type-name string and a type builtin
+// (int, str, dict, ..., or an exception constructor) name the same type, so
+// the scriptling idiom type(x) == "INTEGER" and the Python idiom
+// type(x) == int agree.
+func typeBridgeEqual(a, b object.Object) bool {
+	var name string
+	var t object.Object
+	if sv, ok := a.(*object.String); ok {
+		name, t = sv.StringValue(), b
+	} else if sv, ok := b.(*object.String); ok {
+		name, t = sv.StringValue(), a
+	} else {
+		return false
+	}
+	bi, ok := t.(*object.Builtin)
+	if !ok {
+		return false
+	}
+	var typeName string
+	if n, found := typeBuiltins[bi]; found {
+		typeName = n
+	} else if excName, isExc := exceptionBuiltins[bi]; isExc {
+		typeName = excName
+	} else {
+		return false
+	}
+	return normalizeTypeName(name) == normalizeTypeName(typeName)
 }
 
 // evalObjectsEqualChecked compares a and b for equality, dispatching to a
@@ -364,7 +413,9 @@ func isInstanceOperand(obj object.Object) bool {
 // objectsDeepEqual compares two objects for deep equality (handles lists, tuples, dicts)
 func objectsDeepEqual(a, b object.Object) bool {
 	if a.Type() != b.Type() {
-		return false
+		// Same bridge as objectsEqual: type-name strings and type builtins
+		// ("INTEGER" vs int) name the same type.
+		return typeBridgeEqual(a, b)
 	}
 	switch av := a.(type) {
 	case *object.Integer:
@@ -725,32 +776,78 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			}
 			return merged
 		}
-	case *object.Set:
-		// Set algebra operators. Both operands must be sets (matching Python);
-		// for iterable operands use the .intersection()/.union()/etc. methods.
-		switch operator {
-		case ast.OpBitAnd:
-			if r, ok := right.(*object.Set); ok {
-				return l.Intersection(r)
+		case *object.Set:
+			// Set algebra operators. Both operands must be sets (matching Python);
+			// for iterable operands use the .intersection()/.union()/etc. methods.
+			switch operator {
+			case ast.OpBitAnd:
+				if r, ok := right.(*object.Set); ok {
+					return l.Intersection(r)
+				}
+				return errors.NewTypeError("set", right.Type().String())
+			case ast.OpBitOr:
+				if r, ok := right.(*object.Set); ok {
+					return l.Union(r)
+				}
+				return errors.NewTypeError("set", right.Type().String())
+			case ast.OpSub:
+				if r, ok := right.(*object.Set); ok {
+					return l.Difference(r)
+				}
+				return errors.NewTypeError("set", right.Type().String())
+			case ast.OpBitXor:
+				if r, ok := right.(*object.Set); ok {
+					return l.SymmetricDifference(r)
+				}
+				return errors.NewTypeError("set", right.Type().String())
+			case ast.OpLt, ast.OpLte, ast.OpGt, ast.OpGte, ast.OpEq, ast.OpNeq:
+				// Python set comparisons are subset/superset tests, by content.
+				r, ok := right.(*object.Set)
+				if !ok {
+					if operator == ast.OpEq {
+						return FALSE
+					}
+					if operator == ast.OpNeq {
+						return TRUE
+					}
+					return errors.NewTypeError("set", right.Type().String())
+				}
+				subset := len(l.Elements) <= len(r.Elements)
+				if subset {
+					for k := range l.Elements {
+						if !r.ContainsKeyed(k) {
+							subset = false
+							break
+						}
+					}
+				}
+				superset := len(r.Elements) <= len(l.Elements)
+				if superset {
+					for k := range r.Elements {
+						if !l.ContainsKeyed(k) {
+							superset = false
+							break
+						}
+					}
+				}
+				var b bool
+				switch operator {
+				case ast.OpLt:
+					b = subset && len(l.Elements) < len(r.Elements)
+				case ast.OpLte:
+					b = subset
+				case ast.OpGt:
+					b = superset && len(r.Elements) < len(l.Elements)
+				case ast.OpGte:
+					b = superset
+				case ast.OpEq:
+					b = subset && superset
+				default: // OpNeq
+					b = !(subset && superset)
+				}
+				return nativeBoolToBooleanObject(b)
 			}
-			return errors.NewTypeError("set", right.Type().String())
-		case ast.OpBitOr:
-			if r, ok := right.(*object.Set); ok {
-				return l.Union(r)
-			}
-			return errors.NewTypeError("set", right.Type().String())
-		case ast.OpSub:
-			if r, ok := right.(*object.Set); ok {
-				return l.Difference(r)
-			}
-			return errors.NewTypeError("set", right.Type().String())
-		case ast.OpBitXor:
-			if r, ok := right.(*object.Set); ok {
-				return l.SymmetricDifference(r)
-			}
-			return errors.NewTypeError("set", right.Type().String())
 		}
-	}
 
 	if rb, ok := right.(*object.Boolean); ok {
 		if operator >= ast.OpAdd && operator <= ast.OpNeq {
@@ -1130,7 +1227,7 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 				usedNamedKey = true
 			} else {
 				if valueIdx >= len(values) {
-					return errors.NewError("not enough arguments for format string")
+					return errors.NewTypeErrorTagged("not enough arguments for format string")
 				}
 				val = values[valueIdx]
 				valueIdx++
@@ -1148,7 +1245,7 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 	}
 
 	if valueIdx < len(values) && !usedNamedKey {
-		return errors.NewError("not all arguments converted during string formatting")
+		return errors.NewTypeErrorTagged("not all arguments converted during string formatting")
 	}
 
 	return object.NewString(result.String())
@@ -1184,7 +1281,7 @@ func formatPercentValue(ctx context.Context, spec string, conversion byte, val o
 			return "", rerr
 		}
 		return applyStringSpec(spec, rendered), nil
-	case 'd', 'i':
+	case 'd', 'i', 'u':
 		var intVal int64
 		switch v := val.(type) {
 		case *object.Integer:
@@ -1196,45 +1293,56 @@ func formatPercentValue(ctx context.Context, spec string, conversion byte, val o
 				intVal = 1
 			}
 		default:
-			return "", errors.NewError("%%d format: a number is required, not %s", val.Type().String())
+			return "", errors.NewTypeErrorTagged("%%%c format: a number is required, not %s", conversion, val.Type().String())
 		}
 		return fmt.Sprintf(spec[:len(spec)-1]+"d", intVal), nil
 	case 'f':
 		floatVal, err := val.AsFloat()
 		if err != nil {
-			return "", errors.NewError("%%f format: a number is required, not %s", val.Type().String())
+			return "", errors.NewTypeErrorTagged("%%%c format: a number is required, not %s", conversion, val.Type().String())
 		}
 		return fmt.Sprintf(spec[:len(spec)-1]+"f", floatVal), nil
-	case 'e':
+	case 'e', 'E':
 		floatVal, err := val.AsFloat()
 		if err != nil {
-			return "", errors.NewError("%%e format: a number is required, not %s", val.Type().String())
+			return "", errors.NewTypeErrorTagged("%%%c format: a number is required, not %s", conversion, val.Type().String())
 		}
-		return fmt.Sprintf(spec[:len(spec)-1]+"e", floatVal), nil
-	case 'g':
+		return fmt.Sprintf(spec[:len(spec)-1]+string(conversion), floatVal), nil
+	case 'g', 'G':
 		floatVal, err := val.AsFloat()
 		if err != nil {
-			return "", errors.NewError("%%g format: a number is required, not %s", val.Type().String())
+			return "", errors.NewTypeErrorTagged("%%%c format: a number is required, not %s", conversion, val.Type().String())
 		}
-		return fmt.Sprintf(spec[:len(spec)-1]+"g", floatVal), nil
+		return fmt.Sprintf(spec[:len(spec)-1]+string(conversion), floatVal), nil
 	case 'x':
 		intVal, err := val.AsInt()
 		if err != nil {
-			return "", errors.NewError("%%x format: an integer is required, not %s", val.Type().String())
+			return "", errors.NewTypeErrorTagged("%%%c format: an integer is required, not %s", conversion, val.Type().String())
 		}
 		return fmt.Sprintf(spec[:len(spec)-1]+"x", intVal), nil
 	case 'X':
 		intVal, err := val.AsInt()
 		if err != nil {
-			return "", errors.NewError("%%X format: an integer is required, not %s", val.Type().String())
+			return "", errors.NewTypeErrorTagged("%%%c format: an integer is required, not %s", conversion, val.Type().String())
 		}
 		return fmt.Sprintf(spec[:len(spec)-1]+"X", intVal), nil
 	case 'o':
 		intVal, err := val.AsInt()
 		if err != nil {
-			return "", errors.NewError("%%o format: an integer is required, not %s", val.Type().String())
+			return "", errors.NewTypeErrorTagged("%%%c format: an integer is required, not %s", conversion, val.Type().String())
 		}
-		return fmt.Sprintf(spec[:len(spec)-1]+"o", intVal), nil
+		out := fmt.Sprintf(spec[:len(spec)-1]+"o", intVal)
+		// Python's alternate octal form prefixes 0o (Go's prefixes 0).
+		if strings.Contains(spec, "#") {
+			if out == "0" {
+				out = "0o0"
+			} else if strings.HasPrefix(out, "0") {
+				out = "0o" + out[1:]
+			} else if strings.HasPrefix(out, "-0") {
+				out = "-0o" + out[2:]
+			}
+		}
+		return out, nil
 	case 'c':
 		switch v := val.(type) {
 		case *object.Integer:
@@ -1244,14 +1352,14 @@ func formatPercentValue(ctx context.Context, spec string, conversion byte, val o
 			return string(rune(v.IntValue())), nil
 		case *object.String:
 			if len(v.StringValue()) != 1 {
-				return "", errors.NewError("%%c requires int or char")
+				return "", errors.NewTypeErrorTagged("%%c requires int or char")
 			}
 			return v.StringValue(), nil
 		default:
-			return "", errors.NewError("%%c requires int or char")
+			return "", errors.NewTypeErrorTagged("%%c requires int or char")
 		}
 	default:
-		return "", errors.NewError("unsupported format character: %c", conversion)
+		return "", errors.NewValueError("unsupported format character '%c' (0x%x)", conversion, conversion)
 	}
 }
 
@@ -1644,7 +1752,8 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 			// Check class hierarchy for a property descriptor before writing to Fields
 			if p := findPropertyInClass(key.StringValue(), o.Class); p != nil {
 				if p.Setter == nil {
-					return fmt.Errorf("can't set attribute '%s': property is read-only", key.StringValue())
+					return raisedAssignmentError(object.ExceptionTypeAttributeError,
+						fmt.Sprintf("property '%s' of '%s' object has no setter", key.StringValue(), o.Class.Name))
 				}
 				result := applyFunctionWithContext(ctx, p.Setter, []object.Object{o, value}, nil, nil)
 				if object.IsError(result) {
@@ -1765,6 +1874,14 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 		// be swallowed so the object constructs cleanly.
 		if propagates(result) {
 			return result
+		}
+		// Python rejects an __init__ that returns a non-None value.
+		if _, isNull := result.(*object.Null); !isNull && result != nil {
+			return &object.Exception{
+				Message:       fmt.Sprintf("__init__() should return None, not '%s'", getTypeName(result)),
+				ExceptionType: object.ExceptionTypeTypeError,
+				Raised:        true,
+			}
 		}
 	}
 
@@ -3165,6 +3282,11 @@ func evalIsOperator(left, right object.Object) object.Object {
 	}
 	if left == NULL || right == NULL {
 		return FALSE
+	}
+
+	// type(x) is int: bridge the type-name string to the type builtin.
+	if typeBridgeEqual(left, right) {
+		return TRUE
 	}
 
 	// Special handling for boolean singletons
