@@ -35,7 +35,7 @@ top-level contents. Nested objects are shared (use deepcopy).`,
 			if len(args) != 1 && len(args) != 2 {
 				return errors.NewError("deepcopy() takes 1 or 2 arguments (%d given)", len(args))
 			}
-			return deepCopy(ctx, args[0], make(map[string]object.Object))
+			return deepCopy(ctx, args[0], make(map[object.Object]object.Object))
 		},
 		HelpText: `deepcopy(x) - Return a deep copy of x
 
@@ -84,21 +84,47 @@ func shallowCopy(obj object.Object) object.Object {
 	}
 }
 
-// deepCopy recursively copies obj. The memo maps an object's identity key
-// to its copy, which breaks cycles and keeps shared substructure shared.
-func deepCopy(ctx context.Context, obj object.Object, memo map[string]object.Object) object.Object {
+// maxDeepcopyDepth bounds recursion so a pathologically nested structure
+// reports a catchable error instead of exhausting the goroutine stack
+// (scriptling containers can be built arbitrarily deep by loops; equality
+// and repr share this exposure, but new code gets a bound).
+const maxDeepcopyDepth = 100000
+
+// deepCopy recursively copies obj. The memo maps an object to its copy,
+// which breaks cycles and keeps shared substructure shared; objects are
+// keyed by interface identity (every memoized type is a pointer), avoiding
+// a per-node key allocation.
+func deepCopy(ctx context.Context, obj object.Object, memo map[object.Object]object.Object) object.Object {
+	return deepCopyDepth(ctx, obj, memo, maxDeepcopyDepth)
+}
+
+// isCopyFailure reports whether a recursive copy result is an error or a
+// raised exception that must propagate instead of being embedded in the
+// copy as an element.
+func isCopyFailure(o object.Object) bool {
+	return object.IsError(o) || o.Type() == object.EXCEPTION_OBJ
+}
+
+func deepCopyDepth(ctx context.Context, obj object.Object, memo map[object.Object]object.Object, depth int) object.Object {
+	if depth == 0 {
+		return errors.NewError("deepcopy exceeded maximum nesting depth (%d)", maxDeepcopyDepth)
+	}
 	switch v := obj.(type) {
 	case *object.Null, *object.Boolean, *object.Integer, *object.Float,
 		*object.String, *object.Bytes, *object.Sentinel:
 		return obj
 	case *object.List:
-		if c, ok := memo[object.DictKey(obj)]; ok {
+		if c, ok := memo[obj]; ok {
 			return c
 		}
 		result := &object.List{Elements: make([]object.Object, len(v.Elements))}
-		memo[object.DictKey(obj)] = result
+		memo[obj] = result
 		for i, e := range v.Elements {
-			result.Elements[i] = deepCopy(ctx, e, memo)
+			copied := deepCopyDepth(ctx, e, memo, depth-1)
+			if isCopyFailure(copied) {
+				return copied
+			}
+			result.Elements[i] = copied
 		}
 		return result
 	case *object.Tuple:
@@ -106,13 +132,17 @@ func deepCopy(ctx context.Context, obj object.Object, memo map[string]object.Obj
 		if tupleIsAtomic(v) {
 			return v
 		}
-		if c, ok := memo[object.DictKey(obj)]; ok {
+		if c, ok := memo[obj]; ok {
 			return c
 		}
 		result := &object.Tuple{Elements: make([]object.Object, len(v.Elements))}
-		memo[object.DictKey(obj)] = result
+		memo[obj] = result
 		for i, e := range v.Elements {
-			result.Elements[i] = deepCopy(ctx, e, memo)
+			copied := deepCopyDepth(ctx, e, memo, depth-1)
+			if isCopyFailure(copied) {
+				return copied
+			}
+			result.Elements[i] = copied
 		}
 		return result
 	case *object.Dict:
@@ -120,25 +150,29 @@ func deepCopy(ctx context.Context, obj object.Object, memo map[string]object.Obj
 		if v.Module != "" {
 			return v
 		}
-		if c, ok := memo[object.DictKey(obj)]; ok {
+		if c, ok := memo[obj]; ok {
 			return c
 		}
 		result := &object.Dict{Pairs: make(map[string]object.DictPair, len(v.Pairs))}
-		memo[object.DictKey(obj)] = result
+		memo[obj] = result
 		// Keys are hashable, hence immutable; values may nest arbitrarily.
 		for k, p := range v.Pairs {
-			result.Pairs[k] = object.DictPair{Key: p.Key, Value: deepCopy(ctx, p.Value, memo)}
+			copied := deepCopyDepth(ctx, p.Value, memo, depth-1)
+			if isCopyFailure(copied) {
+				return copied
+			}
+			result.Pairs[k] = object.DictPair{Key: p.Key, Value: copied}
 		}
 		return result
 	case *object.Set:
 		if v.Frozen {
 			return v
 		}
-		if c, ok := memo[object.DictKey(obj)]; ok {
+		if c, ok := memo[obj]; ok {
 			return c
 		}
 		result := object.NewSet()
-		memo[object.DictKey(obj)] = result
+		memo[obj] = result
 		// Elements are hashable, so effectively immutable: sharing them is
 		// safe and keeps their set keys valid.
 		for k, e := range v.Elements {
@@ -152,7 +186,7 @@ func deepCopy(ctx context.Context, obj object.Object, memo map[string]object.Obj
 		copy(shape, v.Shape)
 		return &object.FloatArray{Data: data, Shape: shape}
 	case *object.Instance:
-		if c, ok := memo[object.DictKey(obj)]; ok {
+		if c, ok := memo[obj]; ok {
 			return c
 		}
 		// A __deepcopy__ method takes over completely, as in Python. Python's
@@ -175,19 +209,28 @@ func deepCopy(ctx context.Context, obj object.Object, memo map[string]object.Obj
 				if result == nil {
 					return errors.NewError("__deepcopy__ returned no value")
 				}
-				if object.IsError(result) || result.Type() == object.EXCEPTION_OBJ {
+				if isCopyFailure(result) {
 					return result
 				}
-				memo[object.DictKey(obj)] = result
+				memo[obj] = result
 				return result
 			}
 		}
 		result := &object.Instance{Class: v.Class}
-		memo[object.DictKey(obj)] = result
+		memo[obj] = result
+		var errCopy object.Object
 		v.RangeFields(func(k string, val object.Object) bool {
-			result.SetField(k, deepCopy(ctx, val, memo))
+			copied := deepCopyDepth(ctx, val, memo, depth-1)
+			if isCopyFailure(copied) {
+				errCopy = copied
+				return false
+			}
+			result.SetField(k, copied)
 			return true
 		})
+		if errCopy != nil {
+			return errCopy
+		}
 		return result
 	default:
 		// Functions, lambdas, classes, builtins, iterators, errors: Python

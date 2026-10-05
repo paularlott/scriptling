@@ -1252,10 +1252,13 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 				if val, found := resolveCallee(n, name, env); found {
 					switch fn := val.(type) {
 					case *object.Function:
-						// Fast paths for common arg counts: avoid slice allocation
+						// Fast paths for common arg counts: avoid slice allocation.
+						// KeywordOnlyStart must be 0: these paths fill every
+						// parameter positionally, which would silently accept
+						// positional calls for keyword-only parameters.
 						nargs := len(argFns)
 						nparams := len(fn.Parameters)
-						if fn.Variadic == nil && fn.Kwargs == nil && len(fn.DefaultValues) == 0 && nargs == nparams && nargs <= 3 {
+						if fn.Variadic == nil && fn.Kwargs == nil && len(fn.DefaultValues) == 0 && fn.KeywordOnlyStart == 0 && nargs == nparams && nargs <= 3 {
 							switch nargs {
 							case 1:
 								a0 := argFns[0](ctx, env)

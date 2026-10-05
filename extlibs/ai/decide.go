@@ -1,10 +1,8 @@
 package ai
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 
 	mcpai "github.com/paularlott/mcp/ai"
@@ -85,22 +83,52 @@ func decideMethod(self *object.Instance, ctx context.Context, kwargs object.Kwar
 	return systemOneResponseToObject(resp)
 }
 
-// systemOneResponseToObject converts the response with exact number types
-// (token counts as integers, probabilities as floats). conversion.FromGo's
-// struct path round-trips JSON without UseNumber, which would turn every
-// integer into a float; decoding with json.Number here keeps 174 as 174.
+// systemOneResponseToObject builds the script-facing dict with exact number
+// types (token counts as integers, probabilities as floats) and wire-faithful
+// keys: choice and score answers always carry confidence — 0.0 means a
+// uniform distribution, and dropping the key would hide that — while noul
+// answers carry it only when the server sent one.
 func systemOneResponseToObject(resp *mcpai.SystemOneResponse) object.Object {
-	data, err := json.Marshal(resp)
-	if err != nil {
-		return &object.Error{Message: "decide: " + err.Error()}
+	answers := make(map[string]object.Object, len(resp.Answers))
+	for name, a := range resp.Answers {
+		fields := make(map[string]object.Object, 6)
+		fields["type"] = object.NewString(a.Type)
+		if a.Choice != "" {
+			fields["choice"] = object.NewString(a.Choice)
+		}
+		if a.Noul != nil {
+			fields["noul"] = object.NewFloat(*a.Noul)
+		}
+		if a.Score != nil {
+			fields["score"] = object.NewFloat(*a.Score)
+		}
+		if len(a.Legend) > 0 {
+			legend := make(map[string]object.Object, len(a.Legend))
+			for index, desc := range a.Legend {
+				legend[index] = object.NewString(desc)
+			}
+			fields["legend"] = object.NewStringDict(legend)
+		}
+		if len(a.Probabilities) > 0 {
+			probs := make(map[string]object.Object, len(a.Probabilities))
+			for k, p := range a.Probabilities {
+				probs[k] = object.NewFloat(p)
+			}
+			fields["probabilities"] = object.NewStringDict(probs)
+		}
+		if a.Confidence != 0 || a.Type != "noul" {
+			fields["confidence"] = object.NewFloat(a.Confidence)
+		}
+		answers[name] = object.NewStringDict(fields)
 	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	var generic any
-	if err := dec.Decode(&generic); err != nil {
-		return &object.Error{Message: "decide: " + err.Error()}
-	}
-	return conversion.FromGo(generic)
+	return object.NewStringDict(map[string]object.Object{
+		"model":   object.NewString(resp.Model),
+		"answers": object.NewStringDict(answers),
+		"usage": object.NewStringDict(map[string]object.Object{
+			"input_tokens":  object.NewInteger(int64(resp.Usage.InputTokens)),
+			"output_tokens": object.NewInteger(int64(resp.Usage.OutputTokens)),
+		}),
+	})
 }
 
 // systemOneQuestion validates one named question and converts it to its

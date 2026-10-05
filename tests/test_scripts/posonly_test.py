@@ -34,6 +34,20 @@ assert h(1, z=3) == (1, 2, [], 3, {})
 assert h(1, 9, 8, 7, z=3, w=4) == (1, 9, [8, 7], 3, {"w": 4})
 assert raises_type_error(lambda: h(x=1, z=3))
 
+# A bare * after / keeps later parameters keyword-only: positional calls
+# must not fill them (a compiled fast path once bypassed this for
+# default-less functions; the rejection is asserted in Go tests since
+# scriptling arity errors are not catchable from scripts)
+def kwo(a, /, *, b):
+    return (a, b)
+
+assert kwo(1, b=2) == (1, 2)
+
+def kwo_plain(a, *, b):
+    return (a, b)
+
+assert kwo_plain(1, b=2) == (1, 2)
+
 # **kwargs does not rescue a positional-only name: k(1, a=2) is a TypeError
 # even though **kw could collect it, exactly as in Python
 def k(a, /, **kw):

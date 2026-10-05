@@ -138,4 +138,37 @@ keyed = {(1, 2): "tuple-key"}
 keyed_copy = copy.deepcopy(keyed)
 assert keyed_copy[(1, 2)] == "tuple-key"
 
+# A failing __deepcopy__ propagates as the call's error instead of being
+# embedded inside a corrupt copy
+class Bad:
+    def __deepcopy__(self, memo):
+        raise ValueError("cannot copy me")
+
+class Good:
+    def __init__(self):
+        self.n = 1
+
+    def __deepcopy__(self, memo):
+        return Good()
+
+try:
+    copy.deepcopy({"ok": Good(), "bad": Bad()})
+    embedded_error = "no-raise"
+except ValueError:
+    embedded_error = "raised"
+
+assert embedded_error == "raised"
+
+# Deeply nested structures report a catchable error instead of crashing
+deep = [0]
+for i in range(100005):
+    deep = [deep]
+try:
+    copy.deepcopy(deep)
+    depth_error = "no-raise"
+except Exception as e:
+    depth_error = str(e)
+
+assert "nesting depth" in depth_error
+
 True

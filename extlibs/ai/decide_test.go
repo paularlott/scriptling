@@ -60,6 +60,14 @@ func TestDecideMethodEndToEnd(t *testing.T) {
 					"confidence":    0.8906,
 				},
 				"urgent": map[string]any{"type": "noul", "noul": 0.959},
+				"tie": map[string]any{
+					// Uniform distribution: confidence is exactly 0 and must
+					// still be present — dropping the key would hide that.
+					"type":          "choice",
+					"choice":        "a",
+					"probabilities": map[string]float64{"a": 0.5, "b": 0.5},
+					"confidence":    0.0,
+				},
 			},
 			"usage": map[string]int{"input_tokens": 174, "output_tokens": 1},
 		})
@@ -80,6 +88,14 @@ func TestDecideMethodEndToEnd(t *testing.T) {
 		"urgent": object.NewStringDict(map[string]object.Object{
 			"type":         object.NewString("noul"),
 			"instructions": object.NewString("Page a human?"),
+		}),
+		"tie": object.NewStringDict(map[string]object.Object{
+			"type":         object.NewString("choice"),
+			"instructions": object.NewString("Which option?"),
+			"criteria": object.NewStringDict(map[string]object.Object{
+				"a": object.NewString("First"),
+				"b": object.NewString("Second"),
+			}),
 		}),
 	})
 	kwargs := object.NewKwargs(map[string]object.Object{
@@ -102,7 +118,7 @@ func TestDecideMethodEndToEnd(t *testing.T) {
 		t.Errorf("keep_alive = %v", gotBody["keep_alive"])
 	}
 	sentQuestions, _ := gotBody["questions"].(map[string]any)
-	if len(sentQuestions) != 2 {
+	if len(sentQuestions) != 3 {
 		t.Errorf("questions sent = %v", sentQuestions)
 	}
 
@@ -121,6 +137,16 @@ func TestDecideMethodEndToEnd(t *testing.T) {
 	urgent := dictField(t, answers, "urgent")
 	if noul := dictField(t, urgent, "noul").Inspect(); noul != "0.959" {
 		t.Errorf("urgent noul = %s", noul)
+	}
+	// A noul answer without a server-sent confidence must not grow one.
+	urgentDict := urgent.(*object.Dict)
+	if _, has := urgentDict.GetByString("confidence"); has {
+		t.Errorf("urgent answer should have no confidence key: %s", urgent.Inspect())
+	}
+	// Uniform choice: confidence 0.0 must survive as an explicit zero.
+	tie := dictField(t, answers, "tie")
+	if c := dictField(t, tie, "confidence"); c.Inspect() != "0.0" {
+		t.Errorf("tie confidence = %s, want 0.0", c.Inspect())
 	}
 	usage := dictField(t, result, "usage")
 	if it := dictField(t, usage, "input_tokens").Inspect(); it != "174" {
