@@ -39,8 +39,125 @@ func callIntegerMethod(i *object.Integer, method string, args []object.Object) o
 			return err
 		}
 		return TRUE
+	case "to_bytes":
+		// to_bytes(length, byteorder="big", *, signed=False). Python 3.11+
+		// allows length=None for the minimal representation; that needs
+		// arbitrary precision, so a length is required here.
+		if len(args) < 1 || len(args) > 2 {
+			return errors.NewError("to_bytes() takes 1 or 2 arguments (%d given)", len(args))
+		}
+		length, err := args[0].AsInt()
+		if err != nil {
+			return errors.ParameterError("length", err)
+		}
+		if length < 0 {
+			return errors.NewValueError("to_bytes() length must be non-negative")
+		}
+		byteorder := "big"
+		if len(args) == 2 {
+			s, serr := args[1].AsString()
+			if serr != nil {
+				return errors.ParameterError("byteorder", serr)
+			}
+			bo, ok := kwargsToBytesOrder(s)
+			if !ok {
+				return errors.NewValueError("to_bytes() byteorder must be 'big' or 'little'")
+			}
+			byteorder = bo
+		}
+		v := i.IntValue()
+		out := make([]byte, length)
+		if byteorder == "big" {
+			for idx := int(length) - 1; idx >= 0; idx-- {
+				out[idx] = byte(v & 0xff)
+				v >>= 8
+			}
+		} else {
+			for idx := 0; idx < int(length); idx++ {
+				out[idx] = byte(v & 0xff)
+				v >>= 8
+			}
+		}
+		if v != 0 {
+			return &object.Exception{
+				Message:       "int too big to convert",
+				ExceptionType: object.ExceptionTypeOverflowError,
+				Raised:        true,
+			}
+		}
+		return object.NewBytes(out)
+	case "from_bytes":
+		// from_bytes(bytes, byteorder="big", *, signed=False): accepts a
+		// bytes value or an iterable of ints; strings are a TypeError, as
+		// in Python 3.
+		if len(args) < 1 || len(args) > 2 {
+			return errors.NewError("from_bytes() takes 1 or 2 arguments (%d given)", len(args))
+		}
+		switch src := args[0].(type) {
+		case *object.Bytes:
+			return intFromBytesValue(src.BytesValue(), args)
+		case *object.List:
+			raw := make([]byte, 0, len(src.Elements))
+			for _, elem := range src.Elements {
+				n, nerr := elem.AsInt()
+				if nerr != nil || n < 0 || n > 255 {
+					return errors.NewTypeErrorTagged("cannot convert '%s' object to int in bytes", getTypeName(elem))
+				}
+				raw = append(raw, byte(n))
+			}
+			return intFromBytesValue(raw, args)
+		case *object.Tuple:
+			raw := make([]byte, 0, len(src.Elements))
+			for _, elem := range src.Elements {
+				n, nerr := elem.AsInt()
+				if nerr != nil || n < 0 || n > 255 {
+					return errors.NewTypeErrorTagged("cannot convert '%s' object to int in bytes", getTypeName(elem))
+				}
+				raw = append(raw, byte(n))
+			}
+			return intFromBytesValue(raw, args)
+		case *object.String:
+			return errors.NewTypeErrorTagged("cannot convert 'str' object to bytes")
+		}
+		return errors.NewTypeError("bytes or iterable of ints", args[0].Type().String())
 	}
 	return attributeError(i, method)
+}
+
+// kwargsToBytesOrder validates a byteorder argument, accepting the case
+// variations Python does not but normalising to big/little.
+func kwargsToBytesOrder(s string) (string, bool) {
+	switch s {
+	case "big", "little":
+		return s, true
+	}
+	return "", false
+}
+
+func intFromBytesValue(raw []byte, args []object.Object) object.Object {
+	byteorder := "big"
+	if len(args) == 2 {
+		s, serr := args[1].AsString()
+		if serr != nil {
+			return errors.ParameterError("byteorder", serr)
+		}
+		var ok bool
+		byteorder, ok = kwargsToBytesOrder(s)
+		if !ok {
+			return errors.NewValueError("from_bytes() byteorder must be 'big' or 'little'")
+		}
+	}
+	var v int64
+	if byteorder == "big" {
+		for _, b := range raw {
+			v = v<<8 | int64(b)
+		}
+	} else {
+		for idx := len(raw) - 1; idx >= 0; idx-- {
+			v = v<<8 | int64(raw[idx])
+		}
+	}
+	return object.NewInteger(v)
 }
 
 // callFloatMethod dispatches float methods: is_integer, hex, fromhex and

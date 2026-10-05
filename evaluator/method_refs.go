@@ -34,9 +34,9 @@ var builtinMethodNames = map[object.ObjectType][]string{
 		"intersection_update", "isdisjoint", "issubset", "issuperset", "pop", "remove",
 		"symmetric_difference", "symmetric_difference_update", "union", "update",
 	},
-	object.BYTES_OBJ:       {"base64", "decode", "hex", "length", "split"},
+	object.BYTES_OBJ:       {"base64", "decode", "hex", "join", "length", "split"},
 	object.FLOAT_ARRAY_OBJ: {"shape", "tolist"},
-	object.INTEGER_OBJ:     {"bit_count", "bit_length", "is_integer"},
+	object.INTEGER_OBJ:     {"bit_count", "bit_length", "from_bytes", "is_integer", "to_bytes"},
 	object.FLOAT_OBJ:       {"as_integer_ratio", "fromhex", "hex", "is_integer"},
 }
 
@@ -59,6 +59,9 @@ var staticTypeMethods = map[object.ObjectType]map[string]object.Object{
 	object.DICT_OBJ:   {"fromkeys": &object.Dict{Pairs: map[string]object.DictPair{}}},
 	object.STRING_OBJ: {"maketrans": object.NewString("")},
 	object.FLOAT_OBJ:  {"fromhex": object.NewFloat(0)},
+	object.INTEGER_OBJ: {
+		"from_bytes": object.NewInteger(0), // static: int.from_bytes(data, "big")
+	},
 }
 
 // hasBuiltinMethod reports whether a value of type t has the named method.

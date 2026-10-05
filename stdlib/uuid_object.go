@@ -74,6 +74,21 @@ var UUIDClass = &object.Class{
 			},
 			HelpText: "__eq__(other) - Compare by value",
 		},
+		// UUIDs hash by value (Python UUIDs hash their int), so they work as
+		// dict keys and set members.
+		"__hash__": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				inst := args[0].(*object.Instance)
+				repr, _ := inst.Field("__str_repr__").(*object.String)
+				h := uint64(14695981039346656037)
+				for _, c := range repr.StringValue() {
+					h ^= uint64(c)
+					h *= 1099511628211
+				}
+				return object.NewInteger(int64(h))
+			},
+			HelpText: "__hash__() - Hash by UUID value",
+		},
 		"__repr__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				inst := args[0].(*object.Instance)

@@ -56,6 +56,75 @@ writerow(row) writes one row; writerows(rows) writes many.`,
 
 Iterating yields rows (lists of strings).`,
 		},
+		"DictReader": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := minOneInstanceArg(args, "DictReader"); err != nil {
+					return err
+				}
+				lines := readAllLinesFromSource(ctx, args[0].(*object.Instance))
+				if lines == nil {
+					return csvSimpleError("csv.DictReader source must have read(), getvalue() or readline()")
+				}
+				fields := map[string]object.Object{
+					"_lines":     &object.List{Elements: lines},
+					"_pos":       object.NewInteger(0),
+					"fieldnames": &object.Null{},
+				}
+				// Positional or keyword fieldnames; restval fills short rows.
+				if len(args) > 1 {
+					names, errObj := args[1].AsList()
+					if errObj != nil {
+						return errObj
+					}
+					list := &object.List{Elements: append([]object.Object{}, names...)}
+					fields["_fieldnames"] = list
+					fields["fieldnames"] = list
+				}
+				if names, ok := kwargs.Kwargs["fieldnames"]; ok {
+					nl, errObj := names.AsList()
+					if errObj != nil {
+						return errObj
+					}
+					list := &object.List{Elements: append([]object.Object{}, nl...)}
+					fields["_fieldnames"] = list
+					fields["fieldnames"] = list
+				}
+				if rv, ok := kwargs.Kwargs["restval"]; ok {
+					fields["_restval"] = rv
+				}
+				return object.NewInstanceWithFields(csvDictReaderClass, fields)
+			},
+			HelpText: `DictReader(fileobj, fieldnames=None, restval=None) - CSV reader yielding dicts
+
+The first row is the header unless fieldnames is given.`,
+		},
+		"DictWriter": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := minOneInstanceArg(args, "DictWriter"); err != nil {
+					return err
+				}
+				if len(args) < 2 {
+					return csvSimpleError("csv.DictWriter requires fieldnames")
+				}
+				names, errObj := args[1].AsList()
+				if errObj != nil {
+					return errObj
+				}
+				delimiter, _ := csvDelimiter(kwargs)
+				fields := map[string]object.Object{
+					"_target":     args[0],
+					"_delimiter":  object.NewString(string(delimiter)),
+					"_fieldnames": &object.List{Elements: append([]object.Object{}, names...)},
+				}
+				if rv, ok := kwargs.Kwargs["restval"]; ok {
+					fields["_restval"] = rv
+				}
+				return object.NewInstanceWithFields(csvDictWriterClass, fields)
+			},
+			HelpText: `DictWriter(fileobj, fieldnames, restval="", delimiter=",")
+
+writerow(dict) writes rows ordered by fieldnames; writeheader() writes the header.`,
+		},
 		"loads": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if err := errors.ExactArgs(args, 1); err != nil {

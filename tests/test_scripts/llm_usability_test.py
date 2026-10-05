@@ -195,4 +195,55 @@ try:
 except NotImplementedError as e:
     assert str(e) == "todo"
 
+# --- Review fixes: UUID hashing, csv coercion + Dict classes, int bytes ------
+import csv
+import io
+import uuid
+
+u = uuid.uuid4()
+d = {u: 1}
+assert d[u] == 1
+assert len({u, u}) == 1
+u2 = uuid.UUID(str(u))
+assert u == u2  # value equality
+assert hash(u) == hash(u2)  # and value hashing
+
+buf = io.StringIO()
+w = csv.writer(buf)
+w.writerow([1, "a b", 2.5, True, None])
+assert buf.getvalue() == "1,a b,2.5,True,\r\n"
+
+buf2 = io.StringIO()
+dw = csv.DictWriter(buf2, ["name", "age"])
+dw.writeheader()
+dw.writerow({"name": "x", "age": 7})
+dw.writerow({"name": "y"})
+assert buf2.getvalue() == "name,age\r\nx,7\r\ny,\r\n"
+
+rows = list(csv.DictReader(io.StringIO("name,age\r\nalice,30\r\nbob,\r\n")))
+assert rows[0]["name"] == "alice" and rows[0]["age"] == "30"
+assert rows[1]["name"] == "bob" and rows[1]["age"] == ""
+r = csv.DictReader(io.StringIO("name,age\r\nx,1\r\n"))
+assert list(r) == [{"name": "x", "age": "1"}]
+assert r.fieldnames == ["name", "age"]
+
+r2 = csv.DictReader(io.StringIO("1,2\r\n"), fieldnames=["a", "b"])
+assert list(r2) == [{"a": "1", "b": "2"}]
+
+assert (255).to_bytes(2, "big") == b"\x00\xff"
+assert (255).to_bytes(2, "little") == b"\xff\x00"
+assert int.from_bytes(b"\x00\xff", "big") == 255
+assert int.from_bytes(b"\x00\xff", "little") == 65280
+assert int.from_bytes([1, 0], "big") == 256
+try:
+    (256).to_bytes(1)
+    assert False, "expected OverflowError"
+except OverflowError:
+    pass
+try:
+    int.from_bytes("ab", "big")
+    assert False, "expected TypeError"
+except TypeError:
+    pass
+
 print("llm_usability_test passed")
