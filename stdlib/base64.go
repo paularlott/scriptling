@@ -19,8 +19,9 @@ var Base64Library = object.NewLibrary(Base64LibraryName, map[string]*object.Buil
 			if errObj != nil {
 				return errObj
 			}
+			// Python's base64.b64encode returns bytes.
 			encoded := base64.StdEncoding.EncodeToString(data)
-			return object.NewString(encoded)
+			return object.NewBytesFromString(encoded)
 		},
 		HelpText: `b64encode(s) - Encode bytes-like object to Base64
 
@@ -32,11 +33,16 @@ representation as a string.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			str, err := args[0].AsString()
-			if err != nil {
-				return err
+			var encoded string
+			switch v := args[0].(type) {
+			case *object.String:
+				encoded = v.StringValue()
+			case *object.Bytes:
+				encoded = string(v.BytesValue())
+			default:
+				return errors.NewTypeError("STRING or BYTES", args[0].Type().String())
 			}
-			decoded, decodeErr := base64.StdEncoding.DecodeString(str)
+			decoded, decodeErr := base64.StdEncoding.DecodeString(encoded)
 			if decodeErr != nil {
 				return errors.NewError("base64 decode error: %s", decodeErr.Error())
 			}

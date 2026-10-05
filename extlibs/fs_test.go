@@ -753,3 +753,30 @@ func TestFSSlice(t *testing.T) {
 		t.Errorf("slice(3) = %x, want [03 04 05]", raw)
 	}
 }
+
+// TestFSAcceptsBytesObjects: the binary functions take bytes objects as well
+// as the binary strings read_bytes returns.
+func TestFSAcceptsBytesObjects(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "b.bin")
+	p := newFSInterpreter(t, []string{tmpDir})
+
+	result, err := p.Eval(`import fs
+fs.write_bytes("` + testFile + `", 0, b"\xff\x01\x02")
+fs.write_bytes("` + testFile + `", 3, "AB")
+d = fs.read_bytes("` + testFile + `", 0, 5)
+[fs.len(d), fs.len(b"\xff\x01"), fs.byte_at(b"\xff\x01", 0), fs.unpack("<BBB", b"\xff\x01\x02"), fs.slice(b"\xff\x01\x02", 1) == b"\x01\x02", fs.slice("abc", 0, 2)]`)
+	if err != nil {
+		t.Fatalf("Eval failed: %v", err)
+	}
+	if got, want := result.Inspect(), "[5, 2, 255, [255, 1, 2], True, 'ab']"; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+	raw, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "\xff\x01\x02AB" {
+		t.Fatalf("file content = %q", raw)
+	}
+}

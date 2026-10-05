@@ -347,7 +347,7 @@ func (p *Scriptling) loadLibraryWithDepth(ctx context.Context, name string, dept
 					libDict := lib.GetDict()
 					for k, v := range libDict.Pairs {
 						if _, exists := existingDict.Pairs[k]; !exists {
-							existingDict.Pairs[k] = v
+							existingDict.Store(k, v.Key, v.Value)
 						}
 					}
 					return nil
@@ -1155,7 +1155,7 @@ func (p *Scriptling) loadLibraryIntoEnv(ctx context.Context, name string, env *o
 			if existingDict, ok := existing.(*object.Dict); ok {
 				for k, v := range existingDict.Pairs {
 					if _, exists := libDict.Pairs[k]; !exists {
-						libDict.Pairs[k] = v
+						libDict.Store(k, v.Key, v.Value)
 					}
 				}
 			}
@@ -1406,7 +1406,11 @@ func (p *Scriptling) handleResult(result object.Object, contextMsg string) (obje
 		if !obj.Raised {
 			return obj, nil
 		}
-		// Other exceptions
+		// Other exceptions. An empty message (raise ValueError) still names
+		// the type, as Python's traceback does.
+		if obj.Message == "" && obj.ExceptionType != "" {
+			return obj, fmt.Errorf("%s", obj.ExceptionType)
+		}
 		return obj, fmt.Errorf("%s", obj.Message)
 
 	default:

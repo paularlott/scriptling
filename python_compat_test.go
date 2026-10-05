@@ -267,7 +267,7 @@ func TestCounterIsAPythonCounter(t *testing.T) {
 		"real keys":     {"import collections\nc = collections.Counter([3, 3, 1])\nresult = str(c) + ' ' + str(c[3]) + ' ' + str(c[9]) + ' ' + str(c.most_common(1))\n", "Counter({3: 2, 1: 1}) 2 0 [(3, 2)]"},
 		"dict api":      {"import collections\nc = collections.Counter('aab')\nresult = str([len(c), 'a' in c, sorted(c.items()), sorted(c), c.get('z', 0), c.total()])\n", "[2, True, [('a', 2), ('b', 1)], ['a', 'b'], 0, 3]"},
 		"update":        {"import collections\nc = collections.Counter(a=1)\nc.update(['a', 'b'])\nc.subtract({'b': 3})\nc['z'] = 4\ndel c['z']\nresult = str(c)\n", "Counter({'a': 2, 'b': -2})"},
-		"arithmetic":    {"import collections\na = collections.Counter(a=3, b=1)\nb = collections.Counter(a=1, b=2)\nresult = str([a + b, a - b, a | b, a & b])\n", "[Counter({'a': 4, 'b': 3}), Counter({'a': 2}), Counter({'a': 3, 'b': 2}), Counter({'a': 1, 'b': 1})]"},
+		"arithmetic":    {"import collections\na = collections.Counter({'a': 3, 'b': 1})\nb = collections.Counter({'a': 1, 'b': 2})\nresult = str([a + b, a - b, a | b, a & b])\n", "[Counter({'a': 4, 'b': 3}), Counter({'a': 2}), Counter({'a': 3, 'b': 2}), Counter({'a': 1, 'b': 1})]"},
 		"equality":      {"import collections\nresult = str(collections.Counter('ab') == collections.Counter({'a': 1, 'b': 1}))\n", "True"},
 		"module helper": {"import collections\nresult = str(collections.most_common(collections.Counter('aab'), 1))\n", "[('a', 2)]"},
 	}

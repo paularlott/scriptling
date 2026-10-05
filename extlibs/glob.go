@@ -80,10 +80,21 @@ func (g *GlobLibraryInstance) createGlobLibrary() *object.Library {
 						return err
 					}
 				}
+				// An absolute pattern must not be joined onto the (implicit)
+				// root: filepath.Join(".", "/tmp/x") drops the leading slash.
+				// globMatches keeps absolute patterns whole, and each match
+				// is filtered by IsPathAllowed, so the sandbox still holds;
+				// the root check applies to an explicitly given root only.
+				explicitRoot := len(args) == 2
+				if !explicitRoot && strings.HasPrefix(pattern, "/") {
+					rootDir = ""
+				}
 
 				// Security check on root directory
-				if err := g.checkPathSecurity(rootDir); err != nil {
-					return err
+				if rootDir != "" {
+					if err := g.checkPathSecurity(rootDir); err != nil {
+						return err
+					}
 				}
 
 				recursive, includeHidden, oErr := parseGlobKwargs(kwargs)
@@ -118,10 +129,21 @@ func (g *GlobLibraryInstance) createGlobLibrary() *object.Library {
 						return err
 					}
 				}
+				// An absolute pattern must not be joined onto the (implicit)
+				// root: filepath.Join(".", "/tmp/x") drops the leading slash.
+				// globMatches keeps absolute patterns whole, and each match
+				// is filtered by IsPathAllowed, so the sandbox still holds;
+				// the root check applies to an explicitly given root only.
+				explicitRoot := len(args) == 2
+				if !explicitRoot && strings.HasPrefix(pattern, "/") {
+					rootDir = ""
+				}
 
 				// Security check on root directory
-				if err := g.checkPathSecurity(rootDir); err != nil {
-					return err
+				if rootDir != "" {
+					if err := g.checkPathSecurity(rootDir); err != nil {
+						return err
+					}
 				}
 
 				recursive, includeHidden, oErr := parseGlobKwargs(kwargs)

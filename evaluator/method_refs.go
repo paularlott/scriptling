@@ -26,16 +26,18 @@ var builtinMethodNames = map[object.ObjectType][]string{
 		"append", "clear", "copy", "count", "extend", "index", "insert", "pop", "remove", "reverse", "sort",
 	},
 	object.DICT_OBJ: {
-		"clear", "copy", "fromkeys", "get", "items", "keys", "pop", "setdefault", "update", "values",
+		"clear", "copy", "fromkeys", "get", "items", "keys", "move_to_end", "pop", "popitem", "setdefault", "update", "values",
 	},
 	object.TUPLE_OBJ: {"count", "index"},
 	object.SET_OBJ: {
 		"add", "clear", "copy", "difference", "difference_update", "discard", "intersection",
-		"intersection_update", "issubset", "issuperset", "pop", "remove", "symmetric_difference",
-		"symmetric_difference_update", "union", "update",
+		"intersection_update", "isdisjoint", "issubset", "issuperset", "pop", "remove",
+		"symmetric_difference", "symmetric_difference_update", "union", "update",
 	},
-	object.BYTES_OBJ:       {"base64", "decode", "hex", "length"},
+	object.BYTES_OBJ:       {"base64", "decode", "hex", "join", "length", "split"},
 	object.FLOAT_ARRAY_OBJ: {"shape", "tolist"},
+	object.INTEGER_OBJ:     {"bit_count", "bit_length", "from_bytes", "is_integer", "to_bytes"},
+	object.FLOAT_OBJ:       {"as_integer_ratio", "fromhex", "hex", "is_integer"},
 }
 
 // builtinMethodSet is builtinMethodNames indexed for lookup.
@@ -56,6 +58,10 @@ var builtinMethodSet = func() map[object.ObjectType]map[string]bool {
 var staticTypeMethods = map[object.ObjectType]map[string]object.Object{
 	object.DICT_OBJ:   {"fromkeys": &object.Dict{Pairs: map[string]object.DictPair{}}},
 	object.STRING_OBJ: {"maketrans": object.NewString("")},
+	object.FLOAT_OBJ:  {"fromhex": object.NewFloat(0)},
+	object.INTEGER_OBJ: {
+		"from_bytes": object.NewInteger(0), // static: int.from_bytes(data, "big")
+	},
 }
 
 // hasBuiltinMethod reports whether a value of type t has the named method.
@@ -118,6 +124,7 @@ func attachTypeMethods() {
 	for typeName, t := range map[string]object.ObjectType{
 		"str": object.STRING_OBJ, "list": object.LIST_OBJ, "dict": object.DICT_OBJ,
 		"tuple": object.TUPLE_OBJ, "set": object.SET_OBJ, "bytes": object.BYTES_OBJ,
+		"int": object.INTEGER_OBJ, "float": object.FLOAT_OBJ,
 	} {
 		b := builtins[typeName]
 		if b == nil {

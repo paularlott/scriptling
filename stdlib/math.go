@@ -156,6 +156,38 @@ func oneIntOrFloatFunc(intFn func(*object.Integer) object.Object, floatFn func(*
 }
 
 var MathLibrary = object.NewLibrary(MathLibraryName, map[string]*object.Builtin{
+	"fsum": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			// fsum(iterable) - exact float summation (Python's math.fsum):
+			// accumulate in arbitrary precision, round once at the end.
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			var elements []object.Object
+			switch it := args[0].(type) {
+			case *object.List:
+				elements = it.Elements
+			case *object.Tuple:
+				elements = it.Elements
+			default:
+				return errors.NewTypeError("iterable of numbers", args[0].Type().String())
+			}
+			acc := new(big.Float).SetPrec(128)
+			for _, e := range elements {
+				switch v := e.(type) {
+				case *object.Float:
+					acc.Add(acc, big.NewFloat(v.FloatValue()))
+				case *object.Integer:
+					acc.Add(acc, big.NewFloat(float64(v.IntValue())))
+				default:
+					return errors.NewTypeError("iterable of numbers", e.Type().String())
+				}
+			}
+			out, _ := acc.Float64()
+			return object.NewFloat(out)
+		},
+		HelpText: `fsum(iterable) - Exact floating-point summation`,
+	},
 	"sqrt": {
 		Fn: oneFloatFunc(math.Sqrt),
 		HelpText: `sqrt(x) - Return the square root of x
@@ -221,7 +253,7 @@ Returns a float.`,
 	},
 	"log": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 1); err != nil {
+			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
 			}
 			x, err := args[0].AsFloat()
@@ -231,12 +263,92 @@ Returns a float.`,
 			if x <= 0 {
 				return errors.NewError("log: domain error")
 			}
+			if len(args) == 2 {
+				base, err := args[1].AsFloat()
+				if err != nil {
+					return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
+				}
+				if base <= 0 || base == 1 {
+					return errors.NewError("log: base must be positive and not 1")
+				}
+				return object.NewFloat(math.Log(x) / math.Log(base))
+			}
 			return object.NewFloat(math.Log(x))
 		},
-		HelpText: `log(x) - Return the natural logarithm of x
+		HelpText: `log(x[, base]) - Return the logarithm of x to the given base
 
-x must be positive (integer or float).
-Returns a float.`,
+With one argument, the natural logarithm. With two, log(x) / log(base).
+x must be positive; base must be positive and not 1.`,
+	},
+	"sinh": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			x, err := args[0].AsFloat()
+			if err != nil {
+				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+			}
+			return object.NewFloat(math.Sinh(x))
+		},
+		HelpText: "sinh(x) - Hyperbolic sine",
+	},
+	"cosh": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			x, err := args[0].AsFloat()
+			if err != nil {
+				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+			}
+			return object.NewFloat(math.Cosh(x))
+		},
+		HelpText: "cosh(x) - Hyperbolic cosine",
+	},
+	"exp2": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			x, err := args[0].AsFloat()
+			if err != nil {
+				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+			}
+			return object.NewFloat(math.Exp2(x))
+		},
+		HelpText: "exp2(x) - 2 raised to the power x",
+	},
+	"ldexp": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 2); err != nil {
+				return err
+			}
+			x, err := args[0].AsFloat()
+			if err != nil {
+				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+			}
+			e, err := args[1].AsInt()
+			if err != nil {
+				return errors.NewTypeError("INTEGER", args[1].Type().String())
+			}
+			return object.NewFloat(math.Ldexp(x, int(e)))
+		},
+		HelpText: "ldexp(x, i) - x * 2**i",
+	},
+	"frexp": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			x, err := args[0].AsFloat()
+			if err != nil {
+				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+			}
+			mantissa, exp := math.Frexp(x)
+			return &object.List{Elements: []object.Object{object.NewFloat(mantissa), object.NewInteger(int64(exp))}}
+		},
+		HelpText: "frexp(x) - [mantissa, exponent] with x == mantissa * 2**exponent",
 	},
 	"exp": {
 		Fn: oneFloatFunc(math.Exp),
@@ -906,28 +1018,20 @@ Returns an integer for all-integer inputs, float otherwise.`,
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
-			pList, ok := args[0].(*object.List)
-			if !ok {
-				return errors.NewTypeError("LIST", args[0].Type().String())
+			pList, pOK := numericVector(args[0])
+			if !pOK {
+				return errors.NewTypeError("LIST or TUPLE", args[0].Type().String())
 			}
-			qList, ok := args[1].(*object.List)
-			if !ok {
-				return errors.NewTypeError("LIST", args[1].Type().String())
+			qList, qOK := numericVector(args[1])
+			if !qOK {
+				return errors.NewTypeError("LIST or TUPLE", args[1].Type().String())
 			}
-			if len(pList.Elements) != len(qList.Elements) {
+			if len(pList) != len(qList) {
 				return errors.NewError("dist: points must have the same dimension")
 			}
 			var sum float64
-			for i := 0; i < len(pList.Elements); i++ {
-				p, err := pList.Elements[i].AsFloat()
-				if err != nil {
-					return errors.NewTypeError("INTEGER or FLOAT", pList.Elements[i].Type().String())
-				}
-				q, err := qList.Elements[i].AsFloat()
-				if err != nil {
-					return errors.NewTypeError("INTEGER or FLOAT", qList.Elements[i].Type().String())
-				}
-				d := p - q
+			for i := range pList {
+				d := pList[i] - qList[i]
 				sum += d * d
 			}
 			return object.NewFloat(math.Sqrt(sum))
@@ -1028,3 +1132,26 @@ Returns a FloatArray that avoids per-element boxing overhead.`,
 	"nan": object.NewFloat(math.NaN()),
 	"tau": object.NewFloat(2 * math.Pi),
 }, "Mathematical functions library")
+
+// numericVector accepts a LIST or TUPLE of numbers as a flat coordinate
+// vector, mirroring math.dist's Python signature.
+func numericVector(obj object.Object) ([]float64, bool) {
+	var elems []object.Object
+	switch v := obj.(type) {
+	case *object.List:
+		elems = v.Elements
+	case *object.Tuple:
+		elems = v.Elements
+	default:
+		return nil, false
+	}
+	out := make([]float64, len(elems))
+	for i, e := range elems {
+		f, err := e.AsFloat()
+		if err != nil {
+			return nil, false
+		}
+		out[i] = f
+	}
+	return out, true
+}

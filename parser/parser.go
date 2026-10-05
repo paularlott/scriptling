@@ -17,18 +17,21 @@ const (
 	WALRUS_EXPR       = 2 // := binds looser than everything except another :=
 	CONDITIONAL       = 3 // for conditional expressions (x if cond else y)
 	OR                = 4
-	BIT_OR            = 5
-	BIT_XOR           = 6
-	BIT_AND           = 7
-	AND               = 8
-	EQUALS            = 9
-	LESSGREATER       = 10
-	BIT_SHIFT         = 11
-	SUM               = 12
-	PRODUCT           = 13
-	POWER             = 14
-	PREFIX            = 15
-	CALL              = 16
+	AND               = 5
+	NOT_EXPR          = 6 // prefix `not`: tighter than and/or, looser than comparisons
+	// Comparisons share one level, as in Python (==, !=, <, >, <=, >=, in,
+	// is): mixed chains like a < b == c are built by parseInfixExpression.
+	EQUALS      = 7
+	LESSGREATER = 7
+	BIT_OR      = 8
+	BIT_XOR     = 9
+	BIT_AND     = 10
+	BIT_SHIFT   = 11
+	SUM         = 12
+	PRODUCT     = 13
+	POWER       = 14
+	PREFIX      = 15
+	CALL        = 16
 )
 
 func precedenceFor(tok token.TokenType) int {
@@ -74,6 +77,7 @@ type Parser struct {
 	curToken       token.Token
 	peekToken      token.Token
 	skippedNewline bool // true if a NEWLINE was skipped between curToken and peekToken
+	skippedSemi    bool // true if the skipped separator was a ';' with no NEWLINE (a;b on one line)
 	parenDepth     int  // track parenthesis depth for multiline support
 
 	nestedFuncStack []bool // stack: one bool per active function parse, true if body contains nested func/lambda/class
@@ -175,6 +179,7 @@ func (p *Parser) nextToken() {
 	p.curToken = p.peekToken
 	p.peekToken = p.l.NextToken()
 	p.skippedNewline = false
+	p.skippedSemi = false
 
 	// Track parenthesis depth based on the token we just consumed (curToken)
 	if p.curToken.Type == token.LPAREN || p.curToken.Type == token.LBRACKET || p.curToken.Type == token.LBRACE {
@@ -186,10 +191,17 @@ func (p *Parser) nextToken() {
 	}
 
 	// Skip NEWLINE and SEMICOLON tokens (always skip these at top level too)
+	sawNewline, sawSemi := false, false
 	for p.peekToken.Type == token.NEWLINE || p.peekToken.Type == token.SEMICOLON {
 		p.skippedNewline = true
+		if p.peekToken.Type == token.NEWLINE {
+			sawNewline = true
+		} else {
+			sawSemi = true
+		}
 		p.peekToken = p.l.NextToken()
 	}
+	p.skippedSemi = sawSemi && !sawNewline
 
 	// When inside parentheses, also skip INDENT and DEDENT tokens
 	// This allows multiline function calls, list literals, dict literals, etc.
@@ -334,6 +346,15 @@ func (p *Parser) parseStatementInner() ast.Statement {
 			p.nextToken()
 			return p.parseStatementInner()
 		}
+		// "yield" is a soft keyword statement: a name-only line that starts
+		// a statement and is not part of an assignment is a yield; Python
+		// reserves the word entirely, so an explicit yield-as-name use
+		// (yield = 5) still parses as an assignment for compatibility.
+		if p.curToken.Literal == "yield" &&
+			!p.peekTokenIs(token.ASSIGN) && !p.peekTokenIs(token.COMMA) && !p.isAugmentedAssign() &&
+			!p.peekTokenIs(token.DOT) && !p.peekTokenIs(token.LPAREN) && !p.peekTokenIs(token.LBRACKET) {
+			return p.parseYieldStatement()
+		}
 		if p.curToken.Literal == "match" && !p.peekTokenIs(token.ASSIGN) && !p.peekTokenIs(token.COMMA) && !p.peekTokenIs(token.COLON) && !p.peekTokenIs(token.WALRUS) && !p.isAugmentedAssign() && !p.peekTokenIs(token.LPAREN) && !p.peekTokenIs(token.DOT) && !p.peekTokenIs(token.LBRACKET) {
 			return p.parseMatchStatement()
 		}
@@ -378,31 +399,10 @@ func (p *Parser) parseAssignStatement() *ast.AssignStatement {
 
 	p.nextToken()
 
-	// Handle chained assignment: a = b = 5
-	// Peek ahead: if we have IDENT = ... then parse the inner assignment first
-	if p.curTokenIs(token.IDENT) && p.peekTokenIs(token.ASSIGN) {
-		inner := p.parseAssignStatement()
-		if inner == nil {
-			return nil
-		}
-		// The value of the outer assignment is the same as the inner's value
-		stmt.Value = inner.Value
-		// Wrap as a block: evaluate inner first, then assign same value to outer
-		// We do this by making the value a ChainedAssign expression
-		// Simplest approach: store inner as a preceding statement via a sequence
-		// Actually: just assign inner.Value to both. Return a synthetic block.
-		// For simplicity, return the inner statement and let the outer be a separate assign.
-		// We need both to execute, so use the existing AST by returning a sequence.
-		// The cleanest approach without new AST nodes: evaluate inner, use its value.
-		stmt.Value = inner.Value
-		// We need inner to also execute. Embed it as a ChainedAssign.
-		// Since we don't have a sequence node, we'll add a Chained field to AssignStatement.
-		stmt.Chained = inner
-		return stmt
-	}
-
+	// The value may chain: a = b = 5, a = (b, c) = (1, 2). parseAssignValue
+	// detects another '=' after the candidate value and links the chain.
 	first := p.parseExpressionWithConditional()
-	stmt.Value = p.parseTuplePackingTail(stmt.Token, first)
+	stmt.Value, stmt.Chained = p.parseAssignValue(stmt.Token, first)
 
 	return stmt
 }
@@ -410,17 +410,40 @@ func (p *Parser) parseAssignStatement() *ast.AssignStatement {
 func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 	names := make([]*ast.Identifier, 0, 4)
 	starredIndex := -1
+	// A target element that is not a bare (starred) identifier — a group like
+	// (b, c) or [b, c], an index like x[0], an attribute like obj.attr — makes
+	// the statement complex: it is emitted as a general AssignStatement with a
+	// tuple target, which supports nested destructuring targets.
+	var elements []ast.Expression
+	complex := false
 
-	// Parse first identifier (may be starred)
+	addIdent := func(id *ast.Identifier) {
+		names = append(names, id)
+		if complex {
+			elements = append(elements, id)
+		}
+	}
+
+	// Parse first target (may be starred)
 	if p.curTokenIs(token.ASTERISK) {
 		starredIndex = 0
 		if !p.expectPeek(token.IDENT) {
 			return nil
 		}
 	}
-	names = append(names, p.ident(p.curToken.Literal))
+	if p.curTokenIs(token.IDENT) && !p.peekTokenIs(token.COMMA) && !p.peekTokenIs(token.ASSIGN) {
+		// Identifier carrying a target suffix (x[0], obj.attr): parse the
+		// full target expression.
+		complex = true
+		elements = append(elements, p.parseExpression(LOWEST))
+	} else if p.curTokenIs(token.IDENT) {
+		addIdent(p.ident(p.curToken.Literal))
+	} else {
+		p.errors = append(p.errors, fmt.Sprintf("expected identifier, got %s", p.curToken.Type))
+		return nil
+	}
 
-	// Parse remaining identifiers
+	// Parse remaining targets
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken() // consume comma
 		p.nextToken() // move to next token
@@ -435,11 +458,34 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 			if !p.expectPeek(token.IDENT) {
 				return nil
 			}
-		} else if !p.curTokenIs(token.IDENT) {
-			p.errors = append(p.errors, fmt.Sprintf("expected identifier, got %s", p.curToken.Type))
-			return nil
+			addIdent(p.ident(p.curToken.Literal))
+			continue
 		}
-		names = append(names, p.ident(p.curToken.Literal))
+
+		if p.curTokenIs(token.IDENT) && (p.peekTokenIs(token.COMMA) || p.peekTokenIs(token.ASSIGN)) {
+			addIdent(p.ident(p.curToken.Literal))
+			continue
+		}
+
+		// Grouped or subscripted target: (b, c), [b, c], x[0], obj.attr
+		if !complex {
+			complex = true
+			elements = make([]ast.Expression, 0, len(names)+1)
+			for _, name := range names {
+				elements = append(elements, name)
+			}
+		}
+		if p.curTokenIs(token.LPAREN) || p.curTokenIs(token.LBRACKET) || p.curTokenIs(token.IDENT) {
+			elements = append(elements, p.parseExpression(LOWEST))
+			continue
+		}
+		p.errors = append(p.errors, fmt.Sprintf("expected identifier, got %s", p.curToken.Type))
+		return nil
+	}
+
+	if starredIndex != -1 && complex {
+		p.errors = append(p.errors, "starred unpacking cannot be mixed with grouped or subscripted assignment targets")
+		return nil
 	}
 
 	if !p.expectPeek(token.ASSIGN) {
@@ -447,6 +493,17 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 	}
 
 	p.nextToken()
+
+	if complex {
+		firstValue := p.parseExpressionWithConditional()
+		value, chained := p.parseAssignValue(p.nodeLine(), firstValue)
+		return &ast.AssignStatement{
+			Token:   p.nodeLine(),
+			Left:    &ast.TupleLiteral{Elements: elements},
+			Value:   value,
+			Chained: chained,
+		}
+	}
 
 	// Parse the value - check if it's a comma-separated list (tuple packing)
 	firstValue := p.parseExpression(LOWEST)
@@ -464,6 +521,20 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 		value := &ast.TupleLiteral{
 			Elements: values,
 		}
+		return p.multipleAssignOrChain(names, starredIndex, value)
+	}
+
+	// Single value (must be a tuple/list to unpack)
+	return p.multipleAssignOrChain(names, starredIndex, firstValue)
+}
+
+// multipleAssignOrChain finishes a flat multiple-assignment after its value
+// has been parsed. A following '=' makes that value the next link's target
+// list (a, b = c, d = 1, 2): the statement becomes a chained assignment over
+// tuple targets, since MultipleAssignStatement carries no chain. Starred
+// targets cannot chain — the tuple-target path has no starred support.
+func (p *Parser) multipleAssignOrChain(names []*ast.Identifier, starredIndex int, value ast.Expression) ast.Statement {
+	if !p.peekTokenIs(token.ASSIGN) {
 		return &ast.MultipleAssignStatement{
 			Token:        names[0].Token,
 			Names:        names,
@@ -471,13 +542,24 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 			StarredIndex: starredIndex,
 		}
 	}
-
-	// Single value (must be a tuple/list to unpack)
-	return &ast.MultipleAssignStatement{
-		Token:        names[0].Token,
-		Names:        names,
-		Value:        firstValue,
-		StarredIndex: starredIndex,
+	if starredIndex != -1 {
+		p.errors = append(p.errors, "starred unpacking cannot be chained")
+		return nil
+	}
+	inner := &ast.AssignStatement{Token: p.nodeLine(), Left: value}
+	p.nextToken() // consume =
+	p.nextToken() // move to value
+	first := p.parseExpressionWithConditional()
+	inner.Value, inner.Chained = p.parseAssignValue(p.nodeLine(), first)
+	targets := make([]ast.Expression, len(names))
+	for i, name := range names {
+		targets[i] = name
+	}
+	return &ast.AssignStatement{
+		Token:   names[0].Token,
+		Left:    &ast.TupleLiteral{Elements: targets},
+		Value:   inner.Value,
+		Chained: inner,
 	}
 }
 
@@ -728,7 +810,7 @@ func (p *Parser) parseExpressionStatement() ast.Statement {
 		p.nextToken() // consume =
 		p.nextToken() // move to value
 		first := p.parseExpressionWithConditional()
-		stmt.Value = p.parseTuplePackingTail(p.nodeLine(), first)
+		stmt.Value, stmt.Chained = p.parseAssignValue(p.nodeLine(), first)
 		return stmt
 	}
 	if isAugmentedAssignToken(p.peekToken.Type) {
@@ -743,27 +825,71 @@ func (p *Parser) parseExpressionStatement() ast.Statement {
 		return stmt
 	}
 	expr = p.parseTuplePackingTail(p.nodeLine(), expr)
+	// A comma-separated target list followed by '=' (x[0], y = ... or
+	// (a, b), c = ...) is an assignment with a tuple target.
+	if p.peekTokenIs(token.ASSIGN) {
+		stmt := &ast.AssignStatement{Token: p.nodeLine(), Left: expr}
+		p.nextToken() // consume =
+		p.nextToken() // move to value
+		first := p.parseExpressionWithConditional()
+		stmt.Value, stmt.Chained = p.parseAssignValue(p.nodeLine(), first)
+		return stmt
+	}
 	return &ast.ExpressionStatement{Token: p.nodeLine(), Expression: expr}
+}
+
+// parseYieldStatement parses `yield` / `yield value` as a statement. Phase 1
+// generators support yields as statements only; a yield in expression
+// position still parses as a plain identifier reference and fails at compile.
+func (p *Parser) parseYieldStatement() ast.Statement {
+	stmt := &ast.YieldStatement{Token: p.nodeLine()}
+	// `yield from` delegation is not supported in phase 1 generators.
+	if p.peekTokenIs(token.FROM) {
+		p.errors = append(p.errors, "yield from is not supported yet (delegate manually: for item in it: yield item)")
+		return nil
+	}
+	// A bare yield (end of line) yields None.
+	if p.peekTokenIs(token.NEWLINE) || p.peekTokenIs(token.EOF) || p.peekTokenIs(token.DEDENT) || p.peekTokenIs(token.SEMICOLON) || p.skippedNewline {
+		return stmt
+	}
+	p.nextToken() // move to the value expression
+	stmt.Value = p.parseExpressionWithConditional()
+	return stmt
 }
 
 // parseAnnotatedTail finishes an annotated assignment after the target
 // expression has been parsed (count: int = 5, self.offset: float = 0.5,
-// d["k"]: str = ""). The annotation is parsed and discarded; a bare
-// annotation with no value is a runtime no-op.
+// d["k"]: str = ""). The annotation is parsed and recorded but never
+// evaluated; a bare annotation with no value is a runtime no-op outside
+// class bodies, where the name is kept as field metadata for @dataclass.
 func (p *Parser) parseAnnotatedTail(expr ast.Expression) ast.Statement {
 	p.nextToken() // consume :
 	p.nextToken() // move to the annotation expression
-	if p.parseExpression(LOWEST) == nil {
+	annotation := p.parseExpression(LOWEST)
+	if annotation == nil {
 		return nil
 	}
-	if !p.peekTokenIs(token.ASSIGN) {
-		return &ast.PassStatement{Token: p.nodeLine()}
+	target, ok := expr.(*ast.Identifier)
+	if !ok {
+		// Attribute/subscript annotation targets are not field metadata;
+		// behave as before (assign the value when present, else no-op).
+		if !p.peekTokenIs(token.ASSIGN) {
+			return &ast.PassStatement{Token: p.nodeLine()}
+		}
+		stmt := &ast.AssignStatement{Token: p.nodeLine(), Left: expr}
+		p.nextToken() // consume =
+		p.nextToken() // move to value
+		first := p.parseExpressionWithConditional()
+		stmt.Value = p.parseTuplePackingTail(p.nodeLine(), first)
+		return stmt
 	}
-	stmt := &ast.AssignStatement{Token: p.nodeLine(), Left: expr}
-	p.nextToken() // consume =
-	p.nextToken() // move to value
-	first := p.parseExpressionWithConditional()
-	stmt.Value = p.parseTuplePackingTail(p.nodeLine(), first)
+	stmt := &ast.AnnotatedAssignStatement{Token: p.nodeLine(), Target: target, Annotation: annotation}
+	if p.peekTokenIs(token.ASSIGN) {
+		p.nextToken() // consume =
+		p.nextToken() // move to value
+		first := p.parseExpressionWithConditional()
+		stmt.Value = p.parseTuplePackingTail(p.nodeLine(), first)
+	}
 	return stmt
 }
 
@@ -819,8 +945,11 @@ func (p *Parser) parseConditionalExpression(trueExpr ast.Expression) ast.Express
 		return nil
 	}
 	p.nextToken() // move to false expression
-	// Parse false expression with CONDITIONAL precedence to handle nested conditionals
-	falseExpr := p.parseExpression(CONDITIONAL)
+	// Parse the false expression one level looser than the conditional
+	// itself: a following `if` continues into the else branch, making
+	// a if c1 else b if c2 else d right-associative, as in Python
+	// (a if c1 else (b if c2 else d)).
+	falseExpr := p.parseExpression(CONDITIONAL - 1)
 	return &ast.ConditionalExpression{
 		TrueExpr:  trueExpr,
 		Condition: condition,
@@ -832,6 +961,17 @@ func (p *Parser) parseConditionalExpression(trueExpr ast.Expression) ast.Express
 // This is now just a wrapper that calls parseExpression with LOWEST precedence
 // The actual conditional expression handling is done via the registered infix parser
 func (p *Parser) parseExpressionWithConditional() ast.Expression {
+	// A leading * starts an unpacked element of an implicit tuple:
+	// x = *t, 3 / return *a, b. parseTuplePackingTail rejects a lone *t.
+	if p.curTokenIs(token.ASTERISK) {
+		tok := p.nodeLine()
+		p.nextToken()
+		inner := p.parseExpression(LOWEST)
+		if inner == nil {
+			return nil
+		}
+		return &ast.StarredElement{Token: tok, Value: inner}
+	}
 	return p.parseExpression(LOWEST)
 }
 
@@ -839,6 +979,9 @@ func (p *Parser) parseExpressionWithConditional() ast.Expression {
 // tok is the token to use for the TupleLiteral node.
 func (p *Parser) parseTuplePackingTail(tok ast.LineInfo, first ast.Expression) ast.Expression {
 	if !p.peekTokenIs(token.COMMA) {
+		if _, starred := first.(*ast.StarredElement); starred {
+			p.errors = append(p.errors, fmt.Sprintf("line %d: can't use starred expression here", p.curToken.Line))
+		}
 		return first
 	}
 	elements := make([]ast.Expression, 1, 4)
@@ -852,6 +995,26 @@ func (p *Parser) parseTuplePackingTail(tok ast.LineInfo, first ast.Expression) a
 		elements = append(elements, p.parseExpressionWithConditional())
 	}
 	return &ast.TupleLiteral{Elements: elements}
+}
+
+// parseAssignValue finishes the right-hand side of an assignment after the
+// first value expression has been parsed. That expression may itself turn out
+// to be the next target of a chained assignment — the c in (a, b) = c = (1, 2)
+// — in which case the chain is built here and the shared value (evaluated
+// once, as in Python) is returned along with the chain's first link.
+func (p *Parser) parseAssignValue(tok ast.LineInfo, first ast.Expression) (ast.Expression, *ast.AssignStatement) {
+	value := p.parseTuplePackingTail(tok, first)
+	if !p.peekTokenIs(token.ASSIGN) {
+		return value, nil
+	}
+	inner := &ast.AssignStatement{Token: p.nodeLine(), Left: value}
+	p.nextToken() // consume =
+	p.nextToken() // move to value
+	next := p.parseExpressionWithConditional()
+	innerValue, deeper := p.parseAssignValue(p.nodeLine(), next)
+	inner.Value = innerValue
+	inner.Chained = deeper
+	return innerValue, inner
 }
 
 func (p *Parser) noPrefixParseFnError(t token.TokenType) {
@@ -1167,6 +1330,13 @@ func parseExpressionString(input string) ast.Expression {
 	return expr
 }
 
+// ParseExpressionString parses a standalone expression, for callers that
+// evaluate text assembled at runtime (f-string nested format fields).
+// Returns nil for invalid input.
+func ParseExpressionString(input string) ast.Expression {
+	return parseExpressionString(input)
+}
+
 func (p *Parser) parseBoolean() ast.Expression {
 	if p.curTokenIs(token.TRUE) {
 		return ast.BoolTrue
@@ -1208,8 +1378,16 @@ func (p *Parser) parsePrefixExpression() ast.Expression {
 	expression := &ast.PrefixExpression{
 		Operator: ast.ParseOp(p.curToken.Literal),
 	}
+	// `not` is a low-precedence prefix operator, as in Python: its operand
+	// swallows comparisons (not a == b is not (a == b)) but stops before
+	// and/or. Arithmetic prefixes (-, ~) sit between * and **, so
+	// -2 ** 2 is -(2 ** 2) while -2 * 3 is (-2) * 3.
+	operandPrec := PRODUCT
+	if expression.Operator == ast.OpNot {
+		operandPrec = NOT_EXPR
+	}
 	p.nextToken()
-	expression.Right = p.parseExpression(PREFIX)
+	expression.Right = p.parseExpression(operandPrec)
 	return expression
 }
 
@@ -1221,19 +1399,23 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 	precedence := p.curPrecedence()
 	currentOp := p.curToken.Literal
 	p.nextToken()
-	expression.Right = p.parseExpression(precedence)
+	// ** is right-associative (2**3**2 is 2**(3**2)): parse its right
+	// operand one level looser so a following ** binds to it, not to us.
+	rightPrec := precedence
+	if expression.Operator == ast.OpPow {
+		rightPrec = precedence - 1
+	}
+	expression.Right = p.parseExpression(rightPrec)
 	expression.SetIntFast()
 
-	// Check for chained comparisons: a < b < c becomes a < b and b < c
-	if isComparisonOp(currentOp) && (p.peekTokenIs(token.LT) || p.peekTokenIs(token.GT) ||
-		p.peekTokenIs(token.LTE) || p.peekTokenIs(token.GTE) ||
-		p.peekTokenIs(token.EQ) || p.peekTokenIs(token.NOT_EQ)) {
+	// Check for chained comparisons: a < b < c becomes a < b and b < c.
+	// in/is comparisons chain too, as in Python: 1 in xs == flag is
+	// (1 in xs) and (xs == flag).
+	if isComparisonOp(currentOp) && p.peekIsComparisonToken() {
 		// Build chained comparison
 		comparisons := []*ast.InfixExpression{expression}
 
-		for isComparisonOp(currentOp) && (p.peekTokenIs(token.LT) || p.peekTokenIs(token.GT) ||
-			p.peekTokenIs(token.LTE) || p.peekTokenIs(token.GTE) ||
-			p.peekTokenIs(token.EQ) || p.peekTokenIs(token.NOT_EQ)) {
+		for isComparisonOp(currentOp) && p.peekIsComparisonToken() {
 			p.nextToken()
 			nextOp := p.curToken.Literal
 			nextComp := &ast.InfixExpression{
@@ -1249,23 +1431,38 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 		}
 
 		if len(comparisons) > 1 {
-			result := ast.Expression(comparisons[0])
-			for i := 1; i < len(comparisons); i++ {
-				result = &ast.InfixExpression{
-					Operator: ast.OpAnd,
-					Left:     result,
-					Right:    comparisons[i],
-				}
+			// Keep the chain as one node: Python evaluates each operand
+			// at most once, and an (a<b) and (b<c) desugar would run b's
+			// side effects twice.
+			first := comparisons[0].Left
+			links := make([]ast.ChainedLink, 0, len(comparisons))
+			for _, c := range comparisons {
+				links = append(links, ast.ChainedLink{Op: c.Operator, Operand: c.Right})
 			}
-			return result
+			return &ast.ChainedComparison{First: first, Links: links}
 		}
 	}
 
 	return expression
 }
 
+// peekIsComparisonToken reports whether the next token continues a
+// comparison chain: the ordering/equality operators plus in/is forms.
+func (p *Parser) peekIsComparisonToken() bool {
+	switch p.peekToken.Type {
+	case token.LT, token.GT, token.LTE, token.GTE, token.EQ, token.NOT_EQ,
+		token.IN, token.NOT_IN, token.IS, token.IS_NOT:
+		return true
+	}
+	return false
+}
+
 func isComparisonOp(op string) bool {
-	return op == "<" || op == ">" || op == "<=" || op == ">=" || op == "==" || op == "!="
+	switch op {
+	case "<", ">", "<=", ">=", "==", "!=", "in", "not in", "is", "is not":
+		return true
+	}
+	return false
 }
 
 func (p *Parser) parseGroupedExpression() ast.Expression {
@@ -1276,11 +1473,24 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 		return &ast.TupleLiteral{Elements: nil}
 	}
 
-	firstExp := p.parseExpression(LOWEST_PRECEDENCE)
+	// A leading *iterable makes this a tuple display: (*t,), (*a, *b).
+	startedWithStar := p.curTokenIs(token.ASTERISK)
+	var firstExp ast.Expression
+	if startedWithStar {
+		p.nextToken()
+		firstExp = &ast.StarredElement{Token: p.nodeLine(), Value: p.parseExpression(LOWEST_PRECEDENCE)}
+	} else {
+		firstExp = p.parseExpression(LOWEST_PRECEDENCE)
+	}
 
 	// Check if this is a generator expression (similar to list comprehension)
-	if p.peekTokenIs(token.FOR) {
+	if !startedWithStar && p.peekTokenIs(token.FOR) {
 		return p.parseGeneratorExpression(firstExp)
+	}
+
+	if startedWithStar && !p.peekTokenIs(token.COMMA) {
+		p.errors = append(p.errors, fmt.Sprintf("line %d: cannot use starred expression here", p.curToken.Line))
+		return nil
 	}
 
 	// Check if this is a tuple (has comma)
@@ -1295,6 +1505,11 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 				break
 			}
 			p.nextToken()
+			if p.curTokenIs(token.ASTERISK) {
+				p.nextToken()
+				elements = append(elements, &ast.StarredElement{Token: p.nodeLine(), Value: p.parseExpression(LOWEST_PRECEDENCE)})
+				continue
+			}
 			elements = append(elements, p.parseExpression(LOWEST_PRECEDENCE))
 		}
 
@@ -1314,13 +1529,17 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 
 func (p *Parser) parseCallExpression(function ast.Expression) ast.Expression {
 	exp := &ast.CallExpression{Function: function}
-	args, keywords, argsUnpack, kwargsUnpack := p.parseCallArguments()
+	var unpackAt []int
+	args, keywords, argsUnpack, kwargsUnpack := p.parseCallArguments(&unpackAt)
 	exp.Arguments = args
 	exp.SetOverflow(keywords, argsUnpack, kwargsUnpack)
+	exp.SetArgsUnpackAt(unpackAt, len(args))
 	return exp
 }
 
-func (p *Parser) parseCallArguments() ([]ast.Expression, map[string]ast.Expression, []ast.Expression, ast.Expression) {
+// parseCallArguments parses a call's argument list. unpackAt receives, for each
+// *unpack, the count of positional arguments written before it.
+func (p *Parser) parseCallArguments(unpackAt *[]int) ([]ast.Expression, map[string]ast.Expression, []ast.Expression, ast.Expression) {
 	var args []ast.Expression
 	var keywords map[string]ast.Expression
 	var argsUnpack []ast.Expression
@@ -1357,6 +1576,7 @@ func (p *Parser) parseCallArguments() ([]ast.Expression, map[string]ast.Expressi
 				return nil, nil, nil, nil
 			}
 			p.nextToken() // move to expression
+			*unpackAt = append(*unpackAt, len(args))
 			argsUnpack = append(argsUnpack, p.parseExpression(LOWEST))
 			if p.peekTokenIs(token.COMMA) {
 				p.nextToken() // consume comma
@@ -1503,6 +1723,15 @@ func (p *Parser) parseBlockStatement() *ast.BlockStatement {
 		if stmt != nil {
 			block.Statements = append(block.Statements, stmt)
 		}
+		// "if c: a; b" — every ;-separated statement on the line belongs to
+		// the block, as in Python's simple_stmt list. (nextToken swallows the
+		// separators, so skippedSemi records that a ';' joined the next one.)
+		for p.skippedSemi && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.DEDENT) {
+			p.nextToken()
+			if next := p.parseStatement(); next != nil {
+				block.Statements = append(block.Statements, next)
+			}
+		}
 		return block
 	}
 
@@ -1562,9 +1791,10 @@ func (p *Parser) parseFunctionStatement() *ast.FunctionStatement {
 	}
 
 	stmt.Function = &ast.FunctionLiteral{}
-	params, defaults, variadic, kwargs, keywordOnlyStart := p.parseFunctionParameters()
+	params, defaults, variadic, kwargs, keywordOnlyStart, posOnly := p.parseFunctionParameters()
 	stmt.Function.Parameters = params
 	stmt.Function.SetFuncOverflow(defaults, variadic, kwargs, keywordOnlyStart)
+	stmt.Function.SetPositionalOnly(posOnly)
 
 	// Optional return annotation: def f(...) -> int — parsed and discarded.
 	if p.peekTokenIs(token.MINUS) {
@@ -1622,16 +1852,18 @@ func (p *Parser) parseClassStatement() *ast.ClassStatement {
 	return stmt
 }
 
-func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier, *ast.Identifier, int) {
+func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier, *ast.Identifier, int, int) {
 	var identifiers []*ast.Identifier
 	var defaults map[string]ast.Expression
 	var variadic *ast.Identifier
 	var kwargs *ast.Identifier
 	keywordOnlyStart := -1
+	posOnly := 0
+	slashSeen := false
 
 	if p.peekTokenIs(token.RPAREN) {
 		p.nextToken()
-		return identifiers, defaults, nil, nil, keywordOnlyStart
+		return identifiers, defaults, nil, nil, keywordOnlyStart, posOnly
 	}
 
 	p.nextToken()
@@ -1647,49 +1879,55 @@ func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Ex
 				variadic = p.ident(p.curToken.Literal)
 				if p.peekTokenIs(token.COLON) {
 					if !p.skipAnnotation() {
-						return nil, nil, nil, nil, keywordOnlyStart
+						return nil, nil, nil, nil, keywordOnlyStart, posOnly
 					}
 				}
 			} else if p.peekTokenIs(token.COMMA) {
 				// Bare * marks following parameters as keyword-only.
 			} else {
 				if !p.expectPeek(token.IDENT) {
-					return nil, nil, nil, nil, keywordOnlyStart
+					return nil, nil, nil, nil, keywordOnlyStart, posOnly
 				}
 			}
 		} else if p.curTokenIs(token.POW) {
 			if !p.expectPeek(token.IDENT) {
-				return nil, nil, nil, nil, keywordOnlyStart
+				return nil, nil, nil, nil, keywordOnlyStart, posOnly
 			}
 			kwargs = p.ident(p.curToken.Literal)
 			if p.peekTokenIs(token.COLON) {
 				if !p.skipAnnotation() {
-					return nil, nil, nil, nil, keywordOnlyStart
+					return nil, nil, nil, nil, keywordOnlyStart, posOnly
 				}
 			}
 			if p.peekTokenIs(token.COMMA) {
 				p.nextToken()
 			}
 			if !p.expectPeek(token.RPAREN) {
-				return nil, nil, nil, nil, keywordOnlyStart
+				return nil, nil, nil, nil, keywordOnlyStart, posOnly
 			}
-			return identifiers, defaults, variadic, kwargs, keywordOnlyStart
+			return identifiers, defaults, variadic, kwargs, keywordOnlyStart, posOnly
+		} else if p.curTokenIs(token.SLASH) {
+			// Positional-only marker (def f(a, /, b)): every parameter before
+			// the slash is positional-only. Python allows the marker at most
+			// once, and only before *.
+			if slashSeen {
+				p.errors = append(p.errors, fmt.Sprintf("line %d: '/' may appear at most once in a parameter list", p.curToken.Line))
+				return nil, nil, nil, nil, keywordOnlyStart, posOnly
+			}
+			if keywordOnlyStart != -1 {
+				p.errors = append(p.errors, fmt.Sprintf("line %d: '/' must precede '*' in a parameter list", p.curToken.Line))
+				return nil, nil, nil, nil, keywordOnlyStart, posOnly
+			}
+			slashSeen = true
+			posOnly = len(identifiers)
 		} else {
-			if p.curTokenIs(token.SLASH) {
-				// Positional-only parameter syntax (def f(a, /, b)) is not
-				// supported; without this check the "/" silently becomes a
-				// parameter named "/" and every call fails with a confusing
-				// argument-count error.
-				p.errors = append(p.errors, "positional-only parameters ('/') are not supported")
-				return nil, nil, nil, nil, keywordOnlyStart
-			}
 			ident := p.ident(p.curToken.Literal)
 			identifiers = append(identifiers, ident)
 
 			// Optional type annotation: def f(a: int) — parsed and discarded.
 			if p.peekTokenIs(token.COLON) {
 				if !p.skipAnnotation() {
-					return nil, nil, nil, nil, keywordOnlyStart
+					return nil, nil, nil, nil, keywordOnlyStart, posOnly
 				}
 			}
 
@@ -1708,16 +1946,16 @@ func (p *Parser) parseFunctionParameters() ([]*ast.Identifier, map[string]ast.Ex
 			p.nextToken()
 			if p.peekTokenIs(token.RPAREN) {
 				p.nextToken()
-				return identifiers, defaults, variadic, kwargs, keywordOnlyStart
+				return identifiers, defaults, variadic, kwargs, keywordOnlyStart, posOnly
 			}
 			p.nextToken()
 			continue
 		}
 
 		if !p.expectPeek(token.RPAREN) {
-			return nil, nil, nil, nil, keywordOnlyStart
+			return nil, nil, nil, nil, keywordOnlyStart, posOnly
 		}
-		return identifiers, defaults, variadic, kwargs, keywordOnlyStart
+		return identifiers, defaults, variadic, kwargs, keywordOnlyStart, posOnly
 	}
 }
 
@@ -1733,6 +1971,21 @@ func (p *Parser) skipAnnotation() bool {
 	return p.parseExpression(LOWEST) != nil
 }
 
+// parseForTarget parses one for-loop target: a name, a nested group, or a
+// starred name (for a, *rest in ...) that collects the surplus into a list.
+func (p *Parser) parseForTarget() ast.Expression {
+	if p.curTokenIs(token.ASTERISK) {
+		tok := p.nodeLine()
+		p.nextToken()
+		inner := p.parseExpression(EQUALS)
+		if inner == nil {
+			return nil
+		}
+		return &ast.StarredElement{Token: tok, Value: inner}
+	}
+	return p.parseExpression(EQUALS)
+}
+
 func (p *Parser) parseForStatement() *ast.ForStatement {
 	stmt := &ast.ForStatement{Token: p.nodeLine()}
 
@@ -1740,12 +1993,21 @@ func (p *Parser) parseForStatement() *ast.ForStatement {
 
 	// Parse the variable list (can be single or multiple separated by commas)
 	stmt.Variables = make([]ast.Expression, 0, 2)
-	stmt.Variables = append(stmt.Variables, p.parseExpression(EQUALS))
+	stmt.Variables = append(stmt.Variables, p.parseForTarget())
 
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken() // consume comma
 		p.nextToken() // move to next expression
-		stmt.Variables = append(stmt.Variables, p.parseExpression(EQUALS))
+		stmt.Variables = append(stmt.Variables, p.parseForTarget())
+	}
+
+	// for a, *rest in ...: keep the flat-target loop path star-free by
+	// presenting the whole target list as one nested group.
+	for _, v := range stmt.Variables {
+		if _, starred := v.(*ast.StarredElement); starred {
+			stmt.Variables = []ast.Expression{&ast.TupleLiteral{Elements: stmt.Variables}}
+			break
+		}
 	}
 
 	if !p.expectPeek(token.IN) {
@@ -1782,7 +2044,13 @@ func (p *Parser) parseListLiteral() ast.Expression {
 	}
 
 	p.nextToken()
-	firstExpr := p.parseExpression(LOWEST)
+	var firstExpr ast.Expression
+	if p.curTokenIs(token.ASTERISK) {
+		p.nextToken()
+		firstExpr = &ast.StarredElement{Token: p.nodeLine(), Value: p.parseExpression(LOWEST)}
+	} else {
+		firstExpr = p.parseExpression(LOWEST)
+	}
 
 	// Check if this is a list comprehension
 	if p.peekTokenIs(token.FOR) {
@@ -1799,6 +2067,11 @@ func (p *Parser) parseListLiteral() ast.Expression {
 			break
 		}
 		p.nextToken()
+		if p.curTokenIs(token.ASTERISK) {
+			p.nextToken()
+			elements = append(elements, &ast.StarredElement{Token: p.nodeLine(), Value: p.parseExpression(LOWEST)})
+			continue
+		}
 		elements = append(elements, p.parseExpression(LOWEST))
 	}
 
@@ -1912,9 +2185,10 @@ func (p *Parser) parseLambda() ast.Expression {
 	lambda := &ast.Lambda{}
 
 	if !p.peekTokenIs(token.COLON) {
-		params, defaults, variadic, kwargs, keywordOnlyStart := p.parseLambdaParameters()
+		params, defaults, variadic, kwargs, keywordOnlyStart, posOnly := p.parseLambdaParameters()
 		lambda.Parameters = params
 		lambda.SetFuncOverflow(defaults, variadic, kwargs, keywordOnlyStart)
+		lambda.SetPositionalOnly(posOnly)
 	}
 
 	if !p.expectPeek(token.COLON) {
@@ -1931,17 +2205,19 @@ func (p *Parser) parseLambda() ast.Expression {
 	return lambda
 }
 
-func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier, *ast.Identifier, int) {
+func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expression, *ast.Identifier, *ast.Identifier, int, int) {
 	var identifiers []*ast.Identifier
 	var defaults map[string]ast.Expression
 	var variadic *ast.Identifier
 	var kwargs *ast.Identifier
 	keywordOnlyStart := -1
+	posOnly := 0
+	slashSeen := false
 
 	p.nextToken()
 
 	if p.curTokenIs(token.COLON) {
-		return identifiers, defaults, nil, nil, keywordOnlyStart
+		return identifiers, defaults, nil, nil, keywordOnlyStart, posOnly
 	}
 
 	for {
@@ -1957,18 +2233,29 @@ func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expr
 				// Bare * marks following parameters as keyword-only.
 			} else {
 				if !p.expectPeek(token.IDENT) {
-					return nil, nil, nil, nil, keywordOnlyStart
+					return nil, nil, nil, nil, keywordOnlyStart, posOnly
 				}
 			}
 		} else if p.curTokenIs(token.POW) {
 			if !p.expectPeek(token.IDENT) {
-				return nil, nil, nil, nil, keywordOnlyStart
+				return nil, nil, nil, nil, keywordOnlyStart, posOnly
 			}
 			kwargs = p.ident(p.curToken.Literal)
 			if p.peekTokenIs(token.COMMA) {
 				p.nextToken()
 			}
-			return identifiers, defaults, variadic, kwargs, keywordOnlyStart
+			return identifiers, defaults, variadic, kwargs, keywordOnlyStart, posOnly
+		} else if p.curTokenIs(token.SLASH) {
+			if slashSeen {
+				p.errors = append(p.errors, fmt.Sprintf("line %d: '/' may appear at most once in a parameter list", p.curToken.Line))
+				return nil, nil, nil, nil, keywordOnlyStart, posOnly
+			}
+			if keywordOnlyStart != -1 {
+				p.errors = append(p.errors, fmt.Sprintf("line %d: '/' must precede '*' in a parameter list", p.curToken.Line))
+				return nil, nil, nil, nil, keywordOnlyStart, posOnly
+			}
+			slashSeen = true
+			posOnly = len(identifiers)
 		} else {
 			ident := p.ident(p.curToken.Literal)
 			identifiers = append(identifiers, ident)
@@ -1986,14 +2273,14 @@ func (p *Parser) parseLambdaParameters() ([]*ast.Identifier, map[string]ast.Expr
 
 		if p.peekTokenIs(token.COMMA) {
 			p.nextToken()
-			if p.peekTokenIs(token.COLON) {
-				return identifiers, defaults, variadic, kwargs, keywordOnlyStart
+			if p.curTokenIs(token.COLON) {
+				return identifiers, defaults, variadic, kwargs, keywordOnlyStart, posOnly
 			}
 			p.nextToken()
 			continue
 		}
 
-		return identifiers, defaults, variadic, kwargs, keywordOnlyStart
+		return identifiers, defaults, variadic, kwargs, keywordOnlyStart, posOnly
 	}
 }
 
@@ -2025,7 +2312,34 @@ func (p *Parser) parseDictLiteral() ast.Expression {
 			return dict
 		}
 
-		first := p.parseExpression(LOWEST)
+		// {**mapping, ...} unpacks another mapping's pairs in place.
+		if p.curTokenIs(token.POW) {
+			p.nextToken()
+			dict.Pairs = append(dict.Pairs, ast.DictPairLiteral{
+				Key:   nil, // nil key: unpack Value's pairs
+				Value: p.parseExpression(LOWEST),
+			})
+			p.skipWhitespace()
+			if !p.peekTokenIs(token.COMMA) {
+				break
+			}
+			p.nextToken()
+			p.skipWhitespace()
+			if p.peekTokenIs(token.RBRACE) {
+				break
+			}
+			p.nextToken()
+			continue
+		}
+
+		var first ast.Expression
+		if p.curTokenIs(token.ASTERISK) {
+			// {*iterable, ...}: a set literal with unpacking.
+			p.nextToken()
+			first = &ast.StarredElement{Token: p.nodeLine(), Value: p.parseExpression(LOWEST)}
+		} else {
+			first = p.parseExpression(LOWEST)
+		}
 
 		// Peek past whitespace to determine dict vs set
 		p.skipWhitespace()
@@ -2165,6 +2479,11 @@ func (p *Parser) parseSetLiteralFrom(_ ast.LineInfo, first ast.Expression) ast.E
 		for p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.INDENT) || p.curTokenIs(token.DEDENT) {
 			p.nextToken()
 		}
+		if p.curTokenIs(token.ASTERISK) {
+			p.nextToken()
+			set.Elements = append(set.Elements, &ast.StarredElement{Token: p.nodeLine(), Value: p.parseExpression(LOWEST)})
+			continue
+		}
 		set.Elements = append(set.Elements, p.parseExpression(LOWEST))
 	}
 
@@ -2239,6 +2558,15 @@ func (p *Parser) parseRaiseStatement() *ast.RaiseStatement {
 	if !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.SEMICOLON) && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.DEDENT) {
 		p.nextToken()
 		stmt.Message = p.parseExpression(LOWEST)
+		// `raise X from cause`: the cause is parsed (and evaluated for its
+		// effects); exception chaining itself is not modelled yet.
+		if p.peekTokenIs(token.FROM) {
+			p.nextToken() // consume from
+			if !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.DEDENT) {
+				p.nextToken()
+				stmt.Cause = p.parseExpression(LOWEST)
+			}
+		}
 	}
 
 	return stmt
@@ -2375,9 +2703,11 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 				Receiver: left,
 				Method:   methodName,
 			}
-			args, keywords, argsUnpack, kwargsUnpack := p.parseCallArguments()
+			var unpackAt []int
+			args, keywords, argsUnpack, kwargsUnpack := p.parseCallArguments(&unpackAt)
 			methodCall.Arguments = args
 			methodCall.SetOverflow(keywords, argsUnpack, kwargsUnpack)
+			methodCall.SetArgsUnpackAt(unpackAt, len(args))
 			return methodCall
 		}
 

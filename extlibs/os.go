@@ -128,6 +128,15 @@ Returns the value of the environment variable key if it exists, None if not set 
 			},
 			HelpText: `getcwd() - Get current working directory`,
 		},
+		"getpid": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 0); err != nil {
+					return err
+				}
+				return object.NewInteger(int64(os.Getpid()))
+			},
+			HelpText: `getpid() - Get the current process id`,
+		},
 		"listdir": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if err := errors.MaxArgs(args, 1); err != nil {
@@ -153,7 +162,7 @@ Returns the value of the environment variable key if it exists, None if not set 
 					entries, readErr = os.ReadDir(path)
 				})
 				if readErr != nil {
-					return errors.NewError("cannot read directory: %s", readErr.Error())
+					return pathErrorException("cannot read directory", readErr)
 				}
 
 				elements := make([]object.Object, len(entries))
@@ -226,7 +235,7 @@ matching read_file(); the Python-canonical API is pathlib.Path.read_bytes().`,
 				var openErr error
 				object.RunBlocking(ctx, func() { f, openErr = os.Open(path) })
 				if openErr != nil {
-					return errors.NewError("cannot open file: %s", openErr.Error())
+					return pathErrorException("cannot open file", openErr)
 				}
 
 				scanner := bufio.NewScanner(f)
@@ -406,6 +415,19 @@ Creates a directory and all parent directories as needed.`,
 				}
 				if errObj := checkPathSecurity(o.config, dst); errObj != nil {
 					return errObj
+				}
+				// Defense in depth: a link whose (existing) target resolves
+				// outside the allowed set is denied at creation too, even
+				// though reads through it would already be caught by
+				// symlink resolution. Dangling targets cannot be resolved
+				// and are allowed.
+				if o.config.AllowedPaths != nil {
+					absSrc, err := filepath.Abs(src)
+					if err == nil {
+						if resolved := fssecurity.ResolveExistingPrefix(filepath.Clean(absSrc)); resolved != "" && !o.config.IsPathAllowed(resolved) {
+							return errors.NewPermissionError("access denied: symlink target '%s' is outside allowed directories", src)
+						}
+					}
 				}
 				absDst, _ := filepath.Abs(dst)
 				if err := os.Symlink(src, absDst); err != nil {
@@ -601,11 +623,14 @@ the link itself is checked, not the target it points to.`,
 				if err != nil {
 					return err
 				}
-				return object.NewString(filepath.Base(path))
+				// Python's posixpath.basename: everything after the last
+				// slash, so a trailing slash yields "" (filepath.Base
+				// returns the last component instead).
+				return object.NewString(path[strings.LastIndex(path, "/")+1:])
 			},
 			HelpText: `basename(path) - Get the base name of a path
 
-Returns the final component of a pathname.`,
+Returns the final component of a pathname. A trailing slash yields "".`,
 		},
 		"dirname": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -616,7 +641,14 @@ Returns the final component of a pathname.`,
 				if err != nil {
 					return err
 				}
-				return object.NewString(filepath.Dir(path))
+				// Python's posixpath.dirname: everything up to and including
+				// the last slash, with trailing slashes stripped unless the
+				// whole head is slashes; no slash at all yields "".
+				head := path[:strings.LastIndex(path, "/")+1]
+				if head != "" && head != strings.Repeat("/", len(head)) {
+					head = strings.TrimRight(head, "/")
+				}
+				return object.NewString(head)
 			},
 			HelpText: `dirname(path) - Get the directory name of a path
 
@@ -643,6 +675,34 @@ Returns the directory component of a pathname.`,
 			},
 			HelpText: `split(path) - Split path into (directory, filename) tuple`,
 		},
+		"commonprefix": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				list, errObj := args[0].AsList()
+				if errObj != nil {
+					return errObj
+				}
+				if len(list) == 0 {
+					return object.NewString("")
+				}
+				prefix := list[0].Inspect()
+				for _, item := range list[1:] {
+					s := item.Inspect()
+					for !strings.HasPrefix(s, prefix) {
+						prefix = prefix[:len(prefix)-1]
+						if prefix == "" {
+							return object.NewString("")
+						}
+					}
+				}
+				return object.NewString(prefix)
+			},
+			HelpText: `commonprefix(list) - Longest common leading path component
+
+Returns the longest prefix common to all paths in the list, character-wise as in Python.`,
+		},
 		"splitext": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if err := errors.ExactArgs(args, 1); err != nil {
@@ -652,8 +712,23 @@ Returns the directory component of a pathname.`,
 				if err != nil {
 					return err
 				}
-				ext := filepath.Ext(path)
-				root := path[:len(path)-len(ext)]
+				// Python's posixpath.splitext: the extension starts at the
+				// last dot of the final component, but only when the stem
+				// has a non-dot character — ".bashrc" is all extension,
+				// "a/.hidden" has none.
+				sepIndex := strings.LastIndex(path, "/")
+				dotIndex := strings.LastIndex(path, ".")
+				root, ext := path, ""
+				if dotIndex > sepIndex {
+					i := sepIndex + 1
+					for i < dotIndex {
+						if path[i] != '.' {
+							root, ext = path[:dotIndex], path[dotIndex:]
+							break
+						}
+						i++
+					}
+				}
 				return &object.Tuple{Elements: []object.Object{
 					object.NewString(root),
 					object.NewString(ext),

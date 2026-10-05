@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +47,19 @@ func DictKey(obj Object) string {
 		return "b:" + hex.EncodeToString(o.value)
 	case *Null:
 		return "null:"
+	case *Set:
+		// Frozen sets hash by content so equal frozensets land on the same
+		// dict/set key, as in Python. Mutable sets keep the identity key of
+		// the default case (they are unhashable at the language level).
+		if o.Frozen {
+			keys := make([]string, 0, len(o.Elements))
+			for k := range o.Elements {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			return "fs:{" + strings.Join(keys, ",") + "}"
+		}
+		return fmt.Sprintf("%s:%p", obj.Type(), obj)
 	case *Tuple:
 		// Tuples are hashable in Python if all elements are hashable
 		var b strings.Builder
@@ -99,6 +113,10 @@ func IsHashable(obj Object) bool {
 		// Exceptions hash by identity (like a default Python object). Dict keys
 		// already accept them via evalHashKey; sets must agree.
 		return true
+	case *Sentinel:
+		// Sentinels hash by identity (PEP 661): a sentinel's whole purpose is
+		// uniqueness, so identity keys are exactly right.
+		return true
 	case *Tuple:
 		for _, e := range o.Elements {
 			if !IsHashable(e) {
@@ -106,6 +124,10 @@ func IsHashable(obj Object) bool {
 			}
 		}
 		return true
+	case *Set:
+		// Frozen sets are immutable, so their content hash is stable (Python
+		// frozenset); mutable sets are unhashable.
+		return o.Frozen
 	case *Instance:
 		_, ok := o.Class.Methods["__hash__"]
 		return ok
@@ -164,10 +186,12 @@ const (
 	ExceptionTypeStopIteration     = "StopIteration"
 	ExceptionTypeRuntimeError      = "RuntimeError"
 	ExceptionTypeZeroDivisionError = "ZeroDivisionError"
+	ExceptionTypeOverflowError     = "OverflowError"
 	ExceptionTypeIndexError        = "IndexError"
 	ExceptionTypeKeyError          = "KeyError"
 	ExceptionTypeAttributeError    = "AttributeError"
 	ExceptionTypeOSError           = "OSError"
+	ExceptionTypeAssertionError    = "AssertionError"
 	ExceptionTypeGeneric           = "" // Default for legacy compatibility
 )
 
@@ -266,6 +290,7 @@ const (
 	CLASSMETHOD_OBJ
 	FLOAT_ARRAY_OBJ
 	BYTES_OBJ
+	SENTINEL_OBJ
 )
 
 // String returns the string representation of the ObjectType
@@ -331,6 +356,8 @@ func (ot ObjectType) String() string {
 		return "FLOAT_ARRAY"
 	case BYTES_OBJ:
 		return "BYTES"
+	case SENTINEL_OBJ:
+		return "SENTINEL"
 	default:
 		return "UNKNOWN"
 	}
@@ -640,6 +667,40 @@ func (n *Null) CoerceString() (string, Object) { return n.Inspect(), nil }
 func (n *Null) CoerceInt() (int64, Object)     { return 0, nil }
 func (n *Null) CoerceFloat() (float64, Object) { return 0, nil }
 
+// Sentinel is a unique do-nothing value created by the sentinel() builtin
+// (PEP 661). Each call returns a distinct object that is equal only to
+// itself, so `value is MISSING` is the intended check. repr defaults to the
+// name, which is the point of the feature: a readable marker in logs and the
+// REPL instead of an opaque object address.
+type Sentinel struct {
+	Name string
+	// Repr overrides Inspect when non-empty; empty means "use Name".
+	Repr string
+}
+
+func NewSentinel(name, repr string) *Sentinel {
+	return &Sentinel{Name: name, Repr: repr}
+}
+
+func (s *Sentinel) Type() ObjectType { return SENTINEL_OBJ }
+func (s *Sentinel) Inspect() string {
+	if s.Repr != "" {
+		return s.Repr
+	}
+	return s.Name
+}
+
+func (s *Sentinel) AsString() (string, Object)          { return "", errMustBeString }
+func (s *Sentinel) AsInt() (int64, Object)              { return 0, errMustBeInteger }
+func (s *Sentinel) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
+func (s *Sentinel) AsBool() (bool, Object)              { return true, nil }
+func (s *Sentinel) AsList() ([]Object, Object)          { return nil, errMustBeList }
+func (s *Sentinel) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
+
+func (s *Sentinel) CoerceString() (string, Object) { return s.Inspect(), nil }
+func (s *Sentinel) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
+func (s *Sentinel) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
+
 type ReturnValue struct {
 	Value Object
 	// root points at the environment tree this frame was acquired from, so
@@ -709,6 +770,9 @@ type Function struct {
 	Variadic         *ast.Identifier // *args parameter
 	Kwargs           *ast.Identifier // **kwargs parameter
 	KeywordOnlyStart int             // 1-based index where keyword-only params start; 0 means none
+	// PositionalOnly is the number of leading parameters that cannot be
+	// passed by keyword (before a '/' marker); 0 means no marker.
+	PositionalOnly   int
 	Body             *ast.BlockStatement
 	Env              *Environment
 	LocalSlots       map[string]int
@@ -720,6 +784,12 @@ type Function struct {
 	// built once at definition time so calls that fill in a default do not
 	// walk the AST.
 	CompiledDefaults map[string]EvalFn
+	// ResolvedDefaults holds the VALUE of each default, evaluated once at
+	// definition time in the defining scope, as Python does. Index i aligns
+	// with Parameters[i]; a nil slot means the parameter has no default. A
+	// slice rather than a map: one allocation per definition, and the call
+	// path already walks parameters by index.
+	ResolvedDefaults []Object
 	// CompiledBody memoises the body closure, which is compiled on the first
 	// call and cached on Body, the AST node. The evaluator fills it in only
 	// when CompilerOwned is set.
@@ -729,6 +799,11 @@ type Function struct {
 	// the evaluator may memoise into CompiledBody. Objects assembled elsewhere
 	// may be shared between trees and are never written after construction.
 	CompilerOwned bool
+	// GeneratorPlan is the evaluator's compiled resumable plan for a
+	// generator function (body contains yield; opaque here, a
+	// *evaluator.genPlan). Non-nil marks a generator: calling one
+	// constructs a generator instead of running the body.
+	GeneratorPlan any
 }
 
 func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
@@ -751,6 +826,9 @@ type LambdaFunction struct {
 	Variadic         *ast.Identifier // *args parameter
 	Kwargs           *ast.Identifier // **kwargs parameter
 	KeywordOnlyStart int             // 1-based index where keyword-only params start; 0 means none
+	// PositionalOnly is the number of leading parameters that cannot be
+	// passed by keyword (before a '/' marker); 0 means no marker.
+	PositionalOnly   int
 	Body             ast.Expression
 	Env              *Environment
 	LocalSlots       map[string]int
@@ -765,6 +843,10 @@ type LambdaFunction struct {
 	// built once at definition time so calls that fill in a default do not
 	// walk the AST.
 	CompiledDefaults map[string]EvalFn
+	// ResolvedDefaults holds the VALUE of each default, evaluated once at
+	// definition time in the defining scope, as Python does. Index i aligns
+	// with Parameters[i]; a nil slot means the parameter has no default.
+	ResolvedDefaults []Object
 }
 
 func (lf *LambdaFunction) Type() ObjectType { return LAMBDA_OBJ }
@@ -1938,6 +2020,7 @@ func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
 			ParamSlotIndexes: v.ParamSlotIndexes,
 			ReuseCallEnv:     v.ReuseCallEnv,
 			CompiledDefaults: v.CompiledDefaults,
+			ResolvedDefaults: v.ResolvedDefaults,
 			// CompiledBody is not copied: the source function may be running
 			// on another goroutine that memoises it on first call, and this
 			// can run without the GIL. The copy re-derives it from the
@@ -1959,6 +2042,7 @@ func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
 			ParamSlotIndexes: v.ParamSlotIndexes,
 			CompiledBody:     v.CompiledBody,
 			CompiledDefaults: v.CompiledDefaults,
+			ResolvedDefaults: v.ResolvedDefaults,
 		}
 	}
 	for name, v := range s.dicts {
@@ -1987,14 +2071,17 @@ func deepCopyDict(d *Dict) *Dict {
 	if d == nil {
 		return nil
 	}
-	pairs := make(map[string]DictPair, len(d.Pairs))
-	for k, v := range d.Pairs {
+	out := NewDictSized(len(d.Pairs))
+	out.SetFactory(d.Factory())
+	for _, k := range d.OrderedKeys() {
+		v := d.Pairs[k]
 		if nested, ok := v.Value.(*Dict); ok {
 			v.Value = deepCopyDict(nested)
 		}
-		pairs[k] = v
+		out.Store(k, v.Key, v.Value)
 	}
-	return &Dict{Pairs: pairs, Module: d.Module}
+	out.Module = d.Module
+	return out
 }
 
 // ResetStore removes all keys from the environment store except those in keep.
@@ -2133,6 +2220,20 @@ func (t *Tuple) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 type Dict struct {
 	Pairs map[string]DictPair
+	// order lists canonical keys in insertion order, as Python dicts do. Each
+	// entry carries the sequence number of the pair it was made for, so Delete
+	// can be O(1): it only drops the Pairs entry, and a stale order entry
+	// (key gone, or re-inserted under a newer sequence) is skipped on read and
+	// swept by compact(). Pairs written directly (Go code that bypasses Store)
+	// have sequence 0 and no order entry; ordered reads place them first, in
+	// sorted order, so the result is deterministic.
+	order   []orderEntry
+	head    int // order[:head] is dead; deleting the oldest key just advances it
+	nextSeq uint64
+	stale   int // stale entries inside order[head:] (deleted pairs not at either end)
+	// extra holds the rarely used attachments (default factory, owning
+	// instance) behind one pointer, so an ordinary dict pays 8 bytes for them.
+	extra *dictExtra
 	// Module is the import name when this dict is a library module
 	// ("math", "scriptling.runtime.kv"), empty for an ordinary dict.
 	// Modules display as <module 'math'> and expose only their members.
@@ -2142,6 +2243,14 @@ type Dict struct {
 type DictPair struct {
 	Key   Object
 	Value Object
+	seq   uint64 // insertion sequence; 0 = written outside Store (order unknown)
+}
+
+// orderEntry records one insertion: the canonical key and the sequence number
+// its pair was stored under.
+type orderEntry struct {
+	key string
+	seq uint64
 }
 
 // StringKey returns the string representation of the key.
@@ -2156,12 +2265,397 @@ func (p DictPair) StringKey() string {
 
 // NewStringDict creates a Dict from string key-value pairs.
 // Usage: NewStringDict(map[string]Object{"key": value, ...})
+// A Go map has no order, so entries are inserted in sorted key order, which
+// makes the resulting dict deterministic.
 func NewStringDict(entries map[string]Object) *Dict {
-	pairs := make(map[string]DictPair, len(entries))
-	for k, v := range entries {
-		pairs[DictKey(&String{value: k})] = DictPair{Key: &String{value: k}, Value: v}
+	d := NewDictSized(len(entries))
+	keys := make([]string, 0, len(entries))
+	for k := range entries {
+		keys = append(keys, k)
 	}
-	return &Dict{Pairs: pairs}
+	sort.Strings(keys)
+	for _, k := range keys {
+		d.Store(DictKey(&String{value: k}), &String{value: k}, entries[k])
+	}
+	return d
+}
+
+// dictExtra carries optional dict behaviour; nil for an ordinary dict.
+type dictExtra struct {
+	// factory makes the dict a defaultdict: reading a missing key calls it
+	// (no arguments), stores the result and returns it. A *Null factory
+	// (defaultdict(None)) behaves like a plain dict.
+	factory Object
+	// owner links an instance's __dict__ / vars() view to the instance:
+	// writes to the dict write through to the instance's fields.
+	owner *Instance
+}
+
+// Factory returns the defaultdict factory, or nil for an ordinary dict.
+func (d *Dict) Factory() Object {
+	if d.extra == nil {
+		return nil
+	}
+	return d.extra.factory
+}
+
+// SetFactory makes the dict a defaultdict with the given factory (nil clears it).
+func (d *Dict) SetFactory(f Object) {
+	if f == nil && d.extra == nil {
+		return
+	}
+	if d.extra == nil {
+		d.extra = &dictExtra{}
+	}
+	d.extra.factory = f
+}
+
+// LinkOwner makes writes to this dict write through to inst's fields, as
+// obj.__dict__ does in Python. Copies of the dict are not linked.
+func (d *Dict) LinkOwner(inst *Instance) {
+	if d.extra == nil {
+		d.extra = &dictExtra{}
+	}
+	d.extra.owner = inst
+}
+
+// DefaultDictType is the collections.defaultdict constructor, registered by
+// the stdlib so isinstance(d, defaultdict) can recognise it. FactoryRepr
+// renders a default factory the way Python does (<class 'list'>); the
+// evaluator installs it. Both are nil until then.
+var (
+	DefaultDictType *Builtin
+	FactoryRepr     func(factory Object) string
+)
+
+// IsDefaultDict reports whether the dict was created by defaultdict().
+func (d *Dict) IsDefaultDict() bool { return d.Factory() != nil }
+
+// NewDict returns an empty, insertion-ordered dict.
+func NewDict() *Dict {
+	return &Dict{Pairs: make(map[string]DictPair)}
+}
+
+// NewDictSized returns an empty, insertion-ordered dict with room for n pairs.
+func NewDictSized(n int) *Dict {
+	return &Dict{Pairs: make(map[string]DictPair, n), order: make([]orderEntry, 0, n)}
+}
+
+// Store inserts or updates key → value, extending the insertion order for
+// new keys (Python dict semantics: an existing key keeps its position and its
+// original key object). canonical must be the dict's hash key for key, as
+// used in Pairs (DictKey, or evalHashKeyChecked's result).
+func (d *Dict) Store(canonical string, key Object, value Object) {
+	if d.Pairs == nil {
+		d.Pairs = make(map[string]DictPair)
+	}
+	if old, exists := d.Pairs[canonical]; exists {
+		d.Pairs[canonical] = DictPair{Key: old.Key, Value: value, seq: old.seq}
+		d.writeThrough(old.Key, value)
+		return
+	}
+	d.nextSeq++
+	d.Pairs[canonical] = DictPair{Key: key, Value: value, seq: d.nextSeq}
+	d.order = append(d.order, orderEntry{key: canonical, seq: d.nextSeq})
+	d.writeThrough(key, value)
+}
+
+// writeThrough applies a Store to the owning instance (an obj.__dict__ view).
+// Only string keys name attributes; others stay in the view alone.
+func (d *Dict) writeThrough(key, value Object) {
+	if d.extra == nil || d.extra.owner == nil {
+		return
+	}
+	if name, ok := key.(*String); ok {
+		d.extra.owner.SetField(name.value, value)
+		d.extra.owner.InvalidateBoundMethod(name.value)
+	}
+}
+
+// StoreFrom copies every pair from other into d, preserving other's
+// insertion order; later stores override earlier keys as in Python.
+func (d *Dict) StoreFrom(other *Dict) {
+	for _, k := range other.OrderedKeys() {
+		pair := other.Pairs[k]
+		d.Store(k, pair.Key, pair.Value)
+	}
+}
+
+// live reports whether an order entry still refers to a live pair.
+func (d *Dict) live(e orderEntry) (DictPair, bool) {
+	p, ok := d.Pairs[e.key]
+	return p, ok && p.seq == e.seq
+}
+
+// Delete removes a key. O(1) amortized: the order entry is left in place and
+// skipped as stale (a delete at the tail, as popitem does, trims it at once),
+// and compact() sweeps stale entries once they outnumber live ones. Deleting
+// an absent key is a no-op.
+func (d *Dict) Delete(canonical string) {
+	pair, ok := d.Pairs[canonical]
+	if !ok {
+		return
+	}
+	delete(d.Pairs, canonical)
+	if d.extra != nil && d.extra.owner != nil {
+		if name, ok := pair.Key.(*String); ok {
+			d.extra.owner.DeleteField(name.value)
+			d.extra.owner.InvalidateBoundMethod(name.value)
+		}
+	}
+	if pair.seq == 0 {
+		return // never had an order entry
+	}
+	live := d.order[d.head:]
+	if n := len(live); n > 0 && live[n-1].seq == pair.seq {
+		// Newest key (popitem, LIFO): drop it, then any stale entries it hid.
+		d.order = d.order[:len(d.order)-1]
+		for len(d.order) > d.head {
+			if _, ok := d.live(d.order[len(d.order)-1]); ok {
+				break
+			}
+			d.order = d.order[:len(d.order)-1]
+			if d.stale > 0 {
+				d.stale--
+			}
+		}
+		return
+	}
+	if len(live) > 0 && live[0].seq == pair.seq {
+		// Oldest key (FIFO / LRU eviction): advance past it and any stale
+		// entries behind it.
+		d.head++
+		for d.head < len(d.order) {
+			if _, ok := d.live(d.order[d.head]); ok {
+				break
+			}
+			d.order[d.head] = orderEntry{}
+			d.head++
+			if d.stale > 0 {
+				d.stale--
+			}
+		}
+		d.order[d.head-1] = orderEntry{} // release the key string
+		if d.head == len(d.order) {
+			d.order, d.head, d.stale = d.order[:0], 0, 0 // emptied: reuse the slice
+			return
+		}
+		if d.head > 32 && d.head > len(d.order)/2 {
+			d.compact()
+		}
+		return
+	}
+	d.stale++
+	if d.stale > 32 && d.stale > len(d.Pairs) {
+		d.compact()
+	}
+}
+
+// compact rebuilds order from its live entries, dropping the dead prefix and
+// every stale entry.
+func (d *Dict) compact() {
+	kept := make([]orderEntry, 0, len(d.Pairs)+len(d.Pairs)/4+1)
+	for _, e := range d.order[d.head:] {
+		if _, live := d.live(e); live {
+			kept = append(kept, e)
+		}
+	}
+	d.order = kept
+	d.head = 0
+	d.stale = 0
+}
+
+// Clear removes every entry and the recorded insertion order. Use it instead
+// of replacing Pairs, which would leave stale order entries behind.
+func (d *Dict) Clear() {
+	if d.extra != nil && d.extra.owner != nil {
+		for _, pair := range d.Pairs {
+			if name, ok := pair.Key.(*String); ok {
+				d.extra.owner.DeleteField(name.value)
+				d.extra.owner.InvalidateBoundMethod(name.value)
+			}
+		}
+	}
+	d.Pairs = make(map[string]DictPair)
+	d.order = nil
+	d.head = 0
+	d.stale = 0
+}
+
+// ResetOrder forgets the recorded insertion order: every pair becomes
+// order-unknown (sequence 0), so ordered reads fall back to sorted keys.
+func (d *Dict) ResetOrder() {
+	for k, p := range d.Pairs {
+		p.seq = 0
+		d.Pairs[k] = p
+	}
+	d.order = nil
+	d.head = 0
+	d.stale = 0
+}
+
+// walk visits the pairs in insertion order, calling visit with each canonical
+// key and pair. Pairs whose order is unknown (written without Store) come
+// first in sorted key order. No pair is ever lost or repeated.
+func (d *Dict) walk(visit func(canonical string, p DictPair)) {
+	visited := 0
+	var unknown []string
+	if len(d.order)-d.head != len(d.Pairs) || d.stale > 0 {
+		for k, p := range d.Pairs {
+			if p.seq == 0 {
+				unknown = append(unknown, k)
+			}
+		}
+		sort.Strings(unknown)
+		for _, k := range unknown {
+			visit(k, d.Pairs[k])
+			visited++
+		}
+	}
+	for _, e := range d.order[d.head:] {
+		if p, live := d.live(e); live {
+			visit(e.key, p)
+			visited++
+		}
+	}
+	if visited < len(d.Pairs) {
+		// Defensive: pairs whose sequence has no order entry (e.g. order was
+		// dropped under them). Emit them rather than lose them.
+		seen := make(map[string]struct{}, visited)
+		d.walkSeen(seen)
+		var rest []string
+		for k := range d.Pairs {
+			if _, ok := seen[k]; !ok {
+				rest = append(rest, k)
+			}
+		}
+		sort.Strings(rest)
+		for _, k := range rest {
+			visit(k, d.Pairs[k])
+		}
+	}
+}
+
+func (d *Dict) walkSeen(seen map[string]struct{}) {
+	for k, p := range d.Pairs {
+		if p.seq == 0 {
+			seen[k] = struct{}{}
+		}
+	}
+	for _, e := range d.order[d.head:] {
+		if _, live := d.live(e); live {
+			seen[e.key] = struct{}{}
+		}
+	}
+}
+
+// OrderedKeys returns canonical keys in insertion order (pairs of unknown
+// order first, sorted). Mutating the dict while iterating the result is safe:
+// it is a snapshot.
+func (d *Dict) OrderedKeys() []string {
+	keys := make([]string, 0, len(d.Pairs))
+	d.walk(func(k string, _ DictPair) { keys = append(keys, k) })
+	return keys
+}
+
+// OrderedPairs returns the pairs in insertion order. Only order-visible reads
+// (iteration, repr, views, serialization) need this; lookups and equality stay
+// on Pairs directly.
+func (d *Dict) OrderedPairs() []DictPair {
+	pairs := make([]DictPair, 0, len(d.Pairs))
+	d.walk(func(_ string, p DictPair) { pairs = append(pairs, p) })
+	return pairs
+}
+
+// MoveToEnd repositions an existing key at the end (last) or the front of the
+// insertion order, as OrderedDict.move_to_end does, and reports whether the
+// key exists. O(1) amortized: the old order entry goes stale and the key gets
+// a fresh sequence number at its new position.
+func (d *Dict) MoveToEnd(canonical string, last bool) bool {
+	pair, ok := d.Pairs[canonical]
+	if !ok {
+		return false
+	}
+	live := d.order[d.head:]
+	if pair.seq != 0 && len(live) > 0 {
+		if last && live[len(live)-1].seq == pair.seq {
+			return true // already last
+		}
+		if !last && live[0].seq == pair.seq {
+			return true // already first
+		}
+	}
+	if pair.seq != 0 {
+		d.stale++ // its old entry no longer matches
+	}
+	d.nextSeq++
+	pair.seq = d.nextSeq
+	d.Pairs[canonical] = pair
+	entry := orderEntry{key: canonical, seq: pair.seq}
+	if last {
+		d.order = append(d.order, entry)
+	} else {
+		if d.head == 0 {
+			// Open a gap in front so repeated moves-to-front stay O(1) amortized.
+			gap := len(d.order)/2 + 8
+			grown := make([]orderEntry, gap+len(d.order), gap+len(d.order)+len(d.order)/2)
+			copy(grown[gap:], d.order)
+			d.order, d.head = grown, gap
+		}
+		d.head--
+		d.order[d.head] = entry
+	}
+	if d.stale > 32 && d.stale > len(d.Pairs) {
+		d.compact()
+	}
+	return true
+}
+
+// FirstInserted returns the oldest pair that is still live, with its
+// canonical key — what popitem(last=False) removes. Pairs of unknown order
+// are older than every ordered pair, so the result matches OrderedKeys.
+func (d *Dict) FirstInserted() (string, DictPair, bool) {
+	if len(d.order)-d.head != len(d.Pairs) || d.stale > 0 {
+		var first string
+		found := false
+		for k, p := range d.Pairs {
+			if p.seq == 0 && (!found || k < first) {
+				first, found = k, true
+			}
+		}
+		if found {
+			return first, d.Pairs[first], true
+		}
+	}
+	for _, e := range d.order[d.head:] {
+		if p, live := d.live(e); live {
+			return e.key, p, true
+		}
+	}
+	return "", DictPair{}, false
+}
+
+// LastInserted returns the most recently inserted pair that is still live,
+// with its canonical key — the pair Python's popitem() removes. Pairs of
+// unknown order are treated as older than every ordered pair, so the result
+// is consistent with OrderedKeys.
+func (d *Dict) LastInserted() (string, DictPair, bool) {
+	for i := len(d.order) - 1; i >= d.head; i-- {
+		if p, live := d.live(d.order[i]); live {
+			return d.order[i].key, p, true
+		}
+	}
+	var last string
+	found := false
+	for k, p := range d.Pairs {
+		if p.seq == 0 && (!found || k > last) {
+			last, found = k, true
+		}
+	}
+	if !found {
+		return "", DictPair{}, false
+	}
+	return last, d.Pairs[last], true
 }
 
 func (d *Dict) Type() ObjectType { return DICT_OBJ }
@@ -2192,7 +2686,8 @@ func (d *Dict) GetByString(name string) (DictPair, bool) {
 
 // SetByString sets a pair using a string key (convenience for attribute-style access).
 func (d *Dict) SetByString(name string, value Object) {
-	d.Pairs[DictStringKey(name)] = DictPair{Key: &String{value: name}, Value: value}
+	k := DictStringKey(name)
+	d.Store(k, &String{value: name}, value)
 }
 
 // HasByString checks if a string key exists in the dict.
@@ -2206,7 +2701,7 @@ func (d *Dict) DeleteByString(name string) bool {
 	k := DictStringKey(name)
 	_, ok := d.Pairs[k]
 	if ok {
-		delete(d.Pairs, k)
+		d.Delete(k)
 	}
 	return ok
 }
@@ -2259,6 +2754,18 @@ type Exception struct {
 	Message       string
 	ExceptionType string // Exception type for identification (e.g., "SystemExit", "ValueError", etc.)
 	Code          int    // Exit code for SystemExit; ignored for other exception types
+	// Args holds the constructor arguments for exceptions built from user
+	// exception classes, so `e.args` matches Python.
+	Args []Object
+	// TypeChain names the user exception class hierarchy a custom exception
+	// was raised through (["MyError", "ValueError"] for
+	// class MyError(ValueError)), so except clauses and isinstance match
+	// base classes of user exception classes.
+	TypeChain []string
+	// OriginInstance keeps the user exception class instance a raise
+	// converted from, so custom attributes and methods (e.code) remain
+	// reachable on the caught exception.
+	OriginInstance *Instance
 	// Raised distinguishes an exception that is actively propagating (produced
 	// by a `raise` or by an operation that failed) from one that is merely a
 	// value (constructed via `ValueError("x")`, bound by `except ... as e`, or
@@ -2309,8 +2816,25 @@ type Class struct {
 	BaseClass *Class // optional parent class for inheritance
 	Methods   map[string]Object
 	Env       *Environment
-	cacheMu   sync.RWMutex
-	cache     map[string]classLookupCacheEntry
+	// ExceptionBase names the built-in exception type this class derives
+	// from ("ValueError" for class MyError(ValueError)); "" means the class
+	// is not an exception. Set when the base is an exception constructor;
+	// inherited through BaseClass chains of user exception classes.
+	ExceptionBase string
+	// IsEnum marks classes deriving from enum.Enum: construction looks up
+	// members by value and iteration yields the members, in EnumMembers
+	// order. IntEnum additionally compares equal to plain values.
+	IsEnum      bool
+	IsIntEnum   bool
+	EnumMembers []Object
+	// FieldNames lists the class body's annotated names in source order
+	// (@dataclass fields); AssignNames the plain top-level assignment
+	// targets (enum members, dataclass defaults). Compile-time metadata;
+	// values live in Methods.
+	FieldNames  []string
+	AssignNames []string
+	cacheMu     sync.RWMutex
+	cache       map[string]classLookupCacheEntry
 }
 
 func (c *Class) Type() ObjectType { return CLASS_OBJ }
@@ -2385,6 +2909,9 @@ type Instance struct {
 	inlineVals [inlineFieldCap]Object
 	inlineLen  int
 	overflow   map[string]Object
+	// overflowOrder lists the overflow keys in insertion order, so field order
+	// (vars(obj), obj.__dict__) follows assignment order past the inline fields.
+	overflowOrder []string
 
 	NativeData       any
 	boundMethodCache map[string]boundMethodCacheEntry
@@ -2480,25 +3007,48 @@ func (i *Instance) SetField(name string, val Object) {
 		i.overflow = make(map[string]Object)
 	}
 	i.overflow[name] = val
+	if i.overflowOrder == nil {
+		i.overflowOrder = make([]string, 0, 8) // one allocation for the common case
+	}
+	i.overflowOrder = append(i.overflowOrder, name)
 }
 
 // DeleteField removes the named field if present.
 func (i *Instance) DeleteField(name string) {
 	for n := 0; n < i.inlineLen; n++ {
 		if i.inlineKeys[n] == name {
-			// Swap-remove: move the last inline entry into the gap. Field order
-			// is unspecified, so this is fine and avoids shifting.
+			// Shift left to keep insertion order, then refill the freed inline
+			// slot with the oldest overflow field so inline fields always come
+			// before overflow fields in order.
+			copy(i.inlineKeys[n:i.inlineLen-1], i.inlineKeys[n+1:i.inlineLen])
+			copy(i.inlineVals[n:i.inlineLen-1], i.inlineVals[n+1:i.inlineLen])
 			last := i.inlineLen - 1
-			i.inlineKeys[n] = i.inlineKeys[last]
-			i.inlineVals[n] = i.inlineVals[last]
 			i.inlineKeys[last] = ""
 			i.inlineVals[last] = nil
 			i.inlineLen--
+			if len(i.overflowOrder) > 0 {
+				k := i.overflowOrder[0]
+				v := i.overflow[k]
+				delete(i.overflow, k)
+				i.overflowOrder = i.overflowOrder[1:]
+				i.inlineKeys[i.inlineLen] = k
+				i.inlineVals[i.inlineLen] = v
+				i.inlineLen++
+			}
 			return
 		}
 	}
 	if i.overflow != nil {
+		if _, ok := i.overflow[name]; !ok {
+			return
+		}
 		delete(i.overflow, name)
+		for n, k := range i.overflowOrder {
+			if k == name {
+				i.overflowOrder = append(i.overflowOrder[:n], i.overflowOrder[n+1:]...)
+				break
+			}
+		}
 	}
 }
 
@@ -2513,17 +3063,19 @@ func (i *Instance) FieldCount() int {
 	return i.inlineLen + len(i.overflow)
 }
 
-// RangeFields calls fn for each set field. Iteration order is unspecified and
-// stops early if fn returns false.
+// RangeFields calls fn for each set field in insertion order (the order the
+// fields were first assigned) and stops early if fn returns false.
 func (i *Instance) RangeFields(fn func(name string, val Object) bool) {
 	for n := 0; n < i.inlineLen; n++ {
 		if !fn(i.inlineKeys[n], i.inlineVals[n]) {
 			return
 		}
 	}
-	for k, v := range i.overflow {
-		if !fn(k, v) {
-			return
+	for _, k := range i.overflowOrder {
+		if v, ok := i.overflow[k]; ok {
+			if !fn(k, v) {
+				return
+			}
 		}
 	}
 }
@@ -2766,17 +3318,18 @@ func CloneObject(obj Object) Object {
 		}
 		return &Tuple{Elements: elems}
 	case *Dict:
-		pairs := make(map[string]DictPair, len(v.Pairs))
-		for k, p := range v.Pairs {
-			pairs[k] = DictPair{Key: CloneObject(p.Key), Value: CloneObject(p.Value)}
+		out := NewDict()
+		for _, k := range v.OrderedKeys() {
+			p := v.Pairs[k]
+			out.Store(k, CloneObject(p.Key), CloneObject(p.Value))
 		}
-		return &Dict{Pairs: pairs}
+		return out
 	case *Set:
 		elements := make(map[string]Object, len(v.Elements))
 		for k, e := range v.Elements {
 			elements[k] = CloneObject(e)
 		}
-		return &Set{Elements: elements}
+		return &Set{Elements: elements, Frozen: v.Frozen}
 	case *Instance:
 		clone := &Instance{Class: v.Class}
 		v.RangeFields(func(k string, val Object) bool {

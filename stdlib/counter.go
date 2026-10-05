@@ -86,7 +86,7 @@ func counterAdd(d *object.Dict, key, n object.Object, sign int64) object.Object 
 	if err != nil {
 		return err
 	}
-	d.Pairs[object.DictKey(key)] = object.DictPair{Key: key, Value: sum}
+	d.Store(object.DictKey(key), key, sum)
 	return nil
 }
 
@@ -114,7 +114,7 @@ func counterApply(ctx context.Context, d *object.Dict, src object.Object, sign i
 			return errObj
 		}
 	case *object.Dict:
-		for _, pair := range s.Pairs {
+		for _, pair := range s.OrderedPairs() {
 			if err := counterAdd(d, pair.Key, pair.Value, sign); err != nil {
 				return err
 			}
@@ -195,19 +195,16 @@ type counterEntry struct {
 }
 
 // counterSorted lists entries most common first. Python breaks ties by
-// insertion order, which Scriptling dicts don't keep, so ties are ordered by
-// key for stable output.
+// insertion order, so iteration walks the dict's insertion order and the
+// stable sort keeps ties there.
 func counterSorted(d *object.Dict) []counterEntry {
 	entries := make([]counterEntry, 0, len(d.Pairs))
-	for _, pair := range d.Pairs {
+	for _, pair := range d.OrderedPairs() {
 		v, _ := countValue(pair.Value)
 		entries = append(entries, counterEntry{pair.Key, pair.Value, v})
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
-		if entries[i].value != entries[j].value {
-			return entries[i].value > entries[j].value
-		}
-		return counterKeyRepr(entries[i].key) < counterKeyRepr(entries[j].key)
+		return entries[i].value > entries[j].value
 	})
 	return entries
 }
@@ -243,19 +240,27 @@ func mostCommonArg(args []object.Object, i int) (n int, all bool, errObj object.
 }
 
 // counterArithmetic implements +, -, | and & like Python: results keep only
-// positive counts.
+// positive counts, and keys appear in left-to-right first-seen order.
 func counterArithmetic(op byte, a, b *object.Instance) object.Object {
 	ad, bd := counterData(a), counterData(b)
 	out := newCounter()
 	od := counterData(out)
-	keys := map[string]object.Object{}
-	for k, p := range ad.Pairs {
-		keys[k] = p.Key
+	seen := map[string]bool{}
+	type operandKey struct {
+		canonical string
+		key       object.Object
 	}
-	for k, p := range bd.Pairs {
-		keys[k] = p.Key
+	var keys []operandKey
+	for _, d := range []*object.Dict{ad, bd} {
+		for _, c := range d.OrderedKeys() {
+			if !seen[c] {
+				seen[c] = true
+				keys = append(keys, operandKey{c, d.Pairs[c].Key})
+			}
+		}
 	}
-	for _, key := range keys {
+	for _, ok := range keys {
+		key := ok.key
 		x, y := counterCount(ad, key), counterCount(bd, key)
 		var v object.Object
 		switch op {
@@ -282,7 +287,7 @@ func counterArithmetic(op byte, a, b *object.Instance) object.Object {
 			}
 		}
 		if f, _ := countValue(v); f > 0 {
-			od.Pairs[object.DictKey(key)] = object.DictPair{Key: key, Value: v}
+			od.Store(ok.canonical, key, v)
 		}
 	}
 	return out
@@ -345,7 +350,7 @@ var CounterClass = &object.Class{
 				return &object.Exception{Message: "unhashable type: '" + strings.ToLower(args[1].Type().String()) + "'", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
 			}
 			_, d := counterSelf(args)
-			d.Pairs[object.DictKey(args[1])] = object.DictPair{Key: args[1], Value: args[2]}
+			d.Store(object.DictKey(args[1]), args[1], args[2])
 			return &object.Null{}
 		}),
 		"__delitem__": counterMethod("del c[key]", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -353,7 +358,7 @@ var CounterClass = &object.Class{
 				return err
 			}
 			_, d := counterSelf(args)
-			delete(d.Pairs, object.DictKey(args[1]))
+			d.Delete(object.DictKey(args[1]))
 			return &object.Null{}
 		}),
 		"__len__": counterMethod("len(c)", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -463,7 +468,7 @@ var CounterClass = &object.Class{
 			_, d := counterSelf(args)
 			k := object.DictKey(args[1])
 			if pair, ok := d.Pairs[k]; ok {
-				delete(d.Pairs, k)
+				d.Delete(k)
 				return pair.Value
 			}
 			if len(args) == 3 {
@@ -504,7 +509,7 @@ var CounterClass = &object.Class{
 		"total": counterMethod("total() - sum of all counts", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			_, d := counterSelf(args)
 			var sum object.Object = counterZero
-			for _, p := range d.Pairs {
+			for _, p := range d.OrderedPairs() {
 				var err object.Object
 				if sum, err = addCounts(sum, p.Value, 1); err != nil {
 					return err
@@ -544,14 +549,12 @@ var CounterClass = &object.Class{
 			_, d := counterSelf(args)
 			out := newCounter()
 			od := counterData(out)
-			for k, p := range d.Pairs {
-				od.Pairs[k] = p
-			}
+			od.StoreFrom(d)
 			return out
 		}),
 		"clear": counterMethod("clear() - remove all elements", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			_, d := counterSelf(args)
-			d.Pairs = make(map[string]object.DictPair)
+			d.Clear()
 			return &object.Null{}
 		}),
 	},

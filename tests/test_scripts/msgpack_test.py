@@ -71,12 +71,12 @@ assert hmac.new("k", "m", "sha256").digest() == hmac.digest("k", "m", "sha256")
 # ── base64.b64decode returns Bytes; b64encode accepts Bytes or String ──────
 text = "Hello, World!"
 encoded = base64.b64encode(text)
-assert type(encoded) == "STRING"
-assert encoded == "SGVsbG8sIFdvcmxkIQ=="
+assert type(encoded) == "BYTES"
+assert encoded == bytes("SGVsbG8sIFdvcmxkIQ==")
 
 decoded = base64.b64decode(encoded)
 assert type(decoded) == "BYTES"
 assert decoded.decode() == "Hello, World!"
 
 # b64encode accepts Bytes too
-assert base64.b64encode(bytes("hi")) == "aGk="
+assert base64.b64encode(bytes("hi")) == bytes("aGk=")

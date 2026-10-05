@@ -159,18 +159,21 @@ assert joined == "/home/user/docs" or joined == "/home\\user\\docs"
 
 # Test 14: Edge cases
 print("Testing edge cases...")
-# Empty dirname/basename (Go behavior, not Python)
-assert os.path.dirname("") == "."
-assert os.path.basename("") == "."
+# Empty dirname/basename (Python behavior: posixpath semantics)
+assert os.path.dirname("") == ""
+assert os.path.basename("") == ""
+assert os.path.basename("/") == ""
+assert os.path.basename("/a/b/") == ""
 
 # Root paths
 assert os.path.dirname("/") == "/"
-assert os.path.basename("/") == "/"
+assert os.path.basename("/") == ""
 
 # Extensions
 assert os.path.splitext("file") == ("file", "")
 assert os.path.splitext("file.txt") == ("file", ".txt")
-assert os.path.splitext(".hidden") == ("", ".hidden")
+assert os.path.splitext(".hidden") == (".hidden", "")  # dotfiles have no extension, as in posixpath
+assert os.path.splitext("a/.hidden") == ("a/.hidden", "")
 
 print("All comprehensive OS tests passed!")
 assert passed

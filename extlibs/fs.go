@@ -71,7 +71,7 @@ func (f *fsLibraryInstance) createFSLibrary() *object.Library {
 			},
 			HelpText: `read_bytes(path, offset, length) - Read a range of bytes from a file
 
-Returns raw bytes as a string. offset is 0-based byte position, length is number of bytes to read.
+Returns the bytes as a binary string (the other fs functions accept this or a bytes object). offset is 0-based byte position, length is number of bytes to read.
 length is capped at 64 MiB per call.`,
 		},
 		"unpack": {
@@ -83,7 +83,7 @@ length is capped at 64 MiB per call.`,
 				if err != nil {
 					return err
 				}
-				data, err := args[1].AsString()
+				data, err := binaryData(args[1])
 				if err != nil {
 					return err
 				}
@@ -101,7 +101,7 @@ Returns a list of values.`,
 				if err := errors.ExactArgs(args, 2); err != nil {
 					return err
 				}
-				data, err := args[0].AsString()
+				data, err := binaryData(args[0])
 				if err != nil {
 					return err
 				}
@@ -148,7 +148,7 @@ Format is the same as unpack(). Returns a binary string.`,
 				if err != nil {
 					return err
 				}
-				data, err := args[2].AsString()
+				data, err := binaryData(args[2])
 				if err != nil {
 					return err
 				}
@@ -167,7 +167,7 @@ Creates the file if it does not exist. offset is 0-based byte position.`,
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
-				data, err := args[0].AsString()
+				data, err := binaryData(args[0])
 				if err != nil {
 					return err
 				}
@@ -182,7 +182,7 @@ Unlike the builtin len(), this counts bytes, not Unicode code points.`,
 				if err := errors.RangeArgs(args, 2, 3); err != nil {
 					return err
 				}
-				data, err := args[0].AsString()
+				data, err := binaryData(args[0])
 				if err != nil {
 					return err
 				}
@@ -213,6 +213,10 @@ Unlike the builtin len(), this counts bytes, not Unicode code points.`,
 				if start > end {
 					start = end
 				}
+				// Slicing bytes gives bytes; slicing a binary string gives a string.
+				if _, isBytes := args[0].(*object.Bytes); isBytes {
+					return object.NewBytes(raw[start:end])
+				}
 				return object.NewString(string(raw[start:end]))
 			},
 			HelpText: `slice(data, start[, end]) - Byte-safe slicing of binary data
@@ -220,6 +224,15 @@ Unlike the builtin len(), this counts bytes, not Unicode code points.`,
 Unlike string slicing, this operates on byte offsets, not Unicode code points.`,
 		},
 	}, nil, "Binary I/O library for reading and unpacking binary file formats")
+}
+
+// binaryData returns the raw content of a binary argument: either a bytes
+// object (b"\xff") or a binary string, which is what read_bytes returns.
+func binaryData(obj object.Object) (string, object.Object) {
+	if b, ok := obj.(*object.Bytes); ok {
+		return string(b.BytesValue()), nil
+	}
+	return obj.AsString()
 }
 
 type formatSpec struct {

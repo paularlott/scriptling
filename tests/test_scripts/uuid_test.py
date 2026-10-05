@@ -1,26 +1,29 @@
 import uuid
 
-# Test uuid4 - random UUID
+# Test uuid4 - random UUID (objects now, like Python: str() for the form)
 id1 = uuid.uuid4()
-assert len(id1) == 36
-assert "-" in id1
+assert len(str(id1)) == 36
+assert "-" in str(id1)
+assert id1.version == 4
+assert id1.variant == "specified in RFC 4122"
+assert len(id1.hex) == 32
 
 # Verify uuid4 format (version 4)
-parts = id1.split("-")
-assert len(parts) == 5
-assert len(parts[0]) == 8
-assert len(parts[1]) == 4
-assert len(parts[2]) == 4
-assert len(parts[3]) == 4
-assert len(parts[4]) == 12
+parts = str(id1).split("-")
+assert len(str(id1).split("-")) == 5
+assert len(str(id1).split("-")[0]) == 8
+assert len(str(id1).split("-")[1]) == 4
+assert len(str(id1).split("-")[2]) == 4
+assert len(str(id1).split("-")[3]) == 4
+assert len(str(id1).split("-")[4]) == 12
 
 # Test uuid1 - time-based UUID
 id2 = uuid.uuid1()
-assert len(id2) == 36
+assert len(str(id2)) == 36
 
 # Test uuid7 - timestamp-based sortable UUID
 id3 = uuid.uuid7()
-assert len(id3) == 36
+assert len(str(id3)) == 36
 
 # UUIDs should be unique
 assert id1 != id2

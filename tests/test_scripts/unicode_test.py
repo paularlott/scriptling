@@ -83,7 +83,7 @@ assert len(stripped) > 0  # Should have content after stripping
 # Test 10: Unicode case conversion edge cases
 print("Testing Unicode case conversion...")
 german = "straße"
-assert german.upper() == "STRAßE"  # ß stays ß in Go (unlike Python's SS)
+assert german.upper() == "STRASSE"  # ß uppercases to SS, like Python
 assert german.lower() == "straße"
 
 turkish = "İstanbul"

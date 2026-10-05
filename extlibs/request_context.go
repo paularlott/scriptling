@@ -134,9 +134,9 @@ func copyDict(dict *object.Dict) *object.Dict {
 func copyValue(v object.Object) object.Object {
 	switch t := v.(type) {
 	case *object.Dict:
-		out := &object.Dict{Pairs: make(map[string]object.DictPair, len(t.Pairs))}
-		for k, pair := range t.Pairs {
-			out.Pairs[k] = object.DictPair{Key: pair.Key, Value: copyValue(pair.Value)}
+		out := object.NewDict()
+		for _, pair := range t.OrderedPairs() {
+			out.Store(object.DictKey(pair.Key), pair.Key, copyValue(pair.Value))
 		}
 		return out
 	case *object.List:

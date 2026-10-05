@@ -113,12 +113,13 @@ func TestUUIDLibrary(t *testing.T) {
 	ctx := context.Background()
 	uuidRegex := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-	// Test uuid4
+	// Test uuid4 — now a UUID object; str() renders the canonical form
 	result := UUIDLibrary.Functions()["uuid4"].Fn(ctx, object.NewKwargs(nil))
-	if result.Type() != object.STRING_OBJ {
-		t.Errorf("uuid4() returned %v, want string", result.Type())
+	inst, ok := result.(*object.Instance)
+	if !ok {
+		t.Fatalf("uuid4() returned %v, want instance", result.Type())
 	}
-	uuidStr := result.(*object.String).StringValue()
+	uuidStr := inst.Inspect()
 	if !uuidRegex.MatchString(uuidStr) {
 		t.Errorf("uuid4() returned invalid UUID: %q", uuidStr)
 	}
@@ -128,10 +129,11 @@ func TestUUIDLibrary(t *testing.T) {
 
 	// Test uuid1
 	result = UUIDLibrary.Functions()["uuid1"].Fn(ctx, object.NewKwargs(nil))
-	if result.Type() != object.STRING_OBJ {
-		t.Errorf("uuid1() returned %v, want string", result.Type())
+	if inst1, ok := result.(*object.Instance); ok {
+		uuidStr = inst1.Inspect()
+	} else {
+		t.Fatalf("uuid1() returned %v, want instance", result.Type())
 	}
-	uuidStr = result.(*object.String).StringValue()
 	if !uuidRegex.MatchString(uuidStr) {
 		t.Errorf("uuid1() returned invalid UUID: %q", uuidStr)
 	}
@@ -141,10 +143,11 @@ func TestUUIDLibrary(t *testing.T) {
 
 	// Test uuid7
 	result = UUIDLibrary.Functions()["uuid7"].Fn(ctx, object.NewKwargs(nil))
-	if result.Type() != object.STRING_OBJ {
-		t.Errorf("uuid7() returned %v, want string", result.Type())
+	if inst7, ok := result.(*object.Instance); ok {
+		uuidStr = inst7.Inspect()
+	} else {
+		t.Fatalf("uuid7() returned %v, want instance", result.Type())
 	}
-	uuidStr = result.(*object.String).StringValue()
 	if !uuidRegex.MatchString(uuidStr) {
 		t.Errorf("uuid7() returned invalid UUID: %q", uuidStr)
 	}

@@ -132,12 +132,12 @@ t.celsius = 0
 assert t.celsius == 0, f"expected 0 after set, got {t.celsius}"
 assert t.fahrenheit == 32, f"expected 32, got {t.fahrenheit}"
 
-# read-only property raises error on assignment
+# read-only property raises AttributeError on assignment (catchable)
 try:
     t.fahrenheit = 100
     assert False, "should have raised"
-except Exception as e:
-    assert "read-only" in str(e), f"unexpected error: {e}"
+except AttributeError as e:
+    assert "has no setter" in str(e), f"unexpected error: {e}"
 
 # --- @property setter inheritance ---
 class Base:

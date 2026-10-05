@@ -77,14 +77,28 @@ x: dict[str, int] = {}
 	if len(program.Statements) != 3 {
 		t.Fatalf("expected 3 statements, got %d", len(program.Statements))
 	}
-	if _, ok := program.Statements[0].(*ast.AssignStatement); !ok {
-		t.Fatalf("count: int = 5 should parse as an assignment, got %T", program.Statements[0])
+	// Annotations are kept on the statement (class bodies surface them to
+	// @dataclass); valued ones still assign, bare ones are runtime no-ops.
+	first, ok := program.Statements[0].(*ast.AnnotatedAssignStatement)
+	if !ok {
+		t.Fatalf("count: int = 5 should parse as an annotated assignment, got %T", program.Statements[0])
 	}
-	if _, ok := program.Statements[1].(*ast.PassStatement); !ok {
-		t.Fatalf("bare name: str should parse as a no-op, got %T", program.Statements[1])
+	if first.Target.Value() != "count" || first.Value == nil || first.Annotation == nil {
+		t.Fatalf("count statement fields wrong: %+v", first)
 	}
-	if _, ok := program.Statements[2].(*ast.AssignStatement); !ok {
-		t.Fatalf("annotated assignment with dict annotation should parse as an assignment, got %T", program.Statements[2])
+	second, ok := program.Statements[1].(*ast.AnnotatedAssignStatement)
+	if !ok {
+		t.Fatalf("bare name: str should parse as an annotated no-op, got %T", program.Statements[1])
+	}
+	if second.Value != nil {
+		t.Fatalf("bare annotation should carry no value, got %T", second.Value)
+	}
+	third, ok := program.Statements[2].(*ast.AnnotatedAssignStatement)
+	if !ok {
+		t.Fatalf("annotated assignment with dict annotation should parse as an annotated assignment, got %T", program.Statements[2])
+	}
+	if third.Target.Value() != "x" || third.Value == nil {
+		t.Fatalf("x statement fields wrong: %+v", third)
 	}
 }
 

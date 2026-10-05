@@ -1,8 +1,13 @@
 package object
 
-// Set represents a set of unique objects
+// Set represents a set of unique objects. A frozen set (Python frozenset)
+// is a Set with Frozen set: it rejects mutation, hashes by content, and
+// prints as frozenset(...). The algebra methods below carry the receiver's
+// frozenness to their result, so frozen | set stays frozen and set | frozen
+// stays mutable, matching Python's left-operand rule.
 type Set struct {
 	Elements map[string]Object
+	Frozen   bool
 }
 
 func (s *Set) Type() ObjectType { return SET_OBJ }
@@ -28,6 +33,17 @@ func (s *Set) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 // NewSet creates a new empty Set
 func NewSet() *Set {
 	return &Set{Elements: make(map[string]Object)}
+}
+
+// NewFrozenSet creates a new empty frozen Set (Python frozenset).
+func NewFrozenSet() *Set {
+	return &Set{Elements: make(map[string]Object), Frozen: true}
+}
+
+// Freeze returns s as a frozen set, sharing its elements.
+func (s *Set) Freeze() *Set {
+	s.Frozen = true
+	return s
 }
 
 // add adds an element to the set using DictKey for hashing.
@@ -66,6 +82,7 @@ func (s *Set) Union(other *Set) *Set {
 	for key, e := range other.Elements {
 		result.AddKeyed(key, e)
 	}
+	result.Frozen = s.Frozen
 	return result
 }
 
@@ -114,6 +131,7 @@ func (s *Set) Intersection(other *Set) *Set {
 			result.AddKeyed(key, e)
 		}
 	}
+	result.Frozen = s.Frozen
 	return result
 }
 
@@ -125,6 +143,7 @@ func (s *Set) Difference(other *Set) *Set {
 			result.AddKeyed(key, e)
 		}
 	}
+	result.Frozen = s.Frozen
 	return result
 }
 
@@ -141,6 +160,7 @@ func (s *Set) SymmetricDifference(other *Set) *Set {
 			result.AddKeyed(key, e)
 		}
 	}
+	result.Frozen = s.Frozen
 	return result
 }
 
@@ -168,6 +188,7 @@ func (s *Set) Copy() *Set {
 	for key, e := range s.Elements {
 		result.AddKeyed(key, e)
 	}
+	result.Frozen = s.Frozen
 	return result
 }
 

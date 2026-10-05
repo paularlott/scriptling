@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/paularlott/scriptling/conversion"
@@ -30,10 +32,11 @@ func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 
 	// indent accepts a string (used verbatim, like Python) or a number of
 	// spaces (the common json.dumps(x, indent=2) idiom). An integer of 0
-	// means newline-separated with no spaces, matching Python.
+	// means newline-separated with no spaces, matching Python. indent=None
+	// is the default (no indent), as in Python.
 	indent := ""
 	hasIndent := false
-	if iv := kwargs.Get("indent"); iv != nil {
+	if iv := kwargs.Get("indent"); iv != nil && iv.Type() != object.NULL_OBJ {
 		hasIndent = true
 		switch v := iv.(type) {
 		case *object.String:
@@ -53,16 +56,57 @@ func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 		}
 	}
 
-	data := objectToJSON(args[0])
-	// Encode without HTML escaping: Python's json never turns <, > and &
-	// into \u003c etc. (encoding/json's Marshal does).
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(data); err != nil {
-		return errors.NewError("json serialize error: %s", err.Error())
+	// Default separators follow Python: (", ", ": "), or (",", ": ") when
+	// indenting (the indent reflow below normalizes item separators either
+	// way, but the key separator always applies). Non-ASCII is escaped as
+	// \uXXXX unless ensure_ascii=False, matching Python's default.
+	opts := jsonOpts{itemSep: ", ", keySep: ": ", ensureAscii: true}
+	if hasIndent {
+		opts.itemSep = ","
 	}
-	out := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+	if sep := kwargs.Get("separators"); sep != nil {
+		var elems []object.Object
+		switch s := sep.(type) {
+		case *object.List:
+			elems = s.Elements
+		case *object.Tuple:
+			elems = s.Elements
+		default:
+			return errors.NewError("json.dumps: separators must be a (item, key) pair")
+		}
+		if len(elems) != 2 {
+			return errors.NewError("json.dumps: separators must be a (item, key) pair")
+		}
+		item, err := elems[0].AsString()
+		if err != nil {
+			return err
+		}
+		key, err := elems[1].AsString()
+		if err != nil {
+			return err
+		}
+		opts.itemSep, opts.keySep = item, key
+	}
+	if sk := kwargs.Get("sort_keys"); sk != nil {
+		b, err := sk.AsBool()
+		if err != nil {
+			return errors.NewError("json.dumps: sort_keys must be a boolean")
+		}
+		opts.sortKeys = b
+	}
+	if ea := kwargs.Get("ensure_ascii"); ea != nil {
+		b, err := ea.AsBool()
+		if err != nil {
+			return errors.NewError("json.dumps: ensure_ascii must be a boolean")
+		}
+		opts.ensureAscii = b
+	}
+
+	raw, rerr := objectToJSONRaw(args[0], make(map[object.Object]struct{}), opts)
+	if rerr != nil {
+		return rerr
+	}
+	out := []byte(raw)
 	// hasIndent distinguishes indent=0 (newline-separated, no spaces, as in
 	// Python) from no indent argument at all (fully compact).
 	if hasIndent {
@@ -84,12 +128,15 @@ Parses a JSON string and returns the corresponding Scriptling object.`,
 	},
 	"dumps": {
 		Fn: jsonDumps,
-		HelpText: `dumps(obj, indent="") - Serialize object to JSON string
+		HelpText: `dumps(obj, indent="", separators=None, sort_keys=False, ensure_ascii=True) - Serialize object to JSON string
 
-Converts a Scriptling object to its JSON string representation.
-Optional indent parameter for pretty-printing: a string used verbatim, or a
-number of spaces (indent=2 is the common idiom; indent=0 newline-separates
-with no spaces). Object keys are always emitted in sorted order.`,
+Converts a Scriptling object to its JSON string representation. Dict keys are
+emitted in the dict's insertion order, as in Python; sort_keys=True sorts them.
+Default separators are (", ", ": "); pass separators=(",", ":") for compact
+output. Non-ASCII characters are escaped as \uXXXX unless ensure_ascii=False.
+Optional indent parameter for pretty-printing: a string used verbatim,
+or a number of spaces (indent=2 is the common idiom; indent=0
+newline-separates with no spaces).`,
 	},
 	"parse": {
 		Fn: jsonLoads,
@@ -104,7 +151,24 @@ Parses a JSON string and returns the corresponding Scriptling object.`,
 Converts a Scriptling object to its JSON string representation.
 Optional indent parameter for pretty-printing.`,
 	},
-}, nil, "JSON encoding and decoding library")
+}, map[string]object.Object{
+	// json.JSONDecodeError: a ValueError subclass, as in Python, so
+	// `except json.JSONDecodeError:` matches parse failures.
+	"JSONDecodeError": &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{Message: message, ExceptionType: "JSONDecodeError"}
+		},
+		HelpText: `JSONDecodeError([message]) - Create a JSON decode error`,
+	},
+}, "JSON encoding and decoding library")
 
 // pyFloat marshals with Python's json module float spellings: repr-style
 // numbers ("2.0", "1e+20") and Infinity/-Infinity/NaN for non-finites, which
@@ -124,61 +188,163 @@ func (p pyFloat) MarshalJSON() ([]byte, error) {
 	return []byte(object.FloatStr(f)), nil
 }
 
-func objectToJSON(obj object.Object) interface{} {
-	return objectToJSONSeen(obj, make(map[object.Object]struct{}))
+// jsonOpts carries Python dumps() formatting: the item separator (between
+// array elements and object members), the key separator, sort_keys and
+// ensure_ascii.
+type jsonOpts struct {
+	itemSep     string
+	keySep      string
+	sortKeys    bool
+	ensureAscii bool
 }
 
-// objectToJSONSeen is objectToJSON with the set of containers on the current
-// path. A container already on the path is a cycle; it is rendered as a
-// string placeholder rather than recursed into, which otherwise overflows
-// the Go stack and aborts the host process (unrecoverable).
-func objectToJSONSeen(obj object.Object, seen map[object.Object]struct{}) interface{} {
+// objectToJSONRaw renders obj as JSON text. Containers are assembled here —
+// rather than via encoding/json's map/array marshaling — so dict keys keep
+// the dict's insertion order and Python's separators apply at every level.
+// Leaves go through encoding/json with HTML escaping off, matching Python.
+func objectToJSONRaw(obj object.Object, seen map[object.Object]struct{}, opts jsonOpts) (json.RawMessage, object.Object) {
+	encodeLeaf := func(v interface{}) (json.RawMessage, object.Object) {
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(v); err != nil {
+			return nil, errors.NewError("json serialize error: %s", err.Error())
+		}
+		return json.RawMessage(bytes.TrimSuffix(buf.Bytes(), []byte("\n"))), nil
+	}
+
 	switch obj := obj.(type) {
 	case *object.Integer:
-		return obj.IntValue()
+		return encodeLeaf(obj.IntValue())
 	case *object.Float:
-		return pyFloat(obj.FloatValue())
+		// Python writes non-finite floats as bare NaN/Infinity/-Infinity
+		// tokens; emit them directly (encoding/json would reject a marshaler
+		// that returns them as invalid JSON).
+		f := obj.FloatValue()
+		switch {
+		case math.IsInf(f, 1):
+			return json.RawMessage("Infinity"), nil
+		case math.IsInf(f, -1):
+			return json.RawMessage("-Infinity"), nil
+		case math.IsNaN(f):
+			return json.RawMessage("NaN"), nil
+		}
+		return encodeLeaf(pyFloat(f))
 	case *object.String:
-		return obj.StringValue()
+		return encodeJSONString(obj.StringValue(), opts.ensureAscii), nil
 	case *object.Boolean:
-		return obj.BoolValue()
+		return encodeLeaf(obj.BoolValue())
 	case *object.List:
 		if _, cyclic := seen[obj]; cyclic {
-			return "<cyclic reference>"
+			return encodeLeaf("<cyclic reference>")
 		}
 		seen[obj] = struct{}{}
 		defer delete(seen, obj)
-		arr := make([]interface{}, len(obj.Elements))
-		for i, el := range obj.Elements {
-			arr[i] = objectToJSONSeen(el, seen)
-		}
-		return arr
+		return assembleJSONSeq(obj.Elements, seen, opts, encodeLeaf)
 	case *object.Tuple:
 		// Python serializes tuples as JSON arrays.
 		if _, cyclic := seen[obj]; cyclic {
-			return "<cyclic reference>"
+			return encodeLeaf("<cyclic reference>")
 		}
 		seen[obj] = struct{}{}
 		defer delete(seen, obj)
-		arr := make([]interface{}, len(obj.Elements))
-		for i, el := range obj.Elements {
-			arr[i] = objectToJSONSeen(el, seen)
-		}
-		return arr
+		return assembleJSONSeq(obj.Elements, seen, opts, encodeLeaf)
 	case *object.Dict:
 		if _, cyclic := seen[obj]; cyclic {
-			return "<cyclic reference>"
+			return encodeLeaf("<cyclic reference>")
 		}
 		seen[obj] = struct{}{}
 		defer delete(seen, obj)
-		m := make(map[string]interface{}, len(obj.Pairs))
-		for _, pair := range obj.Pairs {
-			m[pair.StringKey()] = objectToJSONSeen(pair.Value, seen)
+		pairs := obj.OrderedPairs()
+		if opts.sortKeys {
+			sorted := make([]object.DictPair, len(pairs))
+			copy(sorted, pairs)
+			sort.Slice(sorted, func(i, j int) bool {
+				return sorted[i].StringKey() < sorted[j].StringKey()
+			})
+			pairs = sorted
 		}
-		return m
+		var buf bytes.Buffer
+		buf.WriteByte('{')
+		for i, pair := range pairs {
+			if i > 0 {
+				buf.WriteString(opts.itemSep)
+			}
+			keyStr := pair.StringKey()
+			keyJSON := encodeJSONString(keyStr, opts.ensureAscii)
+			buf.Write(keyJSON)
+			buf.WriteString(opts.keySep)
+			valJSON, verr := objectToJSONRaw(pair.Value, seen, opts)
+			if verr != nil {
+				return nil, verr
+			}
+			buf.Write(valJSON)
+		}
+		buf.WriteByte('}')
+		return json.RawMessage(buf.Bytes()), nil
 	case *object.Null:
-		return nil
+		return json.RawMessage("null"), nil
 	default:
-		return obj.Inspect()
+		return encodeLeaf(obj.Inspect())
 	}
+}
+
+// encodeJSONString renders a Python-compatible JSON string literal: ", \\ and
+// control characters escaped as in CPython's json module, and code points
+// above U+007F written as \uXXXX (surrogate pairs beyond the BMP) when
+// ensure_ascii is set — Python's default.
+func encodeJSONString(s string, ensureAscii bool) json.RawMessage {
+	var b strings.Builder
+	b.Grow(len(s) + 2)
+	b.WriteByte('"')
+	for _, r := range s {
+		switch {
+		case r == '"':
+			b.WriteString(`\"`)
+		case r == '\\':
+			b.WriteString(`\\`)
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case r == '\b':
+			b.WriteString(`\b`)
+		case r == '\f':
+			b.WriteString(`\f`)
+		case r < 0x20:
+			fmt.Fprintf(&b, `\u%04x`, r)
+		case ensureAscii && r > 0x7F:
+			if r > 0xFFFF {
+				hi := 0xD800 + ((r - 0x10000) >> 10)
+				lo := 0xDC00 + ((r - 0x10000) & 0x3FF)
+				fmt.Fprintf(&b, `\u%04x\u%04x`, hi, lo)
+			} else {
+				fmt.Fprintf(&b, `\u%04x`, r)
+			}
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return json.RawMessage(b.String())
+}
+
+// assembleJSONSeq renders a JSON array with the configured item separator.
+func assembleJSONSeq(elements []object.Object, seen map[object.Object]struct{}, opts jsonOpts, encodeLeaf func(interface{}) (json.RawMessage, object.Object)) (json.RawMessage, object.Object) {
+	var buf bytes.Buffer
+	buf.WriteByte('[')
+	for i, el := range elements {
+		if i > 0 {
+			buf.WriteString(opts.itemSep)
+		}
+		elJSON, err := objectToJSONRaw(el, seen, opts)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(elJSON)
+	}
+	buf.WriteByte(']')
+	return json.RawMessage(buf.Bytes()), nil
 }

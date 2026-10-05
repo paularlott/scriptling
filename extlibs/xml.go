@@ -15,6 +15,7 @@ import (
 // RegisterXmlLibrary registers the scriptling.xml library.
 func RegisterXmlLibrary(registrar object.LibraryRegistrar) {
 	registrar.RegisterLibrary(NewXmlLibrary())
+	registrar.RegisterLibrary(newAliasedLibrary(NewXmlLibrary(), "xml"))
 }
 
 func NewXmlLibrary() *object.Library {

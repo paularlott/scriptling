@@ -178,9 +178,20 @@ func (r *reprRenderer) container(obj Object) {
 		}
 		r.out.WriteByte(')')
 	case *Dict:
+		if o.Factory() != nil {
+			r.out.WriteString("defaultdict(")
+			if _, none := o.Factory().(*Null); none {
+				r.out.WriteString("None")
+			} else if FactoryRepr != nil {
+				r.out.WriteString(FactoryRepr(o.Factory()))
+			} else {
+				r.out.WriteString(o.Factory().Inspect())
+			}
+			r.out.WriteString(", ")
+		}
 		r.out.WriteByte('{')
 		i := 0
-		for _, pair := range o.Pairs {
+		for _, pair := range o.OrderedPairs() {
 			if i > 0 {
 				r.out.WriteString(", ")
 			}
@@ -190,9 +201,16 @@ func (r *reprRenderer) container(obj Object) {
 			i++
 		}
 		r.out.WriteByte('}')
+		if o.Factory() != nil {
+			r.out.WriteByte(')')
+		}
 	case *Set:
 		if len(o.Elements) == 0 {
-			r.out.WriteString("set()")
+			if o.Frozen {
+				r.out.WriteString("frozenset()")
+			} else {
+				r.out.WriteString("set()")
+			}
 			return
 		}
 		// Sorted for deterministic output.
@@ -207,6 +225,12 @@ func (r *reprRenderer) container(obj Object) {
 			parts = append(parts, sub.out.String())
 		}
 		sort.Strings(parts)
+		if o.Frozen {
+			r.out.WriteString("frozenset({")
+			r.out.WriteString(strings.Join(parts, ", "))
+			r.out.WriteString("})")
+			return
+		}
 		r.out.WriteByte('{')
 		r.out.WriteString(strings.Join(parts, ", "))
 		r.out.WriteByte('}')
@@ -239,7 +263,7 @@ func (r *reprRenderer) view(name string, d *Dict, each func(DictPair)) {
 	r.out.WriteString(name)
 	r.out.WriteString("([")
 	i := 0
-	for _, pair := range d.Pairs {
+	for _, pair := range d.OrderedPairs() {
 		if i > 0 {
 			r.out.WriteString(", ")
 		}

@@ -11,7 +11,8 @@ import (
 
 // evalHashKeyChecked is like evalHashKey but surfaces a raise/error from a
 // user-defined __hash__ instead of silently falling back to the identity hash.
-// The second return is non-nil exactly when __hash__ raised or errored.
+// The second return is non-nil exactly when __hash__ raised or errored, or the
+// value is unhashable (Python's TypeError: unhashable type).
 func evalHashKeyChecked(ctx context.Context, obj object.Object) (string, object.Object) {
 	if inst, ok := obj.(*object.Instance); ok {
 		if _, hasHash := inst.Class.Methods["__hash__"]; hasHash && hashInstanceFn != nil {
@@ -26,7 +27,33 @@ func evalHashKeyChecked(ctx context.Context, obj object.Object) (string, object.
 			return "", &object.Exception{Message: "__hash__ method should return an integer", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
 		}
 	}
+	if !hashableAsKey(obj) {
+		return "", &object.Exception{
+			Message:       fmt.Sprintf("unhashable type: '%s'", getTypeName(obj)),
+			ExceptionType: object.ExceptionTypeTypeError,
+			Raised:        true,
+		}
+	}
 	return object.DictKey(obj), nil
+}
+
+// hashableAsKey reports whether obj may serve as a dict key / set member.
+// object.IsHashable is the strict content-hashability allowlist (used by
+// sentinel machinery); dict and set keys additionally accept anything Python
+// identity-hashes by default: plain instances, classes, functions. As in
+// Python, an instance that defines __eq__ without __hash__ is unhashable.
+func hashableAsKey(obj object.Object) bool {
+	switch o := obj.(type) {
+	case *object.Instance:
+		if _, hasEq := o.Class.Methods["__eq__"]; hasEq {
+			_, hasHash := o.Class.Methods["__hash__"]
+			return hasHash
+		}
+		return true
+	case *object.Class, *object.Function, *object.LambdaFunction, *object.Builtin:
+		return true
+	}
+	return object.IsHashable(obj)
 }
 
 // evalSetAdd adds obj to set s, using __hash__ for instances.
@@ -55,7 +82,7 @@ func iterableToSet(ctx context.Context, obj object.Object, env *object.Environme
 }
 
 func evalSetAdd(ctx context.Context, s *object.Set, obj object.Object) object.Object {
-	if !object.IsHashable(obj) {
+	if !hashableAsKey(obj) {
 		return &object.Exception{Message: "unhashable type: '" + obj.Type().String() + "'", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
 	}
 	hk, raised := evalHashKeyChecked(ctx, obj)
@@ -102,6 +129,13 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 			if name, ok := index.(*object.String); ok {
 				if pair, exists := left.(*object.Dict).GetByString(name.StringValue()); exists {
 					return pair.Value
+				}
+				// defaultdict exposes its factory as an attribute.
+				if dd := left.(*object.Dict); dd.Factory() != nil && name.StringValue() == "default_factory" {
+					if _, none := dd.Factory().(*object.Null); none {
+						return NULL
+					}
+					return dd.Factory()
 				}
 				// Modules expose only their members, not dict methods.
 				if left.(*object.Dict).Module == "" {
@@ -158,9 +192,84 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 			return object.NewString("<lambda>")
 		}
 		return attributeError(left, attr)
+	case object.SENTINEL_OBJ:
+		if !isDotAccess {
+			// Python: "'sentinel' object is not subscriptable"
+			return &object.Exception{
+				Message:       fmt.Sprintf("'%s' object is not subscriptable", getTypeName(left)),
+				ExceptionType: object.ExceptionTypeTypeError,
+				Raised:        true,
+			}
+		}
+		attr, _ := index.AsString()
+		if attr == "__name__" {
+			return object.NewString(left.(*object.Sentinel).Name)
+		}
+		return attributeError(left, attr)
+	case object.SLICE_OBJ:
+		if !isDotAccess {
+			return &object.Exception{
+				Message:       "'slice' object is not subscriptable",
+				ExceptionType: object.ExceptionTypeTypeError,
+				Raised:        true,
+			}
+		}
+		attr, _ := index.AsString()
+		if sl, ok := left.(*object.Slice); ok {
+			switch attr {
+			case "start":
+				if sl.Start != nil {
+					return sl.Start
+				}
+				return NULL
+			case "stop":
+				if sl.End != nil {
+					return sl.End
+				}
+				return NULL
+			case "step":
+				if sl.Step != nil {
+					return sl.Step
+				}
+				return NULL
+			}
+		}
+		return attributeError(left, attr)
 	}
 	if isDotAccess {
 		attr, _ := index.AsString()
+		// Strings are scriptling's type representation (type(e) returns the
+		// type name), so `.__name__` on one resolves the type(e).__name__
+		// idiom: the name itself.
+		if s, ok := left.(*object.String); ok && attr == "__name__" {
+			return s
+		}
+		if exc, ok := left.(*object.Exception); ok {
+			switch attr {
+			case "args":
+				args := exc.Args
+				if args == nil {
+					args = []object.Object{}
+					if exc.Message != "" {
+						args = []object.Object{object.NewString(exc.Message)}
+					}
+				}
+				return &object.Tuple{Elements: args}
+			case "__name__":
+				name := exc.ExceptionType
+				if name == "" {
+					name = "Exception"
+				}
+				return object.NewString(name)
+			}
+			// Custom attributes of the user exception instance the raise
+			// converted from (e.code for a class storing it in __init__).
+			if exc.OriginInstance != nil {
+				if v, exists := exc.OriginInstance.GetField(attr); exists {
+					return v
+				}
+			}
+		}
 		if method := builtinMethodRef(left, attr); method != nil {
 			return method
 		}
@@ -382,6 +491,17 @@ func evalDictIndexExpression(ctx context.Context, dict, index object.Object) obj
 
 	pair, ok := dictObject.Pairs[key]
 	if !ok {
+		// defaultdict: call the factory, store the result, return it.
+		if f := dictObject.Factory(); f != nil {
+			if _, none := f.(*object.Null); !none {
+				val := applyFunctionWithContext(ctx, f, nil, nil, GetEnvFromContext(ctx))
+				if propagates(val) {
+					return val
+				}
+				dictObject.Store(key, index, val)
+				return val
+			}
+		}
 		keyMsg := index.Inspect()
 		if ks, ok := index.(*object.String); ok {
 			keyMsg = object.ReprString(ks.StringValue())
@@ -486,11 +606,32 @@ func evalInstanceIndexExpression(ctx context.Context, instance, index object.Obj
 	if field == "__class__" {
 		return inst.Class
 	}
+	if field == "__dict__" {
+		return instanceDictView(inst)
+	}
 	// As in Python, __getattr__ is consulted only when normal lookup fails.
 	if getattr, ok := inst.Class.LookupMember("__getattr__"); ok {
 		return applyFunctionWithContext(ctx, getattr, []object.Object{instance, index}, nil, nil)
 	}
 	return attributeError(inst, field)
+}
+
+// instanceDictView returns an instance's attributes as a dict in assignment
+// order, linked to the instance: writes to it (update, d[k] = v, del, pop,
+// setdefault, clear) write through to the fields, as obj.__dict__ does in
+// Python. It is a fresh snapshot per access, so reads are always current;
+// a reference kept across later attribute changes does not see them.
+// Internal markers (names that start and end with "__") are not attributes.
+func instanceDictView(inst *object.Instance) *object.Dict {
+	d := object.NewDictSized(inst.FieldCount())
+	inst.RangeFields(func(name string, v object.Object) bool {
+		if !(len(name) > 4 && strings.HasPrefix(name, "__") && strings.HasSuffix(name, "__")) {
+			d.SetByString(name, v)
+		}
+		return true
+	})
+	d.LinkOwner(inst)
+	return d
 }
 
 func evalClassIndexExpression(class, index object.Object) object.Object {

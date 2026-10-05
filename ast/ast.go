@@ -576,6 +576,27 @@ type InfixExpression struct {
 	Right   Expression
 }
 
+// ChainedLink is one link of a ChainedComparison: Operand compared to the
+// previous operand with Op.
+type ChainedLink struct {
+	Op      Op
+	Operand Expression
+}
+
+// ChainedComparison is a comparison chain, as in a < b <= c or x in ys ==
+// flag. Python semantics: operands evaluate left to right, each at most
+// once, and the chain stops at the first false comparison, so later
+// operands are never evaluated. (Desugaring to (a < b) and (b < c) would
+// evaluate b twice.)
+type ChainedComparison struct {
+	First Expression
+	Links []ChainedLink
+}
+
+func (cc *ChainedComparison) expressionNode()      {}
+func (cc *ChainedComparison) TokenLiteral() string { return cc.Links[0].Op.String() }
+func (cc *ChainedComparison) Line() int            { return lineOfExpr(cc.First) }
+
 // IsIntShaped reports whether e can evaluate to an integer using only
 // side-effect-free operations: an integer literal, an identifier read, or
 // integer arithmetic over two such subtrees.
@@ -777,6 +798,9 @@ type FuncOverflow struct {
 	Variadic         *Identifier
 	Kwargs           *Identifier
 	KeywordOnlyStart int
+	// PositionalOnly is the number of leading parameters before a '/' marker;
+	// 0 means no marker. Those parameters cannot be passed by keyword.
+	PositionalOnly int
 }
 
 type FunctionLiteral struct {
@@ -784,11 +808,52 @@ type FunctionLiteral struct {
 	overflow      *FuncOverflow
 	Body          *BlockStatement
 	HasNestedFunc bool
+	// HasYield marks a generator function (the body contains a yield
+	// statement): calls construct a generator instead of running the body.
+	HasYield bool
 
 	LocalSlots       map[string]int
 	LocalSlotNames   []string
 	ParamSlotIndexes []int
 }
+
+// AnnotatedAssignStatement is an annotated assignment (count: int = 5, or a
+// bare annotation with no value). The annotation itself is parsed and
+// recorded but never evaluated; the value, when present, assigns as usual.
+// In class bodies the names become ordered field metadata for @dataclass.
+type AnnotatedAssignStatement struct {
+	Token      LineInfo
+	Target     *Identifier
+	Annotation Expression // parsed, not evaluated
+	Value      Expression // nil for a bare annotation
+}
+
+func (as *AnnotatedAssignStatement) statementNode()       {}
+func (as *AnnotatedAssignStatement) TokenLiteral() string { return as.Target.TokenLiteral() }
+func (as *AnnotatedAssignStatement) Line() int            { return int(as.Token.Line) }
+
+// YieldStatement suspends a generator, producing Value (or None). Phase 1
+// supports yields as statements at the top level of a generator body or of a
+// single top-level loop in it.
+// StarredElement is an unpacking element inside a list or set display:
+// [*rest, 3] / {*items, 4}. Evaluation splices the iterable's elements.
+type StarredElement struct {
+	Token LineInfo
+	Value Expression
+}
+
+func (se *StarredElement) expressionNode()      {}
+func (se *StarredElement) TokenLiteral() string { return "*" }
+func (se *StarredElement) Line() int            { return int(se.Token.Line) }
+
+type YieldStatement struct {
+	Token LineInfo
+	Value Expression // nil yields None
+}
+
+func (ys *YieldStatement) statementNode()       {}
+func (ys *YieldStatement) TokenLiteral() string { return "yield" }
+func (ys *YieldStatement) Line() int            { return int(ys.Token.Line) }
 
 func (fl *FunctionLiteral) GetDefaultValues() map[string]Expression {
 	if fl.overflow == nil {
@@ -828,6 +893,26 @@ func (fl *FunctionLiteral) SetFuncOverflow(dv map[string]Expression, variadic, k
 		Kwargs:           kwargs,
 		KeywordOnlyStart: keywordOnlyStart,
 	}
+}
+
+// GetPositionalOnly returns the number of leading positional-only parameters
+// (0 when the parameter list has no '/' marker).
+func (fl *FunctionLiteral) GetPositionalOnly() int {
+	if fl.overflow == nil {
+		return 0
+	}
+	return fl.overflow.PositionalOnly
+}
+
+// SetPositionalOnly records the number of leading positional-only parameters.
+func (fl *FunctionLiteral) SetPositionalOnly(n int) {
+	if n <= 0 {
+		return
+	}
+	if fl.overflow == nil {
+		fl.overflow = &FuncOverflow{KeywordOnlyStart: -1}
+	}
+	fl.overflow.PositionalOnly = n
 }
 
 func (fl *FunctionLiteral) expressionNode()      {}
@@ -904,6 +989,11 @@ type CallOverflow struct {
 	Keywords     map[string]Expression
 	ArgsUnpack   []Expression
 	KwargsUnpack Expression
+	// ArgsUnpackAt[i] is the number of positional arguments written before
+	// ArgsUnpack[i]. It is nil when every unpack comes after all positional
+	// arguments (f(a, *xs)), the common case; set only for calls such as
+	// f(*xs, b) where order matters.
+	ArgsUnpackAt []int
 }
 
 type CallExpression struct {
@@ -967,6 +1057,24 @@ func (ce *CallExpression) SetOverflow(keywords map[string]Expression, argsUnpack
 		ArgsUnpack:   argsUnpack,
 		KwargsUnpack: kwargsUnpack,
 	}
+}
+
+// GetArgsUnpackAt returns, per *unpack, how many positional arguments precede
+// it, or nil when all unpacks follow every positional argument.
+func (ce *CallExpression) GetArgsUnpackAt() []int {
+	if ce.overflow == nil {
+		return nil
+	}
+	return ce.overflow.ArgsUnpackAt
+}
+
+// SetArgsUnpackAt records unpack positions; call after SetOverflow. A nil or
+// all-trailing list is dropped so the common case stays untouched.
+func (ce *CallExpression) SetArgsUnpackAt(at []int, positional int) {
+	if ce.overflow == nil || !unpackOutOfOrder(at, positional) {
+		return
+	}
+	ce.overflow.ArgsUnpackAt = at
 }
 
 func (ce *CallExpression) HasOverflow() bool {
@@ -1033,6 +1141,24 @@ func (mce *MethodCallExpression) SetOverflow(keywords map[string]Expression, arg
 		ArgsUnpack:   argsUnpack,
 		KwargsUnpack: kwargsUnpack,
 	}
+}
+
+// GetArgsUnpackAt returns, per *unpack, how many positional arguments precede
+// it, or nil when all unpacks follow every positional argument.
+func (mce *MethodCallExpression) GetArgsUnpackAt() []int {
+	if mce.overflow == nil {
+		return nil
+	}
+	return mce.overflow.ArgsUnpackAt
+}
+
+// SetArgsUnpackAt records unpack positions; call after SetOverflow. A nil or
+// all-trailing list is dropped so the common case stays untouched.
+func (mce *MethodCallExpression) SetArgsUnpackAt(at []int, positional int) {
+	if mce.overflow == nil || !unpackOutOfOrder(at, positional) {
+		return
+	}
+	mce.overflow.ArgsUnpackAt = at
 }
 
 func (mce *MethodCallExpression) HasOverflow() bool {
@@ -1365,6 +1491,9 @@ func (ts *TryStatement) Line() int            { return int(ts.Token.Line) }
 type RaiseStatement struct {
 	Token   LineInfo
 	Message Expression
+	// Cause is the `from e` part of `raise X from e`: parsed and evaluated
+	// for its effects; exception chaining is not modelled yet.
+	Cause Expression
 }
 
 func (rs *RaiseStatement) statementNode()       {}
@@ -1529,6 +1658,26 @@ func (l *Lambda) SetFuncOverflow(dv map[string]Expression, variadic, kwargs *Ide
 	}
 }
 
+// GetPositionalOnly returns the number of leading positional-only parameters
+// (0 when the parameter list has no '/' marker).
+func (l *Lambda) GetPositionalOnly() int {
+	if l.overflow == nil {
+		return 0
+	}
+	return l.overflow.PositionalOnly
+}
+
+// SetPositionalOnly records the number of leading positional-only parameters.
+func (l *Lambda) SetPositionalOnly(n int) {
+	if n <= 0 {
+		return
+	}
+	if l.overflow == nil {
+		l.overflow = &FuncOverflow{KeywordOnlyStart: -1}
+	}
+	l.overflow.PositionalOnly = n
+}
+
 func (l *Lambda) expressionNode()      {}
 func (l *Lambda) TokenLiteral() string { return "lambda" }
 func (l *Lambda) Line() int {
@@ -1591,3 +1740,14 @@ type OrPattern struct {
 func (op *OrPattern) expressionNode()      {}
 func (op *OrPattern) TokenLiteral() string { return "|" }
 func (op *OrPattern) Line() int            { return lineOfExprSlice(op.Patterns) }
+
+// unpackOutOfOrder reports whether any *unpack is followed by a positional
+// argument, i.e. needs interleaving rather than appending.
+func unpackOutOfOrder(at []int, positional int) bool {
+	for _, a := range at {
+		if a != positional {
+			return true
+		}
+	}
+	return false
+}

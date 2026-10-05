@@ -104,6 +104,14 @@ These examples expose a local tool to the model, execute it from the script, and
 - You need to debug model-side tool call behavior
 - You want both non-streaming and streaming tool-call examples
 
+### decide/ - Decision Models (Ollama System One)
+
+One request to a decision model that classifies the state, estimates a yes/no probability, and scores it against an ordered rubric — with per-question probabilities and confidence. Requires Ollama v0.35.0+ and a decision model such as `clef-flash`.
+
+```bash
+../../../bin/scriptling decide/example.py
+```
+
 ### scriptlingcoder/ - AI Coding Assistant with Custom Tools
 
 An interactive AI coding assistant that can read, write, and modify files using custom tools. Inspired by [nanocode](https://github.com/1rgs/nanocode).

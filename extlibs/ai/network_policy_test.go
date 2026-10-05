@@ -238,3 +238,59 @@ response.choices[0].message.content
 		t.Errorf("response content = %v, want ok", result.Inspect())
 	}
 }
+
+// TestAIClientNetworkPolicyGuardsDecide: the decision-model path shares the
+// guarded HTTP pool, so policy applies to client.decide() exactly as to
+// client.completion().
+func TestAIClientNetworkPolicyGuardsDecide(t *testing.T) {
+	server := httptest.NewServer(systemOneHandler(t))
+	defer server.Close()
+
+	p := scriptlib.New()
+	Register(p, &netsecurity.Config{AllowLoopback: true})
+	if err := p.SetVar("server_url", server.URL); err != nil {
+		t.Fatalf("SetVar: %v", err)
+	}
+
+	// Denied form: the httptest URL is an IP literal, blocked by default.
+	_, err := p.Eval(`
+import scriptling.ai as ai
+client = ai.Client(server_url, provider=ai.OLLAMA)
+client.decide("clef-flash", "state", questions={"q": {"type": "noul", "instructions": "y?"}})
+`)
+	if err == nil || !strings.Contains(err.Error(), "IP literals") {
+		t.Errorf("decide should be policy-guarded, got: %v", err)
+	}
+
+	// Allowed form: IP literals opted in, the request reaches the server.
+	p2 := scriptlib.New()
+	Register(p2, &netsecurity.Config{AllowLoopback: true, AllowIPLiterals: true})
+	if err := p2.SetVar("server_url", server.URL); err != nil {
+		t.Fatalf("SetVar: %v", err)
+	}
+	result, err := p2.Eval(`
+import scriptling.ai as ai
+client = ai.Client(server_url, provider=ai.OLLAMA)
+r = client.decide("clef-flash", "state", questions={"q": {"type": "noul", "instructions": "y?"}})
+r["answers"]["q"]["noul"] > 0.5
+`)
+	if err != nil {
+		t.Fatalf("allowed decide failed: %v", err)
+	}
+	if result.Inspect() != "True" {
+		t.Errorf("decide under allowed policy: got %s", result.Inspect())
+	}
+}
+
+// systemOneHandler serves a minimal /v1/systemone decision response.
+func systemOneHandler(t *testing.T) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/systemone" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"model":"clef-flash","answers":{"q":{"type":"noul","noul":0.9}},"usage":{"input_tokens":10,"output_tokens":1}}`))
+	}
+}

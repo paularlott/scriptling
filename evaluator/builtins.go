@@ -45,7 +45,8 @@ var (
 )
 
 var builtins = map[string]*object.Builtin{
-	"bytes": BytesBuiltin,
+	"bytes":    BytesBuiltin,
+	"sentinel": SentinelBuiltin,
 	"help": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return helpFunction(ctx, kwargs, args...)
@@ -270,6 +271,11 @@ Returns the number of items in a string, bytes, list, dict, or tuple.`,
 			if exc, ok := obj.(*object.Exception); ok && exc.ExceptionType != "" {
 				return object.NewString(exc.ExceptionType)
 			}
+			// Frozen sets are their own type name, unlike every other
+			// built-in value (which reports the UPPER_CASE object type).
+			if s, ok := obj.(*object.Set); ok && s.Frozen {
+				return object.NewString("frozenset")
+			}
 			return object.NewString(obj.Type().String())
 		},
 		HelpText: `type(obj) - Return the type of an object
@@ -279,6 +285,9 @@ the class it was raised as (e.g. "ValueError"), not the generic "EXCEPTION".`,
 	},
 	"str": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if len(args) == 0 {
+				return object.NewString("") // str() is ''
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -304,6 +313,9 @@ For exceptions, returns just the exception message.`,
 	},
 	"int": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if len(args) == 0 && len(kwargs.Keys()) == 0 {
+				return object.NewInteger(0) // int() is 0
+			}
 			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
 			}
@@ -345,6 +357,12 @@ For exceptions, returns just the exception message.`,
 					return &object.Error{Message: "int() can't convert non-string with explicit base", ExceptionType: object.ExceptionTypeTypeError}
 				}
 				return object.NewInteger(int64(arg.FloatValue()))
+			case *object.Boolean:
+				// bool is an int subclass: int(True) == 1.
+				if hasBase {
+					return &object.Error{Message: "int() can't convert non-string with explicit base", ExceptionType: object.ExceptionTypeTypeError}
+				}
+				return object.NewInteger(boolToInt64(arg.BoolValue()))
 			case *object.String:
 				return parseIntLiteral(arg.StringValue(), base)
 			default:
@@ -360,6 +378,9 @@ Examples: int("ff", 16) == 255, int("0b1010", 2) == 10, int("77", 8) == 63`,
 	},
 	"float": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if len(args) == 0 {
+				return object.NewFloat(0) // float() is 0.0
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -368,6 +389,8 @@ Examples: int("ff", 16) == 255, int("0b1010", 2) == 10, int("77", 8) == 63`,
 				return arg
 			case *object.Integer:
 				return object.NewFloat(float64(arg.IntValue()))
+			case *object.Boolean:
+				return object.NewFloat(float64(boolToInt64(arg.BoolValue())))
 			case *object.String:
 				return parseFloatLiteral(arg.StringValue())
 			default:
@@ -426,6 +449,10 @@ Converts an integer, string, or float to a float.`,
 			floatSum := startFloat
 
 			for _, elem := range elements {
+				if b, isBool := elem.(*object.Boolean); isBool {
+					// bool is an int subclass: sum(x > 2 for x in xs) counts matches.
+					elem = object.NewInteger(boolToInt64(b.BoolValue()))
+				}
 				switch v := elem.(type) {
 				case *object.Integer:
 					if hasFloat {
@@ -615,9 +642,6 @@ Default start is 0. Use list(enumerate(...)) to get a list.`,
 				// Return empty iterator for no arguments
 				return object.NewZipIterator([]object.Object{})
 			}
-			if errObj := checkDictPairing("zip", args); errObj != nil {
-				return errObj
-			}
 			// Validate all arguments are iterable; instances run the iterator
 			// protocol (lazily — only __iter__ is called here).
 			iterArgs := make([]object.Object, len(args))
@@ -779,6 +803,12 @@ With no argument, returns False.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
+			if inst, ok := args[0].(*object.Instance); ok {
+				env := GetEnvFromContext(ctx)
+				if result := callDunderMethodFn(ctx, inst, "__abs__", nil, env); result != nil {
+					return result
+				}
+			}
 			switch num := args[0].(type) {
 			case *object.Integer:
 				if num.IntValue() < 0 {
@@ -786,10 +816,9 @@ With no argument, returns False.`,
 				}
 				return num
 			case *object.Float:
-				if num.FloatValue() < 0 {
-					return object.NewFloat(-num.FloatValue())
-				}
-				return num
+				// math.Abs rather than a < 0 branch: -0.0 < 0 is false in
+				// IEEE comparisons, so the branch would keep negative zero.
+				return object.NewFloat(math.Abs(num.FloatValue()))
 			default:
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
@@ -1100,6 +1129,19 @@ Equivalent to (a // b, a % b) for integers.`,
 							}
 						}
 					}
+					// A user exception class matches its raised exceptions.
+					if exc, ok := obj.(*object.Exception); ok && class.ExceptionBase != "" {
+						if matchesNamedExceptionTypeChain(exc.ExceptionType, class.Name, exc.TypeChain) {
+							return TRUE
+						}
+					}
+					continue
+				}
+
+				if b, ok := typeArg.(*object.Builtin); ok && b == object.DefaultDictType {
+					if d, isDict := obj.(*object.Dict); isDict && d.IsDefaultDict() {
+						return TRUE
+					}
 					continue
 				}
 
@@ -1110,7 +1152,7 @@ Equivalent to (a // b, a % b) for integers.`,
 							if actual == "" {
 								actual = "Exception"
 							}
-							if matchesNamedExceptionType(actual, excName) {
+							if matchesNamedExceptionTypeChain(actual, excName, exc.TypeChain) {
 								return TRUE
 							}
 						}
@@ -1132,6 +1174,19 @@ Equivalent to (a // b, a % b) for integers.`,
 				}
 
 				checkType := strings.ToUpper(typeName)
+				// frozenset and set are distinct types: a frozen set is not a set.
+				if typeName == "frozenset" {
+					if s, ok := obj.(*object.Set); ok && s.Frozen {
+						return TRUE
+					}
+					continue
+				}
+				if typeName == "set" {
+					if s, ok := obj.(*object.Set); ok && !s.Frozen {
+						return TRUE
+					}
+					continue
+				}
 				switch checkType {
 				case "INT", "INTEGER":
 					checkType = "INTEGER"
@@ -1151,6 +1206,15 @@ Equivalent to (a // b, a % b) for integers.`,
 					checkType = "FUNCTION"
 				case "NONE", "NULL", "NONETYPE":
 					checkType = "NULL"
+				case "SLICE":
+					checkType = "SLICE"
+				}
+				// bool is a subclass of int in Python, and scriptling
+				// Booleans already behave as ints in arithmetic.
+				if checkType == "INTEGER" {
+					if _, ok := obj.(*object.Boolean); ok {
+						return TRUE
+					}
 				}
 				if objType == checkType {
 					return TRUE
@@ -1216,15 +1280,18 @@ The argument must be a string of exactly one character.`,
 				return err
 			}
 			switch args[0].(type) {
-			case *object.List, *object.Tuple, *object.String, *object.Iterator, *object.FloatArray:
+			case *object.List, *object.Tuple, *object.String, *object.Iterator, *object.FloatArray,
+				*object.Dict, *object.DictKeys, *object.DictValues, *object.DictItems:
+				// Dicts and their views reverse insertion order (Python 3.8+).
 				return object.NewReversedIterator(args[0])
 			default:
-				return errors.NewTypeError("sequence (LIST, TUPLE, STRING, ITERATOR, FLOAT_ARRAY)", args[0].Type().String())
+				return errors.NewTypeError("sequence (LIST, TUPLE, STRING, ITERATOR, FLOAT_ARRAY, DICT)", args[0].Type().String())
 			}
 		},
 		HelpText: `reversed(seq) - Return a reversed iterator over the sequence
 
-Works with lists, tuples, strings, and iterators.
+Works with lists, tuples, strings, iterators, dicts and dict views (a dict
+reverses its insertion order).
 Use list(reversed(...)) to get a list.`,
 	},
 	"list": {
@@ -1289,13 +1356,13 @@ Otherwise, returns a list containing the items of the iterable.`,
 					if !ok {
 						return errors.NewTypeError("iterable", args[0].Type().String())
 					}
-					result := &object.Dict{Pairs: make(map[string]object.DictPair, len(keys))}
+					result := object.NewDict()
 					for _, key := range keys {
 						hk, rerr := evalHashKeyChecked(ctx, key)
 						if rerr != nil {
 							return rerr
 						}
-						result.Pairs[hk] = object.DictPair{Key: key, Value: value}
+						result.Store(hk, key, value)
 					}
 					return result
 				},
@@ -1305,15 +1372,12 @@ Values default to None. Called as dict.fromkeys(...)`,
 			},
 		},
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			result := &object.Dict{Pairs: make(map[string]object.DictPair)}
+			result := object.NewDict()
 			// Keyword arguments are applied last, so they override keys from
 			// the positional mapping, as in Python: dict({"a": 1}, a=2).
 			addKwargs := func() *object.Dict {
 				for _, key := range kwargs.Keys() {
-					result.Pairs[object.DictKey(object.NewString(key))] = object.DictPair{
-						Key:   object.NewString(key),
-						Value: kwargs.Get(key),
-					}
+					result.SetByString(key, kwargs.Get(key))
 				}
 				return result
 			}
@@ -1355,7 +1419,7 @@ Values default to None. Called as dict.fromkeys(...)`,
 						if herr != nil {
 							return herr
 						}
-						result.Pairs[hk] = object.DictPair{Key: k, Value: v}
+						result.Store(hk, k, v)
 					}
 					return addKwargs()
 				}
@@ -1373,10 +1437,8 @@ Values default to None. Called as dict.fromkeys(...)`,
 			}
 			switch iter := arg.(type) {
 			case *object.Dict:
-				// Copy existing dict
-				for k, v := range iter.Pairs {
-					result.Pairs[k] = v
-				}
+				// Copy existing dict, preserving its insertion order.
+				result.StoreFrom(iter)
 			case *object.List:
 				// List of [key, value] pairs
 				for _, elem := range iter.Elements {
@@ -1392,7 +1454,7 @@ Values default to None. Called as dict.fromkeys(...)`,
 					if len(pair) != 2 {
 						return errors.NewError("dictionary update sequence element must be [key, value] pair")
 					}
-					result.Pairs[object.DictKey(pair[0])] = object.DictPair{Key: pair[0], Value: pair[1]}
+					result.Store(object.DictKey(pair[0]), pair[0], pair[1])
 				}
 			default:
 				return errors.NewTypeError("DICT or LIST of pairs", arg.Type().String())
@@ -1434,6 +1496,50 @@ Keyword arguments are added last and override keys from the mapping.`,
 With no argument, returns an empty tuple.
 Otherwise, returns a tuple containing the items of the iterable.`,
 	},
+	"frozenset": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if len(args) > 1 {
+				return errors.NewError("frozenset() takes at most 1 argument (%d given)", len(args))
+			}
+			if len(args) == 0 {
+				return object.NewFrozenSet()
+			}
+			// Elements must be hashable; evalSetAdd enforces that per
+			// element, exactly as Python rejects unhashable elements.
+			if s, ok := args[0].(*object.Set); ok {
+				c := s.Copy()
+				c.Frozen = true
+				return c
+			}
+			elements, ok, rerr := iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx))
+			if rerr != nil {
+				return rerr
+			}
+			if !ok {
+				return errors.NewTypeError("iterable", args[0].Type().String())
+			}
+			s := object.NewSet()
+			for _, e := range elements {
+				if err := evalSetAdd(ctx, s, e); err != nil {
+					return err
+				}
+			}
+			return s.Freeze()
+		},
+		HelpText: `frozenset([iterable]) - Create an immutable set
+
+Returns a set that cannot be modified: add/remove/update raise
+AttributeError. Frozen sets are hashable (by content), so they can be
+used as dict keys and set members, unlike regular sets.
+
+Elements must be hashable, exactly as for set literals.
+
+Example:
+  fs = frozenset([1, 2, 3])
+  2 in fs                     # True
+  d = {frozenset("ab"): 1}    # legal: hashable key
+  fs | {4}                    # frozenset({1, 2, 3, 4})`,
+	},
 	"set": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) == 0 {
@@ -1443,9 +1549,13 @@ Otherwise, returns a tuple containing the items of the iterable.`,
 				return err
 			}
 
-			// Special case: set returns a copy
+			// Special case: set(s) returns a copy. Always mutable: the
+			// constructor's result type is set, even when s is a frozenset
+			// (use .copy() to preserve frozenness).
 			if s, ok := args[0].(*object.Set); ok {
-				return s.Copy()
+				c := s.Copy()
+				c.Frozen = false
+				return c
 			}
 
 			// Get elements from iterable
@@ -1497,6 +1607,13 @@ For other objects, returns the same as str().`,
 					return hashInstanceFn(ctx, inst)
 				}
 			}
+			if !hashableAsKey(args[0]) {
+				return &object.Exception{
+					Message:       fmt.Sprintf("unhashable type: '%s'", getTypeName(args[0])),
+					ExceptionType: object.ExceptionTypeTypeError,
+					Raised:        true,
+				}
+			}
 			// FNV-1a hash algorithm - fast and good distribution
 			str := args[0].Inspect()
 			const (
@@ -1513,6 +1630,34 @@ For other objects, returns the same as str().`,
 		HelpText: `hash(object) - Return the hash value of an object
 
 Returns an integer hash value for the object using FNV-1a algorithm.`,
+	},
+	"vars": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			// vars() - the current scope's bindings as a dict (module
+			// globals); vars(obj) - an instance's fields.
+			if len(args) > 1 {
+				return errors.NewError("vars() takes 0 or 1 arguments (%d given)", len(args))
+			}
+			if len(args) == 1 {
+				inst, ok := args[0].(*object.Instance)
+				if !ok {
+					return errors.NewTypeError("instance", args[0].Type().String())
+				}
+				return instanceDictView(inst)
+			}
+			env := GetEnvFromContext(ctx)
+			if env == nil {
+				return &object.Dict{Pairs: make(map[string]object.DictPair)}
+			}
+			d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+			env.EachLocal(func(name string, v object.Object) {
+				if v != nil && !strings.HasPrefix(name, "__") {
+					d.SetByString(name, v)
+				}
+			})
+			return d
+		},
+		HelpText: `vars() or vars(object) - Bindings of the current scope or an instance's fields`,
 	},
 	"id": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -1618,10 +1763,7 @@ If default is provided, returns it when the attribute doesn't exist.`,
 				obj.InvalidateBoundMethod(name)
 				return NULL
 			case *object.Dict:
-				obj.Pairs[object.DictKey(object.NewString(name))] = object.DictPair{
-					Key:   object.NewString(name),
-					Value: args[2],
-				}
+				obj.SetByString(name, args[2])
 				return NULL
 			default:
 				return errors.NewError("'%s' object does not support attribute assignment", args[0].Type().String())
@@ -1653,7 +1795,7 @@ Only works on dict-like objects.`,
 			case *object.Dict:
 				dictKey := object.DictKey(object.NewString(name))
 				if _, ok := obj.Pairs[dictKey]; ok {
-					delete(obj.Pairs, dictKey)
+					obj.Delete(dictKey)
 					return NULL
 				}
 				return errors.NewError("dictionary has no key '%s'", name)
@@ -1825,11 +1967,10 @@ Checks the full inheritance chain. issubclass(C, C) is True.`,
 				copy(newElems, o.Elements)
 				return &object.List{Elements: newElems}
 			case *object.Dict:
-				newPairs := make(map[string]object.DictPair, len(o.Pairs))
-				for k, v := range o.Pairs {
-					newPairs[k] = v
-				}
-				return &object.Dict{Pairs: newPairs}
+				copied := object.NewDictSized(len(o.Pairs))
+				copied.SetFactory(o.Factory())
+				copied.StoreFrom(o)
+				return copied
 			case *object.Set:
 				return o.Copy()
 			case *object.Tuple:
@@ -1864,6 +2005,7 @@ Tuples and scalars are returned as-is (they are immutable).`,
 			return &object.Exception{
 				Message:       message,
 				ExceptionType: object.ExceptionTypeException,
+				Args:          append([]object.Object{}, args...),
 			}
 		},
 		HelpText: `Exception([message]) - Create a generic exception
@@ -1884,12 +2026,35 @@ Use with: raise Exception("error message")`,
 			return &object.Exception{
 				Message:       message,
 				ExceptionType: object.ExceptionTypeValueError,
+				Args:          append([]object.Object{}, args...),
 			}
 		},
 		HelpText: `ValueError([message]) - Create a value error exception
 
 Raised when an operation receives an argument with an inappropriate value.
 Use with: raise ValueError("invalid value")`,
+	},
+	"OverflowError": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{
+				Message:       message,
+				ExceptionType: object.ExceptionTypeOverflowError,
+				Args:          append([]object.Object{}, args...),
+			}
+		},
+		HelpText: `OverflowError([message]) - Create an overflow error exception
+
+Raised when a result is too large to represent, such as a float integer
+ratio beyond int64. An ArithmeticError subclass.
+Use with: raise OverflowError("value too large")`,
 	},
 	"TypeError": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -1904,6 +2069,7 @@ Use with: raise ValueError("invalid value")`,
 			return &object.Exception{
 				Message:       message,
 				ExceptionType: object.ExceptionTypeTypeError,
+				Args:          append([]object.Object{}, args...),
 			}
 		},
 		HelpText: `TypeError([message]) - Create a type error exception
@@ -1924,6 +2090,7 @@ Use with: raise TypeError("wrong type")`,
 			return &object.Exception{
 				Message:       message,
 				ExceptionType: object.ExceptionTypeNameError,
+				Args:          append([]object.Object{}, args...),
 			}
 		},
 		HelpText: `NameError([message]) - Create a name error exception
@@ -1944,6 +2111,7 @@ Use with: raise NameError("name not defined")`,
 			return &object.Exception{
 				Message:       message,
 				ExceptionType: object.ExceptionTypeImportError,
+				Args:          append([]object.Object{}, args...),
 			}
 		},
 		HelpText: `ImportError([message]) - Create an import error exception
@@ -1964,6 +2132,7 @@ Use with: raise ImportError("module not found")`,
 			return &object.Exception{
 				Message:       message,
 				ExceptionType: object.ExceptionTypeStopIteration,
+				Args:          append([]object.Object{}, args...),
 			}
 		},
 		HelpText: `StopIteration([message]) - Signal end of iteration
@@ -1981,7 +2150,7 @@ Use with: raise StopIteration()`,
 					message = args[0].Inspect()
 				}
 			}
-			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeRuntimeError}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeRuntimeError, Args: append([]object.Object{}, args...)}
 		},
 		HelpText: `RuntimeError([message]) - Create a runtime error exception`,
 	},
@@ -1995,7 +2164,7 @@ Use with: raise StopIteration()`,
 					message = args[0].Inspect()
 				}
 			}
-			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeZeroDivisionError}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeZeroDivisionError, Args: append([]object.Object{}, args...)}
 		},
 		HelpText: `ZeroDivisionError([message]) - Create a zero division error exception`,
 	},
@@ -2009,7 +2178,7 @@ Use with: raise StopIteration()`,
 					message = args[0].Inspect()
 				}
 			}
-			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeIndexError}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeIndexError, Args: append([]object.Object{}, args...)}
 		},
 		HelpText: `IndexError([message]) - Create an index error exception`,
 	},
@@ -2023,7 +2192,7 @@ Use with: raise StopIteration()`,
 					message = args[0].Inspect()
 				}
 			}
-			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeKeyError}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeKeyError, Args: append([]object.Object{}, args...)}
 		},
 		HelpText: `KeyError([message]) - Create a key error exception`,
 	},
@@ -2037,9 +2206,23 @@ Use with: raise StopIteration()`,
 					message = args[0].Inspect()
 				}
 			}
-			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeAttributeError}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeAttributeError, Args: append([]object.Object{}, args...)}
 		},
 		HelpText: `AttributeError([message]) - Create an attribute error exception`,
+	},
+	"AssertionError": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			message := ""
+			if len(args) > 0 {
+				if str, err := args[0].AsString(); err == nil {
+					message = str
+				} else {
+					message = args[0].Inspect()
+				}
+			}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeAssertionError, Args: append([]object.Object{}, args...)}
+		},
+		HelpText: `AssertionError([message]) - Create an assertion error exception`,
 	},
 	"OSError": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -2051,7 +2234,7 @@ Use with: raise StopIteration()`,
 					message = args[0].Inspect()
 				}
 			}
-			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeOSError}
+			return &object.Exception{Message: message, ExceptionType: object.ExceptionTypeOSError, Args: append([]object.Object{}, args...)}
 		},
 		HelpText: `OSError([message]) - Create an OS error exception`,
 	},
@@ -2101,6 +2284,30 @@ func compareObjectsCtx(ctx context.Context, a, b object.Object, env *object.Envi
 				}
 			}
 			return 1, nil
+		}
+	}
+	// Instances without __lt__/__gt__ are unorderable, as in Python: a
+	// silent 0 here used to leave sorted() unsorted instead of raising.
+	if _, isInst := a.(*object.Instance); isInst {
+		_, hasLt := a.(*object.Instance).Class.Methods["__lt__"]
+		_, hasGt := a.(*object.Instance).Class.Methods["__gt__"]
+		if !hasLt && !hasGt {
+			return 0, &object.Exception{
+				Message:       fmt.Sprintf("'<' not supported between instances of '%s' and '%s'", getTypeName(a), getTypeName(b)),
+				ExceptionType: object.ExceptionTypeTypeError,
+				Raised:        true,
+			}
+		}
+	}
+	if _, isInst := b.(*object.Instance); isInst {
+		_, hasLt := b.(*object.Instance).Class.Methods["__lt__"]
+		_, hasGt := b.(*object.Instance).Class.Methods["__gt__"]
+		if !hasLt && !hasGt {
+			return 0, &object.Exception{
+				Message:       fmt.Sprintf("'<' not supported between instances of '%s' and '%s'", getTypeName(a), getTypeName(b)),
+				ExceptionType: object.ExceptionTypeTypeError,
+				Raised:        true,
+			}
 		}
 	}
 	return compareObjects(a, b), nil
@@ -2408,27 +2615,56 @@ func init() {
 
 	// Build reverse lookup for isinstance() to support bare type names
 	typeBuiltins = map[*object.Builtin]string{
-		builtins["int"]:   "int",
-		builtins["str"]:   "str",
-		builtins["float"]: "float",
-		builtins["bool"]:  "bool",
-		builtins["list"]:  "list",
-		builtins["dict"]:  "dict",
-		builtins["tuple"]: "tuple",
-		builtins["set"]:   "set",
-		builtins["bytes"]: "bytes",
+		builtins["int"]:       "int",
+		builtins["str"]:       "str",
+		builtins["float"]:     "float",
+		builtins["bool"]:      "bool",
+		builtins["list"]:      "list",
+		builtins["dict"]:      "dict",
+		builtins["tuple"]:     "tuple",
+		builtins["slice"]:     "slice",
+		builtins["set"]:       "set",
+		builtins["frozenset"]: "frozenset",
+		builtins["bytes"]:     "bytes",
+	}
+
+	// defaultdict reprs name their factory as Python does: <class 'list'>.
+	object.FactoryRepr = func(factory object.Object) string {
+		switch f := factory.(type) {
+		case *object.Builtin:
+			if name, ok := typeBuiltins[f]; ok {
+				return "<class '" + name + "'>"
+			}
+		case *object.Class:
+			return "<class '" + f.Name + "'>"
+		case *object.Function:
+			return fmt.Sprintf("<function %s at %p>", f.Name, f)
+		case *object.LambdaFunction:
+			return fmt.Sprintf("<function <lambda> at %p>", f)
+		}
+		return factory.Inspect()
 	}
 
 	// Exception constructors (TypeError, ValueError, ...) are types for
 	// isinstance(), matched with the same hierarchy as except clauses.
 	// Base classes of the hierarchy (see exceptionParents) for except
-	// clauses, isinstance() and raise.
-	for _, name := range []string{"BaseException", "LookupError", "ArithmeticError"} {
+	// clauses, isinstance() and raise, plus the OSError family and other
+	// named types Python code references.
+	for _, name := range []string{
+		"BaseException", "LookupError", "ArithmeticError",
+		"FileNotFoundError", "FileExistsError", "IsADirectoryError",
+		"NotADirectoryError", "TimeoutError", "ConnectionError",
+		"ModuleNotFoundError", "RecursionError", "NotImplementedError",
+		"UnicodeError", "UnicodeDecodeError", "UnicodeEncodeError",
+		"KeyboardInterrupt", "JSONDecodeError", "AssertionError",
+		"FrozenInstanceError",
+	} {
 		builtins[name] = exceptionConstructor(name)
 	}
 	exceptionBuiltins = make(map[*object.Builtin]string)
 	for name, b := range builtins {
-		if name == "Exception" || name == "BaseException" || name == "StopIteration" || strings.HasSuffix(name, "Error") {
+		if name == "Exception" || name == "BaseException" || name == "StopIteration" || name == "KeyboardInterrupt" ||
+			strings.HasSuffix(name, "Error") || strings.HasSuffix(name, "Exception") {
 			exceptionBuiltins[b] = name
 		}
 	}
@@ -2446,7 +2682,7 @@ func exceptionConstructor(name string) *object.Builtin {
 					message = args[0].Inspect()
 				}
 			}
-			return &object.Exception{Message: message, ExceptionType: name}
+			return &object.Exception{Message: message, ExceptionType: name, Args: append([]object.Object{}, args...)}
 		},
 		HelpText: name + "([message]) - Create a " + name + " exception",
 	}
@@ -2550,28 +2786,6 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 	}
 
 	return &object.List{Elements: elements}
-}
-
-// checkDictPairing rejects two or more dicts or dict views walked in step.
-// Scriptling dict order is unspecified and can differ between two walks of
-// the same dict, so zip(d.keys(), d.values()) could silently pair the wrong
-// items.
-func checkDictPairing(name string, args []object.Object) object.Object {
-	dicts := 0
-	for _, arg := range args {
-		switch arg.(type) {
-		case *object.Dict, *object.DictKeys, *object.DictValues, *object.DictItems:
-			dicts++
-		}
-	}
-	if dicts < 2 {
-		return nil
-	}
-	return &object.Exception{
-		Message:       fmt.Sprintf("%s() cannot walk two dicts or dict views together because dict order is unspecified; use d.items() or sorted(d)", name),
-		ExceptionType: object.ExceptionTypeTypeError,
-		Raised:        true,
-	}
 }
 
 // hasIteratorArg reports whether any argument is a lazy iterator, which map()
@@ -2685,11 +2899,6 @@ func mapFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 		return errors.NewError("map() requires at least 2 arguments")
 	}
 	fn := args[0]
-	if len(args) > 2 {
-		if errObj := checkDictPairing("map", args[1:]); errObj != nil {
-			return errObj
-		}
-	}
 	if hasIteratorArg(args[1:]) {
 		env := GetEnvFromContext(ctx)
 		return lazyApply(ctx, args[1:], func(items []object.Object) (object.Object, bool) {
@@ -3384,7 +3593,7 @@ func minMaxFunctionImpl(ctx context.Context, kwargs object.Kwargs, wantMax bool,
 					if hasDefault {
 						return defaultVal
 					}
-					return errors.NewError("%s() arg is an empty sequence", name)
+					return errors.NewValueError("%s() arg is an empty sequence", name)
 				}
 				best := fa.Data[0]
 				for _, v := range fa.Data[1:] {
@@ -3403,7 +3612,7 @@ func minMaxFunctionImpl(ctx context.Context, kwargs object.Kwargs, wantMax bool,
 				if hasDefault {
 					return defaultVal
 				}
-				return errors.NewError("%s() arg is an empty sequence", name)
+				return errors.NewValueError("%s() arg is an empty sequence", name)
 			}
 			args = elements
 		}
@@ -3579,4 +3788,12 @@ func isCallableObject(obj object.Object) bool {
 		return ok
 	}
 	return false
+}
+
+// boolToInt64 is Python's int(bool): True is 1, False is 0.
+func boolToInt64(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }

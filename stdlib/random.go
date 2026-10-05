@@ -147,14 +147,14 @@ Returns a random float in the range [0.0, 1.0).`,
 			}
 			if str, ok := args[0].(*object.String); ok {
 				if len(str.StringValue()) == 0 {
-					return errors.NewError("choice() string cannot be empty")
+					return &object.Exception{Message: "choice() string cannot be empty", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 				}
 				idx := rng.Intn(len(str.StringValue()))
 				return object.NewString(string(str.StringValue()[idx]))
 			}
 			if list, ok := args[0].(*object.List); ok {
 				if len(list.Elements) == 0 {
-					return errors.NewError("choice() list cannot be empty")
+					return &object.Exception{Message: "choice() list cannot be empty", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 				}
 				idx := rng.Intn(len(list.Elements))
 				return list.Elements[idx]
@@ -332,7 +332,7 @@ Used for random sampling without replacement.`,
 				n = (start - stop - step - 1) / (-step)
 			}
 			if n <= 0 {
-				return errors.NewError("randrange() empty range")
+				return errors.NewValueError("randrange() empty range")
 			}
 			return object.NewInteger(start + step*rng.Int63n(n))
 		},

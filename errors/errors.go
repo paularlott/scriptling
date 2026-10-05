@@ -60,6 +60,17 @@ func NewValueError(format string, args ...interface{}) *object.Error {
 	}
 }
 
+// NewTypeErrorTagged creates a type error tagged so that `except TypeError:`
+// matches it — for the TypeError classes CPython raises where the generic
+// NewTypeError(expected, got) message shape does not fit ("not enough
+// arguments for format string", wrong value type for a % conversion, ...).
+func NewTypeErrorTagged(format string, args ...interface{}) *object.Error {
+	return &object.Error{
+		Message:       fmt.Sprintf(format, args...),
+		ExceptionType: object.ExceptionTypeTypeError,
+	}
+}
+
 // NewTimeoutError creates a timeout error
 func NewTimeoutError() *object.Error {
 	return &object.Error{Message: ErrTimeout}
@@ -85,9 +96,13 @@ func NewTypeError(expected, got string) *object.Error {
 	return &object.Error{Message: fmt.Sprintf("%s: expected %s, got %s", ErrTypeError, expected, got)}
 }
 
-// NewArgumentError creates an argument error
+// NewArgumentError creates an argument error, tagged TypeError so
+// `except TypeError:` catches it (Python raises TypeError for arity).
 func NewArgumentError(got, want int) *object.Error {
-	return &object.Error{Message: fmt.Sprintf("%s: got %d arguments, want %d", ErrArgumentError, got, want)}
+	return &object.Error{
+		Message:       fmt.Sprintf("%s: got %d arguments, want %d", ErrArgumentError, got, want),
+		ExceptionType: object.ExceptionTypeTypeError,
+	}
 }
 
 // NewIdentifierError creates a name-not-defined error, Python-shaped so

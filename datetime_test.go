@@ -98,12 +98,12 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 		// time.gmtime reports UTC components of the epoch
 		{"gmtime epoch", `
 			g = time.gmtime(0)
-			result = g[0]==1970 and g[1]==1 and g[2]==1 and g[3]==0 and g[4]==0 and g[5]==0 and g[6]==4 and g[7]==1
+			result = g[0]==1970 and g[1]==1 and g[2]==1 and g[3]==0 and g[4]==0 and g[5]==0 and g[6]==3 and g[7]==1 and g.tm_wday==3 and g.tm_yday==1
 		`, true},
-		// 1705314645 = 2024-01-15T10:30:45Z, a Monday (Go weekday 1)
+		// 1705314645 = 2024-01-15T10:30:45Z, a Monday (tm_wday 0 in Python)
 		{"gmtime known timestamp", `
 			g = time.gmtime(1705314645)
-			result = g[0]==2024 and g[1]==1 and g[2]==15 and g[3]==10 and g[4]==30 and g[5]==45 and g[6]==1 and g[7]==15
+			result = g[0]==2024 and g[1]==1 and g[2]==15 and g[3]==10 and g[4]==30 and g[5]==45 and g[6]==0 and g[7]==15 and g.tm_wday==0
 		`, true},
 		// time.localtime reports local components (UTC+8)
 		{"localtime epoch", `
@@ -210,10 +210,10 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 		`, true},
 
 		// comparisons and subtraction are instant based
-		{"datetime subtraction seconds", `
+		{"datetime subtraction timedelta", `
 			a = datetime.datetime.strptime("2024-01-15T10:00:00", "%Y-%m-%dT%H:%M:%S")
 			b = datetime.datetime.strptime("2024-01-15T09:00:00", "%Y-%m-%dT%H:%M:%S")
-			result = a - b
+			result = (a - b).total_seconds()
 		`, 3600.0},
 		{"datetime minus seconds int", `
 			s = datetime.datetime.strptime("2024-01-15T10:00:00", "%Y-%m-%dT%H:%M:%S")
@@ -258,7 +258,7 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 			result = datetime.date(2024, 1, 15).isoformat()
 		`, "2024-01-15"},
 		{"date subtraction days", `
-			result = datetime.date(2024, 1, 22) - datetime.date(2024, 1, 15)
+			result = (datetime.date(2024, 1, 22) - datetime.date(2024, 1, 15)).days
 		`, int64(7)},
 		{"date addition", `
 			result = datetime.date(2024, 1, 15) + 7 == datetime.date(2024, 1, 22)

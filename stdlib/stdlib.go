@@ -27,6 +27,9 @@ const (
 	PlatformLibraryName    = "platform"
 	ItertoolsLibraryName   = "itertools"
 	CollectionsLibraryName = "collections"
+	EnumLibraryName       = "enum"
+	DataclassesLibraryName = "dataclasses"
+	TypingLibraryName      = "typing"
 )
 
 // RegisterAll registers all standard libraries
@@ -51,8 +54,12 @@ func RegisterAll(p interface{ RegisterLibrary(*object.Library) }) {
 	p.RegisterLibrary(PlatformLibrary)
 	p.RegisterLibrary(ItertoolsLibrary)
 	p.RegisterLibrary(CollectionsLibrary)
+	p.RegisterLibrary(EnumLibrary)
+	p.RegisterLibrary(DataclassesLibrary)
+	p.RegisterLibrary(TypingLibrary)
 	p.RegisterLibrary(IOLibrary)
 	p.RegisterLibrary(ContextlibLibrary)
 	p.RegisterLibrary(DifflibLibrary)
 	p.RegisterLibrary(MsgpackLibrary)
+	p.RegisterLibrary(CopyLibrary)
 }

@@ -19,6 +19,8 @@ func TestBuiltinMethodTablesMatchDispatch(t *testing.T) {
 		object.SET_OBJ:         object.NewSet(),
 		object.BYTES_OBJ:       object.NewBytes([]byte("ab")),
 		object.FLOAT_ARRAY_OBJ: object.NewFloatArray1D([]float64{1}),
+		object.INTEGER_OBJ:     object.NewInteger(5),
+		object.FLOAT_OBJ:       object.NewFloat(1.5),
 	}
 	env := object.NewEnvironment()
 	ctx := SetEnvInContext(context.Background(), env)

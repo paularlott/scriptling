@@ -3,13 +3,12 @@ import tempfile
 import shutil
 import os
 
-# Create a few sample files to archive
+# Create a few sample files to archive (scriptling has no open(): the
+# os library's write_file is the way to create files)
 scratch = tempfile.mkdtemp(prefix="zip_demo_")
 os.makedirs(os.path.join(scratch, "src"))
-with open(os.path.join(scratch, "src", "main.py"), "w") as f:
-    f.write("print('hello')\n")
-with open(os.path.join(scratch, "src", "config.toml"), "w") as f:
-    f.write('name = "demo"\n')
+os.write_file(os.path.join(scratch, "src", "main.py"), "print('hello')\n")
+os.write_file(os.path.join(scratch, "src", "config.toml"), 'name = "demo"\n')
 
 # --- Create a ZIP archive ---
 zip_path = os.path.join(scratch, "bundle.zip")

@@ -2,6 +2,7 @@ package stdlib
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -9,9 +10,21 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
+// processStart anchors time.monotonic(): Go monotonic reading since start.
+var processStart = time.Now()
+
+
 var startTime = time.Now()
 
 var TimeLibrary = object.NewLibrary(TimeLibraryName, map[string]*object.Builtin{
+	"monotonic": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			// monotonic() - seconds on a clock that never goes backwards
+			// (Go's monotonic reading since process start).
+			return object.NewFloat(time.Since(processStart).Seconds())
+		},
+		HelpText: `monotonic() - Monotonic clock in seconds`,
+	},
 	"now": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return object.NewString(time.Now().Format("2006-01-02T15:04:05.999999"))
@@ -138,24 +151,12 @@ Returns a time tuple in UTC. If timestamp/datetime is omitted, uses current time
 				return err
 			}
 
-			tuple, err := args[0].AsList()
-			if err != nil {
-				return err
+			vals, verr := timeTupleValues(args[0])
+			if verr != nil {
+				return verr
 			}
 
-			if len(tuple) != 9 {
-				return errors.NewError("time tuple must have exactly 9 elements")
-			}
-
-			// Extract values from tuple
-			year, _ := tuple[0].AsInt()
-			month, _ := tuple[1].AsInt()
-			day, _ := tuple[2].AsInt()
-			hour, _ := tuple[3].AsInt()
-			minute, _ := tuple[4].AsInt()
-			second, _ := tuple[5].AsInt()
-
-			t := time.Date(int(year), time.Month(month), int(day), int(hour), int(minute), int(second), 0, time.Local)
+			t := time.Date(int(vals[0]), time.Month(vals[1]), int(vals[2]), int(vals[3]), int(vals[4]), int(vals[5]), 0, time.Local)
 			return object.NewFloat(float64(t.Unix()))
 		},
 		HelpText: `mktime(tuple) - Convert time tuple to timestamp
@@ -177,26 +178,23 @@ Converts a time tuple (9 elements) to a Unix timestamp.`,
 			if len(args) == 1 {
 				t = time.Now()
 			} else {
-				tuple, err := args[1].AsList()
-				if err != nil {
-					return err
+				vals, verr := timeTupleValues(args[1])
+				if verr != nil {
+					return verr
 				}
-				if len(tuple) != 9 {
-					return errors.NewError("time tuple must have exactly 9 elements")
-				}
-
-				// Extract values from tuple
-				year, _ := tuple[0].AsInt()
-				month, _ := tuple[1].AsInt()
-				day, _ := tuple[2].AsInt()
-				hour, _ := tuple[3].AsInt()
-				minute, _ := tuple[4].AsInt()
-				second, _ := tuple[5].AsInt()
+				year, month, day := vals[0], vals[1], vals[2]
+				hour, minute, second := vals[3], vals[4], vals[5]
 
 				t = time.Date(int(year), time.Month(month), int(day), int(hour), int(minute), int(second), 0, time.Local)
 			}
 
-			return object.NewString(t.Format(pythonToGoFormat(format)))
+			result := t.Format(pythonToGoFormat(format))
+			// %j (day of year) has no Go layout token: it survives the
+			// mapping literally, so substitute it in the output.
+			if strings.Contains(format, "%j") {
+				result = strings.ReplaceAll(result, "%j", fmt.Sprintf("%03d", t.YearDay()))
+			}
+			return object.NewString(result)
 		},
 		HelpText: `strftime(format[, tuple]) - Format time as string
 
@@ -235,23 +233,12 @@ Parses a time string according to the given format and returns a time tuple.`,
 			if len(args) == 0 {
 				t = time.Now()
 			} else if len(args) == 1 {
-				tuple, err := args[0].AsList()
-				if err != nil {
-					return err
-				}
-				if len(tuple) != 9 {
-					return errors.NewError("time tuple must have exactly 9 elements")
+				vals, verr := timeTupleValues(args[0])
+				if verr != nil {
+					return verr
 				}
 
-				// Extract values from tuple
-				year, _ := tuple[0].AsInt()
-				month, _ := tuple[1].AsInt()
-				day, _ := tuple[2].AsInt()
-				hour, _ := tuple[3].AsInt()
-				minute, _ := tuple[4].AsInt()
-				second, _ := tuple[5].AsInt()
-
-				t = time.Date(int(year), time.Month(month), int(day), int(hour), int(minute), int(second), 0, time.Local)
+				t = time.Date(int(vals[0]), time.Month(vals[1]), int(vals[2]), int(vals[3]), int(vals[4]), int(vals[5]), 0, time.Local)
 			} else {
 				if err := errors.MaxArgs(args, 1); err != nil {
 					return err
@@ -290,37 +277,109 @@ Converts a Unix timestamp to a string in the format 'Mon Jan 2 15:04:05 2006'. I
 }, nil, "Time-related functions library")
 
 // Convert Go time.Time to Scriptling time tuple (list)
-func timeToTuple(t time.Time, utc bool) *object.List {
-	var elements []object.Object
-
+func timeToTuple(t time.Time, utc bool) *object.Instance {
 	// gmtime() must report UTC components; time.Now()/time.Unix() carry the
 	// local zone, so convert before extracting the fields.
 	if utc {
 		t = t.UTC()
 	}
 
-	// Get components
 	year, month, day := t.Date()
 	hour, minute, second := t.Clock()
-	weekday := int(t.Weekday())
+	// Python's tm_wday is Monday=0; Go's Weekday is Sunday=0.
+	weekday := (int(t.Weekday()) + 6) % 7
 	yearday := t.YearDay()
 
-	// DST flag (simplified - Go doesn't provide this directly)
-	dst := 0
-
-	elements = []object.Object{
-		object.NewInteger(int64(year)),
-		object.NewInteger(int64(month)),
-		object.NewInteger(int64(day)),
-		object.NewInteger(int64(hour)),
-		object.NewInteger(int64(minute)),
-		object.NewInteger(int64(second)),
-		object.NewInteger(int64(weekday)),
-		object.NewInteger(int64(yearday)),
-		object.NewInteger(int64(dst)),
+	fields := map[string]object.Object{
+		"tm_year":  object.NewInteger(int64(year)),
+		"tm_mon":   object.NewInteger(int64(month)),
+		"tm_mday":  object.NewInteger(int64(day)),
+		"tm_hour":  object.NewInteger(int64(hour)),
+		"tm_min":   object.NewInteger(int64(minute)),
+		"tm_sec":   object.NewInteger(int64(second)),
+		"tm_wday":  object.NewInteger(int64(weekday)),
+		"tm_yday":  object.NewInteger(int64(yearday)),
+		"tm_isdst": object.NewInteger(0),
 	}
+	inst := object.NewInstanceWithFields(StructTimeClass, fields)
+	inst.SetField("_order", &object.List{Elements: []object.Object{
+		fields["tm_year"], fields["tm_mon"], fields["tm_mday"],
+		fields["tm_hour"], fields["tm_min"], fields["tm_sec"],
+		fields["tm_wday"], fields["tm_yday"], fields["tm_isdst"],
+	}})
+	return inst
+}
 
-	return &object.List{Elements: elements}
+// timeTupleValues accepts a time tuple as a List (legacy) or a struct_time
+// instance (gmtime/localtime output) and returns its 9 integer components.
+func timeTupleValues(obj object.Object) ([]int64, object.Object) {
+	if l, ok := obj.(*object.List); ok {
+		if len(l.Elements) != 9 {
+			return nil, errors.NewError("time tuple must have exactly 9 elements")
+		}
+		out := make([]int64, 9)
+		for i, e := range l.Elements {
+			v, err := e.AsInt()
+			if err != nil {
+				return nil, err
+			}
+			out[i] = v
+		}
+		return out, nil
+	}
+	if inst, ok := obj.(*object.Instance); ok {
+		if order, ok := inst.Field("_order").(*object.List); ok && len(order.Elements) == 9 {
+			out := make([]int64, 9)
+			for i, e := range order.Elements {
+				v, err := e.AsInt()
+				if err != nil {
+					return nil, err
+				}
+				out[i] = v
+			}
+			return out, nil
+		}
+	}
+	return nil, errors.NewTypeError("time tuple or struct_time", obj.Type().String())
+}
+
+// StructTimeClass is time.struct_time: indexable like a 9-tuple and with
+// named tm_* attributes, as in Python.
+var StructTimeClass = &object.Class{
+	Name: "struct_time",
+	Methods: map[string]object.Object{
+		"__getitem__": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 2); err != nil {
+					return err
+				}
+				inst := args[0].(*object.Instance)
+				order, _ := inst.Field("_order").(*object.List)
+				idx, err := args[1].AsInt()
+				if err != nil {
+					name, nerr := args[1].AsString()
+					if nerr != nil {
+						return err
+					}
+					if v, ok := inst.GetField(name); ok {
+						return v
+					}
+					return errors.NewError("struct_time has no field %s", name)
+				}
+				if order == nil || idx < 0 || int(idx) >= len(order.Elements) {
+					return errors.NewError("struct_time index out of range")
+				}
+				return order.Elements[idx]
+			},
+			HelpText: "__getitem__(i) - Index or field access",
+		},
+		"__len__": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				return object.NewInteger(9)
+			},
+			HelpText: "__len__() - Always 9 fields",
+		},
+	},
 }
 
 func pythonToGoFormat(pyFormat string) string {
@@ -336,5 +395,7 @@ func pythonToGoFormat(pyFormat string) string {
 	goFormat = strings.ReplaceAll(goFormat, "%B", "January")
 	goFormat = strings.ReplaceAll(goFormat, "%b", "Jan")
 	goFormat = strings.ReplaceAll(goFormat, "%p", "PM")
+	goFormat = strings.ReplaceAll(goFormat, "%I", "3")
+	goFormat = strings.ReplaceAll(goFormat, "%y", "06")
 	return goFormat
 }

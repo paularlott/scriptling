@@ -38,6 +38,13 @@ func compileNode(node ast.Node) object.EvalFn {
 	case *ast.ForStatement:
 		return compileFor(n)
 	case *ast.Identifier:
+		if n.Value() == "yield" {
+			// `yield` parses as a name in expression position (it is a
+			// soft keyword); using it as one is always a mistake here.
+			return func(ctx context.Context, env *object.Environment) object.Object {
+				return errors.NewError("yield expressions are not supported (yield works as a statement in generator functions)")
+			}
+		}
 		return func(ctx context.Context, env *object.Environment) object.Object {
 			return evalIdentifier(n, env)
 		}
@@ -72,6 +79,8 @@ func compileNode(node ast.Node) object.EvalFn {
 		return compilePrefix(n)
 	case *ast.ConditionalExpression:
 		return compileConditional(n)
+	case *ast.ChainedComparison:
+		return compileChainedComparison(n)
 	case *ast.IndexExpression:
 		return compileIndex(n)
 	case *ast.CallExpression:
@@ -111,6 +120,18 @@ func compileNode(node ast.Node) object.EvalFn {
 	case *ast.ContinueStatement:
 		return func(ctx context.Context, env *object.Environment) object.Object {
 			return object.CONTINUE
+		}
+	case *ast.AnnotatedAssignStatement:
+		return compileAnnotatedAssign(n)
+	case *ast.StarredElement:
+		// Inside a display: the display's compilation splices the iterable;
+		// compiling the element itself just evaluates the inner value.
+		return compileExpr(n.Value)
+	case *ast.YieldStatement:
+		// Safety net: the generator plan builder intercepts legal yields;
+		// one reaching ordinary compilation is out of place (phase 1).
+		return func(ctx context.Context, env *object.Environment) object.Object {
+			return errors.NewError("yield outside a generator function is not supported")
 		}
 	case *ast.PassStatement:
 		return func(ctx context.Context, env *object.Environment) object.Object {
@@ -192,6 +213,31 @@ func compileDefaults(defaults map[string]ast.Expression) map[string]object.EvalF
 		out[name] = compileExpr(e)
 	}
 	return out
+}
+
+// resolveDefaults evaluates each parameter default once, in parameter order,
+// at definition time, as Python does: the default is bound to the value the
+// expression produces when the def runs, not re-evaluated against a possibly
+// mutated defining scope at call time. The result is index-aligned with
+// parameters; nil marks a parameter without a default. The second return is
+// non-nil when a default raises and must propagate out of the definition.
+func resolveDefaults(ctx context.Context, env *object.Environment, parameters []*ast.Identifier, compiled map[string]object.EvalFn) ([]object.Object, object.Object) {
+	if len(compiled) == 0 {
+		return nil, nil
+	}
+	out := make([]object.Object, len(parameters))
+	for i, param := range parameters {
+		fn, ok := compiled[param.Value()]
+		if !ok {
+			continue
+		}
+		val := fn(ctx, env)
+		if propagates(val) {
+			return nil, val
+		}
+		out[i] = val
+	}
+	return out, nil
 }
 
 // fixErrorPos gives an Error with a zero line or empty file the position of
@@ -375,6 +421,29 @@ func compileAssign(n *ast.AssignStatement) object.EvalFn {
 			}
 		}
 		if err := assignToExpression(ctx, n.Left, val, env); err != nil {
+			return assignErrorToObject(err)
+		}
+		return NULL
+	}
+}
+
+// compileAnnotatedAssign compiles an annotated assignment: the annotation
+// is recorded on the AST (class bodies surface it to @dataclass) and never
+// evaluated; the value assigns as usual, or the statement is a no-op.
+func compileAnnotatedAssign(n *ast.AnnotatedAssignStatement) object.EvalFn {
+	if n.Value == nil {
+		return func(ctx context.Context, env *object.Environment) object.Object {
+			return NULL
+		}
+	}
+	value := compileExpr(n.Value)
+	target := n.Target
+	return func(ctx context.Context, env *object.Environment) object.Object {
+		val := value(ctx, env)
+		if propagates(val) {
+			return val
+		}
+		if err := assignToExpression(ctx, target, val, env); err != nil {
 			return assignErrorToObject(err)
 		}
 		return NULL
@@ -663,12 +732,10 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 		// unpack and discard. Only the 2-variable form qualifies; everything else
 		// (1 var, 3+ vars, non-DictItems) falls through to the generic path.
 		if di, ok := iterableVal.(*object.DictItems); ok && len(n.Variables) == 2 {
-			// Snapshot keys so body mutations (e.g. del d[k]) can't corrupt the
-			// range, matching DictItems.CreateIterator's view semantics.
-			keys := make([]string, 0, len(di.Dict.Pairs))
-			for k := range di.Dict.Pairs {
-				keys = append(keys, k)
-			}
+			// Snapshot keys (in insertion order) so body mutations (e.g. del
+			// d[k]) can't corrupt the range, matching DictItems.CreateIterator's
+			// view semantics.
+			keys := di.Dict.OrderedKeys()
 			cc := newContextChecker(ctx)
 			for _, key := range keys {
 				pair, ok := di.Dict.Pairs[key]
@@ -702,6 +769,10 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 		// Handle Iterator objects and Views
 		var iter *object.Iterator
 		switch o := iterableVal.(type) {
+		case *object.Class:
+			if o.IsEnum {
+				iter = object.NewIterator(sliceWalk(o.EnumMembers))
+			}
 		case *object.Iterator:
 			iter = o
 		case *object.Dict:
@@ -746,7 +817,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 				}
 
 				if err := setForVariables(n.Variables, element, env); err != nil {
-					return errors.NewError("%s", err.Error())
+					return assignErrorToObject(err)
 				}
 
 				var act loopAction
@@ -784,7 +855,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 						copy(rowData, o.Data[off:off+cols])
 						element := object.NewFloatArray1D(rowData)
 						if err := setForVariables(n.Variables, element, env); err != nil {
-							return errors.NewError("%s", err.Error())
+							return assignErrorToObject(err)
 						}
 						var act loopAction
 						act, result = loopResult(body(ctx, env))
@@ -805,7 +876,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 					}
 					element := object.NewFloat(v)
 					if err := setForVariables(n.Variables, element, env); err != nil {
-						return errors.NewError("%s", err.Error())
+						return assignErrorToObject(err)
 					}
 					var act loopAction
 					act, result = loopResult(body(ctx, env))
@@ -828,7 +899,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 
 					element := object.NewString(string(char))
 					if err := setForVariables(n.Variables, element, env); err != nil {
-						return errors.NewError("%s", err.Error())
+						return assignErrorToObject(err)
 					}
 
 					var act loopAction
@@ -852,7 +923,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 
 					element := object.NewInteger(int64(b))
 					if err := setForVariables(n.Variables, element, env); err != nil {
-						return errors.NewError("%s", err.Error())
+						return assignErrorToObject(err)
 					}
 
 					var act loopAction
@@ -878,7 +949,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 				}
 
 				if err := setForVariables(n.Variables, element, env); err != nil {
-					return errors.NewError("%s", err.Error())
+					return assignErrorToObject(err)
 				}
 
 				var act loopAction
@@ -1067,6 +1138,79 @@ func compileConditional(n *ast.ConditionalExpression) object.EvalFn {
 	}
 }
 
+// compileChainedComparison compiles a < b <= c (and in/is chains): operands
+// evaluate left to right, each at most once, and the chain stops at the
+// first false comparison — later operands are never evaluated. The middle
+// value carries forward, exactly as in Python.
+func compileChainedComparison(n *ast.ChainedComparison) object.EvalFn {
+	first := compileExpr(n.First)
+	type link struct {
+		op ast.Op
+		fn object.EvalFn
+	}
+	links := make([]link, len(n.Links))
+	for i, l := range n.Links {
+		links[i] = link{op: l.Op, fn: compileExpr(l.Operand)}
+	}
+	return func(ctx context.Context, env *object.Environment) object.Object {
+		left := first(ctx, env)
+		if propagates(left) {
+			return left
+		}
+		for _, l := range links {
+			right := l.fn(ctx, env)
+			if propagates(right) {
+				return right
+			}
+			// Integer fast path for ordering/equality links — the loop-guard
+			// idiom (0 <= i < n) is hot, and evalInfixExpression's full
+			// dispatch would dominate it. Membership/identity links (in, is)
+			// take the general path.
+			if li, lok := left.(*object.Integer); lok {
+				if ri, rok := right.(*object.Integer); rok {
+					if holds, isValueOp := intLinkHolds(l.op, li.IntValue(), ri.IntValue()); isValueOp {
+						if !holds {
+							return FALSE
+						}
+						left = right
+						continue
+					}
+				}
+			}
+			result := evalInfixExpression(ctx, l.op, left, right, env)
+			if propagates(result) {
+				return result
+			}
+			if result != TRUE {
+				return FALSE
+			}
+			left = right
+		}
+		return TRUE
+	}
+}
+
+// intLinkHolds evaluates one ordering/equality chain link between two
+// integers. isValueOp is false for membership/identity operators, whose
+// links must use the general comparison path.
+func intLinkHolds(op ast.Op, l, r int64) (holds, isValueOp bool) {
+	switch op {
+	case ast.OpLt:
+		return l < r, true
+	case ast.OpLte:
+		return l <= r, true
+	case ast.OpGt:
+		return l > r, true
+	case ast.OpGte:
+		return l >= r, true
+	case ast.OpEq:
+		return l == r, true
+	case ast.OpNeq:
+		return l != r, true
+	}
+	return false, false
+}
+
 func compileIndex(n *ast.IndexExpression) object.EvalFn {
 	left := compileExpr(n.Left)
 	index := compileExpr(n.Index)
@@ -1174,6 +1318,7 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 	argFns := compileExprs(n.Arguments)
 	kwFns := compileKeywordMap(n.GetKeywords())
 	unpackFns := compileExprs(n.GetArgsUnpack())
+	unpackAt := n.GetArgsUnpackAt()
 	var kwargsUnpackFn object.EvalFn
 	if e := n.GetKwargsUnpack(); e != nil {
 		kwargsUnpackFn = compileExpr(e)
@@ -1191,15 +1336,27 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 			}
 		}
 
-		args := evalCompiledCallArgs(ctx, env, argFns)
-		if isPropagatedError(args) {
-			return args[0]
+		var args []object.Object
+		if unpackAt != nil {
+			// Out-of-order unpacks (f(*xs, b)): arguments evaluate in
+			// source order, positionals and unpacks interleaved, as Python
+			// does. The result is a fresh slice (not pooled).
+			var errObj object.Object
+			args, errObj = mergeUnpackedArgsInOrder(ctx, env, argFns, unpackFns, unpackAt)
+			if errObj != nil {
+				return errObj
+			}
+		} else {
+			args = evalCompiledCallArgs(ctx, env, argFns)
+			if isPropagatedError(args) {
+				return args[0]
+			}
+			// args is borrowed from the per-root arg-buffer free-list; release it on
+			// every return path from here. (If *unpack append below grows args into a
+			// fresh backing, the original pooled buffer is still released correctly; the
+			// grown backing is simply not pooled — a rare case.)
+			defer object.ReleaseArgs(env, args)
 		}
-		// args is borrowed from the per-root arg-buffer free-list; release it on
-		// every return path from here. (If *unpack append below grows args into a
-		// fresh backing, the original pooled buffer is still released correctly; the
-		// grown backing is simply not pooled — a rare case.)
-		defer object.ReleaseArgs(env, args)
 
 		var keywords map[string]object.Object
 		if len(kwFns) > 0 {
@@ -1213,16 +1370,12 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 			}
 		}
 
-		for _, unpackFn := range unpackFns {
-			argsVal := unpackFn(ctx, env)
-			if propagates(argsVal) {
-				return argsVal
+		if len(unpackFns) > 0 && unpackAt == nil {
+			var errObj object.Object
+			args, errObj = appendUnpackedArgs(ctx, env, args, unpackFns)
+			if errObj != nil {
+				return errObj
 			}
-			unpacked, err := unpackArgsFromIterable(argsVal)
-			if err != nil {
-				return err
-			}
-			args = append(args, unpacked...)
 		}
 
 		if kwargsUnpackFn != nil {
@@ -1252,10 +1405,13 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 				if val, found := resolveCallee(n, name, env); found {
 					switch fn := val.(type) {
 					case *object.Function:
-						// Fast paths for common arg counts: avoid slice allocation
+						// Fast paths for common arg counts: avoid slice allocation.
+						// KeywordOnlyStart must be 0: these paths fill every
+						// parameter positionally, which would silently accept
+						// positional calls for keyword-only parameters.
 						nargs := len(argFns)
 						nparams := len(fn.Parameters)
-						if fn.Variadic == nil && fn.Kwargs == nil && len(fn.DefaultValues) == 0 && nargs == nparams && nargs <= 3 {
+						if fn.Variadic == nil && fn.Kwargs == nil && len(fn.DefaultValues) == 0 && fn.KeywordOnlyStart == 0 && nargs == nparams && nargs <= 3 {
 							switch nargs {
 							case 1:
 								a0 := argFns[0](ctx, env)
@@ -1340,6 +1496,7 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 	argFns := compileExprs(n.Arguments)
 	kwFns := compileKeywordMap(n.GetKeywords())
 	unpackFns := compileExprs(n.GetArgsUnpack())
+	unpackAt := n.GetArgsUnpackAt()
 	var kwargsUnpackFn object.EvalFn
 	if e := n.GetKwargsUnpack(); e != nil {
 		kwargsUnpackFn = compileExpr(e)
@@ -1408,16 +1565,22 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 		}
 
 		// Handle *args unpacking (supports multiple)
-		for _, unpackFn := range unpackFns {
-			argsVal := unpackFn(ctx, env)
-			if propagates(argsVal) {
-				return argsVal
+		if len(unpackFns) > 0 {
+			if unpackAt != nil {
+				// Out-of-order unpacks: evaluate in source order (see the
+				// call-site twin in compileCall).
+				var errObj object.Object
+				args, errObj = mergeUnpackedArgsInOrder(ctx, env, argFns, unpackFns, unpackAt)
+				if errObj != nil {
+					return errObj
+				}
+			} else {
+				var errObj object.Object
+				args, errObj = appendUnpackedArgs(ctx, env, args, unpackFns)
+				if errObj != nil {
+					return errObj
+				}
 			}
-			unpacked, err := unpackArgsFromIterable(argsVal)
-			if err != nil {
-				return err
-			}
-			args = append(args, unpacked...)
 		}
 
 		// Handle **kwargs unpacking
@@ -1587,8 +1750,22 @@ func compileFunctionStatement(n *ast.FunctionStatement) object.EvalFn {
 		decorators[i] = compileExpr(d)
 	}
 	name := n.Name.Value()
+	// Generator functions compile to a resumable plan instead of a body.
+	var plan *genPlan
+	var generatorPlan any
+	if containsYield(n.Function.Body) {
+		plan = buildGeneratorPlan(n.Function.Body)
+		generatorPlan = plan
+	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
+		if plan != nil && plan.invalid != "" {
+			return errors.NewError("cannot define generator '%s': %s", name, plan.invalid)
+		}
 		localSlots, localSlotNames := analyzeFunctionLocals(n)
+		resolved, fail := resolveDefaults(ctx, env, n.Function.Parameters, defaults)
+		if fail != nil {
+			return fail
+		}
 		fn := &object.Function{
 			Name:             name,
 			Parameters:       n.Function.Parameters,
@@ -1596,6 +1773,7 @@ func compileFunctionStatement(n *ast.FunctionStatement) object.EvalFn {
 			Variadic:         n.Function.GetVariadic(),
 			Kwargs:           n.Function.GetKwargs(),
 			KeywordOnlyStart: n.Function.GetKeywordOnlyStart() + 1,
+			PositionalOnly:   n.Function.GetPositionalOnly(),
 			Body:             n.Function.Body,
 			Env:              env,
 			LocalSlots:       localSlots,
@@ -1603,7 +1781,9 @@ func compileFunctionStatement(n *ast.FunctionStatement) object.EvalFn {
 			ParamSlotIndexes: n.Function.ParamSlotIndexes,
 			ReuseCallEnv:     !n.Function.HasNestedFunc,
 			CompiledDefaults: defaults,
+			ResolvedDefaults: resolved,
 			CompilerOwned:    true,
+			GeneratorPlan:    generatorPlan,
 		}
 		var result object.Object = fn
 		for i := len(decorators) - 1; i >= 0; i-- {
@@ -1633,12 +1813,17 @@ func compileLambda(n *ast.Lambda) object.EvalFn {
 	defaults := compileDefaults(n.GetDefaultValues())
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		localSlots, localSlotNames := analyzeLambdaLocals(n)
+		resolved, fail := resolveDefaults(ctx, env, n.Parameters, defaults)
+		if fail != nil {
+			return fail
+		}
 		return &object.LambdaFunction{
 			Parameters:       n.Parameters,
 			DefaultValues:    n.GetDefaultValues(),
 			Variadic:         n.GetVariadic(),
 			Kwargs:           n.GetKwargs(),
 			KeywordOnlyStart: n.GetKeywordOnlyStart() + 1,
+			PositionalOnly:   n.GetPositionalOnly(),
 			Body:             n.Body,
 			Env:              env,
 			LocalSlots:       localSlots,
@@ -1646,6 +1831,7 @@ func compileLambda(n *ast.Lambda) object.EvalFn {
 			ParamSlotIndexes: n.ParamSlotIndexes,
 			CompiledBody:     body,
 			CompiledDefaults: defaults,
+			ResolvedDefaults: resolved,
 		}
 	}
 }
@@ -1670,35 +1856,101 @@ func evalCompiledExpressions(ctx context.Context, env *object.Environment, fns [
 
 func compileListLiteral(n *ast.ListLiteral) object.EvalFn {
 	elements := compileExprs(n.Elements)
+	starred := make([]bool, len(n.Elements))
+	for i, e := range n.Elements {
+		_, starred[i] = e.(*ast.StarredElement)
+	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		vals := evalCompiledExpressions(ctx, env, elements)
 		if isPropagatedError(vals) {
 			return vals[0]
 		}
-		return &object.List{Elements: vals}
+		if !hasTrue(starred) {
+			return &object.List{Elements: vals}
+		}
+		// Splice starred elements' iterables into place.
+		out := make([]object.Object, 0, len(vals))
+		for i, v := range vals {
+			if !starred[i] {
+				out = append(out, v)
+				continue
+			}
+			elems, ok, rerr := iterableToSliceChecked(ctx, v, env)
+			if rerr != nil {
+				return rerr
+			}
+			if !ok {
+				return errors.NewTypeErrorTagged("argument after * must be an iterable, not %s", getTypeName(v))
+			}
+			out = append(out, elems...)
+		}
+		return &object.List{Elements: out}
 	}
 }
 
 func compileTupleLiteral(n *ast.TupleLiteral) object.EvalFn {
 	elements := compileExprs(n.Elements)
+	starred := make([]bool, len(n.Elements))
+	for i, e := range n.Elements {
+		_, starred[i] = e.(*ast.StarredElement)
+	}
+	hasStar := hasTrue(starred)
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		vals := evalCompiledExpressions(ctx, env, elements)
 		if isPropagatedError(vals) {
 			return vals[0]
 		}
-		return &object.Tuple{Elements: vals}
+		if !hasStar {
+			return &object.Tuple{Elements: vals}
+		}
+		// Splice starred elements' iterables into place: (1, *xs, 4).
+		out := make([]object.Object, 0, len(vals))
+		for i, v := range vals {
+			if !starred[i] {
+				out = append(out, v)
+				continue
+			}
+			elems, ok, rerr := iterableToSliceChecked(ctx, v, env)
+			if rerr != nil {
+				return rerr
+			}
+			if !ok {
+				return errors.NewTypeErrorTagged("argument after * must be an iterable, not %s", getTypeName(v))
+			}
+			out = append(out, elems...)
+		}
+		return &object.Tuple{Elements: out}
 	}
 }
 
 func compileSetLiteral(n *ast.SetLiteral) object.EvalFn {
 	elements := compileExprs(n.Elements)
+	starred := make([]bool, len(n.Elements))
+	for i, e := range n.Elements {
+		_, starred[i] = e.(*ast.StarredElement)
+	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		vals := evalCompiledExpressions(ctx, env, elements)
 		if isPropagatedError(vals) {
 			return vals[0]
 		}
 		s := object.NewSet()
-		for _, elem := range vals {
+		for i, elem := range vals {
+			if starred[i] {
+				elems, ok, rerr := iterableToSliceChecked(ctx, elem, env)
+				if rerr != nil {
+					return rerr
+				}
+				if !ok {
+					return errors.NewTypeErrorTagged("argument after * must be an iterable, not %s", getTypeName(elem))
+				}
+				for _, e := range elems {
+					if err := evalSetAdd(ctx, s, e); err != nil {
+						return err
+					}
+				}
+				continue
+			}
 			if err := evalSetAdd(ctx, s, elem); err != nil {
 				return err
 			}
@@ -1711,16 +1963,63 @@ func compileDictLiteral(n *ast.DictLiteral) object.EvalFn {
 	pairKeys := make([]object.EvalFn, len(n.Pairs))
 	pairValues := make([]object.EvalFn, len(n.Pairs))
 	for i, pairNode := range n.Pairs {
-		pairKeys[i] = compileExpr(pairNode.Key)
+		if pairNode.Key != nil {
+			pairKeys[i] = compileExpr(pairNode.Key)
+		}
 		pairValues[i] = compileExpr(pairNode.Value)
 	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		if len(pairKeys) == 0 {
-			return &object.Dict{Pairs: make(map[string]object.DictPair)}
+			return object.NewDict()
 		}
-		pairs := make(map[string]object.DictPair, len(pairKeys))
+		result := object.NewDictSized(len(pairKeys))
 
 		for i := range pairKeys {
+			// A nil key marks a {**mapping} entry: merge its pairs in
+			// place, so later entries still override earlier ones.
+			if n.Pairs[i].Key == nil {
+				mv := pairValues[i](ctx, env)
+				if propagates(mv) {
+					return mv
+				}
+				if md, isDict := mv.(*object.Dict); isDict {
+					result.StoreFrom(md)
+					continue
+				}
+				// Mapping instances (defaultdict, Counter, ...): copy via
+				// keys() + __getitem__, as dict(mapping) does.
+				if mInst, isInst := mv.(*object.Instance); isInst {
+					if _, hasKeys := mInst.Class.LookupMember("keys"); hasKeys {
+						keysObj := callDunderMethodFn(ctx, mInst, "keys", nil, env)
+						if propagates(keysObj) {
+							return keysObj
+						}
+						keys, ok, rerr := iterableToSliceChecked(ctx, keysObj, env)
+						if rerr != nil {
+							return rerr
+						}
+						if !ok {
+							return errors.NewTypeErrorTagged("argument after ** must be a mapping, not %s", getTypeName(mv))
+						}
+						for _, k := range keys {
+							v := callDunderMethodFn(ctx, mInst, "__getitem__", []object.Object{k}, env)
+							if v == nil {
+								return errors.NewTypeErrorTagged("mapping with __getitem__, got %s", getTypeName(mv))
+							}
+							if propagates(v) {
+								return v
+							}
+							hk, herr := evalHashKeyChecked(ctx, k)
+							if herr != nil {
+								return herr
+							}
+							result.Store(hk, k, v)
+						}
+						continue
+					}
+				}
+				return errors.NewTypeErrorTagged("argument after ** must be a dict, not %s", getTypeName(mv))
+			}
 			key := pairKeys[i](ctx, env)
 			if propagates(key) {
 				return key
@@ -1735,10 +2034,10 @@ func compileDictLiteral(n *ast.DictLiteral) object.EvalFn {
 			if raised != nil {
 				return raised
 			}
-			pairs[hk] = object.DictPair{Key: key, Value: value}
+			result.Store(hk, key, value)
 		}
 
-		return &object.Dict{Pairs: pairs}
+		return result
 	}
 }
 
@@ -1807,6 +2106,20 @@ func compileSlice(n *ast.SliceExpression) object.EvalFn {
 		}
 
 		switch obj := leftVal.(type) {
+		case *object.Instance:
+			// Python hands the slice object to __getitem__; the compiled
+			// fast path for builtin sequences does not apply here.
+			sliceObj := &object.Slice{Start: nil, End: nil, Step: nil}
+			if hasStart {
+				sliceObj.Start = object.NewInteger(start)
+			}
+			if hasEnd {
+				sliceObj.End = object.NewInteger(end)
+			}
+			if hasStep {
+				sliceObj.Step = object.NewInteger(step)
+			}
+			return evalIndexExpression(ctx, obj, sliceObj, false)
 		case *object.List:
 			return sliceList(obj.Elements, start, end, step, hasStart, hasEnd, hasStep)
 		case *object.Tuple:
@@ -1920,12 +2233,7 @@ func applyAugmentedOp(ctx context.Context, op ast.Op, currentVal, newVal object.
 	if op == ast.OpBitOrEq {
 		if cur, ok := currentVal.(*object.Dict); ok {
 			if r, ok := newVal.(*object.Dict); ok {
-				if cur.Pairs == nil {
-					cur.Pairs = make(map[string]object.DictPair, len(r.Pairs))
-				}
-				for k, v := range r.Pairs {
-					cur.Pairs[k] = v
-				}
+				cur.StoreFrom(r)
 				return nil, true, nil
 			}
 		}
@@ -2085,7 +2393,10 @@ func compileMultipleAssign(n *ast.MultipleAssignStatement) object.EvalFn {
 				return rerr
 			}
 			if !ok {
-				return errors.NewTypeError("list or tuple", val.Type().String())
+				return &object.Error{
+					Message:       fmt.Sprintf("cannot unpack non-iterable %s object", val.Type().String()),
+					ExceptionType: object.ExceptionTypeTypeError,
+				}
 			}
 			elements = elems
 		}
@@ -2096,7 +2407,7 @@ func compileMultipleAssign(n *ast.MultipleAssignStatement) object.EvalFn {
 			// Need at least (len(names) - 1) elements
 			minElements := len(n.Names) - 1
 			if len(elements) < minElements {
-				return errors.NewError("not enough values to unpack (expected at least %d, got %d)", minElements, len(elements))
+				return errors.NewValueError("not enough values to unpack (expected at least %d, got %d)", minElements, len(elements))
 			}
 
 			// Assign elements before the starred variable
@@ -2122,7 +2433,10 @@ func compileMultipleAssign(n *ast.MultipleAssignStatement) object.EvalFn {
 		} else {
 			// No starred unpacking - exact length match required
 			if len(elements) != len(n.Names) {
-				return errors.NewError("cannot unpack %d values to %d variables", len(elements), len(n.Names))
+				if len(elements) > len(n.Names) {
+					return errors.NewValueError("too many values to unpack (expected %d, got %d)", len(n.Names), len(elements))
+				}
+				return errors.NewValueError("not enough values to unpack (expected %d, got %d)", len(n.Names), len(elements))
 			}
 
 			// Assign each value
@@ -2261,7 +2575,7 @@ func evalCompiledAdditionalClauses(ctx context.Context, clauses []compiledClause
 	}
 	return iterateObject(ctx, iterable, func(element object.Object) object.Object {
 		if err := setForVariables(c.variables, element, env); err != nil {
-			return errors.NewError("%s", err.Error())
+			return assignErrorToObject(err)
 		}
 		if c.condition != nil {
 			cond := c.condition(ctx, env)
@@ -2345,7 +2659,7 @@ func (s *compSource) run(ctx context.Context, env *object.Environment, sized fun
 		compEnv = object.NewEnclosedEnvironment(env)
 		step = func(element object.Object) object.Object {
 			if err := setForVariables(s.variables, element, compEnv); err != nil {
-				return errors.NewError("%s", err.Error())
+				return assignErrorToObject(err)
 			}
 			return body(compEnv)
 		}
@@ -2462,7 +2776,7 @@ func compileDictComprehension(n *ast.DictComprehension) object.EvalFn {
 	src := newCompSource(n.Iterable, n.Variables, len(n.AdditionalClauses))
 
 	return func(ctx context.Context, env *object.Environment) object.Object {
-		result := &object.Dict{Pairs: make(map[string]object.DictPair)}
+		result := object.NewDict()
 		runBody := func(compEnv *object.Environment) object.Object {
 			if cond != nil {
 				c := cond(ctx, compEnv)
@@ -2490,7 +2804,7 @@ func compileDictComprehension(n *ast.DictComprehension) object.EvalFn {
 				if rerr != nil {
 					return rerr
 				}
-				result.Pairs[hk] = object.DictPair{Key: k, Value: v}
+				result.Store(hk, k, v)
 				return nil
 			}
 			if len(clauses) > 0 {
@@ -2498,7 +2812,7 @@ func compileDictComprehension(n *ast.DictComprehension) object.EvalFn {
 			}
 			return emit()
 		}
-		if err := src.run(ctx, env, func(size int) { result.Pairs = make(map[string]object.DictPair, size) }, runBody); err != nil {
+		if err := src.run(ctx, env, func(size int) { result = object.NewDictSized(size) }, runBody); err != nil {
 			return err
 		}
 		return result
@@ -2604,12 +2918,88 @@ func compileAssert(n *ast.AssertStatement) object.EvalFn {
 				}
 				msg = msgVal.Inspect()
 			} else {
+				// No custom message: str(e) stays useful uncaught by naming
+				// the exception, as Python's traceback does.
 				msg = "AssertionError"
 			}
-			return &object.Error{Message: fmt.Sprintf("AssertionError at line %d: %s", n.Token.Line, msg)}
+			// AssertionError, catchable by `except AssertionError` like any
+			// Python exception; position is carried on the error object.
+			return &object.Error{
+				Message:       msg,
+				ExceptionType: object.ExceptionTypeAssertionError,
+				Line:          int(n.Token.Line),
+				File:          GetSourceFileFromContext(ctx),
+			}
 		}
 		return NULL
 	}
+}
+
+// exceptionClassChain returns the except-matching chain for a user exception
+// class: its own name, its user-class ancestors, and the built-in exception
+// type they derive from. class MyError(ValueError) yields ["MyError",
+// "ValueError"]; class D(MyError) yields ["D", "MyError", "ValueError"].
+func exceptionClassChain(cls *object.Class) []string {
+	var chain []string
+	for c := cls; c != nil; c = c.BaseClass {
+		chain = append(chain, c.Name)
+	}
+	if cls.ExceptionBase != "" {
+		base := cls.ExceptionBase
+		if len(chain) == 0 || chain[len(chain)-1] != base {
+			chain = append(chain, base)
+		}
+	}
+	return chain
+}
+
+// exceptionFromClassInstance converts a user exception class instance to the
+// raised built-in exception form. The message follows Python's Exception
+// str(): the single constructor argument, the repr of several, or "". The
+// second/third returns are the type chain and the constructor args.
+func exceptionFromClassInstance(ctx context.Context, inst *object.Instance, env *object.Environment) (*object.Exception, []string, []object.Object) {
+	if inst.Class == nil || inst.Class.ExceptionBase == "" {
+		return nil, nil, nil
+	}
+	var args []object.Object
+	if argsField, ok := inst.GetField("args"); ok {
+		if t, ok := argsField.(*object.Tuple); ok {
+			args = t.Elements
+		}
+	}
+	message := ""
+	switch len(args) {
+	case 0:
+	case 1:
+		message = args[0].Inspect()
+		if s, ok := args[0].(*object.String); ok {
+			message = s.StringValue()
+		}
+	default:
+		// Python str() of a multi-arg exception is the repr of the args
+		// tuple: strings carry their quotes.
+		parts := make([]string, 0, len(args))
+		for _, a := range args {
+			rendered, rerr := renderConvertedValue(ctx, a, "r", env)
+			if rerr != nil {
+				parts = append(parts, a.Inspect())
+			} else {
+				parts = append(parts, rendered)
+			}
+		}
+		message = "(" + strings.Join(parts, ", ") + ")"
+	}
+	// A user-defined __str__ overrides the args-derived message.
+	if _, hasStr := inst.Class.Methods["__str__"]; hasStr {
+		if rendered, rerr := renderConvertedValue(ctx, inst, "s", env); rerr == nil {
+			message = rendered
+		}
+	}
+	return &object.Exception{
+		Message:        message,
+		ExceptionType:  inst.Class.Name,
+		OriginInstance: inst,
+	}, exceptionClassChain(inst.Class), args
 }
 
 func compileRaise(n *ast.RaiseStatement) object.EvalFn {
@@ -2617,7 +3007,19 @@ func compileRaise(n *ast.RaiseStatement) object.EvalFn {
 	if n.Message != nil {
 		message = compileExpr(n.Message)
 	}
+	var cause object.EvalFn
+	if n.Cause != nil {
+		cause = compileExpr(n.Cause)
+	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
+		if cause != nil {
+			// `raise X from e`: evaluate the cause expression for its
+			// effects; chaining is not modelled (phase 1).
+			c := cause(ctx, env)
+			if propagates(c) {
+				return c
+			}
+		}
 		if message != nil {
 			msg := message(ctx, env)
 			if object.IsError(msg) {
@@ -2629,6 +3031,18 @@ func compileRaise(n *ast.RaiseStatement) object.EvalFn {
 			if exc, ok := msg.(*object.Exception); ok {
 				exc.Raised = true
 				return exc
+			}
+			// Raising an instance of a user exception class
+			// (class MyError(Exception): ... raise MyError("boom")) converts
+			// to the built-in exception form, carrying the class chain so
+			// `except ValueError` and isinstance still match.
+			if inst, ok := msg.(*object.Instance); ok {
+				if exc, chain, args := exceptionFromClassInstance(ctx, inst, env); exc != nil {
+					exc.Raised = true
+					exc.TypeChain = chain
+					exc.Args = args
+					return exc
+				}
 			}
 			// Python allows `raise ValueError` — the class without a call: the
 			// exception is instantiated with no arguments. Recognized by the raise
@@ -2647,6 +3061,12 @@ func compileRaise(n *ast.RaiseStatement) object.EvalFn {
 						}
 					}
 				}
+			}
+			// A user exception CLASS without a call: raise MyError.
+			if cls, ok := msg.(*object.Class); ok && cls.ExceptionBase != "" {
+				exc := &object.Exception{ExceptionType: cls.Name, TypeChain: exceptionClassChain(cls)}
+				exc.Raised = true
+				return exc
 			}
 			// Python 3 doesn't support raise "string", only raise Exception("string")
 			return errors.NewError("exceptions must derive from BaseException")
@@ -2967,11 +3387,31 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 	}
 	name := n.Name.Value()
 
+	// Compile-time metadata in source order: annotated names (dataclass
+	// fields) and plain top-level assignment targets (enum members,
+	// dataclass defaults).
+	var annotatedNames, assignNames []string
+	for _, s := range n.Body.Statements {
+		switch st := s.(type) {
+		case *ast.AnnotatedAssignStatement:
+			annotatedNames = append(annotatedNames, st.Target.Value())
+			if st.Value != nil {
+				assignNames = append(assignNames, st.Target.Value())
+			}
+		case *ast.AssignStatement:
+			if ident, ok := st.Left.(*ast.Identifier); ok {
+				assignNames = append(assignNames, ident.Value())
+			}
+		}
+	}
+
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		class := &object.Class{
-			Name:    name,
-			Methods: make(map[string]object.Object),
-			Env:     env,
+			Name:        name,
+			Methods:     make(map[string]object.Object),
+			Env:         env,
+			FieldNames:  annotatedNames,
+			AssignNames: assignNames,
 		}
 
 		// Handle base class inheritance
@@ -2981,15 +3421,46 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 			if propagates(baseClassObj) {
 				return baseClassObj
 			}
-			baseClass, ok := baseClassObj.(*object.Class)
-			if !ok {
-				return errors.NewError("base class is not a class type, got %s", baseClassObj.Type())
-			}
-			class.BaseClass = baseClass
+			// class MyError(ValueError): deriving from a built-in exception
+			// constructor makes this a user exception class.
+			if baseBuiltin, isBuiltin := baseClassObj.(*object.Builtin); isBuiltin {
+				if excName, isExc := exceptionBuiltins[baseBuiltin]; isExc {
+					class.ExceptionBase = excName
+					// Store constructor args so raise/`e.args` can use them,
+					// as Python's Exception.__init__ does.
+					class.Methods["__init__"] = &object.Builtin{
+						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+							if len(args) < 1 {
+								return errors.NewError("__init__ requires self")
+							}
+							inst, ok := args[0].(*object.Instance)
+							if !ok {
+								return errors.NewError("__init__ requires instance as first argument")
+							}
+							rest := make([]object.Object, 0, len(args)-1)
+							rest = append(rest, args[1:]...)
+							inst.SetField("args", &object.Tuple{Elements: rest})
+							return NULL
+						},
+					}
+				} else {
+					return errors.NewError("base class is not a class type, got %s", baseClassObj.Type())
+				}
+			} else {
+				baseClass, ok := baseClassObj.(*object.Class)
+				if !ok {
+					return errors.NewError("base class is not a class type, got %s", baseClassObj.Type())
+				}
+				class.BaseClass = baseClass
+				// User exception classes inherit their exception-ness.
+				if baseClass.ExceptionBase != "" {
+					class.ExceptionBase = baseClass.ExceptionBase
+				}
 
-			// Copy methods from base class
-			for mname, method := range baseClass.Methods {
-				class.Methods[mname] = method
+				// Copy methods from base class
+				for mname, method := range baseClass.Methods {
+					class.Methods[mname] = method
+				}
 			}
 		}
 
@@ -3004,6 +3475,10 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 		// failing attribute expression or a security violation in the body is not
 		// silently swallowed). After the body runs, the names it bound in the class
 		// environment become class attributes.
+		// ownDefs records names this class body defines with `def`, so promotion
+		// below skips them but still lets plain assignments shadow inherited
+		// attributes (class C(A): kind = "cat").
+		ownDefs := make(map[string]struct{})
 		for i, s := range n.Body.Statements {
 			if fnStmt, ok := s.(*ast.FunctionStatement); ok {
 				// The compiled def closure builds the function, applies its
@@ -3013,8 +3488,10 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 				if propagates(obj) {
 					return obj
 				}
+				ownDefs[fnStmt.Name.Value()] = struct{}{}
 				switch m := obj.(type) {
 				case *object.Function:
+					ownDefs[m.Name] = struct{}{}
 					class.Methods[m.Name] = m
 				case *object.Property:
 					class.Methods[fnStmt.Name.Value()] = m
@@ -3042,11 +3519,21 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 			if mname == "__class__" {
 				return
 			}
-			if _, isMethod := class.Methods[mname]; isMethod {
+			if _, isOwnDef := ownDefs[mname]; isOwnDef {
 				return
 			}
 			class.Methods[mname] = val
 		})
+
+		// enum.Enum derivation: promote the class's plain assignments to
+		// singleton member instances, in source order.
+		if class.BaseClass != nil && (class.BaseClass.Name == "Enum" || class.BaseClass.Name == "IntEnum") {
+			class.IsEnum = true
+			class.IsIntEnum = class.BaseClass.Name == "IntEnum"
+			if err := buildEnumMembers(class); err != nil {
+				return err
+			}
+		}
 
 		env.Set(name, class)
 		var result object.Object = class
@@ -3065,4 +3552,86 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 		}
 		return result
 	}
+}
+
+// sliceWalk adapts a slice for NewIterator.
+func sliceWalk(elements []object.Object) func() (object.Object, bool) {
+	i := 0
+	return func() (object.Object, bool) {
+		if i >= len(elements) {
+			return nil, false
+		}
+		v := elements[i]
+		i++
+		return v, true
+	}
+}
+
+// hasTrue reports whether any bool in s is true.
+func hasTrue(s []bool) bool {
+	for _, v := range s {
+		if v {
+			return true
+		}
+	}
+	return false
+}
+
+// appendUnpackedArgs evaluates each trailing *unpack (every unpack follows
+// all positional arguments) and appends its items to args.
+func appendUnpackedArgs(ctx context.Context, env *object.Environment, args []object.Object, unpackFns []object.EvalFn) ([]object.Object, object.Object) {
+	for _, unpackFn := range unpackFns {
+		argsVal := unpackFn(ctx, env)
+		if propagates(argsVal) {
+			return args, argsVal
+		}
+		unpacked, err := unpackArgsFromIterable(ctx, argsVal, env)
+		if err != nil {
+			return args, err
+		}
+		args = append(args, unpacked...)
+	}
+	return args, nil
+}
+
+// mergeUnpackedArgsInOrder evaluates a call's arguments in source order —
+// positionals and *unpacks interleaved — for calls such as f(*xs, b) where
+// an unpack precedes positional arguments. unpackAt[i] is how many
+// positional arguments were written before unpack i, so f(*xs, b) yields
+// xs's items then b, as in Python, with side effects running left to right.
+func mergeUnpackedArgsInOrder(ctx context.Context, env *object.Environment, argFns []object.EvalFn, unpackFns []object.EvalFn, unpackAt []int) ([]object.Object, object.Object) {
+	merged := make([]object.Object, 0, len(argFns)+len(unpackFns))
+	next := 0 // positional arguments already evaluated
+	for i, unpackFn := range unpackFns {
+		at := unpackAt[i]
+		if at > len(argFns) {
+			at = len(argFns)
+		}
+		for next < at {
+			v := argFns[next](ctx, env)
+			if propagates(v) {
+				return merged, v
+			}
+			merged = append(merged, v)
+			next++
+		}
+		argsVal := unpackFn(ctx, env)
+		if propagates(argsVal) {
+			return merged, argsVal
+		}
+		unpacked, err := unpackArgsFromIterable(ctx, argsVal, env)
+		if err != nil {
+			return merged, err
+		}
+		merged = append(merged, unpacked...)
+	}
+	for next < len(argFns) {
+		v := argFns[next](ctx, env)
+		if propagates(v) {
+			return merged, v
+		}
+		merged = append(merged, v)
+		next++
+	}
+	return merged, nil
 }

@@ -1,9 +1,11 @@
 package evaluator
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,7 +38,9 @@ func fastStringUpper(s string) string {
 	// correctly even when they appear after an ASCII lowercase letter.
 	for i := 0; i < len(s); i++ {
 		if s[i] >= 0x80 {
-			return strings.ToUpper(s)
+			// Go maps case 1:1, so ß stays ß; Python's full case mapping
+			// uppercases it to SS.
+			return strings.ReplaceAll(strings.ToUpper(s), "ß", "SS")
 		}
 	}
 	// Pure ASCII fast path.
@@ -106,6 +110,16 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 	// Handle library method calls (dictionaries)
 	if obj.Type() == object.DICT_OBJ {
 		return callDictMethod(ctx, obj.(*object.Dict), method, args, keywords, env)
+	}
+
+	// Handle integer methods
+	if obj.Type() == object.INTEGER_OBJ {
+		return callIntegerMethod(obj.(*object.Integer), method, args)
+	}
+
+	// Handle float methods
+	if obj.Type() == object.FLOAT_OBJ {
+		return callFloatMethod(obj.(*object.Float), method, args)
 	}
 
 	// Handle list methods
@@ -185,7 +199,37 @@ func callSuperMethod(ctx context.Context, super *object.Super, method string, ar
 		}
 	}
 
+	if res := callObjectDefault(super.Instance, method, args, keywords); res != nil {
+		return res
+	}
 	return attributeError(super, method)
+}
+
+// callObjectDefault supplies Python's `object` base-class methods for a
+// super() call that no user base class handles: super().__init__() in a class
+// whose base defines no __init__, and super().__repr__/__str__/__eq__/__ne__.
+// Returns nil when method is not one of them.
+func callObjectDefault(self object.Object, method string, args []object.Object, keywords map[string]object.Object) object.Object {
+	switch method {
+	case "__init__":
+		// object.__init__ takes only self; extra arguments are a TypeError.
+		if len(args) > 0 || len(keywords) > 0 {
+			return errors.NewTypeErrorTagged("object.__init__() takes exactly one argument (the instance to initialize)")
+		}
+		return NULL
+	case "__repr__", "__str__":
+		return object.NewString(self.Inspect())
+	case "__eq__", "__ne__":
+		if len(args) != 1 {
+			return errors.NewTypeErrorTagged("expected 1 argument, got %d", len(args))
+		}
+		same := args[0] == self
+		if method == "__ne__" {
+			same = !same
+		}
+		return nativeBoolToBooleanObject(same)
+	}
+	return nil
 }
 
 // prependSelf returns args with self inserted at the front.
@@ -337,13 +381,22 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 			return rerr
 		}
 		if pair, ok := dict.Pairs[key]; ok {
-			delete(dict.Pairs, key)
+			dict.Delete(key)
 			return pair.Value
 		}
 		if len(args) == 2 {
 			return args[1]
 		}
-		return errors.NewError("key '%s' not found", key)
+		// Python raises KeyError(key); its message is the key's repr.
+		rendered, rerr := renderConvertedValue(ctx, args[0], "r", env)
+		if rerr != nil {
+			return rerr
+		}
+		return &object.Exception{
+			Message:       rendered,
+			ExceptionType: object.ExceptionTypeKeyError,
+			Raised:        true,
+		}
 	case "update":
 		if len(args) > 1 {
 			return errors.NewError("update() takes at most 1 argument (%d given)", len(args))
@@ -356,9 +409,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(args) == 1 {
 			switch other := args[0].(type) {
 			case *object.Dict:
-				for k, v := range other.Pairs {
-					dict.Pairs[k] = v
-				}
+				dict.StoreFrom(other)
 			case *object.List:
 				for _, elem := range other.Elements {
 					var pair []object.Object
@@ -377,7 +428,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 					if rerr != nil {
 						return rerr
 					}
-					dict.Pairs[hk] = object.DictPair{Key: pair[0], Value: pair[1]}
+					dict.Store(hk, pair[0], pair[1])
 				}
 			default:
 				return errors.NewTypeError("DICT or LIST of pairs", args[0].Type().String())
@@ -391,7 +442,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(keywords) > 0 {
 			return errors.NewError("clear() does not accept keyword arguments")
 		}
-		dict.Pairs = make(map[string]object.DictPair)
+		dict.Clear()
 		return NULL
 	case "copy":
 		if err := errors.ExactArgs(args, 0); err != nil {
@@ -400,11 +451,10 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(keywords) > 0 {
 			return errors.NewError("copy() does not accept keyword arguments")
 		}
-		newPairs := make(map[string]object.DictPair, len(dict.Pairs))
-		for k, v := range dict.Pairs {
-			newPairs[k] = v
-		}
-		return &object.Dict{Pairs: newPairs}
+		copied := object.NewDictSized(len(dict.Pairs))
+		copied.SetFactory(dict.Factory())
+		copied.StoreFrom(dict)
+		return copied
 	case "setdefault":
 		if len(args) < 1 || len(args) > 2 {
 			return errors.NewError("setdefault() takes 1-2 arguments (%d given)", len(args))
@@ -423,8 +473,54 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(args) == 2 {
 			defaultVal = args[1]
 		}
-		dict.Pairs[key] = object.DictPair{Key: args[0], Value: defaultVal}
+		dict.Store(key, args[0], defaultVal)
 		return defaultVal
+	case "popitem":
+		// popitem(last=True): the newest pair, or the oldest with last=False
+		// (OrderedDict.popitem).
+		last, lerr := dictLastArg(args, keywords, 0, "popitem")
+		if lerr != nil {
+			return lerr
+		}
+		var canonical string
+		var pair object.DictPair
+		var ok bool
+		if last {
+			canonical, pair, ok = dict.LastInserted()
+		} else {
+			canonical, pair, ok = dict.FirstInserted()
+		}
+		if ok {
+			dict.Delete(canonical)
+			return &object.Tuple{Elements: []object.Object{pair.Key, pair.Value}}
+		}
+		return &object.Exception{
+			Message:       "popitem(): dictionary is empty",
+			ExceptionType: object.ExceptionTypeKeyError,
+			Raised:        true,
+		}
+	case "move_to_end":
+		// move_to_end(key, last=True): reposition an existing key at the end,
+		// or the front with last=False (OrderedDict.move_to_end).
+		if len(args) < 1 || len(args) > 2 {
+			return errors.NewError("move_to_end() takes 1-2 arguments (%d given)", len(args))
+		}
+		last, lerr := dictLastArg(args, keywords, 1, "move_to_end")
+		if lerr != nil {
+			return lerr
+		}
+		key, rerr := evalHashKeyChecked(ctx, args[0])
+		if rerr != nil {
+			return rerr
+		}
+		if !dict.MoveToEnd(key, last) {
+			rendered, rerr := renderConvertedValue(ctx, args[0], "r", env)
+			if rerr != nil {
+				return rerr
+			}
+			return &object.Exception{Message: rendered, ExceptionType: object.ExceptionTypeKeyError, Raised: true}
+		}
+		return NULL
 	case "fromkeys":
 		// dict.fromkeys(iterable[, value]) - create new dict with keys from iterable
 		if len(args) < 1 || len(args) > 2 {
@@ -490,6 +586,17 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 	case "extend":
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
+		}
+		if inst, isInst := args[0].(*object.Instance); isInst {
+			elems, ok, rerr := iterableToSliceChecked(ctx, inst, env)
+			if rerr != nil {
+				return rerr
+			}
+			if !ok {
+				return errors.NewTypeError("iterable", inst.Type().String())
+			}
+			list.Elements = append(list.Elements, elems...)
+			return NULL
 		}
 		elements, err := args[0].AsList()
 		if err != nil {
@@ -564,7 +671,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 			return errors.NewError("pop() takes at most 1 argument (%d given)", len(args))
 		}
 		if len(list.Elements) == 0 {
-			return errors.NewError("pop from empty list")
+			return &object.Exception{Message: "pop from empty list", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 		}
 		idx := len(list.Elements) - 1
 		if len(args) == 1 {
@@ -577,7 +684,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 				idx = len(list.Elements) + idx
 			}
 			if idx < 0 || idx >= len(list.Elements) {
-				return errors.NewError("pop index out of range")
+				return &object.Exception{Message: "pop index out of range", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 			}
 		}
 		result := list.Elements[idx]
@@ -622,7 +729,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 				return NULL
 			}
 		}
-		return errors.NewError("value not in list")
+		return errors.NewValueError("list.remove(x): x not in list")
 	case "clear":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
@@ -725,22 +832,117 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 // actually need in glue scripts.
 func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
 	switch method {
-	case "decode":
-		if err := errors.ExactArgs(args, 0); err != nil {
+	case "join":
+		// b"-".join([b"a", b"b"]): concatenate an iterable of bytes.
+		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
 		}
-		encoding := "utf-8"
-		if keywords != nil {
-			if encObj, ok := keywords["encoding"]; ok {
-				if s, err := encObj.AsString(); err == nil {
-					encoding = s
-				}
+		elements, ok, rerr := iterableToSliceChecked(ctx, args[0], env)
+		if rerr != nil {
+			return rerr
+		}
+		if !ok {
+			return errors.NewTypeError("iterable of bytes", args[0].Type().String())
+		}
+		total := len(b.BytesValue()) * max(0, len(elements)-1)
+		for _, elem := range elements {
+			bb, isBytes := elem.(*object.Bytes)
+			if !isBytes {
+				return errors.NewTypeErrorTagged("sequence item: expected bytes, got %s", elem.Type().String())
+			}
+			total += len(bb.BytesValue())
+		}
+		out := make([]byte, 0, total)
+		sep := b.BytesValue()
+		for i, elem := range elements {
+			if i > 0 {
+				out = append(out, sep...)
+			}
+			out = append(out, elem.(*object.Bytes).BytesValue()...)
+		}
+		return object.NewBytes(out)
+	case "split":
+		// Python bytes.split(sep=None, maxsplit=-1): whitespace runs when
+		// no separator, else byte-separator occurrences.
+		if len(args) > 2 {
+			return errors.NewError("split() takes at most 2 arguments (%d given)", len(args))
+		}
+		data := b.BytesValue()
+		maxSplit := -1
+		if len(args) == 2 {
+			if n, err := args[1].AsInt(); err == nil {
+				maxSplit = int(n)
 			}
 		}
-		if encoding != "utf-8" && encoding != "utf8" {
-			return errors.NewError("bytes.decode: unsupported encoding %q (only utf-8 is supported)", encoding)
+		var parts [][]byte
+		if len(args) == 0 || args[0].Type() == object.NULL_OBJ {
+			parts = bytesFields(data)
+		} else {
+			sepObj, ok := args[0].(*object.Bytes)
+			if !ok {
+				return errors.NewTypeError("bytes", args[0].Type().String())
+			}
+			sep := sepObj.BytesValue()
+			if len(sep) == 0 {
+				return errors.NewError("empty separator")
+			}
+			if maxSplit < 0 {
+				parts = bytes.Split(data, sep)
+			} else {
+				parts = bytes.SplitN(data, sep, maxSplit+1)
+			}
 		}
-		return object.NewString(string(b.BytesValue()))
+		elems := make([]object.Object, len(parts))
+		for i, p := range parts {
+			elems[i] = object.NewBytes(p)
+		}
+		return &object.List{Elements: elems}
+	case "decode":
+		// Python signature: decode(encoding="utf-8", errors="strict"),
+		// positional or keyword.
+		if len(args) > 2 {
+			return errors.NewError("decode() takes at most 2 arguments (%d given)", len(args))
+		}
+		encoding := "utf-8"
+		errorsMode := "strict"
+		if len(args) >= 1 {
+			s, err := args[0].AsString()
+			if err != nil {
+				return err
+			}
+			encoding = s
+		} else if keywords != nil {
+			if encObj, ok := keywords["encoding"]; ok {
+				s, err := encObj.AsString()
+				if err != nil {
+					return err
+				}
+				encoding = s
+			}
+		}
+		if len(args) >= 2 {
+			s, err := args[1].AsString()
+			if err != nil {
+				return err
+			}
+			errorsMode = s
+		} else if keywords != nil {
+			if errObj, ok := keywords["errors"]; ok {
+				s, err := errObj.AsString()
+				if err != nil {
+					return err
+				}
+				errorsMode = s
+			}
+		}
+		if errorsMode != "strict" && errorsMode != "ignore" && errorsMode != "replace" {
+			return errors.NewError("decode: unknown error handler %q (use strict, ignore or replace)", errorsMode)
+		}
+		decoded, errObj := decodeBytes(b.BytesValue(), encoding, errorsMode)
+		if errObj != nil {
+			return errObj
+		}
+		return object.NewString(decoded)
 	case "hex":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
@@ -776,14 +978,22 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err := errors.MaxArgs(args, 2); err != nil {
 			return err
 		}
-		// If no argument, split on whitespace
-		if len(args) == 0 {
-			parts := strings.Fields(str.StringValue())
-			elements := make([]object.Object, len(parts))
-			for i, part := range parts {
-				elements[i] = object.NewString(part)
+		// No separator, or an explicit None: split on whitespace runs.
+		if len(args) == 0 || args[0].Type() == object.NULL_OBJ {
+			maxsplit := int64(-1)
+			if len(args) == 2 {
+				n, err := args[1].AsInt()
+				if err != nil {
+					return errors.ParameterError("maxsplit", err)
+				}
+				maxsplit = n
 			}
-			return &object.List{Elements: elements}
+			elements := whitespaceSplit(str.StringValue(), maxsplit)
+			list := &object.List{Elements: make([]object.Object, len(elements))}
+			for i, part := range elements {
+				list.Elements[i] = object.NewString(part)
+			}
+			return list
 		}
 		// With separator argument
 		sep, errObj := args[0].AsString()
@@ -1170,12 +1380,12 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			end = len(str.StringValue())
 		}
 		if start > end {
-			return errors.NewError("substring not found")
+			return errors.NewValueError("substring not found")
 		}
 		searchStr := str.StringValue()[start:end]
 		idx := strings.LastIndex(searchStr, substr)
 		if idx == -1 {
-			return errors.NewError("substring not found")
+			return errors.NewValueError("substring not found")
 		}
 		return object.NewInteger(int64(start + idx))
 	case "index":
@@ -1218,12 +1428,12 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			end = len(str.StringValue())
 		}
 		if start > end {
-			return errors.NewError("substring not found")
+			return errors.NewValueError("substring not found")
 		}
 		searchStr := str.StringValue()[start:end]
 		idx := strings.Index(searchStr, substr)
 		if idx == -1 {
-			return errors.NewError("substring not found")
+			return errors.NewValueError("substring not found")
 		}
 		return object.NewInteger(int64(start + idx))
 	case "count":
@@ -1280,6 +1490,10 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		return object.NewString(result)
 	case "isdigit":
+		// Python's isdigit covers the Unicode decimal digits (category Nd)
+		// plus digit-like characters; Nd is the practical core (Arabic-Indic,
+		// Devanagari, fullwidth, ...). Superscripts like '²' are Numeric_Type
+		// Digit, which Go does not expose — they report False here.
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
@@ -1287,7 +1501,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return FALSE
 		}
 		for _, ch := range str.StringValue() {
-			if ch < '0' || ch > '9' {
+			if !unicode.IsDigit(ch) {
 				return FALSE
 			}
 		}
@@ -1300,7 +1514,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return FALSE
 		}
 		for _, ch := range str.StringValue() {
-			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')) {
+			if !unicode.IsLetter(ch) {
 				return FALSE
 			}
 		}
@@ -1313,24 +1527,24 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return FALSE
 		}
 		for _, ch := range str.StringValue() {
-			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) {
+			if !unicode.IsLetter(ch) && !unicode.IsNumber(ch) {
 				return FALSE
 			}
 		}
 		return TRUE
-	case "isspace":
-		if err := errors.ExactArgs(args, 0); err != nil {
-			return err
-		}
-		if len(str.StringValue()) == 0 {
-			return FALSE
-		}
-		for _, ch := range str.StringValue() {
-			if ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r' && ch != '\v' && ch != '\f' {
+		case "isspace":
+			if err := errors.ExactArgs(args, 0); err != nil {
+				return err
+			}
+			if len(str.StringValue()) == 0 {
 				return FALSE
 			}
-		}
-		return TRUE
+			for _, ch := range str.StringValue() {
+				if !unicode.IsSpace(ch) {
+					return FALSE
+				}
+			}
+			return TRUE
 	case "isupper":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
@@ -1415,7 +1629,11 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			fillChar = fill
 		}
 		padding := w - len(str.StringValue())
-		leftPad := padding / 2
+		// CPython's center: left = padding/2 + (padding & width & 1).
+		// The extra character alternates with the parity of the target
+		// width: 'ab'.center(7, '*') is '***ab**' but 'x'.center(6) is
+		// '  x   '.
+		leftPad := padding/2 + (padding & w & 1)
 		rightPad := padding - leftPad
 		// Use strings.Builder for efficient concatenation
 		var builder strings.Builder
@@ -1612,38 +1830,50 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		return str
 	case "encode":
-		if len(args) > 1 {
-			return errors.NewError("encode() takes at most 1 argument (%d given)", len(args))
+		// Python signature: encode(encoding="utf-8", errors="strict").
+		if len(args) > 2 {
+			return errors.NewError("encode() takes at most 2 arguments (%d given)", len(args))
 		}
 		encoding := "utf-8"
-		if len(args) == 1 {
+		errorsMode := "strict"
+		if len(args) >= 1 {
 			enc, errObj := args[0].AsString()
 			if errObj != nil {
 				return errors.ParameterError("encoding", errObj)
 			}
 			encoding = enc
-		}
-		switch encoding {
-		case "utf-8", "utf8":
-			return object.NewBytesFromString(str.StringValue())
-		case "ascii":
-			for _, r := range str.StringValue() {
-				if r > 127 {
-					return &object.Exception{
-						Message:       "'ascii' codec can't encode character '" + string(r) + "': ordinal not in range(128)",
-						ExceptionType: object.ExceptionTypeValueError,
-						Raised:        true,
-					}
+		} else if keywords != nil {
+			if encObj, ok := keywords["encoding"]; ok {
+				enc, errObj := encObj.AsString()
+				if errObj != nil {
+					return errors.ParameterError("encoding", errObj)
 				}
-			}
-			return object.NewBytesFromString(str.StringValue())
-		default:
-			return &object.Exception{
-				Message:       "unknown encoding: " + encoding,
-				ExceptionType: object.ExceptionTypeValueError,
-				Raised:        true,
+				encoding = enc
 			}
 		}
+		if len(args) >= 2 {
+			em, errObj := args[1].AsString()
+			if errObj != nil {
+				return errors.ParameterError("errors", errObj)
+			}
+			errorsMode = em
+		} else if keywords != nil {
+			if emObj, ok := keywords["errors"]; ok {
+				em, errObj := emObj.AsString()
+				if errObj != nil {
+					return errors.ParameterError("errors", errObj)
+				}
+				errorsMode = em
+			}
+		}
+		if errorsMode != "strict" && errorsMode != "ignore" && errorsMode != "replace" {
+			return errors.NewError("encode: unknown error handler %q (use strict, ignore or replace)", errorsMode)
+		}
+		out, errObj := encodeStr(str.StringValue(), encoding, errorsMode)
+		if errObj != nil {
+			return errObj
+		}
+		return object.NewBytes(out)
 	case "expandtabs":
 		tabsize := 8
 		if len(args) > 1 {
@@ -1774,7 +2004,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		return TRUE
 	case "isdecimal":
-		// Returns True if all characters are decimal digits (0-9)
+		// Decimal digits are exactly Unicode category Nd.
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
@@ -1782,7 +2012,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return FALSE
 		}
 		for _, ch := range str.StringValue() {
-			if ch < '0' || ch > '9' {
+			if !unicode.IsDigit(ch) {
 				return FALSE
 			}
 		}
@@ -1947,6 +2177,19 @@ func callFloatArrayMethod(fa *object.FloatArray, method string, args []object.Ob
 }
 
 func callSetMethod(ctx context.Context, set *object.Set, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	// Frozen sets have no mutating methods at all, exactly as Python's
+	// frozenset: calling one is an AttributeError naming the method.
+	if set.Frozen {
+		switch method {
+		case "add", "remove", "discard", "pop", "clear", "update",
+			"intersection_update", "difference_update", "symmetric_difference_update":
+			return &object.Exception{
+				Message:       fmt.Sprintf("'frozenset' object has no attribute '%s'", method),
+				ExceptionType: object.ExceptionTypeAttributeError,
+				Raised:        true,
+			}
+		}
+	}
 	switch method {
 	case "add":
 		if err := errors.ExactArgs(args, 1); err != nil {
@@ -1965,7 +2208,16 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 			return rerr
 		}
 		if !set.ContainsKeyed(key) {
-			return errors.NewError("KeyError: %s", args[0].Inspect())
+			// Python's KeyError message is the repr of the missing key.
+			rendered, rerr := renderConvertedValue(ctx, args[0], "r", env)
+			if rerr != nil {
+				return rerr
+			}
+			return &object.Exception{
+				Message:       rendered,
+				ExceptionType: object.ExceptionTypeKeyError,
+				Raised:        true,
+			}
 		}
 		delete(set.Elements, key)
 		return NULL
@@ -1984,7 +2236,11 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 			return err
 		}
 		if len(set.Elements) == 0 {
-			return errors.NewError("pop from an empty set")
+			return &object.Exception{
+				Message:       "pop from an empty set",
+				ExceptionType: object.ExceptionTypeKeyError,
+				Raised:        true,
+			}
 		}
 		// Go map iteration order is random, which matches Python's arbitrary pop
 		for k, elem := range set.Elements {
@@ -2029,54 +2285,70 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 			}
 		}
 		return NULL
-	case "union":
-		if err := errors.ExactArgs(args, 1); err != nil {
-			return err
+	case "union", "intersection", "difference":
+		// Python takes any number of arguments, each any iterable.
+		if len(args) == 0 {
+			return errors.NewError("%s() takes at least 1 argument (0 given)", method)
 		}
-		if other, ok := args[0].(*object.Set); ok {
-			return set.Union(other)
+		result := set
+		for _, arg := range args {
+			other, errObj := iterableToSet(ctx, arg, env)
+			if errObj != nil {
+				return errObj
+			}
+			switch method {
+			case "union":
+				result = result.Union(other)
+			case "intersection":
+				result = result.Intersection(other)
+			case "difference":
+				result = result.Difference(other)
+			}
 		}
-		return errors.NewTypeError("SET", args[0].Type().String())
-	case "intersection":
-		if err := errors.ExactArgs(args, 1); err != nil {
-			return err
-		}
-		if other, ok := args[0].(*object.Set); ok {
-			return set.Intersection(other)
-		}
-		return errors.NewTypeError("SET", args[0].Type().String())
-	case "difference":
-		if err := errors.ExactArgs(args, 1); err != nil {
-			return err
-		}
-		if other, ok := args[0].(*object.Set); ok {
-			return set.Difference(other)
-		}
-		return errors.NewTypeError("SET", args[0].Type().String())
+		return result
 	case "symmetric_difference":
+		// Python's symmetric_difference takes exactly one other set/iterable.
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
 		}
-		if other, ok := args[0].(*object.Set); ok {
-			return set.SymmetricDifference(other)
+		other, errObj := iterableToSet(ctx, args[0], env)
+		if errObj != nil {
+			return errObj
 		}
-		return errors.NewTypeError("SET", args[0].Type().String())
+		return set.SymmetricDifference(other)
 	case "issubset":
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
 		}
-		if other, ok := args[0].(*object.Set); ok {
-			return nativeBoolToBooleanObject(set.IsSubset(other))
+		other, errObj := iterableToSet(ctx, args[0], env)
+		if errObj != nil {
+			return errObj
 		}
-		return errors.NewTypeError("SET", args[0].Type().String())
+		return nativeBoolToBooleanObject(set.IsSubset(other))
+	case "isdisjoint":
+		// Python: true when the two sets share no element.
+		if err := errors.ExactArgs(args, 1); err != nil {
+			return err
+		}
+		other, errObj := iterableToSet(ctx, args[0], env)
+		if errObj != nil {
+			return errObj
+		}
+		for key := range set.Elements {
+			if other.ContainsKeyed(key) {
+				return FALSE
+			}
+		}
+		return TRUE
 	case "issuperset":
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
 		}
-		if other, ok := args[0].(*object.Set); ok {
-			return nativeBoolToBooleanObject(set.IsSuperset(other))
+		other, errObj := iterableToSet(ctx, args[0], env)
+		if errObj != nil {
+			return errObj
 		}
-		return errors.NewTypeError("SET", args[0].Type().String())
+		return nativeBoolToBooleanObject(set.IsSuperset(other))
 	default:
 		return attributeError(set, method)
 	}
@@ -2302,4 +2574,88 @@ func rsplitFields(s string, maxsplit int64) []string {
 		fields = append([]string{head}, fields...)
 	}
 	return fields
+}
+
+// whitespaceSplit is split(None, maxsplit): whitespace-run fields, limited
+// to maxsplit from the left, with the remainder keeping its original text
+// ("a  b  c".split(None, 1) == ["a", "b  c"]).
+func whitespaceSplit(s string, maxsplit int64) []string {
+	if maxsplit < 0 {
+		return strings.Fields(s)
+	}
+	var fields []string
+	i := 0
+	for i < len(s) {
+		for i < len(s) {
+			r, size := utf8.DecodeRuneInString(s[i:])
+			if !unicode.IsSpace(r) {
+				break
+			}
+			i += size
+		}
+		if i >= len(s) {
+			break
+		}
+		if int64(len(fields)) == maxsplit {
+			fields = append(fields, s[i:])
+			return fields
+		}
+		start := i
+		for i < len(s) {
+			r, size := utf8.DecodeRuneInString(s[i:])
+			if unicode.IsSpace(r) {
+				break
+			}
+			i += size
+		}
+		fields = append(fields, s[start:i])
+	}
+	return fields
+}
+
+// bytesFields splits data on runs of ASCII whitespace, like Python's
+// bytes.split() with no separator.
+func bytesFields(data []byte) [][]byte {
+	var out [][]byte
+	start := -1
+	for i, c := range data {
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f' {
+			if start >= 0 {
+				out = append(out, data[start:i])
+				start = -1
+			}
+		} else if start < 0 {
+			start = i
+		}
+	}
+	if start >= 0 {
+		out = append(out, data[start:])
+	}
+	if out == nil {
+		out = [][]byte{}
+	}
+	return out
+}
+
+// dictLastArg reads the optional `last` flag of popitem/move_to_end: the
+// positional argument at index pos, or the last= keyword; default True.
+func dictLastArg(args []object.Object, keywords map[string]object.Object, pos int, method string) (bool, object.Object) {
+	last := true
+	given := false
+	if len(args) > pos {
+		last, given = isTruthy(args[pos]), true
+	}
+	for name, v := range keywords {
+		if name != "last" {
+			return false, errors.NewTypeErrorTagged("%s() got an unexpected keyword argument '%s'", method, name)
+		}
+		if given {
+			return false, errors.NewTypeErrorTagged("%s() got multiple values for argument 'last'", method)
+		}
+		last = isTruthy(v)
+	}
+	if method == "popitem" && len(args) > 1 {
+		return false, errors.NewTypeErrorTagged("popitem() takes at most 1 argument (%d given)", len(args))
+	}
+	return last, nil
 }

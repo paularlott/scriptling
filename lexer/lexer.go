@@ -305,6 +305,12 @@ func (l *Lexer) nextToken() token.Token {
 			l.readChar()
 			l.readChar()
 			tok = token.Token{Type: token.ELLIPSIS, Literal: "...", Line: l.line}
+		} else if isDigit(l.peekChar()) {
+			// Leading-dot float literal: .5, .25. An attribute access is
+			// never followed by a digit in valid syntax.
+			num, _ := l.readNumber()
+			tok = token.Token{Type: token.FLOAT, Literal: num, Line: l.line}
+			return tok
 		} else {
 			tok = token.Token{Type: token.DOT, Literal: charString(l.ch), Line: l.line}
 		}
@@ -497,6 +503,13 @@ func (l *Lexer) nextToken() token.Token {
 			}
 			tok.Literal = num
 			return tok
+		} else if l.ch == '.' && isDigit(l.peekChar()) {
+			// Leading-dot float literal: .5, .25 (an attribute access on a
+			// number is never followed by a digit in valid syntax).
+			num, _ := l.readNumber()
+			tok.Type = token.FLOAT
+			tok.Literal = num
+			return tok
 		} else {
 			tok = token.Token{Type: token.ILLEGAL, Literal: charString(l.ch), Line: l.line}
 			l.readChar()
@@ -609,7 +622,11 @@ func (l *Lexer) readNumber() (string, bool) {
 	for isDigit(l.ch) || (l.ch == '_' && isDigit(l.peekChar())) {
 		l.readChar()
 	}
-	if l.ch == '.' && isDigit(l.peekChar()) {
+	if l.ch == '.' && (isDigit(l.peekChar()) || l.peekChar() == 'e' || l.peekChar() == 'E' || !isIdContinue(l.peekChar())) {
+		// A dot after the digits makes a float: 1.5, the trailing-dot form
+		// 1. (Python's 1.0), and 1.e2. A dot followed by another
+		// identifier character cannot occur in valid syntax (attribute
+		// access needs parens: (1).bit_length()).
 		isFloat = true
 		l.readChar()
 		for isDigit(l.ch) || (l.ch == '_' && isDigit(l.peekChar())) {
@@ -860,4 +877,9 @@ func isDigit(ch byte) bool {
 
 func isHexDigit(ch byte) bool {
 	return isDigit(ch) || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')
+}
+
+// isIdContinue reports whether c can continue an identifier.
+func isIdContinue(c byte) bool {
+	return c == '_' || isLetter(c) || isDigit(c)
 }

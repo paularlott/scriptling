@@ -7,14 +7,19 @@ import (
 	"math"
 	"runtime"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/parser"
 )
 
 var (
@@ -297,7 +302,10 @@ func nativeBoolToBooleanObject(input bool) *object.Boolean {
 
 func objectsEqual(a, b object.Object) bool {
 	if a.Type() != b.Type() {
-		return false
+		// type() reports type names as strings ("INTEGER") while int, str,
+		// ... are builtins; `type(x) is int` / `type(x) == int` — a Python
+		// idiom — must bridge the two representations.
+		return typeBridgeEqual(a, b)
 	}
 	switch av := a.(type) {
 	case *object.Integer:
@@ -315,6 +323,52 @@ func objectsEqual(a, b object.Object) bool {
 	default:
 		return a == b // Reference equality for complex types
 	}
+}
+
+// normalizeTypeName folds a scriptling/Python type name ("int", "STR",
+// "NoneType", "INTEGER") onto its canonical object-type string.
+func normalizeTypeName(name string) string {
+	switch strings.ToUpper(name) {
+	case "INT":
+		return "INTEGER"
+	case "STR":
+		return "STRING"
+	case "BOOL":
+		return "BOOLEAN"
+	case "NONE", "NONETYPE":
+		return "NULL"
+	default:
+		return strings.ToUpper(name)
+	}
+}
+
+// typeBridgeEqual reports whether a type-name string and a type builtin
+// (int, str, dict, ..., or an exception constructor) name the same type, so
+// the scriptling idiom type(x) == "INTEGER" and the Python idiom
+// type(x) == int agree.
+func typeBridgeEqual(a, b object.Object) bool {
+	var name string
+	var t object.Object
+	if sv, ok := a.(*object.String); ok {
+		name, t = sv.StringValue(), b
+	} else if sv, ok := b.(*object.String); ok {
+		name, t = sv.StringValue(), a
+	} else {
+		return false
+	}
+	bi, ok := t.(*object.Builtin)
+	if !ok {
+		return false
+	}
+	var typeName string
+	if n, found := typeBuiltins[bi]; found {
+		typeName = n
+	} else if excName, isExc := exceptionBuiltins[bi]; isExc {
+		typeName = excName
+	} else {
+		return false
+	}
+	return normalizeTypeName(name) == normalizeTypeName(typeName)
 }
 
 // evalObjectsEqualChecked compares a and b for equality, dispatching to a
@@ -348,7 +402,9 @@ func evalObjectsEqualChecked(ctx context.Context, a, b object.Object, env *objec
 			return false, nil
 		}
 	}
-	return objectsEqual(a, b), nil
+	// Containers compare by value, as Python's == does (the `in` operator
+	// already used deep equality; count/index/remove agree through here).
+	return objectsDeepEqual(a, b), nil
 }
 
 // isInstanceOperand reports whether obj is a class instance (and therefore
@@ -361,7 +417,24 @@ func isInstanceOperand(obj object.Object) bool {
 // objectsDeepEqual compares two objects for deep equality (handles lists, tuples, dicts)
 func objectsDeepEqual(a, b object.Object) bool {
 	if a.Type() != b.Type() {
-		return false
+		// Same bridge as objectsEqual: type-name strings and type builtins
+		// ("INTEGER" vs int) name the same type.
+		return typeBridgeEqual(a, b)
+	}
+	// Instances with a Go-native __eq__ (dataclasses, namedtuples, enums)
+	// compare by value even nested in containers. Script-level __eq__
+	// needs an evaluation context and is only dispatched by the checked
+	// top-level comparison.
+	if aInst, ok := a.(*object.Instance); ok {
+		if method, has := aInst.Class.Methods["__eq__"]; has {
+			if eqFn, isBuiltin := method.(*object.Builtin); isBuiltin {
+				if r, ok := eqFn.Fn(context.Background(), object.NewKwargs(nil), a, b).(*object.Boolean); ok {
+					return r.BoolValue()
+				}
+				return false
+			}
+		}
+		return a == b
 	}
 	switch av := a.(type) {
 	case *object.Integer:
@@ -435,9 +508,21 @@ func evalPrefixExpression(ctx context.Context, operator ast.Op, right object.Obj
 	switch operator {
 	case ast.OpNot:
 		return evalNotOperatorExpression(ctx, right, env)
-	case ast.OpSub:
-		return evalMinusPrefixOperatorExpression(right)
-	case ast.OpBitNot:
+	case ast.OpSub, ast.OpBitNot:
+		// Instances dispatch unary - to __neg__ and ~ to __invert__, as in
+		// Python, before the built-in type error applies.
+		if inst, ok := right.(*object.Instance); ok {
+			name := "__neg__"
+			if operator == ast.OpBitNot {
+				name = "__invert__"
+			}
+			if result := callDunderMethodFn(ctx, inst, name, nil, env); result != nil {
+				return result
+			}
+		}
+		if operator == ast.OpSub {
+			return evalMinusPrefixOperatorExpression(right)
+		}
 		return evalBitwiseNotOperatorExpression(right)
 	default:
 		return errors.NewError("%s: %s%s", errors.ErrUnknownOperator, operator, right.Type())
@@ -461,8 +546,20 @@ func evalMinusPrefixOperatorExpression(right object.Object) object.Object {
 		return object.NewInteger(-right.IntValue())
 	case *object.Float:
 		return object.NewFloat(-right.FloatValue())
+	case *object.Boolean:
+		// bool is an int in Python: -True is -1
+		v := int64(0)
+		if right.BoolValue() {
+			v = 1
+		}
+		return object.NewInteger(-v)
 	default:
-		return errors.NewError("%s: -%s", errors.ErrUnknownOperator, right.Type())
+		// Python: TypeError: bad operand type for unary -: 'str'
+		return &object.Exception{
+			Message:       fmt.Sprintf("bad operand type for unary -: '%s'", getTypeName(right)),
+			ExceptionType: object.ExceptionTypeTypeError,
+			Raised:        true,
+		}
 	}
 }
 
@@ -470,8 +567,18 @@ func evalBitwiseNotOperatorExpression(right object.Object) object.Object {
 	switch right := right.(type) {
 	case *object.Integer:
 		return object.NewInteger(^right.IntValue())
+	case *object.Boolean:
+		v := int64(0)
+		if right.BoolValue() {
+			v = 1
+		}
+		return object.NewInteger(^v)
 	default:
-		return errors.NewError("%s: ~%s", errors.ErrUnknownOperator, right.Type())
+		return &object.Exception{
+			Message:       fmt.Sprintf("bad operand type for unary ~: '%s'", getTypeName(right)),
+			ExceptionType: object.ExceptionTypeTypeError,
+			Raised:        true,
+		}
 	}
 }
 
@@ -679,13 +786,9 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			if !ok {
 				return errors.NewTypeError("dict", right.Type().String())
 			}
-			merged := &object.Dict{Pairs: make(map[string]object.DictPair, len(l.Pairs)+len(r.Pairs))}
-			for k, v := range l.Pairs {
-				merged.Pairs[k] = v
-			}
-			for k, v := range r.Pairs {
-				merged.Pairs[k] = v
-			}
+			merged := object.NewDictSized(len(l.Pairs) + len(r.Pairs))
+			merged.StoreFrom(l)
+			merged.StoreFrom(r)
 			return merged
 		}
 	case *object.Set:
@@ -712,6 +815,52 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				return l.SymmetricDifference(r)
 			}
 			return errors.NewTypeError("set", right.Type().String())
+		case ast.OpLt, ast.OpLte, ast.OpGt, ast.OpGte, ast.OpEq, ast.OpNeq:
+			// Python set comparisons are subset/superset tests, by content.
+			r, ok := right.(*object.Set)
+			if !ok {
+				if operator == ast.OpEq {
+					return FALSE
+				}
+				if operator == ast.OpNeq {
+					return TRUE
+				}
+				return errors.NewTypeError("set", right.Type().String())
+			}
+			subset := len(l.Elements) <= len(r.Elements)
+			if subset {
+				for k := range l.Elements {
+					if !r.ContainsKeyed(k) {
+						subset = false
+						break
+					}
+				}
+			}
+			superset := len(r.Elements) <= len(l.Elements)
+			if superset {
+				for k := range r.Elements {
+					if !l.ContainsKeyed(k) {
+						superset = false
+						break
+					}
+				}
+			}
+			var b bool
+			switch operator {
+			case ast.OpLt:
+				b = subset && len(l.Elements) < len(r.Elements)
+			case ast.OpLte:
+				b = subset
+			case ast.OpGt:
+				b = superset && len(r.Elements) < len(l.Elements)
+			case ast.OpGte:
+				b = superset
+			case ast.OpEq:
+				b = subset && superset
+			default: // OpNeq
+				b = !(subset && superset)
+			}
+			return nativeBoolToBooleanObject(b)
 		}
 	}
 
@@ -733,7 +882,13 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			}
 			return FALSE
 		}
-		return nativeBoolToBooleanObject(objectsDeepEqual(left, right))
+		// The checked comparison dispatches __eq__ on instances (also
+		// inside containers) and falls back to structural equality.
+		eq, rerr := evalObjectsEqualChecked(ctx, left, right, env)
+		if rerr != nil {
+			return rerr
+		}
+		return nativeBoolToBooleanObject(eq)
 	case ast.OpNeq:
 		if la, ok := left.(*object.FloatArray); ok {
 			if ra, ok := right.(*object.FloatArray); ok {
@@ -741,7 +896,11 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			}
 			return TRUE
 		}
-		return nativeBoolToBooleanObject(!objectsDeepEqual(left, right))
+		eq, rerr := evalObjectsEqualChecked(ctx, left, right, env)
+		if rerr != nil {
+			return rerr
+		}
+		return nativeBoolToBooleanObject(!eq)
 	default:
 		return newUnsupportedOperandError(operator, left, right)
 	}
@@ -792,14 +951,60 @@ func newUnsupportedOperandError(operator ast.Op, left, right object.Object) obje
 	return err
 }
 
+// intOverflowError is the catchable OverflowError for int64-bound arithmetic
+// that leaves the representable range: Python would compute a big int, so a
+// silent wraparound (the old behaviour) is a wrong answer with no error.
+func intOverflowError(op string) object.Object {
+	err := errors.NewError("integer arithmetic result too large for int64 (%s); scriptling ints are 64-bit", op)
+	err.ExceptionType = object.ExceptionTypeOverflowError
+	return err
+}
+
+// checked int64 arithmetic: each returns (result, true) or (_, false) on overflow.
+func addOv(a, b int64) (int64, bool) {
+	s := a + b
+	if (a > 0 && b > 0 && s < 0) || (a < 0 && b < 0 && s >= 0) {
+		return 0, false
+	}
+	return s, true
+}
+
+func subOv(a, b int64) (int64, bool) {
+	d := a - b
+	if (a >= 0 && b < 0 && d < 0) || (a < 0 && b > 0 && d > 0) {
+		return 0, false
+	}
+	return d, true
+}
+
+func mulOv(a, b int64) (int64, bool) {
+	if a == 0 || b == 0 {
+		return 0, true
+	}
+	p := a * b
+	if p/b != a || (a == -1 && b == math.MinInt64) || (b == -1 && a == math.MinInt64) {
+		return 0, false
+	}
+	return p, true
+}
+
 func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object.Object {
 	switch operator {
 	case ast.OpAdd:
-		return object.NewInteger(leftVal + rightVal)
+		if s, ok := addOv(leftVal, rightVal); ok {
+			return object.NewInteger(s)
+		}
+		return intOverflowError("+")
 	case ast.OpSub:
-		return object.NewInteger(leftVal - rightVal)
+		if d, ok := subOv(leftVal, rightVal); ok {
+			return object.NewInteger(d)
+		}
+		return intOverflowError("-")
 	case ast.OpMul:
-		return object.NewInteger(leftVal * rightVal)
+		if p, ok := mulOv(leftVal, rightVal); ok {
+			return object.NewInteger(p)
+		}
+		return intOverflowError("*")
 	case ast.OpDiv:
 		if rightVal == 0 {
 			return errors.NewZeroDivisionError()
@@ -811,6 +1016,9 @@ func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object
 		}
 		// Python floors toward negative infinity; Go truncates toward zero,
 		// so adjust when the signs differ and the division is inexact.
+		if leftVal == math.MinInt64 && rightVal == -1 {
+			return intOverflowError("//")
+		}
 		q := leftVal / rightVal
 		if leftVal%rightVal != 0 && (leftVal < 0) != (rightVal < 0) {
 			q--
@@ -820,18 +1028,33 @@ func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object
 		if rightVal < 0 {
 			return evalFloatInfixValues(ast.OpPow, float64(leftVal), float64(rightVal))
 		}
-		if rightVal > 63 || (leftVal > 1 && rightVal > 40) || (leftVal < -1 && rightVal > 40) {
-			return object.NewFloat(math.Pow(float64(leftVal), float64(rightVal)))
-		}
+		// Compute with overflow checks; leaving int64 raises instead of
+		// silently degrading to a float (Python computes the exact big int).
 		result := int64(1)
 		base := leftVal
 		exp := rightVal
+		overflow := false
 		for exp > 0 {
 			if exp%2 == 1 {
-				result *= base
+				var ok bool
+				result, ok = mulOv(result, base)
+				if !ok {
+					overflow = true
+					break
+				}
 			}
-			base *= base
+			if exp > 1 {
+				var ok bool
+				base, ok = mulOv(base, base)
+				if !ok {
+					overflow = true
+					break
+				}
+			}
 			exp /= 2
+		}
+		if overflow {
+			return intOverflowError("**")
 		}
 		return object.NewInteger(result)
 	case ast.OpMod:
@@ -853,12 +1076,33 @@ func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object
 		return object.NewInteger(leftVal ^ rightVal)
 	case ast.OpLShift:
 		if rightVal < 0 {
-			return errors.NewError("negative shift count")
+			return &object.Exception{
+				Message:       "negative shift count",
+				ExceptionType: object.ExceptionTypeValueError,
+				Raised:        true,
+			}
 		}
-		return object.NewInteger(leftVal << uint64(rightVal))
+		if rightVal < 64 {
+			if leftVal > 0 && leftVal > (math.MaxInt64>>uint(rightVal)) {
+				return intOverflowError("<<")
+			}
+			if leftVal < 0 && leftVal < (math.MinInt64>>uint(rightVal)) {
+				return intOverflowError("<<")
+			}
+			return object.NewInteger(leftVal << uint64(rightVal))
+		}
+		// Shift counts >= 64: only zero stays representable.
+		if leftVal == 0 {
+			return object.NewInteger(0)
+		}
+		return intOverflowError("<<")
 	case ast.OpRShift:
 		if rightVal < 0 {
-			return errors.NewError("negative shift count")
+			return &object.Exception{
+				Message:       "negative shift count",
+				ExceptionType: object.ExceptionTypeValueError,
+				Raised:        true,
+			}
 		}
 		return object.NewInteger(leftVal >> uint64(rightVal))
 	case ast.OpLt:
@@ -1085,7 +1329,7 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 				usedNamedKey = true
 			} else {
 				if valueIdx >= len(values) {
-					return errors.NewError("not enough arguments for format string")
+					return errors.NewTypeErrorTagged("not enough arguments for format string")
 				}
 				val = values[valueIdx]
 				valueIdx++
@@ -1103,7 +1347,7 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 	}
 
 	if valueIdx < len(values) && !usedNamedKey {
-		return errors.NewError("not all arguments converted during string formatting")
+		return errors.NewTypeErrorTagged("not all arguments converted during string formatting")
 	}
 
 	return object.NewString(result.String())
@@ -1139,7 +1383,7 @@ func formatPercentValue(ctx context.Context, spec string, conversion byte, val o
 			return "", rerr
 		}
 		return applyStringSpec(spec, rendered), nil
-	case 'd', 'i':
+	case 'd', 'i', 'u':
 		var intVal int64
 		switch v := val.(type) {
 		case *object.Integer:
@@ -1151,45 +1395,62 @@ func formatPercentValue(ctx context.Context, spec string, conversion byte, val o
 				intVal = 1
 			}
 		default:
-			return "", errors.NewError("%%d format: a number is required, not %s", val.Type().String())
+			return "", errors.NewTypeErrorTagged("%%%c format: a number is required, not %s", conversion, val.Type().String())
 		}
 		return fmt.Sprintf(spec[:len(spec)-1]+"d", intVal), nil
 	case 'f':
-		floatVal, err := val.AsFloat()
+		floatVal, err := percentFloatArg(val)
 		if err != nil {
-			return "", errors.NewError("%%f format: a number is required, not %s", val.Type().String())
+			return "", errors.NewTypeErrorTagged("%%%c format: a number is required, not %s", conversion, val.Type().String())
 		}
 		return fmt.Sprintf(spec[:len(spec)-1]+"f", floatVal), nil
-	case 'e':
-		floatVal, err := val.AsFloat()
+	case 'e', 'E':
+		floatVal, err := percentFloatArg(val)
 		if err != nil {
-			return "", errors.NewError("%%e format: a number is required, not %s", val.Type().String())
+			return "", errors.NewTypeErrorTagged("%%%c format: a number is required, not %s", conversion, val.Type().String())
 		}
-		return fmt.Sprintf(spec[:len(spec)-1]+"e", floatVal), nil
-	case 'g':
-		floatVal, err := val.AsFloat()
+		return fmt.Sprintf(spec[:len(spec)-1]+string(conversion), floatVal), nil
+	case 'g', 'G':
+		floatVal, err := percentFloatArg(val)
 		if err != nil {
-			return "", errors.NewError("%%g format: a number is required, not %s", val.Type().String())
+			return "", errors.NewTypeErrorTagged("%%%c format: a number is required, not %s", conversion, val.Type().String())
 		}
-		return fmt.Sprintf(spec[:len(spec)-1]+"g", floatVal), nil
+		goSpec := spec[:len(spec)-1]
+		if !strings.Contains(goSpec, ".") {
+			// Python's %g defaults to 6 significant digits (Go's is the
+			// shortest round-trip form).
+			goSpec += ".6"
+		}
+		return fmt.Sprintf(goSpec+string(conversion), floatVal), nil
 	case 'x':
 		intVal, err := val.AsInt()
 		if err != nil {
-			return "", errors.NewError("%%x format: an integer is required, not %s", val.Type().String())
+			return "", errors.NewTypeErrorTagged("%%%c format: an integer is required, not %s", conversion, val.Type().String())
 		}
 		return fmt.Sprintf(spec[:len(spec)-1]+"x", intVal), nil
 	case 'X':
 		intVal, err := val.AsInt()
 		if err != nil {
-			return "", errors.NewError("%%X format: an integer is required, not %s", val.Type().String())
+			return "", errors.NewTypeErrorTagged("%%%c format: an integer is required, not %s", conversion, val.Type().String())
 		}
 		return fmt.Sprintf(spec[:len(spec)-1]+"X", intVal), nil
 	case 'o':
 		intVal, err := val.AsInt()
 		if err != nil {
-			return "", errors.NewError("%%o format: an integer is required, not %s", val.Type().String())
+			return "", errors.NewTypeErrorTagged("%%%c format: an integer is required, not %s", conversion, val.Type().String())
 		}
-		return fmt.Sprintf(spec[:len(spec)-1]+"o", intVal), nil
+		out := fmt.Sprintf(spec[:len(spec)-1]+"o", intVal)
+		// Python's alternate octal form prefixes 0o (Go's prefixes 0).
+		if strings.Contains(spec, "#") {
+			if out == "0" {
+				out = "0o0"
+			} else if strings.HasPrefix(out, "0") {
+				out = "0o" + out[1:]
+			} else if strings.HasPrefix(out, "-0") {
+				out = "-0o" + out[2:]
+			}
+		}
+		return out, nil
 	case 'c':
 		switch v := val.(type) {
 		case *object.Integer:
@@ -1199,14 +1460,14 @@ func formatPercentValue(ctx context.Context, spec string, conversion byte, val o
 			return string(rune(v.IntValue())), nil
 		case *object.String:
 			if len(v.StringValue()) != 1 {
-				return "", errors.NewError("%%c requires int or char")
+				return "", errors.NewTypeErrorTagged("%%c requires int or char")
 			}
 			return v.StringValue(), nil
 		default:
-			return "", errors.NewError("%%c requires int or char")
+			return "", errors.NewTypeErrorTagged("%%c requires int or char")
 		}
 	default:
-		return "", errors.NewError("unsupported format character: %c", conversion)
+		return "", errors.NewValueError("unsupported format character '%c' (0x%x)", conversion, conversion)
 	}
 }
 
@@ -1451,9 +1712,18 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 }
 
 // unpackArgsFromIterable unpacks an iterable object into a slice of arguments
-func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Object) {
+func unpackArgsFromIterable(ctx context.Context, argsVal object.Object, env *object.Environment) ([]object.Object, object.Object) {
 	var unpacked []object.Object
 	switch val := argsVal.(type) {
+	case *object.Instance:
+		elems, ok, rerr := iterableToSliceChecked(ctx, val, env)
+		if rerr != nil {
+			return nil, rerr
+		}
+		if !ok {
+			return nil, errors.NewTypeErrorTagged("argument after * must be iterable, not %s", argsVal.Type())
+		}
+		unpacked = elems
 	case *object.List:
 		unpacked = val.Elements
 	case *object.Tuple:
@@ -1522,7 +1792,7 @@ func unpackArgsFromIterable(argsVal object.Object) ([]object.Object, object.Obje
 			unpacked = append(unpacked, elem)
 		}
 	default:
-		return nil, errors.NewError("argument after * must be iterable, not %s", argsVal.Type())
+		return nil, errors.NewTypeErrorTagged("argument after * must be iterable, not %s", argsVal.Type())
 	}
 	return unpacked, nil
 }
@@ -1579,7 +1849,7 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 		if rerr != nil {
 			return hashKeyAssignError(rerr)
 		}
-		o.Pairs[key] = object.DictPair{Key: index, Value: value}
+		o.Store(key, index, value)
 		return nil
 	case *object.Instance:
 		// For explicit bracket access (not dot), call __setitem__ if defined
@@ -1596,10 +1866,21 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 			}
 		}
 		if key, ok := index.(*object.String); ok {
+			if key.StringValue() == "__dict__" {
+				return raisedAssignmentError(object.ExceptionTypeAttributeError,
+					"assigning to __dict__ is not supported; update it in place (obj.__dict__.update(...)) or use setattr()")
+			}
+			// Frozen dataclasses refuse field writes after construction
+			// (Python's FrozenInstanceError, an AttributeError subclass).
+			if _, frozen := o.Class.Methods["__frozen__"]; frozen {
+				return raisedAssignmentError("FrozenInstanceError",
+					fmt.Sprintf("cannot assign to field '%s'", key.StringValue()))
+			}
 			// Check class hierarchy for a property descriptor before writing to Fields
 			if p := findPropertyInClass(key.StringValue(), o.Class); p != nil {
 				if p.Setter == nil {
-					return fmt.Errorf("can't set attribute '%s': property is read-only", key.StringValue())
+					return raisedAssignmentError(object.ExceptionTypeAttributeError,
+						fmt.Sprintf("property '%s' of '%s' object has no setter", key.StringValue(), o.Class.Name))
 				}
 				result := applyFunctionWithContext(ctx, p.Setter, []object.Object{o, value}, nil, nil)
 				if object.IsError(result) {
@@ -1679,7 +1960,10 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 		o.Data[i] = f
 		return nil
 	}
-	return fmt.Errorf("cannot assign to index")
+	// Immutable or non-subscriptable targets (tuple, str, bytes, ...) raise a
+	// catchable TypeError, as in Python.
+	return raisedAssignmentError(object.ExceptionTypeTypeError,
+		fmt.Sprintf("'%s' object does not support item assignment", getTypeName(obj)))
 }
 
 // tryEvalFastBuiltinCall handles fast-path builtin calls (len, type, str, etc.).
@@ -1690,6 +1974,17 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 //   - ok=false, envFn==nil: not applicable, caller should use normal resolution.
 
 func createInstance(ctx context.Context, class *object.Class, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	// Enum classes construct by value lookup, not instantiation.
+	if class.IsEnum {
+		if len(args) != 1 {
+			return &object.Exception{
+				Message:       fmt.Sprintf("%s() takes 1 argument (%d given)", class.Name, len(args)),
+				ExceptionType: object.ExceptionTypeTypeError,
+				Raised:        true,
+			}
+		}
+		return enumValueLookup(class, args[0])
+	}
 	instance := object.NewInstanceWithFields(class, make(map[string]object.Object))
 
 	// Call __init__ if it exists, walking the base class chain
@@ -1720,6 +2015,14 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 		// be swallowed so the object constructs cleanly.
 		if propagates(result) {
 			return result
+		}
+		// Python rejects an __init__ that returns a non-None value.
+		if _, isNull := result.(*object.Null); !isNull && result != nil {
+			return &object.Exception{
+				Message:       fmt.Sprintf("__init__() should return None, not '%s'", getTypeName(result)),
+				ExceptionType: object.ExceptionTypeTypeError,
+				Raised:        true,
+			}
 		}
 	}
 
@@ -1759,6 +2062,10 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 // applyUserFunctionDirect is a fast path for calling a 1-parameter function with
 // a single argument, bypassing slice allocation and the generic params path.
 func applyUserFunctionDirect(ctx context.Context, fn *object.Function, arg object.Object) object.Object {
+	if fn.GeneratorPlan != nil {
+		plan, _ := fn.GeneratorPlan.(*genPlan)
+		return newGenerator(ctx, fn, []object.Object{arg}, nil, fn.Env, plan)
+	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.Enter() {
 			return errors.NewCallDepthExceededError(int(cd.max))
@@ -1792,6 +2099,10 @@ func applyUserFunctionDirect(ctx context.Context, fn *object.Function, arg objec
 
 // applyUserFunction2 is a fast path for 2-parameter calls, avoiding slice allocation.
 func applyUserFunction2(ctx context.Context, fn *object.Function, a0, a1 object.Object) object.Object {
+	if fn.GeneratorPlan != nil {
+		plan, _ := fn.GeneratorPlan.(*genPlan)
+		return newGenerator(ctx, fn, []object.Object{a0, a1}, nil, fn.Env, plan)
+	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.Enter() {
 			return errors.NewCallDepthExceededError(int(cd.max))
@@ -1827,6 +2138,10 @@ func applyUserFunction2(ctx context.Context, fn *object.Function, a0, a1 object.
 
 // applyUserFunctionN is a fast path for N-parameter calls (N <= 3), using stack-allocated args.
 func applyUserFunctionN(ctx context.Context, fn *object.Function, args ...object.Object) object.Object {
+	if fn.GeneratorPlan != nil {
+		plan, _ := fn.GeneratorPlan.(*genPlan)
+		return newGenerator(ctx, fn, args, nil, fn.Env, plan)
+	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.Enter() {
 			return errors.NewCallDepthExceededError(int(cd.max))
@@ -1880,6 +2195,14 @@ func functionBody(fn *object.Function) object.EvalFn {
 }
 
 func applyUserFunction(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	// Generator functions construct a generator instead of running.
+	if fn.GeneratorPlan != nil {
+		plan, _ := fn.GeneratorPlan.(*genPlan)
+		if plan == nil {
+			return errors.NewError("generator function '%s' has no compiled plan", fn.Name)
+		}
+		return newGenerator(ctx, fn, args, keywords, env, plan)
+	}
 	// Check call depth to prevent stack overflow
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.Enter() {
@@ -2023,14 +2346,33 @@ func (fp *funcParams) evalDefault(ctx context.Context, name string, defaultExpr 
 	return compileExpr(defaultExpr)(ctx, fp.parentEnv)
 }
 
+// defaultFor returns the value the parameter at index idx binds when its
+// argument is omitted, or ok=false when it has no default. Compiler-created
+// functions carry values resolved once at definition time (Python semantics),
+// index-aligned with parameters; anything else falls back to evaluating the
+// expression in the defining scope now.
+func (fp *funcParams) defaultFor(ctx context.Context, idx int, name string) (object.Object, bool) {
+	if fp.resolvedDefaults != nil && fp.resolvedDefaults[idx] != nil {
+		return fp.resolvedDefaults[idx], true
+	}
+	if expr, ok := fp.defaultValues[name]; ok {
+		return fp.evalDefault(ctx, name, expr), true
+	}
+	return nil, false
+}
+
 // funcParams abstracts the common parts of Function and LambdaFunction for parameter handling
 type funcParams struct {
 	parameters       []*ast.Identifier
 	defaultValues    map[string]ast.Expression
 	compiledDefaults map[string]object.EvalFn
+	resolvedDefaults []object.Object
 	variadic         *ast.Identifier
 	kwargs           *ast.Identifier
 	keywordOnlyStart int
+	// positionalOnly is the number of leading parameters that cannot be
+	// passed by keyword (before a '/' marker); 0 means no marker.
+	positionalOnly   int
 	parentEnv        *object.Environment
 	localSlots       map[string]int
 	localSlotNames   []string
@@ -2079,19 +2421,18 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 	// Check for extra positional arguments
 	if numArgs > positionalLimit {
 		if fp.variadic != nil {
-			// Collect extra arguments into a list. Copy so the varargs list
-			// doesn't alias the caller's args buffer (which may be reused).
+			// Collect extra arguments into a tuple, as Python's *args. Copy so
+			// it doesn't alias the caller's args buffer (which may be reused).
 			varArgs := make([]object.Object, numArgs-positionalLimit)
 			copy(varArgs, args[positionalLimit:])
-			list := &object.List{Elements: varArgs}
-			env.Set(fp.variadic.Value(), list)
+			env.Set(fp.variadic.Value(), &object.Tuple{Elements: varArgs})
 		} else {
 			minArgs := positionalLimit
 			return nil, errors.NewArgumentError(numArgs, minArgs)
 		}
 	} else if fp.variadic != nil {
-		// No extra arguments, set variadic to empty list
-		env.Set(fp.variadic.Value(), &object.List{Elements: []object.Object{}})
+		// No extra arguments, set variadic to an empty tuple
+		env.Set(fp.variadic.Value(), &object.Tuple{Elements: []object.Object{}})
 	}
 
 	// Handle keyword arguments if present
@@ -2149,6 +2490,25 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 				return nil, errors.NewError("got an unexpected keyword argument '%s'", key)
 			}
 
+			// A '/' marker makes the parameters before it positional-only:
+			// naming one by keyword cannot bind the parameter. With **kwargs
+			// the keyword lands in the dict instead (Python semantics);
+			// without it, naming one is Python's TypeError.
+			if paramIdx < fp.positionalOnly {
+				if fp.kwargs != nil {
+					if extraKwargs == nil {
+						extraKwargs = make(map[string]object.Object, len(keywords))
+					}
+					extraKwargs[key] = value
+					continue
+				}
+				return nil, &object.Exception{
+					Message:       fmt.Sprintf("got some positional-only arguments passed as keyword arguments: '%s'", key),
+					ExceptionType: object.ExceptionTypeTypeError,
+					Raised:        true,
+				}
+			}
+
 			if isParamSet(paramIdx, key) {
 				return nil, errors.NewError("multiple values for argument '%s'", key)
 			}
@@ -2159,12 +2519,20 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 
 		// Set **kwargs dict if defined
 		if fp.kwargs != nil {
-			kwargsDict := &object.Dict{Pairs: make(map[string]object.DictPair, len(extraKwargs))}
-			for key, value := range extraKwargs {
-				kwargsDict.Pairs[object.DictKey(object.NewString(key))] = object.DictPair{
-					Key:   object.NewString(key),
-					Value: value,
-				}
+			// Call-site keyword order is not kept (keywords arrive as a map),
+			// so the dict is filled in sorted key order: deterministic rather
+			// than random per call.
+			kwargsDict := object.NewDictSized(len(extraKwargs))
+			var keyBuf [8]string
+			names := keyBuf[:0]
+			for key := range extraKwargs {
+				names = append(names, key)
+			}
+			if len(names) > 1 {
+				sort.Strings(names)
+			}
+			for _, key := range names {
+				kwargsDict.SetByString(key, extraKwargs[key])
 			}
 			env.Set(fp.kwargs.Value(), kwargsDict)
 		}
@@ -2172,8 +2540,10 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 		// Check for missing arguments and apply defaults
 		for pi, param := range fp.parameters {
 			if !isParamSet(pi, param.Value()) {
-				if defaultExpr, ok := fp.defaultValues[param.Value()]; ok {
-					defaultVal := fp.evalDefault(ctx, param.Value(), defaultExpr)
+				if defaultVal, ok := fp.defaultFor(ctx, pi, param.Value()); ok {
+					if object.IsError(defaultVal) || isRaised(defaultVal) {
+						return nil, defaultVal
+					}
 					env.Set(param.Value(), defaultVal)
 				} else {
 					minArgs := numParams - len(fp.defaultValues)
@@ -2184,22 +2554,41 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 	} else {
 		// No keywords - set empty **kwargs dict if defined
 		if fp.kwargs != nil {
-			env.Set(fp.kwargs.Value(), &object.Dict{Pairs: make(map[string]object.DictPair)})
+			env.Set(fp.kwargs.Value(), object.NewDict())
 		}
 
+		missing := func(i int) (object.Object, bool) {
+			param := fp.parameters[i]
+			if defaultVal, ok := fp.defaultFor(ctx, i, param.Value()); ok {
+				if object.IsError(defaultVal) || isRaised(defaultVal) {
+					return defaultVal, false
+				}
+				env.Set(param.Value(), defaultVal)
+				return nil, false
+			}
+			return nil, true
+		}
+		// A required keyword-only argument missing without keywords gets
+		// Python's specific message; other arities the generic one.
+		if fp.keywordOnlyStart > 0 && numArgs >= fp.keywordOnlyStart-1 {
+			for pi := fp.keywordOnlyStart - 1; pi < numParams; pi++ {
+				if _, isMissing := missing(pi); isMissing {
+					return nil, errors.NewTypeErrorTagged("missing 1 required keyword-only argument: '%s'", fp.parameters[pi].Value())
+				}
+			}
+		}
 		if numArgs < numParams {
 			// No keywords - check for missing required arguments
 			for i := numArgs; i < numParams; i++ {
-				param := fp.parameters[i]
-				if defaultExpr, ok := fp.defaultValues[param.Value()]; ok {
-					defaultVal := fp.evalDefault(ctx, param.Value(), defaultExpr)
-					env.Set(param.Value(), defaultVal)
-				} else {
+				if _, isMissing := missing(i); isMissing {
 					minArgs := numParams - len(fp.defaultValues)
 					return nil, errors.NewArgumentError(numArgs, minArgs)
 				}
 			}
 		}
+		// Keyword-only parameters with enough positional args present are
+		// covered by the keyword-only loop above (numArgs >= keywordOnlyStart-1
+		// includes numArgs >= numParams after varargs collected the extras).
 	}
 
 	return env, nil
@@ -2210,9 +2599,11 @@ func extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.O
 		parameters:       fn.Parameters,
 		defaultValues:    fn.DefaultValues,
 		compiledDefaults: fn.CompiledDefaults,
+		resolvedDefaults: fn.ResolvedDefaults,
 		variadic:         fn.Variadic,
 		kwargs:           fn.Kwargs,
 		keywordOnlyStart: fn.KeywordOnlyStart,
+		positionalOnly:   fn.PositionalOnly,
 		parentEnv:        fn.Env,
 		localSlots:       fn.LocalSlots,
 		localSlotNames:   fn.LocalSlotNames,
@@ -2226,9 +2617,11 @@ func extendLambdaEnv(ctx context.Context, fn *object.LambdaFunction, args []obje
 		parameters:       fn.Parameters,
 		defaultValues:    fn.DefaultValues,
 		compiledDefaults: fn.CompiledDefaults,
+		resolvedDefaults: fn.ResolvedDefaults,
 		variadic:         fn.Variadic,
 		kwargs:           fn.Kwargs,
 		keywordOnlyStart: fn.KeywordOnlyStart,
+		positionalOnly:   fn.PositionalOnly,
 		parentEnv:        fn.Env,
 		localSlots:       fn.LocalSlots,
 		localSlotNames:   fn.LocalSlotNames,
@@ -2446,6 +2839,52 @@ func strInstanceChecked(ctx context.Context, inst *object.Instance, env *object.
 // value of that name in env, rendered via str semantics. Nested fields are
 // the common plain-variable form; anything else is left untouched for
 // formatWithSpec to render literally.
+// nestedSpecCache memoizes compiled nested spec-field expressions by their
+// source text, so a hot f-string like f"{x:>{w + 1}}" does not re-parse and
+// re-compile on every evaluation. Bounded: beyond nestedSpecCacheMax entries
+// (dynamic format strings could otherwise grow it without limit) further
+// expressions compile per call.
+var nestedSpecCache sync.Map // string -> object.EvalFn
+
+const nestedSpecCacheMax = 1024
+
+var nestedSpecCacheSize atomic.Int64
+
+func nestedSpecEvalFn(text string) object.EvalFn {
+	if cached, ok := nestedSpecCache.Load(text); ok {
+		return cached.(object.EvalFn)
+	}
+	expr := parser.ParseExpressionString(text)
+	if expr == nil {
+		return nil
+	}
+	fn := compileExpr(expr)
+	if nestedSpecCacheSize.Load() < nestedSpecCacheMax && nestedSpecCacheSize.Add(1) <= nestedSpecCacheMax {
+		nestedSpecCache.Store(text, fn)
+	}
+	return fn
+}
+
+// isIdentifierLikeName reports whether s is shaped like a bare identifier
+// (letter/underscore first, then letters, digits or underscores), so a nested
+// format field holding it is treated as a name lookup rather than a
+// expression to parse ("2" and "w+1" are not identifier-like).
+func isIdentifierLikeName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if r == '_' || unicode.IsLetter(r) {
+			continue
+		}
+		if i > 0 && unicode.IsDigit(r) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func expandNestedSpecFields(ctx context.Context, spec string, env *object.Environment) (string, object.Object) {
 	if !strings.Contains(spec, "{") {
 		return spec, nil
@@ -2471,7 +2910,22 @@ func expandNestedSpecFields(ctx context.Context, spec string, env *object.Enviro
 		}
 		val, ok := env.Get(name)
 		if !ok {
-			return "", errors.NewError("nested format field '%s' is not defined", name)
+			// Python allows any expression in a nested spec field
+			// (f"{x:>{width + 1}}", f"{x:>{2}}"), not just names. A bare
+			// identifier that resolved to nothing stays the original
+			// not-defined error; anything else (operators, leading digits)
+			// parses as an expression.
+			if isIdentifierLikeName(name) {
+				return "", errors.NewError("nested format field '%s' is not defined", name)
+			}
+			fn := nestedSpecEvalFn(name)
+			if fn == nil {
+				return "", errors.NewError("nested format field '%s' is not defined", name)
+			}
+			val = fn(ctx, env)
+			if propagates(val) {
+				return "", val
+			}
 		}
 		rendered, rerr := renderConvertedValue(ctx, val, "s", env)
 		if rerr != nil {
@@ -3028,6 +3482,39 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 			}
 			return nativeBoolToBooleanObject(isTruthy(result))
 		}
+		// No __contains__: fall back to iterating via __iter__, as Python does.
+		elems, ok, rerr := iterableToSliceChecked(ctx, container, env)
+		if rerr != nil {
+			return rerr
+		}
+		if !ok {
+			return errors.NewTypeError("iterable", right.Type().String())
+		}
+		for _, e := range elems {
+			eq, rerr := evalObjectsEqualChecked(ctx, left, e, env)
+			if rerr != nil {
+				return rerr
+			}
+			if eq {
+				return TRUE
+			}
+		}
+		return FALSE
+	case *object.Class:
+		// Membership on an enum class: member in Color.
+		if container.IsEnum {
+			for _, m := range container.EnumMembers {
+				if m == left {
+					return TRUE
+				}
+				if member, ok := m.(*object.Instance); ok {
+					if mv, has := member.GetField("value"); has && mv.Inspect() == left.Inspect() {
+						return TRUE
+					}
+				}
+			}
+			return FALSE
+		}
 		return errors.NewTypeError("iterable", right.Type().String())
 	default:
 		return errors.NewTypeError("iterable", right.Type().String())
@@ -3042,6 +3529,11 @@ func evalIsOperator(left, right object.Object) object.Object {
 	}
 	if left == NULL || right == NULL {
 		return FALSE
+	}
+
+	// type(x) is int: bridge the type-name string to the type builtin.
+	if typeBridgeEqual(left, right) {
+		return TRUE
 	}
 
 	// Special handling for boolean singletons
@@ -3205,11 +3697,13 @@ func errorExceptionType(err *object.Error) string {
 func matchesExceptionType(exception object.Object, exceptTypeExpr ast.Expression, env *object.Environment) bool {
 	// Get the exception type string
 	var exceptionType string
+	var chain []string
 	if exc, ok := exception.(*object.Exception); ok {
 		exceptionType = exc.ExceptionType
 		if exceptionType == "" {
 			exceptionType = "Exception" // Default to Exception if not set
 		}
+		chain = exc.TypeChain
 	} else if _, ok := exception.(*object.Error); ok {
 		// Errors are treated as generic exceptions
 		exceptionType = "Exception"
@@ -3217,7 +3711,7 @@ func matchesExceptionType(exception object.Object, exceptTypeExpr ast.Expression
 		return false
 	}
 
-	return matchesExceptionTypeExpr(exceptionType, exceptTypeExpr, env)
+	return matchesExceptionTypeExpr(exceptionType, exceptTypeExpr, env, chain)
 }
 
 // evalExceptTypeSideEffects evaluates the parts of an except-type expression
@@ -3256,7 +3750,7 @@ func evalExceptTypeSideEffects(ctx context.Context, expr ast.Expression, env *ob
 	}
 }
 
-func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expression, env *object.Environment) bool {
+func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expression, env *object.Environment, chain []string) bool {
 	switch expr := exceptTypeExpr.(type) {
 	case *ast.Identifier:
 		// A name bound to an exception type or a tuple of them (E = KeyError,
@@ -3264,27 +3758,27 @@ func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expressio
 		// match by name.
 		if env != nil {
 			if val, ok := env.Get(expr.Value()); ok {
-				if matched, isType := matchesExceptionValue(exceptionType, val); isType {
+				if matched, isType := matchesExceptionValue(exceptionType, val, chain); isType {
 					return matched
 				}
 			}
 		}
-		return matchesNamedExceptionType(exceptionType, expr.Value())
+		return matchesNamedExceptionTypeChain(exceptionType, expr.Value(), chain)
 	case *ast.IndexExpression:
 		// Handle dotted names like requests.HTTPError — match on the last component
 		dotted := buildDottedName(expr)
 		parts := strings.Split(dotted, ".")
-		return matchesNamedExceptionType(exceptionType, parts[len(parts)-1])
+		return matchesNamedExceptionTypeChain(exceptionType, parts[len(parts)-1], chain)
 	case *ast.TupleLiteral:
 		for _, elem := range expr.Elements {
-			if matchesExceptionTypeExpr(exceptionType, elem, env) {
+			if matchesExceptionTypeExpr(exceptionType, elem, env, chain) {
 				return true
 			}
 		}
 		return false
 	case *ast.ListLiteral:
 		for _, elem := range expr.Elements {
-			if matchesExceptionTypeExpr(exceptionType, elem, env) {
+			if matchesExceptionTypeExpr(exceptionType, elem, env, chain) {
 				return true
 			}
 		}
@@ -3297,14 +3791,14 @@ func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expressio
 // matchesExceptionValue matches an exception against a value used as an
 // except type: an exception type, or a tuple of them. isType is false when
 // val is neither.
-func matchesExceptionValue(exceptionType string, val object.Object) (matched, isType bool) {
+func matchesExceptionValue(exceptionType string, val object.Object, chain []string) (matched, isType bool) {
 	switch v := val.(type) {
 	case *object.Builtin:
 		name, ok := exceptionBuiltins[v]
-		return ok && matchesNamedExceptionType(exceptionType, name), ok
+		return ok && matchesNamedExceptionTypeChain(exceptionType, name, chain), ok
 	case *object.Tuple:
 		for _, elem := range v.Elements {
-			m, ok := matchesExceptionValue(exceptionType, elem)
+			m, ok := matchesExceptionValue(exceptionType, elem, chain)
 			if !ok {
 				return false, false
 			}
@@ -3335,10 +3829,18 @@ var exceptionParents = map[string]string{
 	"RecursionError":                      "RuntimeError",
 	"NotImplementedError":                 "RuntimeError",
 	"UnicodeError":                        "ValueError",
+	"FrozenInstanceError":                 "AttributeError",
 	"JSONDecodeError":                     "ValueError",
 }
 
 func matchesNamedExceptionType(exceptionType, expectedType string) bool {
+	return matchesNamedExceptionTypeChain(exceptionType, expectedType, nil)
+}
+
+// matchesNamedExceptionTypeChain is matchesNamedExceptionType, additionally
+// walking a user exception class's TypeChain: except ValueError must catch
+// an exception raised as class MyError(ValueError).
+func matchesNamedExceptionTypeChain(exceptionType, expectedType string, chain []string) bool {
 	switch expectedType {
 	case "BaseException":
 		return true
@@ -3349,6 +3851,13 @@ func matchesNamedExceptionType(exceptionType, expectedType string) bool {
 	for t := exceptionType; t != ""; t = exceptionParents[t] {
 		if t == expectedType {
 			return true
+		}
+	}
+	for _, c := range chain {
+		for t := c; t != ""; t = exceptionParents[t] {
+			if t == expectedType {
+				return true
+			}
 		}
 	}
 	return false
@@ -3594,7 +4103,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			if _, ok := o.Pairs[key]; !ok {
 				return raisedAssignmentError(object.ExceptionTypeKeyError, index.Inspect())
 			}
-			delete(o.Pairs, key)
+			o.Delete(key)
 			return nil
 		case *object.Instance:
 			if !target.IsDotAccess {
@@ -3855,9 +4364,87 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 		return assignIndexValue(ctx, left.IsDotAccess, obj, index, value)
 	case *ast.SliceExpression:
 		return assignToSliceExpression(ctx, left, value, env)
+	case *ast.TupleLiteral:
+		return assignUnpackTargets(ctx, left.Elements, value, env)
+	case *ast.ListLiteral:
+		return assignUnpackTargets(ctx, left.Elements, value, env)
 	default:
 		return fmt.Errorf("cannot assign to expression")
 	}
+}
+
+// assignUnpackTargets destructures value into a tuple/list assignment target,
+// recursing through assignToExpression so nested groups, indexes, slices and
+// identifiers all bind as leaves, as in Python: (a, (b, c)) = (1, (2, 3)).
+func assignUnpackTargets(ctx context.Context, targets []ast.Expression, value object.Object, env *object.Environment) error {
+	var elements []object.Object
+	switch v := value.(type) {
+	case *object.List:
+		elements = v.Elements
+	case *object.Tuple:
+		elements = v.Elements
+	default:
+		elems, ok, rerr := iterableToSliceChecked(ctx, value, env)
+		if rerr != nil {
+			if exc, ok := rerr.(*object.Exception); ok {
+				return &assignmentExceptionError{ex: exc}
+			}
+			return fmt.Errorf("assignment error")
+		}
+		if !ok {
+			return raisedAssignmentError(object.ExceptionTypeTypeError,
+				fmt.Sprintf("cannot unpack non-iterable %s object", value.Type().String()))
+		}
+		elements = elems
+	}
+	// A starred target ((a, *rest) = ...) collects the surplus into a list.
+	starIdx := -1
+	for i, target := range targets {
+		if _, ok := target.(*ast.StarredElement); ok {
+			if starIdx >= 0 {
+				return raisedAssignmentError(object.ExceptionTypeTypeError, "multiple starred expressions in assignment")
+			}
+			starIdx = i
+		}
+	}
+	if starIdx >= 0 {
+		after := len(targets) - starIdx - 1
+		if len(elements) < starIdx+after {
+			return raisedAssignmentError(object.ExceptionTypeValueError,
+				fmt.Sprintf("not enough values to unpack (expected at least %d, got %d)", starIdx+after, len(elements)))
+		}
+		for i := 0; i < starIdx; i++ {
+			if err := assignToExpression(ctx, targets[i], elements[i], env); err != nil {
+				return err
+			}
+		}
+		restEnd := len(elements) - after
+		rest := make([]object.Object, restEnd-starIdx)
+		copy(rest, elements[starIdx:restEnd])
+		if err := assignToExpression(ctx, targets[starIdx].(*ast.StarredElement).Value, &object.List{Elements: rest}, env); err != nil {
+			return err
+		}
+		for i := 0; i < after; i++ {
+			if err := assignToExpression(ctx, targets[starIdx+1+i], elements[restEnd+i], env); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if len(elements) != len(targets) {
+		if len(elements) > len(targets) {
+			return raisedAssignmentError(object.ExceptionTypeValueError,
+				fmt.Sprintf("too many values to unpack (expected %d, got %d)", len(targets), len(elements)))
+		}
+		return raisedAssignmentError(object.ExceptionTypeValueError,
+			fmt.Sprintf("not enough values to unpack (expected %d, got %d)", len(targets), len(elements)))
+	}
+	for i, target := range targets {
+		if err := assignToExpression(ctx, target, elements[i], env); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 var errNotNestedFloatArrayAssignment = fmt.Errorf("not nested float_array assignment")
@@ -3950,11 +4537,19 @@ func setForVariables(variables []ast.Expression, value object.Object, env *objec
 	case *object.List:
 		elements = v.Elements
 	default:
-		return fmt.Errorf("cannot unpack non-tuple/list value")
+		// Any other iterable unpacks per iteration too: for a, b in ["xy"].
+		elems, ok := object.IterableToSlice(value)
+		if !ok {
+			return raisedAssignmentError(object.ExceptionTypeTypeError, fmt.Sprintf("cannot unpack non-iterable %s object", value.Type().String()))
+		}
+		elements = elems
 	}
 
-	if len(elements) != len(variables) {
-		return fmt.Errorf("cannot unpack %d values into %d variables", len(elements), len(variables))
+	if len(elements) > len(variables) {
+		return raisedAssignmentError(object.ExceptionTypeValueError, fmt.Sprintf("too many values to unpack (expected %d, got %d)", len(variables), len(elements)))
+	}
+	if len(elements) < len(variables) {
+		return raisedAssignmentError(object.ExceptionTypeValueError, fmt.Sprintf("not enough values to unpack (expected %d, got %d)", len(variables), len(elements)))
 	}
 
 	for i, varExpr := range variables {
@@ -3965,6 +4560,53 @@ func setForVariables(variables []ast.Expression, value object.Object, env *objec
 	return nil
 }
 
+// setForTargets assigns a nested for-loop target group. Groups containing a
+// starred name (for a, (b, *c) in ...) collect the surplus into a list; the
+// plain flat case stays on the setForVariables hot path.
+func setForTargets(variables []ast.Expression, value object.Object, env *object.Environment) error {
+	for starIdx, varExpr := range variables {
+		if _, ok := varExpr.(*ast.StarredElement); !ok {
+			continue
+		}
+		var elements []object.Object
+		switch v := value.(type) {
+		case *object.Tuple:
+			elements = v.Elements
+		case *object.List:
+			elements = v.Elements
+		default:
+			elems, ok := object.IterableToSlice(value)
+			if !ok {
+				return raisedAssignmentError(object.ExceptionTypeTypeError, fmt.Sprintf("cannot unpack non-iterable %s object", value.Type().String()))
+			}
+			elements = elems
+		}
+		star := varExpr.(*ast.StarredElement)
+		after := len(variables) - starIdx - 1
+		if len(elements) < starIdx+after {
+			return raisedAssignmentError(object.ExceptionTypeValueError, fmt.Sprintf("not enough values to unpack (expected at least %d, got %d)", starIdx+after, len(elements)))
+		}
+		for i := 0; i < starIdx; i++ {
+			if err := setForVariable(variables[i], elements[i], env); err != nil {
+				return err
+			}
+		}
+		restEnd := len(elements) - after
+		rest := make([]object.Object, restEnd-starIdx)
+		copy(rest, elements[starIdx:restEnd])
+		if err := setForVariable(star.Value, &object.List{Elements: rest}, env); err != nil {
+			return err
+		}
+		for i := 0; i < after; i++ {
+			if err := setForVariable(variables[starIdx+1+i], elements[restEnd+i], env); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return setForVariables(variables, value, env)
+}
+
 // setForVariable assigns a single for-loop target expression to a value.
 // Supports identifiers and nested tuple/list unpacking, e.g. for a, (b, c) in ...
 func setForVariable(varExpr ast.Expression, value object.Object, env *object.Environment) error {
@@ -3973,9 +4615,9 @@ func setForVariable(varExpr ast.Expression, value object.Object, env *object.Env
 		setIdentifierFast(target, value, env)
 		return nil
 	case *ast.TupleLiteral:
-		return setForVariables(target.Elements, value, env)
+		return setForTargets(target.Elements, value, env)
 	case *ast.ListLiteral:
-		return setForVariables(target.Elements, value, env)
+		return setForTargets(target.Elements, value, env)
 	default:
 		return fmt.Errorf("for loop variables must be identifiers")
 	}
@@ -4158,6 +4800,16 @@ func instanceToIterator(ctx context.Context, inst *object.Instance, env *object.
 
 func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object) object.Object) object.Object {
 	switch o := obj.(type) {
+	case *object.Class:
+		// Enum classes iterate their members, in definition order.
+		if !o.IsEnum {
+			return errors.NewTypeError("iterable", obj.Type().String())
+		}
+		for _, m := range o.EnumMembers {
+			if err := fn(m); err != nil {
+				return err
+			}
+		}
 	case *object.List:
 		for _, el := range o.Elements {
 			if err := fn(el); err != nil {
@@ -4517,7 +5169,12 @@ func formatWithSpec(obj object.Object, spec string) (string, object.Object) {
 			}
 		} else if intVal, err := obj.AsInt(); err == nil {
 			if zero && width > 0 {
-				formatted = formatZeroPaddedInt(intVal, width)
+				// The sign counts toward the width: +06d on 42 is +00042.
+				padWidth := width
+				if intVal >= 0 && (sign == '+' || sign == ' ') {
+					padWidth--
+				}
+				formatted = formatZeroPaddedInt(intVal, padWidth)
 				formatted = applySign(formatted, intVal >= 0, sign)
 			} else {
 				formatted = strconv.FormatInt(intVal, 10)
@@ -4568,7 +5225,8 @@ func formatWithSpec(obj object.Object, spec string) (string, object.Object) {
 					formatted = strconv.FormatFloat(floatVal, 'g', precision, 64)
 				}
 			} else {
-				formatted = strconv.FormatFloat(floatVal, 'g', -1, 64)
+				// No precision: Python's default of 6 significant digits.
+				formatted = strconv.FormatFloat(floatVal, 'g', 6, 64)
 				if typeChar == 'G' {
 					formatted = strings.ToUpper(formatted)
 				}
@@ -4985,6 +5643,9 @@ func getTypeName(obj object.Object) string {
 	case object.TUPLE_OBJ:
 		return "tuple"
 	case object.SET_OBJ:
+		if obj.(*object.Set).Frozen {
+			return "frozenset"
+		}
 		return "set"
 	case object.NULL_OBJ:
 		return "NoneType"
@@ -5023,7 +5684,18 @@ func getTypeName(obj object.Object) string {
 		return "classmethod"
 	case object.FLOAT_ARRAY_OBJ:
 		return "FloatArray"
+	case object.SENTINEL_OBJ:
+		return "sentinel"
 	default:
 		return obj.Type().String()
 	}
+}
+
+// percentFloatArg converts a %f/%e/%g operand to float64; bool counts as an
+// int (True is 1.0), as in Python.
+func percentFloatArg(val object.Object) (float64, object.Object) {
+	if b, ok := val.(*object.Boolean); ok {
+		return float64(boolToInt64(b.BoolValue())), nil
+	}
+	return val.AsFloat()
 }
