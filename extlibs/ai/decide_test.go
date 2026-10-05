@@ -101,9 +101,18 @@ func TestDecideMethodEndToEnd(t *testing.T) {
 	kwargs := object.NewKwargs(map[string]object.Object{
 		"questions":  questions,
 		"keep_alive": object.NewString("5m"),
+		"images": &object.List{Elements: []object.Object{
+			object.NewBytesFromString("png-bytes"),
+			object.NewString("c3RyaW5nLWJhc2U2NA=="),
+		}},
 	})
 
-	result := decideMethod(instance, context.Background(), kwargs, "clef-flash", "Checkout returns 500s since 9am.")
+	// A dict state exercises the any-binder's object → JSON conversion.
+	state := object.NewStringDict(map[string]object.Object{
+		"service": object.NewString("checkout"),
+		"errors":  object.NewInteger(500),
+	})
+	result := decideMethod(instance, context.Background(), kwargs, "clef-flash", state)
 	if result.Type() == object.ERROR_OBJ {
 		t.Fatalf("decide failed: %s", result.Inspect())
 	}
@@ -111,11 +120,19 @@ func TestDecideMethodEndToEnd(t *testing.T) {
 	if gotPath != "/v1/systemone" {
 		t.Errorf("request path = %q, want /v1/systemone", gotPath)
 	}
-	if gotBody["model"] != "clef-flash" || gotBody["state"] != "Checkout returns 500s since 9am." {
+	sentState, _ := gotBody["state"].(map[string]any)
+	if sentState["service"] != "checkout" || sentState["errors"] != float64(500) {
+		t.Errorf("state = %v", gotBody["state"])
+	}
+	if gotBody["model"] != "clef-flash" {
 		t.Errorf("request = %v", gotBody)
 	}
 	if gotBody["keep_alive"] != "5m" {
 		t.Errorf("keep_alive = %v", gotBody["keep_alive"])
+	}
+	sentImages, _ := gotBody["images"].([]any)
+	if len(sentImages) != 2 || sentImages[0] != "cG5nLWJ5dGVz" || sentImages[1] != "c3RyaW5nLWJhc2U2NA==" {
+		t.Errorf("images = %v (bytes must arrive base64-encoded)", sentImages)
 	}
 	sentQuestions, _ := gotBody["questions"].(map[string]any)
 	if len(sentQuestions) != 3 {

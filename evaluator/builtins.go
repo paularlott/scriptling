@@ -1506,9 +1506,13 @@ Example:
 				return err
 			}
 
-			// Special case: set returns a copy
+			// Special case: set(s) returns a copy. Always mutable: the
+			// constructor's result type is set, even when s is a frozenset
+			// (use .copy() to preserve frozenness).
 			if s, ok := args[0].(*object.Set); ok {
-				return s.Copy()
+				c := s.Copy()
+				c.Frozen = false
+				return c
 			}
 
 			// Get elements from iterable

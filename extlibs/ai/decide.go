@@ -42,7 +42,7 @@ func decideMethod(self *object.Instance, ctx context.Context, kwargs object.Kwar
 		return &object.Error{Message: fmt.Sprintf("decide: questions must hold 1 to 64 entries, got %d", len(questionsMap))}
 	}
 
-	req := mcpai.SystemOneRequest{Model: model, State: state}
+	req := mcpai.SystemOneRequest{Model: model, State: goJSONValue(state)}
 	req.Questions = make(map[string]mcpai.SystemOneQuestion, len(questionsMap))
 	for name, qObj := range questionsMap {
 		q, err := systemOneQuestion(name, qObj)
@@ -129,6 +129,17 @@ func systemOneResponseToObject(resp *mcpai.SystemOneResponse) object.Object {
 			"output_tokens": object.NewInteger(int64(resp.Usage.OutputTokens)),
 		}),
 	})
+}
+
+// goJSONValue normalizes a value that arrived through an `any` parameter:
+// script objects (a dict or list state) pass through as object.Object and
+// must become plain Go values before json.Marshal, or the request body
+// serializes the interpreter's Go structs instead of the script's data.
+func goJSONValue(v any) any {
+	if obj, ok := v.(object.Object); ok {
+		return conversion.ToGo(obj)
+	}
+	return v
 }
 
 // systemOneQuestion validates one named question and converts it to its

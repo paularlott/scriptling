@@ -98,6 +98,15 @@ def raises_type_error(fn):
 
 assert raises_type_error(lambda: frozenset([[1]]))
 
+# set() of a frozenset is a mutable set, as in Python (use .copy() to keep
+# it frozen)
+mutable = set(fs)
+mutable.add(99)
+assert 99 in mutable
+assert type(mutable) != "frozenset"
+assert fs.copy() == fs
+assert type(fs.copy()) == "frozenset"
+
 # isinstance distinguishes frozenset from set
 assert isinstance(fs, frozenset)
 assert not isinstance(fs, set)
