@@ -196,6 +196,30 @@ func compileDefaults(defaults map[string]ast.Expression) map[string]object.EvalF
 	return out
 }
 
+// resolveDefaults evaluates each parameter default once, in parameter order,
+// at definition time, as Python does: the default is bound to the value the
+// expression produces when the def runs, not re-evaluated against a possibly
+// mutated defining scope at call time. The second return is non-nil when a
+// default raises and must propagate out of the definition.
+func resolveDefaults(ctx context.Context, env *object.Environment, parameters []*ast.Identifier, compiled map[string]object.EvalFn) (map[string]object.Object, object.Object) {
+	if len(compiled) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]object.Object, len(compiled))
+	for _, param := range parameters {
+		fn, ok := compiled[param.Value()]
+		if !ok {
+			continue
+		}
+		val := fn(ctx, env)
+		if propagates(val) {
+			return nil, val
+		}
+		out[param.Value()] = val
+	}
+	return out, nil
+}
+
 // fixErrorPos gives an Error with a zero line or empty file the position of
 // the node being evaluated, so error reports name the statement that failed.
 func fixErrorPos(ctx context.Context, obj object.Object, line int) object.Object {
@@ -1667,6 +1691,10 @@ func compileFunctionStatement(n *ast.FunctionStatement) object.EvalFn {
 	name := n.Name.Value()
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		localSlots, localSlotNames := analyzeFunctionLocals(n)
+		resolved, fail := resolveDefaults(ctx, env, n.Function.Parameters, defaults)
+		if fail != nil {
+			return fail
+		}
 		fn := &object.Function{
 			Name:             name,
 			Parameters:       n.Function.Parameters,
@@ -1682,6 +1710,7 @@ func compileFunctionStatement(n *ast.FunctionStatement) object.EvalFn {
 			ParamSlotIndexes: n.Function.ParamSlotIndexes,
 			ReuseCallEnv:     !n.Function.HasNestedFunc,
 			CompiledDefaults: defaults,
+			ResolvedDefaults: resolved,
 			CompilerOwned:    true,
 		}
 		var result object.Object = fn
@@ -1712,6 +1741,10 @@ func compileLambda(n *ast.Lambda) object.EvalFn {
 	defaults := compileDefaults(n.GetDefaultValues())
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		localSlots, localSlotNames := analyzeLambdaLocals(n)
+		resolved, fail := resolveDefaults(ctx, env, n.Parameters, defaults)
+		if fail != nil {
+			return fail
+		}
 		return &object.LambdaFunction{
 			Parameters:       n.Parameters,
 			DefaultValues:    n.GetDefaultValues(),
@@ -1726,6 +1759,7 @@ func compileLambda(n *ast.Lambda) object.EvalFn {
 			ParamSlotIndexes: n.ParamSlotIndexes,
 			CompiledBody:     body,
 			CompiledDefaults: defaults,
+			ResolvedDefaults: resolved,
 		}
 	}
 }
@@ -2179,7 +2213,10 @@ func compileMultipleAssign(n *ast.MultipleAssignStatement) object.EvalFn {
 				return rerr
 			}
 			if !ok {
-				return errors.NewTypeError("list or tuple", val.Type().String())
+				return &object.Error{
+					Message:       fmt.Sprintf("cannot unpack non-iterable %s object", val.Type().String()),
+					ExceptionType: object.ExceptionTypeTypeError,
+				}
 			}
 			elements = elems
 		}
@@ -2190,7 +2227,7 @@ func compileMultipleAssign(n *ast.MultipleAssignStatement) object.EvalFn {
 			// Need at least (len(names) - 1) elements
 			minElements := len(n.Names) - 1
 			if len(elements) < minElements {
-				return errors.NewError("not enough values to unpack (expected at least %d, got %d)", minElements, len(elements))
+				return errors.NewValueError("not enough values to unpack (expected at least %d, got %d)", minElements, len(elements))
 			}
 
 			// Assign elements before the starred variable
@@ -2216,7 +2253,10 @@ func compileMultipleAssign(n *ast.MultipleAssignStatement) object.EvalFn {
 		} else {
 			// No starred unpacking - exact length match required
 			if len(elements) != len(n.Names) {
-				return errors.NewError("cannot unpack %d values to %d variables", len(elements), len(n.Names))
+				if len(elements) > len(n.Names) {
+					return errors.NewValueError("too many values to unpack (expected %d, got %d)", len(n.Names), len(elements))
+				}
+				return errors.NewValueError("not enough values to unpack (expected %d, got %d)", len(n.Names), len(elements))
 			}
 
 			// Assign each value

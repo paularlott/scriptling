@@ -783,6 +783,11 @@ type Function struct {
 	// built once at definition time so calls that fill in a default do not
 	// walk the AST.
 	CompiledDefaults map[string]EvalFn
+	// ResolvedDefaults holds the VALUE of each default, evaluated once at
+	// definition time in the defining scope, as Python does. Calls that fill
+	// in a default bind this value instead of re-evaluating the expression
+	// against the (possibly mutated) defining scope.
+	ResolvedDefaults map[string]Object
 	// CompiledBody memoises the body closure, which is compiled on the first
 	// call and cached on Body, the AST node. The evaluator fills it in only
 	// when CompilerOwned is set.
@@ -831,6 +836,9 @@ type LambdaFunction struct {
 	// built once at definition time so calls that fill in a default do not
 	// walk the AST.
 	CompiledDefaults map[string]EvalFn
+	// ResolvedDefaults holds the VALUE of each default, evaluated once at
+	// definition time in the defining scope, as Python does.
+	ResolvedDefaults map[string]Object
 }
 
 func (lf *LambdaFunction) Type() ObjectType { return LAMBDA_OBJ }
@@ -2004,6 +2012,7 @@ func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
 			ParamSlotIndexes: v.ParamSlotIndexes,
 			ReuseCallEnv:     v.ReuseCallEnv,
 			CompiledDefaults: v.CompiledDefaults,
+			ResolvedDefaults: v.ResolvedDefaults,
 			// CompiledBody is not copied: the source function may be running
 			// on another goroutine that memoises it on first call, and this
 			// can run without the GIL. The copy re-derives it from the
@@ -2025,6 +2034,7 @@ func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
 			ParamSlotIndexes: v.ParamSlotIndexes,
 			CompiledBody:     v.CompiledBody,
 			CompiledDefaults: v.CompiledDefaults,
+			ResolvedDefaults: v.ResolvedDefaults,
 		}
 	}
 	for name, v := range s.dicts {

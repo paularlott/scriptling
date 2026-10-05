@@ -2068,11 +2068,26 @@ func (fp *funcParams) evalDefault(ctx context.Context, name string, defaultExpr 
 	return compileExpr(defaultExpr)(ctx, fp.parentEnv)
 }
 
+// defaultFor returns the value a parameter's default binds, or ok=false when
+// the parameter has no default. Compiler-created functions carry the value
+// resolved once at definition time (Python semantics); anything else falls
+// back to evaluating the expression in the defining scope now.
+func (fp *funcParams) defaultFor(ctx context.Context, name string) (object.Object, bool) {
+	if v, ok := fp.resolvedDefaults[name]; ok {
+		return v, true
+	}
+	if expr, ok := fp.defaultValues[name]; ok {
+		return fp.evalDefault(ctx, name, expr), true
+	}
+	return nil, false
+}
+
 // funcParams abstracts the common parts of Function and LambdaFunction for parameter handling
 type funcParams struct {
 	parameters       []*ast.Identifier
 	defaultValues    map[string]ast.Expression
 	compiledDefaults map[string]object.EvalFn
+	resolvedDefaults map[string]object.Object
 	variadic         *ast.Identifier
 	kwargs           *ast.Identifier
 	keywordOnlyStart int
@@ -2230,8 +2245,10 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 		// Check for missing arguments and apply defaults
 		for pi, param := range fp.parameters {
 			if !isParamSet(pi, param.Value()) {
-				if defaultExpr, ok := fp.defaultValues[param.Value()]; ok {
-					defaultVal := fp.evalDefault(ctx, param.Value(), defaultExpr)
+				if defaultVal, ok := fp.defaultFor(ctx, param.Value()); ok {
+					if object.IsError(defaultVal) || isRaised(defaultVal) {
+						return nil, defaultVal
+					}
 					env.Set(param.Value(), defaultVal)
 				} else {
 					minArgs := numParams - len(fp.defaultValues)
@@ -2249,8 +2266,10 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 			// No keywords - check for missing required arguments
 			for i := numArgs; i < numParams; i++ {
 				param := fp.parameters[i]
-				if defaultExpr, ok := fp.defaultValues[param.Value()]; ok {
-					defaultVal := fp.evalDefault(ctx, param.Value(), defaultExpr)
+				if defaultVal, ok := fp.defaultFor(ctx, param.Value()); ok {
+					if object.IsError(defaultVal) || isRaised(defaultVal) {
+						return nil, defaultVal
+					}
 					env.Set(param.Value(), defaultVal)
 				} else {
 					minArgs := numParams - len(fp.defaultValues)
@@ -2268,6 +2287,7 @@ func extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.O
 		parameters:       fn.Parameters,
 		defaultValues:    fn.DefaultValues,
 		compiledDefaults: fn.CompiledDefaults,
+		resolvedDefaults: fn.ResolvedDefaults,
 		variadic:         fn.Variadic,
 		kwargs:           fn.Kwargs,
 		keywordOnlyStart: fn.KeywordOnlyStart,
@@ -2285,6 +2305,7 @@ func extendLambdaEnv(ctx context.Context, fn *object.LambdaFunction, args []obje
 		parameters:       fn.Parameters,
 		defaultValues:    fn.DefaultValues,
 		compiledDefaults: fn.CompiledDefaults,
+		resolvedDefaults: fn.ResolvedDefaults,
 		variadic:         fn.Variadic,
 		kwargs:           fn.Kwargs,
 		keywordOnlyStart: fn.KeywordOnlyStart,
@@ -3956,9 +3977,53 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 		return assignIndexValue(ctx, left.IsDotAccess, obj, index, value)
 	case *ast.SliceExpression:
 		return assignToSliceExpression(ctx, left, value, env)
+	case *ast.TupleLiteral:
+		return assignUnpackTargets(ctx, left.Elements, value, env)
+	case *ast.ListLiteral:
+		return assignUnpackTargets(ctx, left.Elements, value, env)
 	default:
 		return fmt.Errorf("cannot assign to expression")
 	}
+}
+
+// assignUnpackTargets destructures value into a tuple/list assignment target,
+// recursing through assignToExpression so nested groups, indexes, slices and
+// identifiers all bind as leaves, as in Python: (a, (b, c)) = (1, (2, 3)).
+func assignUnpackTargets(ctx context.Context, targets []ast.Expression, value object.Object, env *object.Environment) error {
+	var elements []object.Object
+	switch v := value.(type) {
+	case *object.List:
+		elements = v.Elements
+	case *object.Tuple:
+		elements = v.Elements
+	default:
+		elems, ok, rerr := iterableToSliceChecked(ctx, value, env)
+		if rerr != nil {
+			if exc, ok := rerr.(*object.Exception); ok {
+				return &assignmentExceptionError{ex: exc}
+			}
+			return fmt.Errorf("assignment error")
+		}
+		if !ok {
+			return raisedAssignmentError(object.ExceptionTypeTypeError,
+				fmt.Sprintf("cannot unpack non-iterable %s object", value.Type().String()))
+		}
+		elements = elems
+	}
+	if len(elements) != len(targets) {
+		if len(elements) > len(targets) {
+			return raisedAssignmentError(object.ExceptionTypeValueError,
+				fmt.Sprintf("too many values to unpack (expected %d, got %d)", len(targets), len(elements)))
+		}
+		return raisedAssignmentError(object.ExceptionTypeValueError,
+			fmt.Sprintf("not enough values to unpack (expected %d, got %d)", len(targets), len(elements)))
+	}
+	for i, target := range targets {
+		if err := assignToExpression(ctx, target, elements[i], env); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 var errNotNestedFloatArrayAssignment = fmt.Errorf("not nested float_array assignment")

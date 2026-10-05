@@ -413,17 +413,40 @@ func (p *Parser) parseAssignStatement() *ast.AssignStatement {
 func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 	names := make([]*ast.Identifier, 0, 4)
 	starredIndex := -1
+	// A target element that is not a bare (starred) identifier — a group like
+	// (b, c) or [b, c], an index like x[0], an attribute like obj.attr — makes
+	// the statement complex: it is emitted as a general AssignStatement with a
+	// tuple target, which supports nested destructuring targets.
+	var elements []ast.Expression
+	complex := false
 
-	// Parse first identifier (may be starred)
+	addIdent := func(id *ast.Identifier) {
+		names = append(names, id)
+		if complex {
+			elements = append(elements, id)
+		}
+	}
+
+	// Parse first target (may be starred)
 	if p.curTokenIs(token.ASTERISK) {
 		starredIndex = 0
 		if !p.expectPeek(token.IDENT) {
 			return nil
 		}
 	}
-	names = append(names, p.ident(p.curToken.Literal))
+	if p.curTokenIs(token.IDENT) && !p.peekTokenIs(token.COMMA) && !p.peekTokenIs(token.ASSIGN) {
+		// Identifier carrying a target suffix (x[0], obj.attr): parse the
+		// full target expression.
+		complex = true
+		elements = append(elements, p.parseExpression(LOWEST))
+	} else if p.curTokenIs(token.IDENT) {
+		addIdent(p.ident(p.curToken.Literal))
+	} else {
+		p.errors = append(p.errors, fmt.Sprintf("expected identifier, got %s", p.curToken.Type))
+		return nil
+	}
 
-	// Parse remaining identifiers
+	// Parse remaining targets
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken() // consume comma
 		p.nextToken() // move to next token
@@ -438,11 +461,34 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 			if !p.expectPeek(token.IDENT) {
 				return nil
 			}
-		} else if !p.curTokenIs(token.IDENT) {
-			p.errors = append(p.errors, fmt.Sprintf("expected identifier, got %s", p.curToken.Type))
-			return nil
+			addIdent(p.ident(p.curToken.Literal))
+			continue
 		}
-		names = append(names, p.ident(p.curToken.Literal))
+
+		if p.curTokenIs(token.IDENT) && (p.peekTokenIs(token.COMMA) || p.peekTokenIs(token.ASSIGN)) {
+			addIdent(p.ident(p.curToken.Literal))
+			continue
+		}
+
+		// Grouped or subscripted target: (b, c), [b, c], x[0], obj.attr
+		if !complex {
+			complex = true
+			elements = make([]ast.Expression, 0, len(names)+1)
+			for _, name := range names {
+				elements = append(elements, name)
+			}
+		}
+		if p.curTokenIs(token.LPAREN) || p.curTokenIs(token.LBRACKET) || p.curTokenIs(token.IDENT) {
+			elements = append(elements, p.parseExpression(LOWEST))
+			continue
+		}
+		p.errors = append(p.errors, fmt.Sprintf("expected identifier, got %s", p.curToken.Type))
+		return nil
+	}
+
+	if starredIndex != -1 && complex {
+		p.errors = append(p.errors, "starred unpacking cannot be mixed with grouped or subscripted assignment targets")
+		return nil
 	}
 
 	if !p.expectPeek(token.ASSIGN) {
@@ -450,6 +496,15 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 	}
 
 	p.nextToken()
+
+	if complex {
+		firstValue := p.parseExpressionWithConditional()
+		return &ast.AssignStatement{
+			Token: p.nodeLine(),
+			Left:  &ast.TupleLiteral{Elements: elements},
+			Value: p.parseTuplePackingTail(p.nodeLine(), firstValue),
+		}
+	}
 
 	// Parse the value - check if it's a comma-separated list (tuple packing)
 	firstValue := p.parseExpression(LOWEST)
@@ -746,6 +801,16 @@ func (p *Parser) parseExpressionStatement() ast.Statement {
 		return stmt
 	}
 	expr = p.parseTuplePackingTail(p.nodeLine(), expr)
+	// A comma-separated target list followed by '=' (x[0], y = ... or
+	// (a, b), c = ...) is an assignment with a tuple target.
+	if p.peekTokenIs(token.ASSIGN) {
+		stmt := &ast.AssignStatement{Token: p.nodeLine(), Left: expr}
+		p.nextToken() // consume =
+		p.nextToken() // move to value
+		first := p.parseExpressionWithConditional()
+		stmt.Value = p.parseTuplePackingTail(p.nodeLine(), first)
+		return stmt
+	}
 	return &ast.ExpressionStatement{Token: p.nodeLine(), Expression: expr}
 }
 

@@ -884,17 +884,18 @@ str(B()) + "," + str(len(B())) + "," + repr(B())
 	})
 }
 
-// A raise while evaluating a default argument must propagate at call time;
-// the default must still be used when the argument is omitted and clean.
-func TestDefaultArgumentRaisePropagatesAtCall(t *testing.T) {
+// A raise while evaluating a default argument must propagate at definition
+// time (Python evaluates defaults at the def); the default must still be used
+// when the argument is omitted and clean.
+func TestDefaultArgumentRaisePropagatesAtDefinition(t *testing.T) {
 	t.Run("raising default propagates", func(t *testing.T) {
 		got := evalString(t, `
 def boom():
     raise ValueError("defarg")
-def f(x=boom()):
-    return x
 try:
-    r = "f()=" + str(f())
+    def f(x=boom()):
+        return x
+    r = "no-raise"
 except ValueError as e:
     r = "caught:" + str(e)
 r
@@ -912,6 +913,19 @@ str(f()) + "," + str(f(5))
 `)
 		if got != "20,10" {
 			t.Fatalf("result = %q, want %q", got, "20,10")
+		}
+	})
+
+	t.Run("default captures value at definition", func(t *testing.T) {
+		got := evalString(t, `
+n = 10
+def f(x=n):
+    return x
+n = 99
+str(f()) + "," + str(f())
+`)
+		if got != "10,10" {
+			t.Fatalf("result = %q, want %q", got, "10,10")
 		}
 	})
 }
