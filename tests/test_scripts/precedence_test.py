@@ -59,3 +59,23 @@ assert s - {1} == {2}
 assert s | {3} == {1, 2, 3}
 
 True
+
+# Unary minus and ~ keep working and raise Python's TypeError on bad
+# operand types (catchable, not fatal)
+assert --5 == 5
+assert -5 == -5
+assert ~5 == -6
+assert ~~5 == 5
+
+def _raises_type_error(fn):
+    try:
+        fn()
+        return False
+    except TypeError:
+        return True
+
+assert _raises_type_error(lambda: -("a" * 2))
+assert _raises_type_error(lambda: -[1, 2])
+assert _raises_type_error(lambda: -None)
+assert _raises_type_error(lambda: ~"x")
+assert _raises_type_error(lambda: ~2.5)

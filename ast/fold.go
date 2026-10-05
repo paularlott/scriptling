@@ -173,6 +173,12 @@ func foldExpression(expr Expression) Expression {
 		e.Condition = foldExpression(e.Condition)
 		e.FalseExpr = foldExpression(e.FalseExpr)
 
+	case *ChainedComparison:
+		e.First = foldExpression(e.First)
+		for i := range e.Links {
+			e.Links[i].Operand = foldExpression(e.Links[i].Operand)
+		}
+
 	case *WalrusExpression:
 		e.Value = foldExpression(e.Value)
 

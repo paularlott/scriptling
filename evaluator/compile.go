@@ -72,6 +72,8 @@ func compileNode(node ast.Node) object.EvalFn {
 		return compilePrefix(n)
 	case *ast.ConditionalExpression:
 		return compileConditional(n)
+	case *ast.ChainedComparison:
+		return compileChainedComparison(n)
 	case *ast.IndexExpression:
 		return compileIndex(n)
 	case *ast.CallExpression:
@@ -1065,6 +1067,79 @@ func compileConditional(n *ast.ConditionalExpression) object.EvalFn {
 		}
 		return falseExpr(ctx, env)
 	}
+}
+
+// compileChainedComparison compiles a < b <= c (and in/is chains): operands
+// evaluate left to right, each at most once, and the chain stops at the
+// first false comparison — later operands are never evaluated. The middle
+// value carries forward, exactly as in Python.
+func compileChainedComparison(n *ast.ChainedComparison) object.EvalFn {
+	first := compileExpr(n.First)
+	type link struct {
+		op ast.Op
+		fn object.EvalFn
+	}
+	links := make([]link, len(n.Links))
+	for i, l := range n.Links {
+		links[i] = link{op: l.Op, fn: compileExpr(l.Operand)}
+	}
+	return func(ctx context.Context, env *object.Environment) object.Object {
+		left := first(ctx, env)
+		if object.IsError(left) {
+			return left
+		}
+		for _, l := range links {
+			right := l.fn(ctx, env)
+			if object.IsError(right) {
+				return right
+			}
+			// Integer fast path for ordering/equality links — the loop-guard
+			// idiom (0 <= i < n) is hot, and evalInfixExpression's full
+			// dispatch would dominate it. Membership/identity links (in, is)
+			// take the general path.
+			if li, lok := left.(*object.Integer); lok {
+				if ri, rok := right.(*object.Integer); rok {
+					if holds, isValueOp := intLinkHolds(l.op, li.IntValue(), ri.IntValue()); isValueOp {
+						if !holds {
+							return FALSE
+						}
+						left = right
+						continue
+					}
+				}
+			}
+			result := evalInfixExpression(ctx, l.op, left, right, env)
+			if propagates(result) {
+				return result
+			}
+			if result != TRUE {
+				return FALSE
+			}
+			left = right
+		}
+		return TRUE
+	}
+}
+
+// intLinkHolds evaluates one ordering/equality chain link between two
+// integers. isValueOp is false for membership/identity operators, whose
+// links must use the general comparison path.
+func intLinkHolds(op ast.Op, l, r int64) (holds, isValueOp bool) {
+	switch op {
+	case ast.OpLt:
+		return l < r, true
+	case ast.OpLte:
+		return l <= r, true
+	case ast.OpGt:
+		return l > r, true
+	case ast.OpGte:
+		return l >= r, true
+	case ast.OpEq:
+		return l == r, true
+	case ast.OpNeq:
+		return l != r, true
+	}
+	return false, false
 }
 
 func compileIndex(n *ast.IndexExpression) object.EvalFn {

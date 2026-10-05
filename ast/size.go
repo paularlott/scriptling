@@ -15,6 +15,8 @@ var (
 	sizeOfPrefixExpression        = int(unsafe.Sizeof(PrefixExpression{}))
 	sizeOfInfixExpression         = int(unsafe.Sizeof(InfixExpression{}))
 	sizeOfConditionalExpression   = int(unsafe.Sizeof(ConditionalExpression{}))
+	sizeOfChainedComparison       = int(unsafe.Sizeof(ChainedComparison{}))
+	sizeOfChainedLink             = int(unsafe.Sizeof(ChainedLink{}))
 	sizeOfWalrusExpression        = int(unsafe.Sizeof(WalrusExpression{}))
 	sizeOfAssignStatement         = int(unsafe.Sizeof(AssignStatement{}))
 	sizeOfAugmentedAssign         = int(unsafe.Sizeof(AugmentedAssignStatement{}))
@@ -503,6 +505,15 @@ func (e *estimator) walkExpression(expr Expression) {
 		e.walkExpression(n.TrueExpr)
 		e.walkExpression(n.Condition)
 		e.walkExpression(n.FalseExpr)
+	case *ChainedComparison:
+		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfChainedComparison) {
+			return
+		}
+		e.total += allocSize(cap(n.Links) * sizeOfChainedLink)
+		e.walkExpression(n.First)
+		for i := range n.Links {
+			e.walkExpression(n.Links[i].Operand)
+		}
 	case *WalrusExpression:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfWalrusExpression) {
 			return

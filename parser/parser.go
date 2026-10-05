@@ -1264,15 +1264,15 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 		}
 
 		if len(comparisons) > 1 {
-			result := ast.Expression(comparisons[0])
-			for i := 1; i < len(comparisons); i++ {
-				result = &ast.InfixExpression{
-					Operator: ast.OpAnd,
-					Left:     result,
-					Right:    comparisons[i],
-				}
+			// Keep the chain as one node: Python evaluates each operand
+			// at most once, and an (a<b) and (b<c) desugar would run b's
+			// side effects twice.
+			first := comparisons[0].Left
+			links := make([]ast.ChainedLink, 0, len(comparisons))
+			for _, c := range comparisons {
+				links = append(links, ast.ChainedLink{Op: c.Operator, Operand: c.Right})
 			}
-			return result
+			return &ast.ChainedComparison{First: first, Links: links}
 		}
 	}
 

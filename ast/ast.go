@@ -576,6 +576,27 @@ type InfixExpression struct {
 	Right   Expression
 }
 
+// ChainedLink is one link of a ChainedComparison: Operand compared to the
+// previous operand with Op.
+type ChainedLink struct {
+	Op      Op
+	Operand Expression
+}
+
+// ChainedComparison is a comparison chain, as in a < b <= c or x in ys ==
+// flag. Python semantics: operands evaluate left to right, each at most
+// once, and the chain stops at the first false comparison, so later
+// operands are never evaluated. (Desugaring to (a < b) and (b < c) would
+// evaluate b twice.)
+type ChainedComparison struct {
+	First Expression
+	Links []ChainedLink
+}
+
+func (cc *ChainedComparison) expressionNode()      {}
+func (cc *ChainedComparison) TokenLiteral() string { return cc.Links[0].Op.String() }
+func (cc *ChainedComparison) Line() int            { return lineOfExpr(cc.First) }
+
 // IsIntShaped reports whether e can evaluate to an integer using only
 // side-effect-free operations: an integer literal, an identifier read, or
 // integer arithmetic over two such subtrees.
