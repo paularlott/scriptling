@@ -1495,7 +1495,11 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			fillChar = fill
 		}
 		padding := w - len(str.StringValue())
-		leftPad := padding / 2
+		// CPython's center: left = padding/2 + (padding & width & 1).
+		// The extra character alternates with the parity of the target
+		// width: 'ab'.center(7, '*') is '***ab**' but 'x'.center(6) is
+		// '  x   '.
+		leftPad := padding/2 + (padding & w & 1)
 		rightPad := padding - leftPad
 		// Use strings.Builder for efficient concatenation
 		var builder strings.Builder
