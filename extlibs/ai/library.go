@@ -101,6 +101,7 @@ func buildLibrary(guard *netsecurity.Guard) *object.Library {
 	builder.Constant("OLLAMA", string(ai.ProviderOllama))
 	builder.Constant("ZAI", string(ai.ProviderZAi))
 	builder.Constant("MISTRAL", string(ai.ProviderMistral))
+	builder.Constant("GROK", string(ai.ProviderGrok))
 
 	builder.
 		// Client(base_url, **kwargs) - Create a new AI client
@@ -231,6 +232,8 @@ func buildLibrary(guard *netsecurity.Guard) *object.Library {
 				providerType = ai.ProviderZAi
 			case "mistral":
 				providerType = ai.ProviderMistral
+			case "grok":
+				providerType = ai.ProviderGrok
 			default:
 				return nil, fmt.Errorf("unsupported provider: %s", provider)
 			}
@@ -281,7 +284,7 @@ Creates a new AI client instance for making API calls to supported services.
 
 Parameters:
   base_url (str): Base URL of the API (defaults to https://api.openai.com/v1 if empty)
-  provider (str, optional): Provider type (defaults to ai.OPENAI). Use constants: ai.OPENAI, ai.CLAUDE, ai.GEMINI, ai.OLLAMA, ai.ZAI, ai.MISTRAL
+  provider (str, optional): Provider type (defaults to ai.OPENAI). Use constants: ai.OPENAI, ai.CLAUDE, ai.GEMINI, ai.OLLAMA, ai.ZAI, ai.MISTRAL, ai.GROK
   api_key (str, optional): API key for authentication
   max_tokens (int, optional): Default max_tokens for all requests (Claude defaults to 4096 if not set)
   temperature (float, optional): Default temperature for all requests (0.0-2.0)
@@ -358,29 +361,14 @@ Example:
 				return object.NewString(""), nil
 			}
 
-			// Extract content from response.choices[0].message.content
-			content := ""
-			if choices, ok := responseMap["choices"].([]any); ok && len(choices) > 0 {
-				if choice, ok := choices[0].(map[string]any); ok {
-					if message, ok := choice["message"].(map[string]any); ok {
-						if msgContent, ok := message["content"].(string); ok {
-							// Extract thinking and get clean content
-							result := extractThinking(msgContent)
-							if contentStr, ok := result["content"].(string); ok {
-								content = contentStr
-							}
-						}
-					}
-				}
-			}
-
-			return object.NewString(content), nil
+			return object.NewString(responseText(responseMap)), nil
 		}, `text(response) - Get text content from response (without thinking blocks)
 
-Extracts the text content from a completion response, automatically removing any thinking blocks.
+Extracts the text content from a completion response or a Responses API response,
+automatically removing any thinking blocks.
 
 Parameters:
-  response (dict): Chat completion response from client.completion()
+  response (dict): Response from client.completion() or client.response_create()
 
 Returns:
   str: The response text with thinking blocks removed
@@ -445,11 +433,12 @@ Example:
 			return conversion.FromGo(extractToolCallsFromGo(conversion.ToGo(input))), nil
 		}, `tool_calls(response_or_message) - Extract normalized tool calls
 
-Extracts tool calls from a completion response, a message dict, or a tool call list
-and returns them in a normalized format.
+Extracts tool calls from a completion response, a Responses API response, a message
+dict, or a tool call list and returns them in a normalized format. For a Responses API
+response the id is the function call's call_id.
 
 Parameters:
-  response_or_message (dict or list): A completion response, message dict, or list of tool calls
+  response_or_message (dict or list): A completion or Responses API response, message dict, or list of tool calls
 
 Returns:
   list: Normalized tool call dicts with id, type, and function fields
@@ -487,6 +476,33 @@ Example:
   tool_results = ai.execute_tool_calls(tools, tool_calls)
   for result in tool_results:
       print(result["content"])`).
+		FunctionWithHelp("tool_outputs", func(ctx context.Context, results object.Object) (object.Object, error) {
+			items, err := toolOutputs(conversion.ToGo(results))
+			if err != nil {
+				return &object.Error{Message: "tool_outputs: " + err.Error()}, nil
+			}
+			return conversion.FromGo(items), nil
+		}, `tool_outputs(tool_results) - Convert tool results to Responses API input items
+
+Converts tool result messages, as returned by ai.execute_tool_calls(), into
+function_call_output items to send as the input of the next client.response_create()
+or client.response_stream() call, continuing from the response that asked for the
+tools with previous_response_id.
+
+Parameters:
+  tool_results (list): Tool result dicts with tool_call_id and content
+
+Returns:
+  list: function_call_output dicts with call_id and output
+
+Example:
+  response = client.response_create("gpt-4o", "What is the weather in Paris?", tools=tools.build())
+  calls = ai.tool_calls(response)
+  if calls:
+      results = ai.execute_tool_calls(tools, calls)
+      response = client.response_create("gpt-4o", ai.tool_outputs(results),
+                                        previous_response_id=response.id, tools=tools.build())
+  print(ai.text(response))`).
 		FunctionWithHelp("collect_stream", func(ctx context.Context, kwargs object.Kwargs, streamObj object.Object) (object.Object, error) {
 			stream, ok := streamObj.(*object.Instance)
 			if !ok {
@@ -836,11 +852,93 @@ func streamingTagCarryLen(input string, tags []string) int {
 	return maxCarry
 }
 
+// responseText returns the text of a completion or Responses API response,
+// with thinking blocks removed.
+func responseText(responseMap map[string]any) string {
+	var content string
+	if choices, ok := responseMap["choices"].([]any); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]any); ok {
+			if message, ok := choice["message"].(map[string]any); ok {
+				content, _ = message["content"].(string)
+			}
+		}
+	} else if output, ok := responseMap["output"].([]any); ok {
+		var sb strings.Builder
+		for _, itemRaw := range output {
+			item, _ := itemRaw.(map[string]any)
+			if item["type"] != "message" {
+				continue
+			}
+			parts, _ := item["content"].([]any)
+			for _, partRaw := range parts {
+				if part, ok := partRaw.(map[string]any); ok && part["type"] == "output_text" {
+					text, _ := part["text"].(string)
+					sb.WriteString(text)
+				}
+			}
+		}
+		content = sb.String()
+	}
+	if content == "" {
+		return ""
+	}
+	clean, _ := extractThinking(content)["content"].(string)
+	return clean
+}
+
+// toolOutputs converts tool result messages into Responses API
+// function_call_output input items.
+func toolOutputs(results any) ([]map[string]any, error) {
+	list, ok := results.([]any)
+	if !ok {
+		return nil, fmt.Errorf("tool_results must be a list")
+	}
+	items := make([]map[string]any, 0, len(list))
+	for i, raw := range list {
+		result, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("tool_results[%d] must be a dict", i)
+		}
+		callID := stringValue(result["tool_call_id"])
+		if callID == "" {
+			callID = stringValue(result["call_id"])
+		}
+		if callID == "" {
+			return nil, fmt.Errorf("tool_results[%d] has no tool_call_id", i)
+		}
+		output := result["content"]
+		if output == nil {
+			output = result["output"]
+		}
+		if _, isString := output.(string); !isString {
+			output = fmt.Sprint(output)
+		}
+		items = append(items, map[string]any{"type": "function_call_output", "call_id": callID, "output": output})
+	}
+	return items, nil
+}
+
 func extractToolCallsFromGo(input any) []map[string]any {
 	switch v := input.(type) {
 	case nil:
 		return []map[string]any{}
 	case map[string]any:
+		// Responses API response: function_call output items, identified by call_id
+		if output, ok := v["output"].([]any); ok {
+			calls := make([]any, 0, len(output))
+			for _, itemRaw := range output {
+				item, ok := itemRaw.(map[string]any)
+				if !ok || item["type"] != "function_call" {
+					continue
+				}
+				id := stringValue(item["call_id"])
+				if id == "" {
+					id = stringValue(item["id"])
+				}
+				calls = append(calls, map[string]any{"id": id, "type": "function", "name": item["name"], "arguments": item["arguments"]})
+			}
+			return normalizeToolCalls(calls)
+		}
 		if choicesRaw, ok := v["choices"].([]any); ok && len(choicesRaw) > 0 {
 			if choice, ok := choicesRaw[0].(map[string]any); ok {
 				if message, ok := choice["message"].(map[string]any); ok {

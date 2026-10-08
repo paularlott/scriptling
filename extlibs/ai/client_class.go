@@ -129,6 +129,11 @@ Parameters:
   model (str): Model identifier (e.g., "gpt-4o", "gpt-4")
   input (str or list): Either a string (user message content) or a list of input items (messages)
   system_prompt (str, optional): System prompt to use when input is a string
+  instructions (str, optional): Instructions for this request (not carried over to later turns)
+  previous_response_id (str, optional): Continue the conversation of this response
+  tools (list, optional): Tool definitions, e.g. from ToolRegistry.build(); the model's calls
+    are returned for the script to run (see ai.tool_calls() and ai.tool_outputs())
+  store (bool, optional): Set False to keep nothing: the response can't be retrieved or continued
   background (bool, optional): If true, runs asynchronously and returns immediately with in_progress status
   extra_body (dict, optional): Provider-specific fields to merge into the request body
 
@@ -214,6 +219,11 @@ Parameters:
   model (str): Model identifier (e.g., "gpt-4o", "gpt-4")
   input (str or list): Either a string (user message content) or a list of input items (messages)
   system_prompt (str, optional): System prompt to use when input is a string
+  instructions (str, optional): Instructions for this request (not carried over to later turns)
+  previous_response_id (str, optional): Continue the conversation of this response
+  tools (list, optional): Tool definitions, e.g. from ToolRegistry.build(); calls arrive as
+    function_call output items (events "response.output_item.added"/".done")
+  store (bool, optional): Set False to keep nothing: the response can't be retrieved or continued
   extra_body (dict, optional): Provider-specific fields to merge into the request body
 
 Returns:
@@ -239,19 +249,48 @@ Examples:
 
   # With system prompt
   stream = client.response_stream("gpt-4o", "Explain AI", system_prompt="You are a helpful assistant")`).
-		MethodWithHelp("response_compact", responseCompactMethod, `response_compact(id) - Compact a response
+		MethodWithHelp("response_compact", responseCompactMethod, `response_compact(model, previous_response_id=None, input=None, instructions=None) - Compact a conversation
 
-Compacts a response by removing intermediate reasoning steps, returning a more concise version.
+Compacts a long conversation into a short output to use in its place: the conversation
+of previous_response_id (if given) followed by input. Pass the result's output as the
+input of the next response_create() call, adding the new message, instead of
+previous_response_id. With OpenAI and xAI this uses the native compaction endpoint
+(xAI needs input and doesn't accept previous_response_id); with other providers the
+model summarises the conversation.
 
 Parameters:
-  id (str): Response ID to compact
+  model (str): Model used for compaction
+  previous_response_id (str, optional): Response whose conversation to compact
+  input (str or list, optional): Further conversation to include
+  instructions (str, optional): Instructions the conversation was run under
 
 Returns:
-  dict: Compacted response object with reasoning removed
+  dict: Compaction with id, object ("response.compaction"), output and usage
 
 Example:
-  response = client.response_compact("resp_123")
-  print(response.output)  # Output without reasoning steps`).
+  compacted = client.response_compact("gpt-4o", previous_response_id=response.id)
+  response = client.response_create("gpt-4o", compacted.output + [
+    {"role": "user", "content": "Carry on"}
+  ])`).
+		MethodWithHelp("supports", supportsMethod, `supports(capability) - Check a client capability
+
+Reports whether the client supports a capability:
+  "responses"          - the provider's native Responses API (OpenAI, xAI)
+  "responses_emulated" - the Responses API emulated over chat completions, with
+                         responses stored in this process
+  "embeddings"         - client.embedding()
+  "decision"           - client.decide() (Ollama)
+Every client reports exactly one of "responses" and "responses_emulated".
+
+Parameters:
+  capability (str): Capability name
+
+Returns:
+  bool: True if supported
+
+Example:
+  if client.supports("responses"):
+    print("native Responses API")`).
 		MethodWithHelp("embedding", embeddingMethod, `embedding(model, input) - Create an embedding
 
 Creates an embedding vector for the given input text(s) using the specified model.
@@ -543,6 +582,67 @@ func chatCompletionResponseToGoMap(resp *ai.ChatCompletionResponse) map[string]a
 	return result
 }
 
+// toolsFromKwargs parses the tools kwarg: function tool dicts, in the chat
+// completions form ({"type": "function", "function": {...}}, as
+// ToolRegistry.build() returns) or the flat Responses API form. Returns nil
+// when the kwarg is absent.
+func toolsFromKwargs(kwargs object.Kwargs) ([]ai.Tool, *object.Error) {
+	if !kwargs.Has("tools") {
+		return nil, nil
+	}
+	toolsObjs := kwargs.MustGetList("tools", nil)
+	tools := make([]ai.Tool, 0, len(toolsObjs))
+	for i, toolObj := range toolsObjs {
+		toolMap, ok := conversion.ToGo(toolObj).(map[string]any)
+		if !ok {
+			return nil, &object.Error{Message: fmt.Sprintf("tools[%d] must be a dict", i)}
+		}
+		fnMap, ok := toolMap["function"].(map[string]any)
+		if !ok {
+			fnMap = toolMap // flat form
+		}
+		tool := ai.Tool{Type: "function"}
+		tool.Function.Name, _ = fnMap["name"].(string)
+		if tool.Function.Name == "" {
+			return nil, &object.Error{Message: fmt.Sprintf("tools[%d] has no function name", i)}
+		}
+		tool.Function.Description, _ = fnMap["description"].(string)
+		tool.Function.Parameters, _ = fnMap["parameters"].(map[string]any)
+		tools = append(tools, tool)
+	}
+	return tools, nil
+}
+
+// applyResponseKwargs sets the Responses API request options shared by
+// response_create and response_stream.
+func applyResponseKwargs(req *ai.CreateResponseRequest, kwargs object.Kwargs, method string) *object.Error {
+	if kwargs.Has("previous_response_id") {
+		req.PreviousResponseID = kwargs.MustGetString("previous_response_id", "")
+	}
+	if kwargs.Has("instructions") {
+		req.Instructions = kwargs.MustGetString("instructions", "")
+	}
+	if v := kwargs.Get("store"); v != nil && v.Type() != object.NULL_OBJ {
+		b, ok := v.(*object.Boolean)
+		if !ok {
+			return &object.Error{Message: method + ": store must be a boolean"}
+		}
+		store := b.BoolValue()
+		req.Store = &store
+	}
+	tools, toolsErr := toolsFromKwargs(kwargs)
+	if toolsErr != nil {
+		return toolsErr
+	}
+	req.Tools = tools
+	extraBody, extraBodyErr := extraBodyFromKwargs(kwargs, method)
+	if extraBodyErr != nil {
+		return extraBodyErr
+	}
+	req.ExtraBody = extraBody
+	return nil
+}
+
 func extraBodyFromKwargs(kwargs object.Kwargs, method string) (map[string]any, *object.Error) {
 	if !kwargs.Has("extra_body") {
 		return nil, nil
@@ -762,34 +862,11 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 		}
 	}
 
-	// Handle optional tools parameter
-	if kwargs.Has("tools") {
-		toolsObjs := kwargs.MustGetList("tools", nil)
-		tools := make([]ai.Tool, 0, len(toolsObjs))
-		for i, toolObj := range toolsObjs {
-			// Convert dict to ai.Tool
-			toolMap, err := toolObj.AsDict()
-			if err != nil {
-				return &object.Error{Message: fmt.Sprintf("tools[%d] must be a dict: %v", i, err)}
-			}
-			tool := ai.Tool{Type: "function"}
-			if fnVal, ok := toolMap["function"]; ok && fnVal != nil {
-				// Convert object.Object to Go map using ToGo
-				fnGo := conversion.ToGo(fnVal)
-				if fnMap, ok := fnGo.(map[string]any); ok {
-					if name, ok := fnMap["name"].(string); ok {
-						tool.Function.Name = name
-					}
-					if desc, ok := fnMap["description"].(string); ok {
-						tool.Function.Description = desc
-					}
-					if params, ok := fnMap["parameters"].(map[string]any); ok {
-						tool.Function.Parameters = params
-					}
-				}
-			}
-			tools = append(tools, tool)
-		}
+	tools, toolsErr := toolsFromKwargs(kwargs)
+	if toolsErr != nil {
+		return toolsErr
+	}
+	if tools != nil {
 		req.Tools = tools
 	}
 
@@ -879,12 +956,9 @@ func responseCreateMethod(self *object.Instance, ctx context.Context, kwargs obj
 	if kwargs.Has("background") {
 		req.Background = kwargs.MustGetBool("background", false)
 	}
-
-	extraBody, extraBodyErr := extraBodyFromKwargs(kwargs, "response_create")
-	if extraBodyErr != nil {
-		return extraBodyErr
+	if errObj := applyResponseKwargs(&req, kwargs, "response_create"); errObj != nil {
+		return errObj
 	}
-	req.ExtraBody = extraBody
 
 	var resp *ai.ResponseObject
 	var err error
@@ -959,7 +1033,7 @@ func responseDeleteMethod(self *object.Instance, ctx context.Context, id string)
 }
 
 // response_compact method implementation
-func responseCompactMethod(self *object.Instance, ctx context.Context, id string) object.Object {
+func responseCompactMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, model string) object.Object {
 	ci, cerr := getClientInstance(self)
 	if cerr != nil {
 		return cerr
@@ -969,14 +1043,45 @@ func responseCompactMethod(self *object.Instance, ctx context.Context, id string
 		return &object.Error{Message: "response_compact: no client configured"}
 	}
 
-	var resp *ai.ResponseObject
+	req := ai.CompactResponseRequest{
+		Model:              model,
+		PreviousResponseID: kwargs.MustGetString("previous_response_id", ""),
+		Instructions:       kwargs.MustGetString("instructions", ""),
+	}
+	if v := kwargs.Get("input"); v != nil && v.Type() != object.NULL_OBJ {
+		switch input := conversion.ToGo(v).(type) {
+		case string:
+			req.Input = []any{map[string]any{"type": "message", "role": "user", "content": input}}
+		case []any:
+			req.Input = input
+		default:
+			return &object.Error{Message: "response_compact: input must be a string or a list of input items"}
+		}
+	}
+	if req.PreviousResponseID == "" && len(req.Input) == 0 {
+		return &object.Error{Message: "response_compact: pass previous_response_id, input, or both"}
+	}
+
+	var resp *ai.CompactedResponse
 	var err error
-	object.RunBlocking(ctx, func() { resp, err = ci.client.CompactResponse(ctx, id) })
+	object.RunBlocking(ctx, func() { resp, err = ci.client.CompactResponse(ctx, req) })
 	if err != nil {
 		return &object.Error{Message: "failed to compact response: " + err.Error()}
 	}
 
 	return conversion.FromGo(resp)
+}
+
+// supports method implementation
+func supportsMethod(self *object.Instance, ctx context.Context, capability string) object.Object {
+	ci, cerr := getClientInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+	if ci.client == nil {
+		return &object.Error{Message: "supports: no client configured"}
+	}
+	return object.NewBoolean(ci.client.SupportsCapability(capability))
 }
 
 // embedding method implementation
@@ -1029,23 +1134,7 @@ func extractTextFromResponse(resp object.Object) object.Object {
 		return object.NewString("")
 	}
 
-	// Extract content from response.choices[0].message.content
-	content := ""
-	if choices, ok := responseMap["choices"].([]any); ok && len(choices) > 0 {
-		if choice, ok := choices[0].(map[string]any); ok {
-			if message, ok := choice["message"].(map[string]any); ok {
-				if msgContent, ok := message["content"].(string); ok {
-					// Extract thinking and get clean content
-					result := extractThinking(msgContent)
-					if contentStr, ok := result["content"].(string); ok {
-						content = contentStr
-					}
-				}
-			}
-		}
-	}
-
-	return object.NewString(content)
+	return object.NewString(responseText(responseMap))
 }
 
 func completionParallelMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, model string, messagesList any) object.Object {
@@ -1192,11 +1281,9 @@ func responseStreamMethod(self *object.Instance, ctx context.Context, kwargs obj
 		Model: model,
 		Input: inputList,
 	}
-	extraBody, extraBodyErr := extraBodyFromKwargs(kwargs, "response_stream")
-	if extraBodyErr != nil {
-		return extraBodyErr
+	if errObj := applyResponseKwargs(&req, kwargs, "response_stream"); errObj != nil {
+		return errObj
 	}
-	req.ExtraBody = extraBody
 
 	var stream *ai.ResponseStream
 	object.RunBlocking(ctx, func() { stream = ci.client.StreamResponse(ctx, req) })
@@ -1729,32 +1816,11 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 	if kwargs.Has("max_tokens") {
 		streamReq.MaxTokens = int(kwargs.MustGetInt("max_tokens", 0))
 	}
-	// Handle optional tools parameter
-	if kwargs.Has("tools") {
-		toolsObjs := kwargs.MustGetList("tools", nil)
-		tools := make([]ai.Tool, 0, len(toolsObjs))
-		for i, toolObj := range toolsObjs {
-			toolMap, err := toolObj.AsDict()
-			if err != nil {
-				return &object.Error{Message: fmt.Sprintf("tools[%d] must be a dict: %v", i, err)}
-			}
-			tool := ai.Tool{Type: "function"}
-			if fnVal, ok := toolMap["function"]; ok && fnVal != nil {
-				fnGo := conversion.ToGo(fnVal)
-				if fnMap, ok := fnGo.(map[string]any); ok {
-					if name, ok := fnMap["name"].(string); ok {
-						tool.Function.Name = name
-					}
-					if desc, ok := fnMap["description"].(string); ok {
-						tool.Function.Description = desc
-					}
-					if params, ok := fnMap["parameters"].(map[string]any); ok {
-						tool.Function.Parameters = params
-					}
-				}
-			}
-			tools = append(tools, tool)
-		}
+	tools, toolsErr := toolsFromKwargs(kwargs)
+	if toolsErr != nil {
+		return toolsErr
+	}
+	if tools != nil {
 		streamReq.Tools = tools
 	}
 

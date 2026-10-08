@@ -28,7 +28,7 @@ Set these environment variables to enable LLM-based deduplication. When similar 
 | Variable                 | Description                                                                                 |
 | ------------------------ | ------------------------------------------------------------------------------------------- |
 | `SCRIPTLING_AI_BASE_URL` | Base URL of the AI provider (e.g. `http://127.0.0.1:1234/v1`)                               |
-| `SCRIPTLING_AI_PROVIDER` | Provider type: `openai`, `claude`, `gemini`, `ollama`, `zai`, `mistral` (default: `openai`) |
+| `SCRIPTLING_AI_PROVIDER` | Provider type: `openai`, `claude`, `gemini`, `ollama`, `zai`, `mistral`, `grok` (default: `openai`) |
 | `SCRIPTLING_AI_MODEL`    | Model name (e.g. `qwen3-8b`, `gpt-4o-mini`)                                                 |
 | `SCRIPTLING_AI_TOKEN`    | API key / bearer token (optional for local providers)                                       |
 

@@ -60,7 +60,7 @@ func (timeoutMockClient) CancelResponse(context.Context, string) (*mcpai.Respons
 	return nil, nil
 }
 func (timeoutMockClient) DeleteResponse(context.Context, string) error { return nil }
-func (timeoutMockClient) CompactResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+func (timeoutMockClient) CompactResponse(context.Context, mcpai.CompactResponseRequest) (*mcpai.CompactedResponse, error) {
 	return nil, nil
 }
 func (timeoutMockClient) Close() error { return nil }
@@ -115,7 +115,7 @@ func (toolArgsMockClient) CancelResponse(context.Context, string) (*mcpai.Respon
 	return nil, nil
 }
 func (toolArgsMockClient) DeleteResponse(context.Context, string) error { return nil }
-func (toolArgsMockClient) CompactResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+func (toolArgsMockClient) CompactResponse(context.Context, mcpai.CompactResponseRequest) (*mcpai.CompactedResponse, error) {
 	return nil, nil
 }
 func (toolArgsMockClient) Close() error { return nil }
@@ -180,7 +180,7 @@ func (toolStreamMockClient) CancelResponse(context.Context, string) (*mcpai.Resp
 	return nil, nil
 }
 func (toolStreamMockClient) DeleteResponse(context.Context, string) error { return nil }
-func (toolStreamMockClient) CompactResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+func (toolStreamMockClient) CompactResponse(context.Context, mcpai.CompactResponseRequest) (*mcpai.CompactedResponse, error) {
 	return nil, nil
 }
 func (toolStreamMockClient) Close() error { return nil }
@@ -243,7 +243,7 @@ func (thinkingTagStreamMockClient) CancelResponse(context.Context, string) (*mcp
 	return nil, nil
 }
 func (thinkingTagStreamMockClient) DeleteResponse(context.Context, string) error { return nil }
-func (thinkingTagStreamMockClient) CompactResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+func (thinkingTagStreamMockClient) CompactResponse(context.Context, mcpai.CompactResponseRequest) (*mcpai.CompactedResponse, error) {
 	return nil, nil
 }
 func (thinkingTagStreamMockClient) Close() error { return nil }
@@ -2405,7 +2405,7 @@ func (echoMockClient) CancelResponse(context.Context, string) (*mcpai.ResponseOb
 	return nil, nil
 }
 func (echoMockClient) DeleteResponse(context.Context, string) error { return nil }
-func (echoMockClient) CompactResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+func (echoMockClient) CompactResponse(context.Context, mcpai.CompactResponseRequest) (*mcpai.CompactedResponse, error) {
 	return nil, nil
 }
 func (echoMockClient) Close() error { return nil }
@@ -2476,7 +2476,7 @@ func (r *rateLimitMockClient) CancelResponse(context.Context, string) (*mcpai.Re
 	return nil, nil
 }
 func (r *rateLimitMockClient) DeleteResponse(context.Context, string) error { return nil }
-func (r *rateLimitMockClient) CompactResponse(context.Context, string) (*mcpai.ResponseObject, error) {
+func (r *rateLimitMockClient) CompactResponse(context.Context, mcpai.CompactResponseRequest) (*mcpai.CompactedResponse, error) {
 	return nil, nil
 }
 func (r *rateLimitMockClient) Close() error { return nil }

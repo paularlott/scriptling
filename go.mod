@@ -15,12 +15,12 @@ require (
 	github.com/paularlott/gossip v0.23.0
 	github.com/paularlott/jsonrpc v0.2.0
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.31.0
+	github.com/paularlott/mcp v0.32.0
 	github.com/paularlott/snapshotkv v0.6.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/valkey-io/valkey-go v1.0.78
 	github.com/yuin/goldmark v1.8.6
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/text v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -39,7 +39,7 @@ require (
 	github.com/hashicorp/go-msgpack/v2 v2.1.5 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/klauspost/compress v1.20.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260802145828-341c2f0c90b5 // indirect
