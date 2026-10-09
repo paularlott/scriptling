@@ -1,6 +1,6 @@
 module github.com/paularlott/scriptling
 
-go 1.27.1
+go 1.27.2
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -15,7 +15,7 @@ require (
 	github.com/paularlott/gossip v0.23.0
 	github.com/paularlott/jsonrpc v0.2.0
 	github.com/paularlott/logger v0.3.0
-	github.com/paularlott/mcp v0.32.0
+	github.com/paularlott/mcp v0.32.2
 	github.com/paularlott/snapshotkv v0.6.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/valkey-io/valkey-go v1.0.78
@@ -48,7 +48,7 @@ require (
 	github.com/power-devops/perfstat v0.0.0-20260916203055-22a1a467d9f0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/shamaton/msgpack/v3 v3.2.3 // indirect
-	github.com/shoenig/go-m1cpu v0.2.3 // indirect
+	github.com/shoenig/go-m1cpu v0.2.4 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
