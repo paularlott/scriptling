@@ -23,8 +23,9 @@
 // A nil Config (or nil *Guard) means no restrictions: existing embedders
 // keep today's behavior. A non-nil Config enables the policy with safe
 // defaults — loopback, link-local (including cloud metadata endpoints),
-// private, unspecified and multicast addresses are all denied unless
-// explicitly allowed.
+// private, reserved (shared/CGNAT, documentation, benchmarking, NAT64,
+// 6to4 and other non-public ranges), unspecified and multicast addresses are
+// all denied unless explicitly allowed.
 package netsecurity
 
 import (
@@ -59,6 +60,16 @@ type Config struct {
 	// AllowPrivateIPs permits RFC1918 and IPv6 unique-local ranges (off by
 	// default). This is the explicit "this script may reach the LAN" switch.
 	AllowPrivateIPs bool
+
+	// AllowReservedIPs permits the special-purpose ranges that are neither
+	// private nor publicly routable (off by default): shared address space /
+	// CGNAT (100.64.0.0/10, which also holds some cloud metadata endpoints),
+	// "this network" 0.0.0.0/8, IETF protocol assignments, documentation and
+	// benchmarking ranges, 240.0.0.0/4 and broadcast, and the IPv6 forms that
+	// embed or translate IPv4 (IPv4-compatible ::/96, NAT64, 6to4, Teredo)
+	// plus discard, documentation and deprecated site-local ranges. See
+	// ReservedCIDRs for the full list.
+	AllowReservedIPs bool
 
 	// AllowHosts, when non-empty, is an allowlist: only listed hosts may be
 	// contacted. Listed hosts are trusted — their resolved IPs bypass the
@@ -126,8 +137,44 @@ type Guard struct {
 	allowIPLiterals,
 	allowLoopback,
 	allowPrivateIPs,
+	allowReservedIPs,
 	allowAll bool
 }
+
+// ReservedCIDRs are the special-purpose ranges blocked unless
+// Config.AllowReservedIPs is set: addresses that are neither private (see
+// net.IP.IsPrivate) nor publicly routable, or that embed an IPv4 address a
+// gateway would translate to (so a hostname cannot reach an internal IPv4
+// address through its IPv6 form).
+var ReservedCIDRs = []string{
+	"0.0.0.0/8",       // "this network" (RFC 791)
+	"100.64.0.0/10",   // shared address space / CGNAT (RFC 6598)
+	"192.0.0.0/24",    // IETF protocol assignments (RFC 6890)
+	"192.0.2.0/24",    // documentation TEST-NET-1 (RFC 5737)
+	"198.18.0.0/15",   // benchmarking (RFC 2544)
+	"198.51.100.0/24", // documentation TEST-NET-2 (RFC 5737)
+	"203.0.113.0/24",  // documentation TEST-NET-3 (RFC 5737)
+	"240.0.0.0/4",     // reserved, including broadcast 255.255.255.255 (RFC 1112)
+	"::/96",           // IPv4-compatible IPv6 (deprecated, RFC 4291)
+	"64:ff9b::/96",    // NAT64 well-known prefix (RFC 6052)
+	"64:ff9b:1::/48",  // NAT64 local-use prefix (RFC 8215)
+	"100::/64",        // discard-only (RFC 6666)
+	"2001::/32",       // Teredo (RFC 4380)
+	"2001:2::/48",     // benchmarking (RFC 5180)
+	"2001:db8::/32",   // documentation (RFC 3849)
+	"2002::/16",       // 6to4 (RFC 3056)
+	"3fff::/20",       // documentation (RFC 9637)
+	"fec0::/10",       // site-local, deprecated (RFC 3879)
+}
+
+// reservedNets is ReservedCIDRs compiled once.
+var reservedNets = func() []*net.IPNet {
+	nets, err := parseCIDRs(ReservedCIDRs)
+	if err != nil {
+		panic(err)
+	}
+	return nets
+}()
 
 // Resolver returns the resolver this guard dials with: the configured DNS
 // servers when set, otherwise the system resolver. Hosts can hand it to
@@ -154,14 +201,15 @@ func NewGuard(cfg *Config) (*Guard, error) {
 		return nil, nil
 	}
 	g := &Guard{
-		allowHosts:      compileHostRules(cfg.AllowHosts),
-		denyHosts:       compileHostRules(cfg.DenyHosts),
-		requireHTTPS:    cfg.RequireHTTPS,
-		allowIPLiterals: cfg.AllowIPLiterals,
-		allowLoopback:   cfg.AllowLoopback,
-		allowPrivateIPs: cfg.AllowPrivateIPs,
-		allowAll:        cfg.AllowAll,
-		clientTimeout:   cfg.ClientTimeout,
+		allowHosts:       compileHostRules(cfg.AllowHosts),
+		denyHosts:        compileHostRules(cfg.DenyHosts),
+		requireHTTPS:     cfg.RequireHTTPS,
+		allowIPLiterals:  cfg.AllowIPLiterals,
+		allowLoopback:    cfg.AllowLoopback,
+		allowPrivateIPs:  cfg.AllowPrivateIPs,
+		allowReservedIPs: cfg.AllowReservedIPs,
+		allowAll:         cfg.AllowAll,
+		clientTimeout:    cfg.ClientTimeout,
 		dialer: &net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
@@ -188,15 +236,16 @@ func NewGuard(cfg *Config) (*Guard, error) {
 
 // policyFile is the TOML schema accepted by LoadConfig.
 type policyFile struct {
-	HTTPSOnly       bool     `toml:"https_only"`
-	AllowIPLiterals bool     `toml:"allow_ip_literals"`
-	AllowLoopback   bool     `toml:"allow_loopback"`
-	AllowPrivateIPs bool     `toml:"allow_private_ips"`
-	AllowHosts      []string `toml:"allow_hosts"`
-	DenyHosts       []string `toml:"deny_hosts"`
-	AllowCIDRs      []string `toml:"allow_cidrs"`
-	DenyCIDRs       []string `toml:"deny_cidrs"`
-	DNSServers      []string `toml:"dns_servers"`
+	HTTPSOnly        bool     `toml:"https_only"`
+	AllowIPLiterals  bool     `toml:"allow_ip_literals"`
+	AllowLoopback    bool     `toml:"allow_loopback"`
+	AllowPrivateIPs  bool     `toml:"allow_private_ips"`
+	AllowReservedIPs bool     `toml:"allow_reserved_ips"`
+	AllowHosts       []string `toml:"allow_hosts"`
+	DenyHosts        []string `toml:"deny_hosts"`
+	AllowCIDRs       []string `toml:"allow_cidrs"`
+	DenyCIDRs        []string `toml:"deny_cidrs"`
+	DNSServers       []string `toml:"dns_servers"`
 	// ClientTimeout caps each HTTP request end to end, e.g. "30s" or "2m".
 	// Empty leaves requests to their own per-request timeouts.
 	ClientTimeout string `toml:"client_timeout"`
@@ -229,16 +278,17 @@ func LoadConfig(path string) (*Config, error) {
 		}
 	}
 	cfg := &Config{
-		RequireHTTPS:    f.HTTPSOnly,
-		AllowIPLiterals: f.AllowIPLiterals,
-		AllowLoopback:   f.AllowLoopback,
-		AllowPrivateIPs: f.AllowPrivateIPs,
-		AllowHosts:      f.AllowHosts,
-		DenyHosts:       f.DenyHosts,
-		AllowedCIDRs:    f.AllowCIDRs,
-		DeniedCIDRs:     f.DenyCIDRs,
-		DNSServers:      f.DNSServers,
-		ClientTimeout:   clientTimeout,
+		RequireHTTPS:     f.HTTPSOnly,
+		AllowIPLiterals:  f.AllowIPLiterals,
+		AllowLoopback:    f.AllowLoopback,
+		AllowPrivateIPs:  f.AllowPrivateIPs,
+		AllowReservedIPs: f.AllowReservedIPs,
+		AllowHosts:       f.AllowHosts,
+		DenyHosts:        f.DenyHosts,
+		AllowedCIDRs:     f.AllowCIDRs,
+		DeniedCIDRs:      f.DenyCIDRs,
+		DNSServers:       f.DNSServers,
+		ClientTimeout:    clientTimeout,
 	}
 	if _, err := NewGuard(cfg); err != nil {
 		return nil, fmt.Errorf("invalid policy in %s: %w", path, err)
@@ -384,9 +434,11 @@ func (g *Guard) NewTransport() *http.Transport {
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: time.Second,
-		TLSClientConfig:       nil, // default verification, TLS 1.3 minimum below
+		TLSClientConfig:       nil, // default verification, TLS 1.2 minimum below
 	}
-	t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13}
+	// TLS 1.2 minimum: plenty of public APIs and MCP servers still do not
+	// offer 1.3, and Go's 1.2 defaults are restricted to AEAD suites.
+	t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	http2.ConfigureTransport(t)
 	// HTTP/2 configuration errors are non-fatal; the client falls back to HTTP/1.1.
 	return t
@@ -431,6 +483,12 @@ func (g *Guard) checkIP(ip net.IP) error {
 	case ip.IsLoopback():
 		if !g.allowLoopback {
 			return fmt.Errorf("network policy: loopback address %s is not allowed", ip)
+		}
+	case g.containsIP(reservedNets, ip):
+		// After loopback/unspecified: ::/96 also holds :: and ::1, which keep
+		// their own categories (and allow_loopback still governs ::1).
+		if !g.allowReservedIPs {
+			return fmt.Errorf("network policy: reserved address %s is not allowed", ip)
 		}
 	case ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast():
 		// No toggle: link-local hosts the cloud metadata endpoints among

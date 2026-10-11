@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -343,5 +344,40 @@ func TestNormalizeLibraryNameNamespaces(t *testing.T) {
 		if got := NormalizeLibraryName(tt.in); got != tt.want {
 			t.Fatalf("NormalizeLibraryName(%q) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+func TestPolicyAllowReservedIPs(t *testing.T) {
+	policy := PolicyFromSecurity(&netsecurity.Config{AllowReservedIPs: true}, nil)
+	if policy == nil || policy.Network == nil || !policy.Network.AllowReservedIPs {
+		t.Fatalf("AllowReservedIPs lost: %#v", policy)
+	}
+
+	data, err := json.Marshal(policy.Network)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"allow_reserved_ips":true`) {
+		t.Fatalf("wire form missing allow_reserved_ips: %s", data)
+	}
+	var back NetworkPolicy
+	if err := json.Unmarshal(data, &back); err != nil || !back.AllowReservedIPs {
+		t.Fatalf("round-trip failed: %v %#v", err, back)
+	}
+
+	check := func(allow bool) error {
+		p := &Policy{Network: &NetworkPolicy{AllowIPLiterals: true, AllowReservedIPs: allow}}
+		guard, err := p.Guard()
+		if err != nil {
+			t.Fatalf("guard: %v", err)
+		}
+		u, _ := url.Parse("http://100.64.0.1/")
+		return guard.CheckURL(u)
+	}
+	if err := check(false); err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Errorf("reserved literal must be blocked when false, got %v", err)
+	}
+	if err := check(true); err != nil {
+		t.Errorf("reserved literal must pass when true, got %v", err)
 	}
 }

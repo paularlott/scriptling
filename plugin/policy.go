@@ -12,14 +12,15 @@ import (
 //
 // A nil *NetworkPolicy means the host imposes no network restriction.
 type NetworkPolicy struct {
-	RequireHTTPS    bool     `json:"require_https,omitempty"`
-	AllowIPLiterals bool     `json:"allow_ip_literals,omitempty"`
-	AllowLoopback   bool     `json:"allow_loopback,omitempty"`
-	AllowPrivateIPs bool     `json:"allow_private_ips,omitempty"`
-	AllowHosts      []string `json:"allow_hosts,omitempty"`
-	DenyHosts       []string `json:"deny_hosts,omitempty"`
-	AllowedCIDRs    []string `json:"allowed_cidrs,omitempty"`
-	DeniedCIDRs     []string `json:"denied_cidrs,omitempty"`
+	RequireHTTPS     bool     `json:"require_https,omitempty"`
+	AllowIPLiterals  bool     `json:"allow_ip_literals,omitempty"`
+	AllowLoopback    bool     `json:"allow_loopback,omitempty"`
+	AllowPrivateIPs  bool     `json:"allow_private_ips,omitempty"`
+	AllowReservedIPs bool     `json:"allow_reserved_ips,omitempty"`
+	AllowHosts       []string `json:"allow_hosts,omitempty"`
+	DenyHosts        []string `json:"deny_hosts,omitempty"`
+	AllowedCIDRs     []string `json:"allowed_cidrs,omitempty"`
+	DeniedCIDRs      []string `json:"denied_cidrs,omitempty"`
 }
 
 // Policy is the security context a host sends to plugins in the
@@ -52,14 +53,15 @@ func PolicyFromSecurity(cfg *netsecurity.Config, allowedPaths []string) *Policy 
 	}
 	if cfg != nil {
 		policy.Network = &NetworkPolicy{
-			RequireHTTPS:    cfg.RequireHTTPS,
-			AllowIPLiterals: cfg.AllowIPLiterals,
-			AllowLoopback:   cfg.AllowLoopback,
-			AllowPrivateIPs: cfg.AllowPrivateIPs,
-			AllowHosts:      cfg.AllowHosts,
-			DenyHosts:       cfg.DenyHosts,
-			AllowedCIDRs:    cfg.AllowedCIDRs,
-			DeniedCIDRs:     cfg.DeniedCIDRs,
+			RequireHTTPS:     cfg.RequireHTTPS,
+			AllowIPLiterals:  cfg.AllowIPLiterals,
+			AllowLoopback:    cfg.AllowLoopback,
+			AllowPrivateIPs:  cfg.AllowPrivateIPs,
+			AllowReservedIPs: cfg.AllowReservedIPs,
+			AllowHosts:       cfg.AllowHosts,
+			DenyHosts:        cfg.DenyHosts,
+			AllowedCIDRs:     cfg.AllowedCIDRs,
+			DeniedCIDRs:      cfg.DeniedCIDRs,
 		}
 	}
 	return policy
@@ -101,14 +103,15 @@ func (p *Policy) Guard() (*netsecurity.Guard, error) {
 		return nil, nil
 	}
 	cfg := &netsecurity.Config{
-		RequireHTTPS:    p.Network.RequireHTTPS,
-		AllowIPLiterals: p.Network.AllowIPLiterals,
-		AllowLoopback:   p.Network.AllowLoopback,
-		AllowPrivateIPs: p.Network.AllowPrivateIPs,
-		AllowHosts:      p.Network.AllowHosts,
-		DenyHosts:       p.Network.DenyHosts,
-		AllowedCIDRs:    p.Network.AllowedCIDRs,
-		DeniedCIDRs:     p.Network.DeniedCIDRs,
+		RequireHTTPS:     p.Network.RequireHTTPS,
+		AllowIPLiterals:  p.Network.AllowIPLiterals,
+		AllowLoopback:    p.Network.AllowLoopback,
+		AllowPrivateIPs:  p.Network.AllowPrivateIPs,
+		AllowReservedIPs: p.Network.AllowReservedIPs,
+		AllowHosts:       p.Network.AllowHosts,
+		DenyHosts:        p.Network.DenyHosts,
+		AllowedCIDRs:     p.Network.AllowedCIDRs,
+		DeniedCIDRs:      p.Network.DeniedCIDRs,
 	}
 	return netsecurity.NewGuard(cfg)
 }
