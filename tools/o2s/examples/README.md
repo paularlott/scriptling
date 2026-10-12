@@ -45,13 +45,13 @@ parameters:
 
 ```bash
 # Single-file with internal $ref
-scriptling o2s.py -- petstore.json --generate --output /tmp/petstore
+scriptling o2s.py petstore.json --generate --output /tmp/petstore
 
 # Multi-file with external $ref (JSON)
-scriptling o2s.py -- petstore-multifile.json --generate --output /tmp/multifile
+scriptling o2s.py petstore-multifile.json --generate --output /tmp/multifile
 
 # Multi-file with external $ref (YAML)
-scriptling o2s.py -- petstore-multifile.yaml --generate --output /tmp/multifile_yaml
+scriptling o2s.py petstore-multifile.yaml --generate --output /tmp/multifile_yaml
 ```
 
 All examples include:

@@ -5,8 +5,8 @@ o2s - OpenAPI to Scriptling
 Converts OpenAPI v3 specifications into pure Scriptling HTTP client libraries.
 
 Usage:
-  scriptling o2s.py -- <spec_file> [--list]
-  scriptling o2s.py -- <spec_file> --generate [options]
+  scriptling o2s.py <spec_file> [--list]
+  scriptling o2s.py <spec_file> --generate [options]
   ./o2s.py <spec_file> [options]  (if executable)
 """
 
@@ -64,11 +64,9 @@ def print_usage():
     print("o2s - OpenAPI to Scriptling")
     print()
     print("Usage:")
-    print("  scriptling o2s.py -- <spec_file> [--list]")
-    print("  scriptling o2s.py -- <spec_file> --generate [--filter <file>] [--output <base>] [--max-params <n>]")
+    print("  scriptling o2s.py <spec_file> [--list]")
+    print("  scriptling o2s.py <spec_file> --generate [--filter <file>] [--output <base>] [--max-params <n>]")
     print("  ./o2s.py <spec_file> [options]  (if executable)")
-    print()
-    print("Note: Use '--' separator when running with scriptling CLI")
     print()
     print("Modes:")
     print("  --list              List all endpoints (default)")
@@ -82,16 +80,16 @@ def print_usage():
     print()
     print("Examples:")
     print("  # List all endpoints")
-    print("  scriptling o2s.py -- api.json")
+    print("  scriptling o2s.py api.json")
     print()
     print("  # Generate library (creates api_client.py and api_client.md)")
-    print("  scriptling o2s.py -- api.json --generate")
+    print("  scriptling o2s.py api.json --generate")
     print()
     print("  # Generate with custom name (creates petstore.py and petstore.md)")
-    print("  scriptling o2s.py -- api.json --generate --output petstore")
+    print("  scriptling o2s.py api.json --generate --output petstore")
     print()
     print("  # Use data/kwargs for methods with >3 params")
-    print("  scriptling o2s.py -- api.json --generate --max-params 3")
+    print("  scriptling o2s.py api.json --generate --max-params 3")
 
 def load_spec(filepath):
     """Load OpenAPI spec from JSON or YAML file with $ref support"""

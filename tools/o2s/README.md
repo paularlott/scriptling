@@ -8,19 +8,19 @@ Convert OpenAPI v3 specifications into pure Scriptling HTTP client libraries.
 
 ```bash
 # List endpoints
-scriptling o2s.py -- api.json
+scriptling o2s.py api.json
 
 # Generate library (creates api_client.py and api_client.md)
-scriptling o2s.py -- api.json --generate
+scriptling o2s.py api.json --generate
 
 # Generate with custom name (creates petstore.py and petstore.md)
-scriptling o2s.py -- api.json --generate --output petstore
+scriptling o2s.py api.json --generate --output petstore
 ```
 
 ## Usage
 
 ```bash
-scriptling o2s.py -- <spec_file> [options]
+scriptling o2s.py <spec_file> [options]
 ```
 
 **Options:**
@@ -34,25 +34,23 @@ scriptling o2s.py -- <spec_file> [options]
   - Below threshold: Individual named parameters
   - At/above threshold: Single `data=None` parameter
 
-**Note:** Use `--` separator when running with scriptling CLI.
-
 ## Examples
 
 ```bash
 # List all endpoints
-scriptling o2s.py -- examples/petstore.json
+scriptling o2s.py examples/petstore.json
 
 # Generate library (creates api_client.py and api_client.md)
-scriptling o2s.py -- examples/petstore.json --generate
+scriptling o2s.py examples/petstore.json --generate
 
 # Generate with custom name (creates petstore.py and petstore.md)
-scriptling o2s.py -- examples/petstore.json --generate --output petstore
+scriptling o2s.py examples/petstore.json --generate --output petstore
 
 # Use data dict for methods with 3+ parameters
-scriptling o2s.py -- examples/petstore.json --generate --max-params 3
+scriptling o2s.py examples/petstore.json --generate --max-params 3
 
 # Generate filtered library
-scriptling o2s.py -- examples/petstore.json --generate \
+scriptling o2s.py examples/petstore.json --generate \
   --filter examples/filter.txt --output petstore
 ```
 

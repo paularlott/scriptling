@@ -77,7 +77,10 @@ func buildRootCommand() *cli.Command {
 		Name:        "scriptling",
 		Version:     build.Version,
 		Usage:       "Scriptling interpreter",
-		Description: "Run Scriptling scripts from files, stdin, or interactively",
+		Description: "Run Scriptling scripts from files, stdin, or interactively. Give scriptling's options before the script file: everything after it is passed to the script in sys.argv, flags included.",
+		// Everything after the script file belongs to the script, as with
+		// python: scriptling tool.py --verbose passes --verbose to it.
+		PassThrough: true,
 		ConfigFile: cli_toml.NewConfigFile(&cfgFile, func() []string {
 			paths := []string{"."}
 			home, err := os.UserHomeDir()
@@ -872,7 +875,7 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 
 	argv := []string{file}
 	if file != "" {
-		argv = append(argv, cmd.GetArgs()...)
+		argv = append(argv, scriptArgs(cmd, file)...)
 	}
 
 	var stdinReader io.Reader
@@ -950,7 +953,7 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		return fmt.Errorf("bundle has no serve protocols declared; add serve = [\"http\"] and/or \"mcp\", \"json-rpc\" to manifest.toml")
 	}
 	file := cmd.GetStringArg("file")
-	argv := cmd.GetArgs()
+	argv := scriptArgs(cmd, file)
 	if file != "" {
 		argv = append([]string{file}, argv...)
 	}
@@ -1017,7 +1020,7 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 
 func runJSONRPCServer(ctx context.Context, cmd *cli.Command) error {
 	file := cmd.GetStringArg("file")
-	argv := cmd.GetArgs()
+	argv := scriptArgs(cmd, file)
 	if file != "" {
 		argv = append([]string{file}, argv...)
 	}
@@ -1069,7 +1072,7 @@ func runJSONRPCServer(ctx context.Context, cmd *cli.Command) error {
 
 func runMCPStdioServer(ctx context.Context, cmd *cli.Command) error {
 	file := cmd.GetStringArg("file")
-	argv := cmd.GetArgs()
+	argv := scriptArgs(cmd, file)
 	if file != "" {
 		argv = append([]string{file}, argv...)
 	}
@@ -1509,4 +1512,16 @@ func isStdinEmpty() bool {
 // readFile reads a local file, used by packCmd --hash.
 func readFile(path string) ([]byte, error) {
 	return os.ReadFile(path)
+}
+
+// scriptArgs returns the arguments after the script file. A leading "--"
+// is dropped, so the older "scriptling tool.py -- --flag" form still passes
+// just --flag. In bundle mode, where "--" came before any file and the file
+// argument is the script's first argument, the rest is left as it is.
+func scriptArgs(cmd *cli.Command, file string) []string {
+	args := cmd.GetArgs()
+	if file != "" && !strings.HasPrefix(file, "--") && len(args) > 0 && args[0] == "--" {
+		return args[1:]
+	}
+	return args
 }
