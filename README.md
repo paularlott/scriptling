@@ -61,9 +61,28 @@ export SCRIPTLING_PLUGIN_DIR="$(brew --prefix)/opt/scriptling-plugins/libexec/pl
 # or pass per run: scriptling --plugin-dir "$(brew --prefix)/opt/scriptling-plugins/libexec/plugins" script.py
 ```
 
+Need 1Password service accounts in `scriptling.secret`? Two more builds add
+them, with and without the database drivers (each adds about 14 MB):
+
+```bash
+brew install paularlott/tap/scriptling-onepassword
+# or, without the database drivers:
+brew install paularlott/tap/scriptling-slim-onepassword
+```
+
+| Formula / release zip | Database drivers | 1Password service accounts |
+| --- | --- | --- |
+| `scriptling` | compiled in | — |
+| `scriptling-slim` | load with `scriptling-plugins` | — |
+| `scriptling-onepassword` | compiled in | yes |
+| `scriptling-slim-onepassword` | load with `scriptling-plugins` | yes |
+
+All four install the same `scriptling` command, so install only one.
+1Password Connect works in every build.
+
 Release zips and plugin binaries are on the
 [releases page](https://github.com/paularlott/scriptling/releases) — every
-zip (default and slim alike) contains the binary named plainly `scriptling`,
+zip (all four variants alike) contains the binary named plainly `scriptling`,
 and the plugins zip for your platform
 (`plugins-linux-arm64.zip` and friends) contains all four binaries named
 plainly (`sqlite`, `sql`, `valkey`, `badgerdb`). Unzip it and point

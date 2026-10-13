@@ -11,18 +11,18 @@ import (
 	"github.com/paularlott/scriptling/build"
 )
 
-// formulaTemplate works for the compiled-in and slim builds: Prefix is the
-// artifact name (scriptling / scriptling-slim), Class the formula class, Desc
-// the description line, BinName the executable inside the zip, and InstallAs
-// the name it installs as. Both zips carry the binary named scriptling (the
-// slim build swaps in for the compiled-in one, hence the conflict between the
-// two formulas).
+// formulaTemplate works for every CLI variant: Prefix is the artifact name
+// (scriptling, scriptling-slim, scriptling-onepassword,
+// scriptling-slim-onepassword), Class the formula class, Desc the description
+// line, BinName the executable inside the zip, and InstallAs the name it
+// installs as. Every zip carries the binary named scriptling, so each variant
+// conflicts with the others.
 const formulaTemplate = `class {{ .Class }} < Formula
 	desc "{{ .Desc }}"
 	homepage "https://github.com/paularlott/scriptling"
 	license "MIT"
 	version "{{ .Version }}"
-{{ if .Conflicts }}	conflicts_with "{{ .Conflicts }}", because: "both install a scriptling binary"
+{{ range .Conflicts }}	conflicts_with "{{ . }}", because: "both install a scriptling binary"
 {{ end }}	if OS.mac?
 		if Hardware::CPU.arm?
 			url "https://github.com/paularlott/scriptling/releases/download/v#{version}/{{ .Prefix }}-darwin-arm64.zip"
@@ -156,7 +156,7 @@ func main() {
 	mode := ""
 	for _, arg := range os.Args[1:] {
 		switch arg {
-		case "-slim", "-plugins":
+		case "-slim", "-plugins", "-onepassword", "-slim-onepassword":
 			mode = arg
 		}
 	}
@@ -175,41 +175,12 @@ func main() {
 			fail("Error executing template: %v", err)
 		}
 		return
-	case "-slim":
-		data := struct {
-			Version   string
-			Prefix    string
-			Class     string
-			Desc      string
-			BinName   string
-			InstallAs string
-			Conflicts string
-			Caveats   string
-			Checksum  checksums
-		}{
-			Version:   build.Version,
-			Prefix:    "scriptling-slim",
-			Class:     "ScriptlingSlim",
-			Desc:      "Scriptling without the database plugins compiled in (use scriptling-plugins)",
-			BinName:   "scriptling",
-			InstallAs: "scriptling",
-			Conflicts: "scriptling",
-			Caveats: "This formula installs Scriptling without the database plugins\n" +
-				"compiled in. For the database plugins: brew install scriptling\n" +
-				"(this binary plus sqlite/sql/valkey/badger compiled in), or keep\n" +
-				"this lean build and brew install scriptling-plugins, then run with\n" +
-				"SCRIPTLING_PLUGIN_DIR=\"$(brew --prefix)/opt/scriptling-plugins/libexec/plugins\".\n\n",
-		}
-		var err error
-		if data.Checksum, err = checksumSet("scriptling-slim"); err != nil {
-			fail("Error opening file: %v", err)
-		}
-		if err := template.Must(template.New("formula").Parse(formulaTemplate)).Execute(os.Stdout, data); err != nil {
-			fail("Error executing template: %v", err)
-		}
-		return
 	}
 
+	v, ok := variants[mode]
+	if !ok {
+		fail("unknown formula %q", mode)
+	}
 	data := struct {
 		Version   string
 		Prefix    string
@@ -217,26 +188,78 @@ func main() {
 		Desc      string
 		BinName   string
 		InstallAs string
-		Conflicts string
+		Conflicts []string
 		Caveats   string
 		Checksum  checksums
 	}{
 		Version:   build.Version,
-		Prefix:    "scriptling",
-		Class:     "Scriptling",
-		Desc:      "A powerful scripting language with Python-like syntax and database plugins built in",
+		Prefix:    v.prefix,
+		Class:     v.class,
+		Desc:      v.desc,
 		BinName:   "scriptling",
 		InstallAs: "scriptling",
-		Conflicts: "scriptling-slim",
-		Caveats: "The sqlite, sql, valkey and badger database plugins are compiled in,\n" +
-			"so the scriptling-plugins formula is not needed. For a leaner\n" +
-			"binary without them: brew install scriptling-slim.\n\n",
+		Caveats:   v.caveats,
+	}
+	for _, other := range cliVariants {
+		if other != v.prefix {
+			data.Conflicts = append(data.Conflicts, other)
+		}
 	}
 	var err error
-	if data.Checksum, err = checksumSet("scriptling"); err != nil {
+	if data.Checksum, err = checksumSet(v.prefix); err != nil {
 		fail("Error opening file: %v", err)
 	}
 	if err := template.Must(template.New("formula").Parse(formulaTemplate)).Execute(os.Stdout, data); err != nil {
 		fail("Error executing template: %v", err)
 	}
+}
+
+// cliVariants are the formulas that install a scriptling binary; each
+// conflicts with all the others.
+var cliVariants = []string{"scriptling", "scriptling-slim", "scriptling-onepassword", "scriptling-slim-onepassword"}
+
+type variant struct {
+	prefix, class, desc, caveats string
+}
+
+// variants maps the generator's flag to the CLI build it describes; the
+// default (no flag) is the standard scriptling build.
+var variants = map[string]variant{
+	"": {
+		prefix: "scriptling",
+		class:  "Scriptling",
+		desc:   "A powerful scripting language with Python-like syntax and database plugins built in",
+		caveats: "The sqlite, sql, valkey and badger database plugins are compiled in,\n" +
+			"so the scriptling-plugins formula is not needed. For a leaner\n" +
+			"binary without them: brew install scriptling-slim. For 1Password\n" +
+			"service accounts in scriptling.secret: brew install scriptling-onepassword.\n\n",
+	},
+	"-slim": {
+		prefix: "scriptling-slim",
+		class:  "ScriptlingSlim",
+		desc:   "Scriptling without the database plugins compiled in (use scriptling-plugins)",
+		caveats: "This formula installs Scriptling without the database plugins\n" +
+			"compiled in. For the database plugins: brew install scriptling\n" +
+			"(this binary plus sqlite/sql/valkey/badger compiled in), or keep\n" +
+			"this lean build and brew install scriptling-plugins, then run with\n" +
+			"SCRIPTLING_PLUGIN_DIR=\"$(brew --prefix)/opt/scriptling-plugins/libexec/plugins\".\n\n",
+	},
+	"-onepassword": {
+		prefix: "scriptling-onepassword",
+		class:  "ScriptlingOnepassword",
+		desc:   "Scriptling with database plugins and 1Password service accounts built in",
+		caveats: "This formula installs Scriptling with the database plugins and\n" +
+			"1Password service account support compiled in: scriptling.secret's\n" +
+			"onepassword provider accepts service_account_token as well as Connect.\n" +
+			"Without the database plugins: brew install scriptling-slim-onepassword.\n\n",
+	},
+	"-slim-onepassword": {
+		prefix: "scriptling-slim-onepassword",
+		class:  "ScriptlingSlimOnepassword",
+		desc:   "Scriptling with 1Password service accounts built in, without the database plugins",
+		caveats: "This formula installs Scriptling with 1Password service account\n" +
+			"support compiled in (scriptling.secret's onepassword provider accepts\n" +
+			"service_account_token) but without the database plugins. Add them with\n" +
+			"brew install scriptling-plugins, or install scriptling-onepassword.\n\n",
+	},
 }

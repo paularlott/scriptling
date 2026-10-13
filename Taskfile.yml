@@ -9,8 +9,12 @@ vars:
   # scriptling build. Build with a subset (e.g. just "plugin_valkey") for a
   # CLI with only those drivers; build-slim omits them entirely. 1Password
   # service accounts come from the scriptling-onepassword extension, built
-  # into a custom CLI (see scriptling-cli/scriptlingcmd).
+  # into the -onepassword variants from the builds/onepassword module.
   PLUGIN_TAGS: plugin_sqlite,plugin_sql,plugin_valkey,plugin_badgerdb
+  # The -onepassword variants build from their own module so Scriptling's
+  # go.mod never depends on the 1Password SDK; they share the CLI's profile.
+  ONEPASSWORD_DIR: builds/onepassword
+  CLI_PGO: ../../scriptling-cli/default.pgo
   DB_PLUGINS: sqlite sql valkey badgerdb
   PLATFORMS: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
   VERSION:
@@ -68,9 +72,11 @@ tasks:
       - task: build-platforms
       - task: build-slim-platforms
       - task: build-plugins-platforms
+      - task: build-onepassword-platforms
       - task: create-zips
       - task: create-slim-zips
       - task: create-plugin-zips
+      - task: create-onepassword-zips
 
   create-zips:
     desc: Create ZIP files for all platforms
@@ -98,6 +104,24 @@ tasks:
           rm -f scriptling-slim-${GOOS}-${GOARCH}.zip
           zip scriptling-slim-${GOOS}-${GOARCH}.zip scriptling${ext}
           rm scriptling${ext}
+        done
+
+  create-onepassword-zips:
+    desc: Create ZIP files for the scriptling-onepassword and scriptling-slim-onepassword builds
+    cmds:
+      - |
+        # As with slim, the binary inside each zip is named scriptling.
+        cd {{.BIN_DIR}}
+        for variant in scriptling-onepassword scriptling-slim-onepassword; do
+          for platform in {{.PLATFORMS}}; do
+            GOOS=${platform%/*} GOARCH=${platform#*/}
+            ext=""
+            if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+            cp ${variant}-${GOOS}-${GOARCH}${ext} scriptling${ext}
+            rm -f ${variant}-${GOOS}-${GOARCH}.zip
+            zip ${variant}-${GOOS}-${GOARCH}.zip scriptling${ext}
+            rm scriptling${ext}
+          done
         done
 
   create-plugin-zips:
@@ -169,6 +193,31 @@ tasks:
           go build {{.LDFLAGS}} -o {{.BIN_DIR}}/scriptling-slim-${GOOS}-${GOARCH}${ext} ./scriptling-cli
         done
 
+  build-onepassword:
+    desc: Build scriptling-onepassword for the current platform (database plugins and 1Password service accounts compiled in)
+    dir: "{{.ONEPASSWORD_DIR}}"
+    cmds:
+      - go build {{.LDFLAGS}} -pgo={{.CLI_PGO}} -tags '{{.PLUGIN_TAGS}}' -o ../../{{.BIN_DIR}}/scriptling-onepassword .
+
+  build-slim-onepassword:
+    desc: Build scriptling-slim-onepassword for the current platform (1Password service accounts, no database plugins)
+    dir: "{{.ONEPASSWORD_DIR}}"
+    cmds:
+      - go build {{.LDFLAGS}} -pgo={{.CLI_PGO}} -o ../../{{.BIN_DIR}}/scriptling-slim-onepassword .
+
+  build-onepassword-platforms:
+    desc: Build scriptling-onepassword and scriptling-slim-onepassword for all platforms
+    dir: "{{.ONEPASSWORD_DIR}}"
+    cmds:
+      - |
+        for platform in {{.PLATFORMS}}; do
+          export GOOS=${platform%/*} GOARCH=${platform#*/}
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          go build {{.LDFLAGS}} -pgo={{.CLI_PGO}} -tags '{{.PLUGIN_TAGS}}' -o ../../{{.BIN_DIR}}/scriptling-onepassword-${GOOS}-${GOARCH}${ext} .
+          go build {{.LDFLAGS}} -pgo={{.CLI_PGO}} -o ../../{{.BIN_DIR}}/scriptling-slim-onepassword-${GOOS}-${GOARCH}${ext} .
+        done
+
   build-plugins:
     desc: Build the database plugin binaries for the current platform into bin/plugins
     cmds:
@@ -231,6 +280,28 @@ tasks:
         mv "$tmp" "$out" || exit 1
         trap - EXIT
 
+  homebrew-formula-onepassword:
+    desc: Generate the Homebrew formula for scriptling-onepassword
+    cmds:
+      - |
+        out=../homebrew-tap/Formula/scriptling-onepassword.rb
+        tmp=$(mktemp "${out}.tmp.XXXXXX") || exit 1
+        trap 'rm -f "$tmp"' EXIT
+        go run ./scripts/homebrew-formula/ -onepassword > "$tmp" || exit 1
+        mv "$tmp" "$out" || exit 1
+        trap - EXIT
+
+  homebrew-formula-slim-onepassword:
+    desc: Generate the Homebrew formula for scriptling-slim-onepassword
+    cmds:
+      - |
+        out=../homebrew-tap/Formula/scriptling-slim-onepassword.rb
+        tmp=$(mktemp "${out}.tmp.XXXXXX") || exit 1
+        trap 'rm -f "$tmp"' EXIT
+        go run ./scripts/homebrew-formula/ -slim-onepassword > "$tmp" || exit 1
+        mv "$tmp" "$out" || exit 1
+        trap - EXIT
+
   homebrew-formula-plugins:
     desc: Generate the Homebrew formula for the database plugin binaries
     cmds:
@@ -275,6 +346,8 @@ tasks:
         SCRIPTLING_FORMULA_BIN_DIR="$formula_artifacts" go run ./scripts/homebrew-formula/ > "$formula_stage/scriptling.rb" || exit 1
         SCRIPTLING_FORMULA_BIN_DIR="$formula_artifacts" go run ./scripts/homebrew-formula/ -slim > "$formula_stage/scriptling-slim.rb" || exit 1
         SCRIPTLING_FORMULA_BIN_DIR="$formula_artifacts" go run ./scripts/homebrew-formula/ -plugins > "$formula_stage/scriptling-plugins.rb" || exit 1
+        SCRIPTLING_FORMULA_BIN_DIR="$formula_artifacts" go run ./scripts/homebrew-formula/ -onepassword > "$formula_stage/scriptling-onepassword.rb" || exit 1
+        SCRIPTLING_FORMULA_BIN_DIR="$formula_artifacts" go run ./scripts/homebrew-formula/ -slim-onepassword > "$formula_stage/scriptling-slim-onepassword.rb" || exit 1
 
         # Check if tag exists
         if git tag -l v{{.VERSION}} | grep -q v{{.VERSION}}; then
@@ -295,3 +368,5 @@ tasks:
         mv "$formula_stage/scriptling.rb" ../homebrew-tap/Formula/scriptling.rb || exit 1
         mv "$formula_stage/scriptling-slim.rb" ../homebrew-tap/Formula/scriptling-slim.rb || exit 1
         mv "$formula_stage/scriptling-plugins.rb" ../homebrew-tap/Formula/scriptling-plugins.rb || exit 1
+        mv "$formula_stage/scriptling-onepassword.rb" ../homebrew-tap/Formula/scriptling-onepassword.rb || exit 1
+        mv "$formula_stage/scriptling-slim-onepassword.rb" ../homebrew-tap/Formula/scriptling-slim-onepassword.rb || exit 1
