@@ -124,3 +124,26 @@ func TestRegistryListUnknownAlias(t *testing.T) {
 		t.Fatalf("List() error = %v, want unknown alias error", err)
 	}
 }
+
+func TestOnePasswordConnectConfigUnchanged(t *testing.T) {
+	p, err := NewProvider(Config{Provider: "onepassword", Address: "http://connect:8080", Token: "connect-token"})
+	if err != nil {
+		t.Fatalf("Connect config: %v", err)
+	}
+	if _, ok := p.(*onePasswordProvider); !ok {
+		t.Fatalf("Connect config built %T, want the Connect provider", p)
+	}
+}
+
+func TestOnePasswordServiceAccountNeedsSDKPackage(t *testing.T) {
+	serviceAccountMu.Lock()
+	previous := serviceAccountFactory
+	serviceAccountFactory = nil
+	serviceAccountMu.Unlock()
+	t.Cleanup(func() { RegisterOnePasswordServiceAccount(previous) })
+
+	_, err := NewProvider(Config{Provider: "onepassword", ServiceAccountToken: "ops_x"})
+	if err == nil || !strings.Contains(err.Error(), "not supported by this build") {
+		t.Fatalf("err = %v, want not supported by this build", err)
+	}
+}

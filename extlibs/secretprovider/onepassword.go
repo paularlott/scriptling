@@ -4,23 +4,49 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F-]{36}$`)
+
+// onePasswordIDTTL bounds how long a vault name or item title is remembered
+// as an id. Ids are stable; the bound only limits how long a renamed item
+// keeps answering to its old title.
+const onePasswordIDTTL = 10 * time.Minute
 
 type onePasswordProvider struct {
 	address      string
 	token        string
 	defaultField string
 	client       *http.Client
+
+	// ids remembers vault names and item titles resolved to ids, so a read
+	// after the first costs one request (the item) instead of three.
+	idsMu sync.Mutex
+	ids   map[string]cachedID
+	now   func() time.Time
 }
+
+type cachedID struct {
+	id        string
+	expiresAt time.Time
+}
+
+// errOnePasswordNotFound marks a 404 from Connect, keeping the error text
+// unchanged.
+var errOnePasswordNotFound = errors.New("not found")
+
+type onePasswordNotFoundError struct{ error }
+
+func (e onePasswordNotFoundError) Is(target error) bool { return target == errOnePasswordNotFound }
 
 type onePasswordVault struct {
 	ID   string `json:"id"`
@@ -72,6 +98,8 @@ func NewOnePasswordProvider(cfg Config) (Provider, error) {
 		token:        cfg.Token,
 		defaultField: cfg.DefaultField,
 		client:       client,
+		ids:          map[string]cachedID{},
+		now:          time.Now,
 	}
 	if provider.defaultField == "" {
 		provider.defaultField = "password"
@@ -167,6 +195,11 @@ func (p *onePasswordProvider) resolveVaultID(ctx context.Context, vaultRef strin
 		return vaultRef, nil
 	}
 
+	key := "vault\x00" + vaultRef
+	if id, ok := p.cachedID(key); ok {
+		return id, nil
+	}
+
 	var vaults []onePasswordVault
 	if err := p.getJSON(ctx, "/v1/vaults?filter="+url.QueryEscape(`name eq "`+escapeSCIMValue(vaultRef)+`"`), &vaults); err != nil {
 		return "", fmt.Errorf("onepassword: list vaults: %w", err)
@@ -174,6 +207,7 @@ func (p *onePasswordProvider) resolveVaultID(ctx context.Context, vaultRef strin
 
 	for _, vault := range vaults {
 		if vault.Name == vaultRef {
+			p.storeID(key, vault.ID)
 			return vault.ID, nil
 		}
 	}
@@ -190,6 +224,21 @@ func (p *onePasswordProvider) resolveItem(ctx context.Context, vaultID, itemRef 
 		return &item, nil
 	}
 
+	// A remembered id costs one request. If the item has gone since, look
+	// it up by title again.
+	key := "item\x00" + vaultID + "\x00" + itemRef
+	if itemID, ok := p.cachedID(key); ok {
+		var item onePasswordItem
+		err := p.getJSON(ctx, "/v1/vaults/"+url.PathEscape(vaultID)+"/items/"+url.PathEscape(itemID), &item)
+		if err == nil && item.Title == itemRef {
+			return &item, nil
+		}
+		p.dropID(key)
+		if err != nil && !errors.Is(err, errOnePasswordNotFound) {
+			return nil, fmt.Errorf("onepassword: get item %q: %w", itemRef, err)
+		}
+	}
+
 	var items []onePasswordItem
 	filter := url.QueryEscape(`title eq "` + escapeSCIMValue(itemRef) + `"`)
 	if err := p.getJSON(ctx, "/v1/vaults/"+url.PathEscape(vaultID)+"/items?filter="+filter, &items); err != nil {
@@ -202,11 +251,35 @@ func (p *onePasswordProvider) resolveItem(ctx context.Context, vaultID, itemRef 
 			if err := p.getJSON(ctx, "/v1/vaults/"+url.PathEscape(vaultID)+"/items/"+url.PathEscape(item.ID), &fullItem); err != nil {
 				return nil, fmt.Errorf("onepassword: get item %q: %w", itemRef, err)
 			}
+			p.storeID(key, item.ID)
 			return &fullItem, nil
 		}
 	}
 
 	return nil, fmt.Errorf("onepassword: item %q not found", itemRef)
+}
+
+func (p *onePasswordProvider) cachedID(key string) (string, bool) {
+	p.idsMu.Lock()
+	defer p.idsMu.Unlock()
+	entry, ok := p.ids[key]
+	if !ok || !p.now().Before(entry.expiresAt) {
+		delete(p.ids, key)
+		return "", false
+	}
+	return entry.id, true
+}
+
+func (p *onePasswordProvider) storeID(key, id string) {
+	p.idsMu.Lock()
+	defer p.idsMu.Unlock()
+	p.ids[key] = cachedID{id: id, expiresAt: p.now().Add(onePasswordIDTTL)}
+}
+
+func (p *onePasswordProvider) dropID(key string) {
+	p.idsMu.Lock()
+	defer p.idsMu.Unlock()
+	delete(p.ids, key)
 }
 
 func (p *onePasswordProvider) resolveField(item *onePasswordItem, field string) (string, error) {
@@ -264,7 +337,11 @@ func (p *onePasswordProvider) getJSON(ctx context.Context, path string, out any)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(body)))
+		err := fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(body)))
+		if resp.StatusCode == http.StatusNotFound {
+			err = onePasswordNotFoundError{err}
+		}
+		return err
 	}
 
 	return json.NewDecoder(resp.Body).Decode(out)

@@ -10,10 +10,14 @@ type Config struct {
 	Provider string `toml:"provider"`
 	Alias    string `toml:"alias"`
 
-	Address      string `toml:"address"`
-	Token        string `toml:"token"`
-	CacheTTL     string `toml:"cache_ttl"`
-	DefaultField string `toml:"default_field"`
+	Address string `toml:"address"`
+	Token   string `toml:"token"`
+	// ServiceAccountToken selects a 1Password service account instead of
+	// 1Password Connect for the onepassword provider. Needs the
+	// github.com/paularlott/scriptling-onepassword extension linked in.
+	ServiceAccountToken string `toml:"service_account_token"`
+	CacheTTL            string `toml:"cache_ttl"`
+	DefaultField        string `toml:"default_field"`
 
 	AppRoleID     string `toml:"app_role_id"`
 	AppRoleSecret string `toml:"app_role_secret"`
@@ -53,6 +57,9 @@ func NewProvider(cfg Config) (Provider, error) {
 	case "vault":
 		return NewVaultProvider(cfg)
 	case "onepassword":
+		if cfg.ServiceAccountToken != "" {
+			return newOnePasswordServiceAccountProvider(cfg)
+		}
 		return NewOnePasswordProvider(cfg)
 	default:
 		return nil, fmt.Errorf("unsupported secret provider %q", cfg.Provider)

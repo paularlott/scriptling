@@ -7,7 +7,9 @@ vars:
   LDFLAGS: '-ldflags="-s -w"'
   # Build tags that compile the database plugins into the CLI — the default
   # scriptling build. Build with a subset (e.g. just "plugin_valkey") for a
-  # CLI with only those drivers; build-slim omits them entirely.
+  # CLI with only those drivers; build-slim omits them entirely. 1Password
+  # service accounts come from the scriptling-onepassword extension, built
+  # into a custom CLI (see scriptling-cli/scriptlingcmd).
   PLUGIN_TAGS: plugin_sqlite,plugin_sql,plugin_valkey,plugin_badgerdb
   DB_PLUGINS: sqlite sql valkey badgerdb
   PLATFORMS: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
