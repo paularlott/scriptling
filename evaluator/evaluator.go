@@ -62,6 +62,23 @@ func (cd *CallDepth) Enter() bool {
 	return cd.current <= cd.max
 }
 
+// LimitError returns the error for a failed Enter, and undoes its depth
+// increment, since the call does not happen.
+func (cd *CallDepth) LimitError() *object.Error {
+	cd.current--
+	return errors.NewCallDepthExceededError(int(cd.max))
+}
+
+// EnsureCallDepth returns ctx with a call-depth tracker, adding one with the
+// default depth when ctx has none. Hosts that call script functions directly
+// use it so the recursion limit applies as it does to a full evaluation.
+func EnsureCallDepth(ctx context.Context) context.Context {
+	if GetCallDepthFromContext(ctx) != nil {
+		return ctx
+	}
+	return SetCallDepthInContext(ctx, NewCallDepth(DefaultMaxCallDepth))
+}
+
 // Exit decrements call depth
 func (cd *CallDepth) Exit() {
 	cd.current--
@@ -168,9 +185,7 @@ func EvalWithContext(ctx context.Context, node ast.Node, env *object.Environment
 	// Add the default call-depth tracker last (outermost) when a caller hasn't
 	// supplied one, so the per-call GetCallDepthFromContext lookup on the hot
 	// path is O(1) rather than walking past the evaluator/source-file wrappers.
-	if GetCallDepthFromContext(ctx) == nil {
-		ctx = ContextWithCallDepth(ctx, DefaultMaxCallDepth)
-	}
+	ctx = EnsureCallDepth(ctx)
 	// Acquire the interpreter lock for the duration of this top-level run so the
 	// whole tree is touched by one goroutine at a time.
 	if gilEnv := enterScript(env); gilEnv != nil {
@@ -284,12 +299,20 @@ func assignErrorToObject(err error) object.Object {
 // This matters most for attribute access: `obj.attr` desugars to an index by a
 // string literal, so without this every field read allocated its own copy of the
 // field name.
+//
+// Folding can make a literal as large as its repetition bound, so the value
+// is checked against the value limit on each evaluation (one atomic load when
+// no value limit is set): a cached program run by a stricter interpreter is
+// refused too.
 func evalStringLiteral(node *ast.StringLiteral) object.Object {
-	if s, ok := node.Boxed().(*object.String); ok {
-		return s
+	s, ok := node.Boxed().(*object.String)
+	if !ok {
+		s = object.NewString(node.Value)
+		node.SetBoxed(s)
 	}
-	s := object.NewString(node.Value)
-	node.SetBoxed(s)
+	if errObj := object.CheckString(s); errObj != nil {
+		return errObj
+	}
 	return s
 }
 
@@ -721,9 +744,13 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			}
 		case ast.OpAdd:
 			if r, ok := right.(*object.Tuple); ok {
+				if errObj := checkElementCount(len(l.Elements) + len(r.Elements)); errObj != nil {
+					return errObj
+				}
 				result := make([]object.Object, len(l.Elements)+len(r.Elements))
 				copy(result, l.Elements)
 				copy(result[len(l.Elements):], r.Elements)
+				object.TrackSlice(result)
 				return &object.Tuple{Elements: result}
 			}
 			return errors.NewTypeError("tuple", right.Type().String())
@@ -763,9 +790,13 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			default:
 				return errors.NewTypeError("list", right.Type().String())
 			}
+			if errObj := checkElementCount(len(l.Elements) + len(rightElems)); errObj != nil {
+				return errObj
+			}
 			result := make([]object.Object, len(l.Elements)+len(rightElems))
 			copy(result, l.Elements)
 			copy(result[len(l.Elements):], rightElems)
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		case ast.OpMul:
 			if r, ok := right.(*object.Integer); ok {
@@ -786,6 +817,9 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			if !ok {
 				return errors.NewTypeError("dict", right.Type().String())
 			}
+			if errObj := checkDictMerge(l, r); errObj != nil {
+				return errObj
+			}
 			merged := object.NewDictSized(len(l.Pairs) + len(r.Pairs))
 			merged.StoreFrom(l)
 			merged.StoreFrom(r)
@@ -802,6 +836,9 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			return errors.NewTypeError("set", right.Type().String())
 		case ast.OpBitOr:
 			if r, ok := right.(*object.Set); ok {
+				if errObj := checkSetMerge(l, r); errObj != nil {
+					return errObj
+				}
 				return l.Union(r)
 			}
 			return errors.NewTypeError("set", right.Type().String())
@@ -1207,6 +1244,9 @@ func evalStringInfixExpression(operator ast.Op, leftVal, rightVal string) object
 		if len(rightVal) == 0 {
 			return object.NewString(leftVal)
 		}
+		if errObj := checkConcat(len(leftVal) + len(rightVal)); errObj != nil {
+			return errObj
+		}
 		return object.NewString(leftVal + rightVal)
 	case ast.OpEq:
 		return nativeBoolToBooleanObject(leftVal == rightVal)
@@ -1282,15 +1322,26 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 			for i < len(format) && (format[i] == '-' || format[i] == '+' || format[i] == ' ' || format[i] == '#' || format[i] == '0') {
 				i++
 			}
-			// Width (number or *)
+			// Width (number or *) and precision, each bounded by the value
+			// limit since either can size the result.
+			specSize := int64(0)
 			for i < len(format) && format[i] >= '0' && format[i] <= '9' {
+				specSize = min(specSize*10+int64(format[i]-'0'), absoluteMaxBytes+1)
 				i++
 			}
 			// Precision
 			if i < len(format) && format[i] == '.' {
 				i++
+				precision := int64(0)
 				for i < len(format) && format[i] >= '0' && format[i] <= '9' {
+					precision = min(precision*10+int64(format[i]-'0'), absoluteMaxBytes+1)
 					i++
+				}
+				specSize = max(specSize, precision)
+			}
+			if specSize > 0 {
+				if errObj := checkWidth("formatted value", specSize); errObj != nil {
+					return errObj
 				}
 			}
 
@@ -1471,41 +1522,21 @@ func formatPercentValue(ctx context.Context, spec string, conversion byte, val o
 	}
 }
 
-// Repetition result quotas: a repetition is how a script asks for a huge
-// allocation in one expression, so the result size is bounded and the refusal
-// is a clean error rather than an opaque runtime panic (or, for strings, a
-// panic that escapes evaluation) or an OOM kill.
-const (
-	maxRepeatBytes    = 1 << 30 // 1 GiB per string/bytes repetition result
-	maxRepeatElements = 1 << 27 // ~134M elements (~1 GiB of object pointers)
-)
-
-// checkRepetition validates multiplier*unitLen against limit. Returns an
-// error object to hand back from the fast paths, or nil when the repetition
-// may proceed (including the trivially-empty cases).
-func checkRepetition(multiplier, unitLen, limit int64) object.Object {
-	if multiplier <= 0 || unitLen == 0 {
-		return nil
-	}
-	if multiplier > limit/unitLen {
-		return errors.NewError("repetition result too large (over %d units)", limit)
-	}
-	return nil
-}
-
 // repeatElements returns elems repeated multiplier times, an empty slice for a
 // non-positive multiplier or empty elems, or the repetition error when the
-// result would exceed maxRepeatElements. checkRepetition bounds the element
-// count, so neither the int conversion nor slices.Repeat's internal size
-// arithmetic can overflow.
+// result would be larger than the interpreter allows. checkRepetition bounds
+// the element count, so neither the int conversion nor slices.Repeat's
+// internal size arithmetic can overflow.
 func repeatElements(elems []object.Object, multiplier int64) ([]object.Object, object.Object) {
 	if multiplier <= 0 || len(elems) == 0 {
 		return []object.Object{}, nil
 	}
-	if errObj := checkRepetition(multiplier, int64(len(elems)), maxRepeatElements); errObj != nil {
+	if errObj := checkRepetition(multiplier, int64(len(elems)), slotBytes); errObj != nil {
 		return nil, errObj
 	}
-	return slices.Repeat(elems, int(multiplier)), nil
+	result := slices.Repeat(elems, int(multiplier))
+	object.TrackSlice(result)
+	return result, nil
 }
 
 func evalStringMultiplication(str string, multiplier int64) object.Object {
@@ -1517,7 +1548,7 @@ func evalStringMultiplication(str string, multiplier int64) object.Object {
 	if len(str) == 0 {
 		return object.NewString("")
 	}
-	if errObj := checkRepetition(multiplier, int64(len(str)), maxRepeatBytes); errObj != nil {
+	if errObj := checkRepetition(multiplier, int64(len(str)), 1); errObj != nil {
 		return errObj
 	}
 	return object.NewString(strings.Repeat(str, int(multiplier)))
@@ -1535,6 +1566,9 @@ func evalBytesInfixExpression(operator ast.Op, left *object.Bytes, right object.
 	if r, ok := right.(*object.Bytes); ok {
 		switch operator {
 		case ast.OpAdd:
+			if errObj := checkConcat(left.Len() + r.Len()); errObj != nil {
+				return errObj
+			}
 			joined := make([]byte, 0, left.Len()+r.Len())
 			joined = append(joined, left.BytesValue()...)
 			joined = append(joined, r.BytesValue()...)
@@ -1568,7 +1602,7 @@ func evalBytesMultiplication(b *object.Bytes, multiplier int64) object.Object {
 	if srcLen == 0 {
 		return object.NewBytes(nil)
 	}
-	if errObj := checkRepetition(multiplier, int64(srcLen), maxRepeatBytes); errObj != nil {
+	if errObj := checkRepetition(multiplier, int64(srcLen), 1); errObj != nil {
 		return errObj
 	}
 	// checkRepetition bounds the byte count, so bytes.Repeat's internal size
@@ -1729,6 +1763,9 @@ func unpackArgsFromIterable(ctx context.Context, argsVal object.Object, env *obj
 	case *object.Tuple:
 		unpacked = val.Elements
 	case *object.String:
+		if errObj := checkElementCount(len(val.StringValue())); errObj != nil {
+			return nil, errObj
+		}
 		for _, r := range val.StringValue() {
 			unpacked = append(unpacked, object.NewString(string(r)))
 		}
@@ -1736,7 +1773,13 @@ func unpackArgsFromIterable(ctx context.Context, argsVal object.Object, env *obj
 		if val.Infinite() {
 			return nil, errors.NewError("%s", object.InfiniteIteratorMessage)
 		}
+		// Drain with the same size check and cancellation as list(iterator),
+		// so f(*range(n)) with a huge n stops cleanly.
+		cc := newContextChecker(ctx)
 		for {
+			if err := cc.check(); err != nil {
+				return nil, err
+			}
 			elem, hasNext := val.Next()
 			if !hasNext {
 				break
@@ -1744,7 +1787,9 @@ func unpackArgsFromIterable(ctx context.Context, argsVal object.Object, env *obj
 			if propagates(elem) {
 				return nil, elem // a raise while pulling the iterator
 			}
-			unpacked = append(unpacked, elem)
+			if errObj := appendElement(&unpacked, elem); errObj != nil {
+				return nil, errObj
+			}
 		}
 	case *object.Dict:
 		iter := val.CreateIterator()
@@ -1848,6 +1893,9 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 		key, rerr := evalHashKeyChecked(ctx, index)
 		if rerr != nil {
 			return hashKeyAssignError(rerr)
+		}
+		if errObj := checkDictGrowth(o, key); errObj != nil {
+			return raisedAssignmentError(object.ExceptionTypeMemoryError, errObj.(*object.Error).Message)
 		}
 		o.Store(key, index, value)
 		return nil
@@ -2068,7 +2116,7 @@ func applyUserFunctionDirect(ctx context.Context, fn *object.Function, arg objec
 	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.Enter() {
-			return errors.NewCallDepthExceededError(int(cd.max))
+			return cd.LimitError()
 		}
 		defer cd.Exit()
 	}
@@ -2105,7 +2153,7 @@ func applyUserFunction2(ctx context.Context, fn *object.Function, a0, a1 object.
 	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.Enter() {
-			return errors.NewCallDepthExceededError(int(cd.max))
+			return cd.LimitError()
 		}
 		defer cd.Exit()
 	}
@@ -2144,7 +2192,7 @@ func applyUserFunctionN(ctx context.Context, fn *object.Function, args ...object
 	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.Enter() {
-			return errors.NewCallDepthExceededError(int(cd.max))
+			return cd.LimitError()
 		}
 		defer cd.Exit()
 	}
@@ -2206,7 +2254,7 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 	// Check call depth to prevent stack overflow
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.Enter() {
-			return errors.NewCallDepthExceededError(int(cd.max))
+			return cd.LimitError()
 		}
 		defer cd.Exit()
 	}
@@ -2263,7 +2311,7 @@ func applyFunction(ctx context.Context, fn object.Object, args []object.Object, 
 		return applyLambdaFunctionWithContext(ctx, fn, args, keywords, env)
 	case *object.Builtin:
 		ctxWithEnv := SetEnvInContext(ctx, env)
-		return fn.Fn(ctxWithEnv, object.NewKwargs(keywords), args...)
+		return checkResult(fn.Fn(ctxWithEnv, object.NewKwargs(keywords), args...))
 	case *object.Class:
 		return createInstance(ctx, fn, args, keywords, env)
 	case *object.Instance:
@@ -2314,7 +2362,7 @@ func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFuncti
 	// Check call depth to prevent stack overflow
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.Enter() {
-			return errors.NewCallDepthExceededError(int(cd.max))
+			return cd.LimitError()
 		}
 		defer cd.Exit()
 	}
@@ -4732,12 +4780,26 @@ func iterableToSliceChecked(ctx context.Context, obj object.Object, env *object.
 			if propagates(val) {
 				return nil, false, val
 			}
-			elements = append(elements, val)
+			if errObj := appendElement(&elements, val); errObj != nil {
+				return nil, false, errObj
+			}
 		}
 		return elements, true, nil
 	}
 	inst, isInst := obj.(*object.Instance)
 	if !isInst {
+		// Strings and bytes expand to one object per character or byte, far
+		// larger than the value itself, so check the expanded size first.
+		switch v := obj.(type) {
+		case *object.String:
+			if errObj := checkElementCount(len(v.StringValue())); errObj != nil {
+				return nil, false, errObj
+			}
+		case *object.Bytes:
+			if errObj := checkElementCount(v.Len()); errObj != nil {
+				return nil, false, errObj
+			}
+		}
 		elems, ok := object.IterableToSlice(obj)
 		return elems, ok, nil
 	}
@@ -4762,7 +4824,9 @@ func iterableToSliceChecked(ctx context.Context, obj object.Object, env *object.
 		if propagates(val) {
 			return nil, false, val
 		}
-		elements = append(elements, val)
+		if errObj := appendElement(&elements, val); errObj != nil {
+			return nil, false, errObj
+		}
 	}
 	return elements, true, nil
 }
@@ -5070,7 +5134,15 @@ func formatWithSpec(obj object.Object, spec string) (string, object.Object) {
 	// Width
 	for i < n && spec[i] >= '0' && spec[i] <= '9' {
 		width = width*10 + int(spec[i]-'0')
+		if int64(width) > absoluteMaxBytes {
+			return "", object.NewMemoryError("format width too large")
+		}
 		i++
+	}
+	if width > 0 {
+		if errObj := checkWidth("formatted value", int64(width)); errObj != nil {
+			return "", errObj
+		}
 	}
 
 	// Grouping
@@ -5087,7 +5159,15 @@ func formatWithSpec(obj object.Object, spec string) (string, object.Object) {
 		start := i
 		for i < n && spec[i] >= '0' && spec[i] <= '9' {
 			precision = precision*10 + int(spec[i]-'0')
+			if int64(precision) > absoluteMaxBytes {
+				return "", object.NewMemoryError("format precision too large")
+			}
 			i++
+		}
+		if precision > 0 {
+			if errObj := checkWidth("formatted value", int64(precision)); errObj != nil {
+				return "", errObj
+			}
 		}
 		if i == start {
 			return "", formatSpecError("Format specifier missing precision")

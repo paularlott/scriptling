@@ -279,7 +279,8 @@ func fetchURL(ctx context.Context, client *http.Client, rawURL string, insecure 
 	}
 	var data []byte
 	if maxBytes <= 0 {
-		object.RunBlocking(ctx, func() { data, err = io.ReadAll(resp.Body) })
+		// No max_bytes: the interpreter's value limit still applies.
+		object.RunBlocking(ctx, func() { data, err = object.ReadAllLimitedErr(resp.Body, "download") })
 		if err != nil {
 			return nil, err
 		}
@@ -318,8 +319,8 @@ func writeFetchedFile(data []byte, dest string, mode, dirMode os.FileMode) (fetc
 		}
 	}
 
-	existing, err := os.ReadFile(dest)
-	if err == nil && bytes.Equal(existing, data) {
+	_, err := os.Stat(dest)
+	if object.FileEquals(dest, data) {
 		if err := os.Chmod(dest, mode); err != nil {
 			return fetchResult{}, fmt.Errorf("failed to set mode on %s: %w", dest, err)
 		}
@@ -394,7 +395,7 @@ func unpackZipBytes(data []byte, dest string, mode, dirMode os.FileMode, allowed
 		if err != nil {
 			return fetchResult{}, fmt.Errorf("failed to open zip entry %s: %w", f.Name, err)
 		}
-		content, readErr := io.ReadAll(rc)
+		content, readErr := object.ReadAllLimitedErr(rc, "zip entry")
 		closeErr := rc.Close()
 		if readErr != nil {
 			return fetchResult{}, fmt.Errorf("failed to read zip entry %s: %w", f.Name, readErr)
@@ -408,22 +409,22 @@ func unpackZipBytes(data []byte, dest string, mode, dirMode os.FileMode, allowed
 		}
 
 		fileMode := zipFileMode(f, mode)
-		existing, err := os.ReadFile(target)
-		if err == nil && bytes.Equal(existing, content) {
+		_, statErr := os.Stat(target)
+		if object.FileEquals(target, content) {
 			if err := os.Chmod(target, fileMode); err != nil {
 				return fetchResult{}, fmt.Errorf("failed to set mode on %s: %w", target, err)
 			}
 			files = append(files, target)
 			continue
 		}
-		if err == nil {
+		if statErr == nil {
 			status = StatusUpdated
-		} else if os.IsNotExist(err) {
+		} else if os.IsNotExist(statErr) {
 			if status == StatusUnchanged {
 				status = StatusCreated
 			}
 		} else {
-			return fetchResult{}, fmt.Errorf("failed to read existing %s: %w", target, err)
+			return fetchResult{}, fmt.Errorf("failed to read existing %s: %w", target, statErr)
 		}
 
 		if err := os.WriteFile(target, content, fileMode); err != nil {

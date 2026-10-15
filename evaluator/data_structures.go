@@ -89,6 +89,9 @@ func evalSetAdd(ctx context.Context, s *object.Set, obj object.Object) object.Ob
 	if raised != nil {
 		return raised
 	}
+	if errObj := checkSetGrowth(s, hk); errObj != nil {
+		return errObj
+	}
 	s.AddKeyed(hk, obj)
 	return nil
 }
@@ -498,6 +501,9 @@ func evalDictIndexExpression(ctx context.Context, dict, index object.Object) obj
 				if propagates(val) {
 					return val
 				}
+				if errObj := checkDictGrowth(dictObject, key); errObj != nil {
+					return errObj
+				}
 				dictObject.Store(key, index, val)
 				return val
 			}
@@ -538,7 +544,8 @@ func evalStringIndexExpression(str, index object.Object) object.Object {
 		if idx < 0 || idx >= length {
 			return &object.Exception{Message: "string index out of range", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 		}
-		return object.NewString(strObject.StringValue()[idx : idx+1])
+		// A single byte from the static table: never keeps the string alive.
+		return object.NewString(object.ByteString(strObject.StringValue()[idx]))
 	}
 
 	runes := []rune(strObject.StringValue())
@@ -1124,7 +1131,7 @@ func evalStringSliceExpression(str, index object.Object) object.Object {
 	}
 
 	slicedStr := sliceString(strObj.StringValue(), start, end, step, hasStart, hasEnd, hasStep)
-	return object.NewString(slicedStr)
+	return object.NewSubstring(slicedStr, strObj.StringValue())
 }
 
 // evalBytesIndexExpression indexes a Bytes value by an integer, returning the

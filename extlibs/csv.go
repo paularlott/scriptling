@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"io"
 	"sort"
 	"strings"
 
@@ -140,20 +141,35 @@ writerow(dict) writes rows ordered by fieldnames; writeheader() writes the heade
 				reader.Comma = delimiter
 				reader.FieldsPerRecord = -1 // allow variable-length rows
 
-				records, e := reader.ReadAll()
-				if e != nil {
-					return errors.NewError("csv.loads: %s", e.Error())
-				}
+				reader.ReuseRecord = true
 
-				elements := make([]object.Object, len(records))
-				for i, row := range records {
+				// Rows are converted as they are read, so the parsed rows are
+				// never all held natively on top of the values they become.
+				out, errObj := newResultList(ctx, 0)
+				if errObj != nil {
+					return errObj
+				}
+				for {
+					row, e := reader.Read()
+					if e == io.EOF {
+						break
+					}
+					if e != nil {
+						return errors.NewError("csv.loads: %s", e.Error())
+					}
+					if errObj := object.CheckElements(int64(len(row))); errObj != nil {
+						return errObj
+					}
 					rowElems := make([]object.Object, len(row))
+					object.TrackSlice(rowElems)
 					for j, val := range row {
 						rowElems[j] = object.NewString(val)
 					}
-					elements[i] = &object.List{Elements: rowElems}
+					if errObj := out.add(&object.List{Elements: rowElems}); errObj != nil {
+						return errObj
+					}
 				}
-				return &object.List{Elements: elements}
+				return out.list()
 			},
 			HelpText: `loads(content, delimiter=",") - Parse a CSV string into a list of rows
 

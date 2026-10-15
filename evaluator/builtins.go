@@ -2,6 +2,7 @@ package evaluator
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"math"
@@ -125,7 +126,13 @@ Use list(filter(...)) to get a list.`,
 					}
 					return nil
 				}
-				fmt.Fprint(writer, s)
+				_, err := io.WriteString(writer, s)
+				if stderrors.Is(err, object.ErrOutputNoRoom) {
+					return object.NewMemoryError("%s: no room for more captured output", object.ErrMemoryLimitExceeded)
+				}
+				if stderrors.Is(err, object.ErrOutputLimitExceeded) {
+					return object.NewMemoryError("captured output too large: the limit is %d bytes", object.MaxValueBytes())
+				}
 				return nil
 			}
 
@@ -1328,7 +1335,9 @@ Otherwise, returns a list containing the items of the iterable.`,
 			if !ok {
 				return errors.NewTypeError("list", args[0].Type().String())
 			}
-			list.Elements = append(list.Elements, args[1])
+			if errObj := appendElement(&list.Elements, args[1]); errObj != nil {
+				return errObj
+			}
 			return NULL
 		},
 		HelpText: `append(list, value) - Append a value to a list
@@ -2657,7 +2666,7 @@ func init() {
 		"ModuleNotFoundError", "RecursionError", "NotImplementedError",
 		"UnicodeError", "UnicodeDecodeError", "UnicodeEncodeError",
 		"KeyboardInterrupt", "JSONDecodeError", "AssertionError",
-		"FrozenInstanceError",
+		"FrozenInstanceError", "MemoryError",
 	} {
 		builtins[name] = exceptionConstructor(name)
 	}
@@ -2779,6 +2788,7 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 
 		// Reorder elements
 		newElements := make([]object.Object, n)
+		object.TrackSlice(newElements)
 		for i, idx := range indices {
 			newElements[i] = elements[idx]
 		}

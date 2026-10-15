@@ -109,27 +109,46 @@ func (g *grepLibraryInstance) run(ctx context.Context, kwargs object.Kwargs, arg
 	}
 
 	var matches []matchResult
+	var errObj object.Object
 	if info.IsDir() {
-		matches = g.searchDir(ctx, searchPath, re, opts)
+		matches, errObj = g.searchDir(ctx, searchPath, re, opts)
 	} else {
-		matches = g.searchFile(searchPath, re, opts)
+		matches, errObj = g.searchFile(ctx, searchPath, re, opts, newNativeBudget(ctx, "grep matches"))
+	}
+	if errObj != nil {
+		return errObj
 	}
 
-	return matchesToList(matches)
+	return matchesToList(ctx, matches)
 }
 
 // searchDir walks a directory and searches files concurrently.
-func (g *grepLibraryInstance) searchDir(ctx context.Context, root string, re *regexp.Regexp, opts fileopsOptions) []matchResult {
+func (g *grepLibraryInstance) searchDir(ctx context.Context, root string, re *regexp.Regexp, opts fileopsOptions) ([]matchResult, object.Object) {
+	// The walk and the workers stop when the gathered matches no longer fit
+	// in the memory left, or the call is cancelled.
+	call := ctx
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
 	jobs := make(chan string, 64)
-	resultsCh := make(chan []matchResult, 64)
+	type fileMatches struct {
+		matches []matchResult
+		errObj  object.Object
+	}
+	resultsCh := make(chan fileMatches, 64)
 
+	// Workers gather for the calling interpreter: bind them to its guard so
+	// a single file full of matches is bounded too.
+	guard := object.CurrentGuard()
+	budget := newNativeBudget(ctx, "grep matches")
 	var wg sync.WaitGroup
 	for i := 0; i < workerCount(); i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer object.BindGuard(guard)()
 			for path := range jobs {
-				resultsCh <- g.searchFile(path, re, opts)
+				matches, errObj := g.searchFile(ctx, path, re, opts, budget)
+				resultsCh <- fileMatches{matches, errObj}
 			}
 		}()
 	}
@@ -141,20 +160,40 @@ func (g *grepLibraryInstance) searchDir(ctx context.Context, root string, re *re
 
 	go walkFiles(ctx, root, opts, g.config, jobs)
 
+	// The workers count what they gather against the shared budget; here
+	// the first failure stops the walk and the rest is drained.
 	var all []matchResult
+	var errObj object.Object
 	object.RunBlocking(ctx, func() {
 		for r := range resultsCh {
-			all = append(all, r...)
+			if errObj != nil {
+				continue
+			}
+			if r.errObj != nil {
+				errObj = r.errObj
+				stop()
+				all = nil
+				continue
+			}
+			all = append(all, r.matches...)
 		}
 	})
-	return all
+	if errObj == nil {
+		errObj = cancelledError(call) // a cancelled call never returns partial results
+	}
+	return all, errObj
 }
 
+// matchResultOverhead is what a match costs beyond its text: the struct and
+// the dict, strings and integer it becomes.
+const matchResultOverhead = 160
+
 // searchFile searches a single file for matches.
-func (g *grepLibraryInstance) searchFile(path string, re *regexp.Regexp, opts fileopsOptions) []matchResult {
+// searchFile gathers the matches in one file, counting them against budget.
+func (g *grepLibraryInstance) searchFile(ctx context.Context, path string, re *regexp.Regexp, opts fileopsOptions, budget *nativeBudget) ([]matchResult, object.Object) {
 	f, ok := openTextFile(path, opts.maxSize)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	defer f.Close()
 
@@ -165,6 +204,9 @@ func (g *grepLibraryInstance) searchFile(path string, re *regexp.Regexp, opts fi
 		lineNum++
 		line := scanner.Text()
 		if re.MatchString(line) {
+			if errObj := budget.add(len(path) + len(line) + matchResultOverhead); errObj != nil {
+				return nil, errObj
+			}
 			results = append(results, matchResult{
 				File: path,
 				Line: lineNum,
@@ -172,20 +214,28 @@ func (g *grepLibraryInstance) searchFile(path string, re *regexp.Regexp, opts fi
 			})
 		}
 	}
-	return results
+	if errObj := cancelledError(ctx); errObj != nil {
+		return nil, errObj
+	}
+	return results, nil
 }
 
 // matchesToList converts []matchResult to a Scriptling list of dicts.
-func matchesToList(matches []matchResult) object.Object {
-	elements := make([]object.Object, len(matches))
-	for i, m := range matches {
+func matchesToList(ctx context.Context, matches []matchResult) object.Object {
+	out, errObj := newResultList(ctx, len(matches))
+	if errObj != nil {
+		return errObj
+	}
+	for _, m := range matches {
 		d := &object.Dict{Pairs: make(map[string]object.DictPair)}
 		d.SetByString("file", object.NewString(m.File))
 		d.SetByString("line", object.NewInteger(int64(m.Line)))
 		d.SetByString("text", object.NewString(m.Text))
-		elements[i] = d
+		if errObj := out.add(d); errObj != nil {
+			return errObj
+		}
 	}
-	return &object.List{Elements: elements}
+	return out.list()
 }
 
 const grepPatternHelp = `pattern(regex, path, *, recursive=False, ignore_case=False, glob="", follow_links=False, max_size=1048576) -> list

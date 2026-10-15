@@ -255,13 +255,17 @@ func (t *sedLibraryInstance) fnExtract(ctx context.Context, kwargs object.Kwargs
 	}
 
 	var results []extractResult
+	var errObj object.Object
 	if info.IsDir() {
-		results = t.extractDir(ctx, targetPath, re, opts)
+		results, errObj = t.extractDir(ctx, targetPath, re, opts)
 	} else {
-		results = t.extractFile(targetPath, re, opts)
+		results, errObj = t.extractFile(ctx, targetPath, re, opts, newNativeBudget(ctx, "extracted matches"))
+	}
+	if errObj != nil {
+		return errObj
 	}
 
-	return extractToList(results)
+	return extractToList(ctx, results)
 }
 
 // extractResult holds a single line's capture groups.
@@ -273,17 +277,28 @@ type extractResult struct {
 }
 
 // extractDir walks a directory extracting captures concurrently.
-func (t *sedLibraryInstance) extractDir(ctx context.Context, root string, re *regexp.Regexp, opts fileopsOptions) []extractResult {
+func (t *sedLibraryInstance) extractDir(ctx context.Context, root string, re *regexp.Regexp, opts fileopsOptions) ([]extractResult, object.Object) {
+	call := ctx
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
 	jobs := make(chan string, 64)
-	resultsCh := make(chan []extractResult, 64)
+	type fileResults struct {
+		results []extractResult
+		errObj  object.Object
+	}
+	resultsCh := make(chan fileResults, 64)
 
+	guard := object.CurrentGuard()
+	budget := newNativeBudget(ctx, "extracted matches")
 	var wg sync.WaitGroup
 	for i := 0; i < workerCount(); i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer object.BindGuard(guard)()
 			for path := range jobs {
-				resultsCh <- t.extractFile(path, re, opts)
+				results, errObj := t.extractFile(ctx, path, re, opts, budget)
+				resultsCh <- fileResults{results, errObj}
 			}
 		}()
 	}
@@ -296,19 +311,43 @@ func (t *sedLibraryInstance) extractDir(ctx context.Context, root string, re *re
 	go walkFiles(ctx, root, opts, t.config, jobs)
 
 	var all []extractResult
+	var errObj object.Object
 	object.RunBlocking(ctx, func() {
 		for r := range resultsCh {
-			all = append(all, r...)
+			if errObj != nil {
+				continue // stopped: drain so the workers can finish
+			}
+			if r.errObj != nil {
+				errObj = r.errObj
+				stop()
+				all = nil
+				continue
+			}
+			all = append(all, r.results...)
 		}
 	})
-	return all
+	if errObj == nil {
+		errObj = cancelledError(call) // a cancelled call never returns partial results
+	}
+	return all, errObj
+}
+
+// bytes estimates what the result costs: its text and groups, plus the
+// struct and the dict, list and strings it becomes.
+func (r extractResult) bytes() int {
+	n := len(r.File) + len(r.Text) + 200
+	for _, g := range r.Groups {
+		n += len(g) + 64
+	}
+	return n
 }
 
 // extractFile scans a single file returning all capture group matches.
-func (t *sedLibraryInstance) extractFile(path string, re *regexp.Regexp, opts fileopsOptions) []extractResult {
+// extractFile gathers the matches in one file, counting them against budget.
+func (t *sedLibraryInstance) extractFile(ctx context.Context, path string, re *regexp.Regexp, opts fileopsOptions, budget *nativeBudget) ([]extractResult, object.Object) {
 	f, ok := openTextFile(path, opts.maxSize)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	defer f.Close()
 
@@ -323,33 +362,46 @@ func (t *sedLibraryInstance) extractFile(path string, re *regexp.Regexp, opts fi
 			// m[0] is the full match, m[1:] are the capture groups
 			groups := make([]string, len(m)-1)
 			copy(groups, m[1:])
-			results = append(results, extractResult{
+			r := extractResult{
 				File:   path,
 				Line:   lineNum,
 				Text:   line,
 				Groups: groups,
-			})
+			}
+			if errObj := budget.add(r.bytes()); errObj != nil {
+				return nil, errObj
+			}
+			results = append(results, r)
 		}
 	}
-	return results
+	if errObj := cancelledError(ctx); errObj != nil {
+		return nil, errObj
+	}
+	return results, nil
 }
 
 // extractToList converts []extractResult to a Scriptling list of dicts.
-func extractToList(results []extractResult) object.Object {
-	elements := make([]object.Object, len(results))
-	for i, r := range results {
+func extractToList(ctx context.Context, results []extractResult) object.Object {
+	out, errObj := newResultList(ctx, len(results))
+	if errObj != nil {
+		return errObj
+	}
+	for _, r := range results {
 		d := &object.Dict{Pairs: make(map[string]object.DictPair)}
 		d.SetByString("file", object.NewString(r.File))
 		d.SetByString("line", object.NewInteger(int64(r.Line)))
 		d.SetByString("text", object.NewString(r.Text))
 		groupElems := make([]object.Object, len(r.Groups))
+		object.TrackSlice(groupElems)
 		for j, g := range r.Groups {
 			groupElems[j] = object.NewString(g)
 		}
 		d.SetByString("groups", &object.List{Elements: groupElems})
-		elements[i] = d
+		if errObj := out.add(d); errObj != nil {
+			return errObj
+		}
 	}
-	return &object.List{Elements: elements}
+	return out.list()
 }
 
 const textExtractHelp = `extract(regex, path, *, recursive=False, ignore_case=False, glob="", follow_links=False, max_size=1048576) -> list

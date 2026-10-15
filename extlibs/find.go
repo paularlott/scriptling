@@ -114,13 +114,21 @@ func (f *findLibraryInstance) createLibrary() *object.Library {
 					return oErr
 				}
 
-				matches := f.findPaths(ctx, searchPath, opts)
-
-				elements := make([]object.Object, len(matches))
-				for i, m := range matches {
-					elements[i] = object.NewString(m)
+				matches, errObj := f.findPathsChecked(ctx, searchPath, opts)
+				if errObj != nil {
+					return errObj
 				}
-				return &object.List{Elements: elements}
+
+				out, errObj := newResultList(ctx, len(matches))
+				if errObj != nil {
+					return errObj
+				}
+				for _, m := range matches {
+					if errObj := out.add(object.NewString(m)); errObj != nil {
+						return errObj
+					}
+				}
+				return out.list()
 			},
 			HelpText: findPathHelp,
 		},
@@ -142,13 +150,21 @@ func (f *findLibraryInstance) createLibrary() *object.Library {
 					return oErr
 				}
 
-				matches := f.findEntries(ctx, searchPath, opts)
-
-				elements := make([]object.Object, len(matches))
-				for i, e := range matches {
-					elements[i] = findEntryToDict(e)
+				matches, errObj := f.findEntriesChecked(ctx, searchPath, opts)
+				if errObj != nil {
+					return errObj
 				}
-				return &object.List{Elements: elements}
+
+				out, errObj := newResultList(ctx, len(matches))
+				if errObj != nil {
+					return errObj
+				}
+				for _, e := range matches {
+					if errObj := out.add(findEntryToDict(e)); errObj != nil {
+						return errObj
+					}
+				}
+				return out.list()
 			},
 			HelpText: findEntriesHelp,
 		},
@@ -269,10 +285,23 @@ func parseFindKwargs(kwargs object.Kwargs) (findOptions, object.Object) {
 // findPaths walks searchPath applying the filters, returning matching paths.
 // A single-file search path is checked directly; a directory is walked with a
 // bounded worker pool so stat calls run concurrently (same model as grep).
+// findPaths is findPathsChecked without the stop reason, for callers that
+// have no limits.
 func (f *findLibraryInstance) findPaths(ctx context.Context, searchPath string, opts findOptions) []string {
+	paths, _ := f.findPathsChecked(ctx, searchPath, opts)
+	return paths
+}
+
+// findPathsChecked gathers the matching paths, stopping with an error when
+// the gathered paths no longer fit in the memory left or the call is
+// cancelled.
+func (f *findLibraryInstance) findPathsChecked(ctx context.Context, searchPath string, opts findOptions) ([]string, object.Object) {
+	call := ctx
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
 	info, err := os.Stat(searchPath)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 
 	// Single-file root: check it directly against the filters.
@@ -280,21 +309,21 @@ func (f *findLibraryInstance) findPaths(ctx context.Context, searchPath string, 
 		if opts.name != "" {
 			matched, mErr := filepath.Match(opts.name, filepath.Base(searchPath))
 			if mErr != nil || !matched {
-				return nil
+				return nil, nil
 			}
 		}
 		switch opts.entryType {
 		case "dir":
-			return nil
+			return nil, nil
 		case "file":
 			if !info.Mode().IsRegular() {
-				return nil
+				return nil, nil
 			}
 		}
 		if matchSizeMtime(info, opts) {
-			return []string{searchPath}
+			return []string{searchPath}, nil
 		}
-		return nil
+		return nil, nil
 	}
 
 	jobs := make(chan string, 64)
@@ -319,22 +348,55 @@ func (f *findLibraryInstance) findPaths(ctx context.Context, searchPath string, 
 	go walkEntries(ctx, searchPath, opts, f.config, jobs)
 
 	var all []string
+	var errObj object.Object
+	budget := newNativeBudget(ctx, "found paths")
 	object.RunBlocking(ctx, func() {
 		for batch := range resultsCh {
-			all = append(all, batch...)
+			if errObj != nil {
+				continue // stopped: drain so the workers can finish
+			}
+			for _, p := range batch {
+				if errObj = budget.add(len(p) + foundPathOverhead); errObj != nil {
+					stop()
+					all = nil
+					break
+				}
+			}
+			if errObj == nil {
+				all = append(all, batch...)
+			}
 		}
 	})
-	return all
+	if errObj == nil {
+		errObj = cancelledError(call) // a cancelled call never returns partial results
+	}
+	return all, errObj
 }
+
+// Overheads beyond the path text: the slice entry and the string or dict
+// the result becomes.
+const (
+	foundPathOverhead  = 48
+	foundEntryOverhead = 320
+)
 
 // findEntries is the rich variant of findPaths: same walker, same filters, but
 // each surviving entry is stat'd and returned as a FindEntry with its size,
 // mtime, and is-dir flag. Use this when the caller needs the metadata to
 // compare trees without re-reading the bytes (e.g. differential sync).
+// findEntries is findEntriesChecked without the stop reason.
 func (f *findLibraryInstance) findEntries(ctx context.Context, searchPath string, opts findOptions) []FindEntry {
+	entries, _ := f.findEntriesChecked(ctx, searchPath, opts)
+	return entries
+}
+
+func (f *findLibraryInstance) findEntriesChecked(ctx context.Context, searchPath string, opts findOptions) ([]FindEntry, object.Object) {
+	call := ctx
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
 	info, err := os.Stat(searchPath)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 
 	// Single-file root: check it directly against the filters.
@@ -342,15 +404,15 @@ func (f *findLibraryInstance) findEntries(ctx context.Context, searchPath string
 		if opts.name != "" {
 			matched, mErr := filepath.Match(opts.name, filepath.Base(searchPath))
 			if mErr != nil || !matched {
-				return nil
+				return nil, nil
 			}
 		}
 		switch opts.entryType {
 		case "dir":
-			return nil
+			return nil, nil
 		case "file":
 			if !info.Mode().IsRegular() {
-				return nil
+				return nil, nil
 			}
 		}
 		if matchSizeMtime(info, opts) {
@@ -359,9 +421,9 @@ func (f *findLibraryInstance) findEntries(ctx context.Context, searchPath string
 			if opts.includeHash && !info.IsDir() {
 				entry.Hash = hashFile(searchPath)
 			}
-			return []FindEntry{entry}
+			return []FindEntry{entry}, nil
 		}
-		return nil
+		return nil, nil
 	}
 
 	jobs := make(chan string, 64)
@@ -388,12 +450,29 @@ func (f *findLibraryInstance) findEntries(ctx context.Context, searchPath string
 	go walkEntries(ctx, searchPath, opts, f.config, jobs)
 
 	var all []FindEntry
+	var errObj object.Object
+	budget := newNativeBudget(ctx, "found entries")
 	object.RunBlocking(ctx, func() {
 		for batch := range resultsCh {
-			all = append(all, batch...)
+			if errObj != nil {
+				continue
+			}
+			for _, e := range batch {
+				if errObj = budget.add(len(e.Path) + foundEntryOverhead); errObj != nil {
+					stop()
+					all = nil
+					break
+				}
+			}
+			if errObj == nil {
+				all = append(all, batch...)
+			}
 		}
 	})
-	return all
+	if errObj == nil {
+		errObj = cancelledError(call) // a cancelled call never returns partial results
+	}
+	return all, errObj
 }
 
 // filterEntry applies the remaining size/mtime filters to an entry that has

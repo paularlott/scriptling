@@ -7,6 +7,21 @@ import (
 	"time"
 )
 
+// restoreConfig puts the pool configuration back when the test ends, so tests
+// that change it leave none of their settings to the next (they may run in
+// any order, and more than once).
+func restoreConfig(t *testing.T) {
+	t.Helper()
+	poolCfgMu.RLock()
+	saved := poolCfg
+	poolCfgMu.RUnlock()
+	t.Cleanup(func() {
+		poolCfgMu.Lock()
+		poolCfg = saved
+		poolCfgMu.Unlock()
+	})
+}
+
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
@@ -28,6 +43,8 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestGetConfig_Default(t *testing.T) {
+	restoreConfig(t)
+	SetConfig(nil) // no configuration set: the default applies
 	cfg := GetConfig()
 
 	if cfg.MaxIdleConns != 100 {
@@ -36,8 +53,7 @@ func TestGetConfig_Default(t *testing.T) {
 }
 
 func TestSetAndGetConfig(t *testing.T) {
-	// Save original config
-	originalCfg := GetConfig()
+	restoreConfig(t)
 
 	// Set a custom config
 	customCfg := &Config{
@@ -63,11 +79,10 @@ func TestSetAndGetConfig(t *testing.T) {
 		t.Errorf("GetConfig() Timeout = %v, want 10s", gotCfg.Timeout)
 	}
 
-	// Restore original config
-	SetConfig(&originalCfg)
 }
 
 func TestGetConfig_Copy(t *testing.T) {
+	restoreConfig(t)
 	customCfg := &Config{
 		MaxIdleConns:        200,
 		MaxIdleConnsPerHost: 100,
@@ -222,6 +237,7 @@ func TestGetHTTPClient_Concurrent(t *testing.T) {
 }
 
 func TestSetConfig_Concurrent(t *testing.T) {
+	restoreConfig(t)
 	// Test concurrent access to SetConfig and GetConfig
 	var wg sync.WaitGroup
 

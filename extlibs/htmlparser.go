@@ -348,6 +348,7 @@ func parseHTML(ctx context.Context, instance *object.Instance, data string) obje
 
 						// Convert attrs to list of tuples
 						attrsList := &object.List{Elements: make([]object.Object, len(attrs))}
+						object.TrackSlice(attrsList.Elements)
 						for j, attr := range attrs {
 							attrsList.Elements[j] = &object.Tuple{Elements: []object.Object{
 								object.NewString(attr[0]),

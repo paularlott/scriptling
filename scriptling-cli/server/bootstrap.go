@@ -67,6 +67,11 @@ func NewServer(config ServerConfig) (*Server, error) {
 		}
 	}
 
+	// A WebSocket handler from an earlier server may still be running on its
+	// hijacked connection; let it finish before its runtime state is reset.
+	if !waitWebSocketHandlers(5 * time.Second) {
+		Log.Warn("Resetting the runtime with WebSocket handlers still running")
+	}
 	extlibs.ResetRuntime()
 
 	if err := extlibs.InitKVStore(config.KVStoragePath, Log); err != nil {
@@ -174,10 +179,14 @@ func NewServer(config ServerConfig) (*Server, error) {
 			if extlibs.RuntimeState.ServerCollect != nil {
 				extlibs.RuntimeState.ServerCollect()
 			}
-			close(startCh)
+			// The error goes on its (buffered) channel before the start
+			// signal: NewServer wakes on startCh and reads startErrCh without
+			// blocking, so sending afterwards would sometimes let it return a
+			// started server for a script that failed.
 			if runErr != nil {
 				startErrCh <- runErr
 			}
+			close(startCh)
 		} else if runErr != nil {
 			Log.Error("Setup script error after server start", "error", runErr)
 		}

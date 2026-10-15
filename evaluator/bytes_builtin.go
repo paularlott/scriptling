@@ -43,6 +43,9 @@ func bytesConstructorFn(ctx context.Context, kwargs object.Kwargs, args ...objec
 		if n < 0 {
 			return errors.NewError("negative count in bytes(): %d", n)
 		}
+		if errObj := checkSize("bytes", n); errObj != nil {
+			return errObj
+		}
 		return object.NewBytes(make([]byte, n))
 	case *object.String:
 		encoding := "utf-8"

@@ -113,10 +113,14 @@ func readFileBytes(ctx context.Context, config fssecurity.Config, path string) (
 		return nil, err
 	}
 	var content []byte
+	var limitErr object.Object
 	var err error
-	object.RunBlocking(ctx, func() { content, err = os.ReadFile(path) })
+	object.RunBlocking(ctx, func() { content, limitErr, err = object.ReadFileLimited(path) })
 	if err != nil {
 		return nil, pathErrorException("cannot read file", err)
+	}
+	if limitErr != nil {
+		return nil, limitErr
 	}
 	return content, nil
 }

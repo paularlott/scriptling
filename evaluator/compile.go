@@ -140,6 +140,9 @@ func compileNode(node ast.Node) object.EvalFn {
 	case *ast.BytesLiteral:
 		value := n.Value
 		return func(ctx context.Context, env *object.Environment) object.Object {
+			if errObj := object.CheckAllocFor("bytes literal", int64(len(value))); errObj != nil {
+				return errObj
+			}
 			return object.NewBytes(value)
 		}
 	case *ast.WalrusExpression:
@@ -1305,7 +1308,7 @@ func applyCompiledBuiltinFast(ctx context.Context, env *object.Environment, fn *
 	ctxWithEnv := SetEnvInContext(ctx, env)
 	res := fn.Fn(ctxWithEnv, object.Kwargs{}, args...)
 	object.ReleaseArgs(env, args)
-	return res
+	return checkResult(res)
 }
 
 // compileCall converts a call expression. The identifier-callee fast section
@@ -1659,7 +1662,7 @@ func evalFastDictCallableMethodCompiled(ctx context.Context, dict *object.Dict, 
 	switch fn := pair.Value.(type) {
 	case *object.Builtin:
 		ctxWithEnv := SetEnvInContext(ctx, env)
-		return fn.Fn(ctxWithEnv, object.NewKwargs(nil), args...)
+		return checkResult(fn.Fn(ctxWithEnv, object.NewKwargs(nil), args...))
 	case *object.Function:
 		return applyFunctionWithContext(ctx, fn, args, nil, env)
 	case *object.LambdaFunction:
@@ -1860,16 +1863,36 @@ func compileListLiteral(n *ast.ListLiteral) object.EvalFn {
 	for i, e := range n.Elements {
 		_, starred[i] = e.(*ast.StarredElement)
 	}
+	hasStar := hasTrue(starred)
+	// Every element expression, starred or not, gets a slot; a starred
+	// literal builds a second array of the same size to splice into.
+	slots := len(elements)
+	if hasStar {
+		slots *= 2
+	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
+		// Refuse an oversized literal before running its expressions. A
+		// literal within every limit, with accounting off, skips both the
+		// check and the tracking for one atomic load.
+		bounded := !object.SlotsWithin(slots)
+		if bounded {
+			if errObj := checkElementCount(slots); errObj != nil {
+				return errObj
+			}
+		}
 		vals := evalCompiledExpressions(ctx, env, elements)
 		if isPropagatedError(vals) {
 			return vals[0]
 		}
-		if !hasTrue(starred) {
+		if bounded {
+			object.TrackSlice(vals)
+		}
+		if !hasStar {
 			return &object.List{Elements: vals}
 		}
 		// Splice starred elements' iterables into place.
 		out := make([]object.Object, 0, len(vals))
+		object.TrackSlice(out)
 		for i, v := range vals {
 			if !starred[i] {
 				out = append(out, v)
@@ -1882,7 +1905,10 @@ func compileListLiteral(n *ast.ListLiteral) object.EvalFn {
 			if !ok {
 				return errors.NewTypeErrorTagged("argument after * must be an iterable, not %s", getTypeName(v))
 			}
-			out = append(out, elems...)
+			var errObj object.Object
+			if out, errObj = appendElements(out, elems...); errObj != nil {
+				return errObj
+			}
 		}
 		return &object.List{Elements: out}
 	}
@@ -1895,16 +1921,30 @@ func compileTupleLiteral(n *ast.TupleLiteral) object.EvalFn {
 		_, starred[i] = e.(*ast.StarredElement)
 	}
 	hasStar := hasTrue(starred)
+	slots := len(elements)
+	if hasStar {
+		slots *= 2
+	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
+		bounded := !object.SlotsWithin(slots)
+		if bounded {
+			if errObj := checkElementCount(slots); errObj != nil {
+				return errObj
+			}
+		}
 		vals := evalCompiledExpressions(ctx, env, elements)
 		if isPropagatedError(vals) {
 			return vals[0]
+		}
+		if bounded {
+			object.TrackSlice(vals)
 		}
 		if !hasStar {
 			return &object.Tuple{Elements: vals}
 		}
 		// Splice starred elements' iterables into place: (1, *xs, 4).
 		out := make([]object.Object, 0, len(vals))
+		object.TrackSlice(out)
 		for i, v := range vals {
 			if !starred[i] {
 				out = append(out, v)
@@ -1917,7 +1957,10 @@ func compileTupleLiteral(n *ast.TupleLiteral) object.EvalFn {
 			if !ok {
 				return errors.NewTypeErrorTagged("argument after * must be an iterable, not %s", getTypeName(v))
 			}
-			out = append(out, elems...)
+			var errObj object.Object
+			if out, errObj = appendElements(out, elems...); errObj != nil {
+				return errObj
+			}
 		}
 		return &object.Tuple{Elements: out}
 	}
@@ -1930,9 +1973,18 @@ func compileSetLiteral(n *ast.SetLiteral) object.EvalFn {
 		_, starred[i] = e.(*ast.StarredElement)
 	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
+		bounded := !object.SlotsWithin(len(elements))
+		if bounded {
+			if errObj := checkElementCount(len(elements)); errObj != nil {
+				return errObj
+			}
+		}
 		vals := evalCompiledExpressions(ctx, env, elements)
 		if isPropagatedError(vals) {
 			return vals[0]
+		}
+		if bounded {
+			object.TrackSlice(vals)
 		}
 		s := object.NewSet()
 		for i, elem := range vals {
@@ -1972,6 +2024,13 @@ func compileDictLiteral(n *ast.DictLiteral) object.EvalFn {
 		if len(pairKeys) == 0 {
 			return object.NewDict()
 		}
+		// The dict is presized to the literal's entries, **mappings
+		// included, so that count is checked before any is evaluated.
+		if !object.SlotsWithin(len(pairKeys)) {
+			if errObj := checkDictSize(len(pairKeys)); errObj != nil {
+				return errObj
+			}
+		}
 		result := object.NewDictSized(len(pairKeys))
 
 		for i := range pairKeys {
@@ -1983,6 +2042,9 @@ func compileDictLiteral(n *ast.DictLiteral) object.EvalFn {
 					return mv
 				}
 				if md, isDict := mv.(*object.Dict); isDict {
+					if errObj := checkDictMerge(result, md); errObj != nil {
+						return errObj
+					}
 					result.StoreFrom(md)
 					continue
 				}
@@ -2013,6 +2075,9 @@ func compileDictLiteral(n *ast.DictLiteral) object.EvalFn {
 							if herr != nil {
 								return herr
 							}
+							if errObj := checkDictGrowth(result, hk); errObj != nil {
+								return errObj
+							}
 							result.Store(hk, k, v)
 						}
 						continue
@@ -2033,6 +2098,9 @@ func compileDictLiteral(n *ast.DictLiteral) object.EvalFn {
 			hk, raised := evalHashKeyChecked(ctx, key)
 			if raised != nil {
 				return raised
+			}
+			if errObj := checkDictGrowth(result, hk); errObj != nil {
+				return errObj
 			}
 			result.Store(hk, key, value)
 		}
@@ -2130,7 +2198,7 @@ func compileSlice(n *ast.SliceExpression) object.EvalFn {
 			return result
 		case *object.String:
 			elements := sliceString(obj.StringValue(), start, end, step, hasStart, hasEnd, hasStep)
-			return object.NewString(elements)
+			return object.NewSubstring(elements, obj.StringValue())
 		case *object.Bytes:
 			return sliceBytes(obj, start, end, step, hasStart, hasEnd, hasStep)
 		case *object.FloatArray:
@@ -2218,6 +2286,9 @@ func applyAugmentedOp(ctx context.Context, op ast.Op, currentVal, newVal object.
 	if op == ast.OpAddEq {
 		if cur, ok := currentVal.(*object.String); ok {
 			if r, ok := newVal.(*object.String); ok {
+				if errObj := checkConcat(len(cur.StringValue()) + len(r.StringValue())); errObj != nil {
+					return nil, false, errObj
+				}
 				return object.NewString(cur.StringValue() + r.StringValue()), false, nil
 			}
 		}
@@ -2233,6 +2304,9 @@ func applyAugmentedOp(ctx context.Context, op ast.Op, currentVal, newVal object.
 	if op == ast.OpBitOrEq {
 		if cur, ok := currentVal.(*object.Dict); ok {
 			if r, ok := newVal.(*object.Dict); ok {
+				if errObj := checkDictMerge(cur, r); errObj != nil {
+					return nil, false, errObj
+				}
 				cur.StoreFrom(r)
 				return nil, true, nil
 			}
@@ -2245,7 +2319,11 @@ func applyAugmentedOp(ctx context.Context, op ast.Op, currentVal, newVal object.
 		switch op {
 		case ast.OpAddEq:
 			if r, ok := newVal.(*object.List); ok {
-				cur.Elements = append(cur.Elements, r.Elements...)
+				elements, errObj := appendElements(cur.Elements, r.Elements...)
+				if errObj != nil {
+					return nil, false, errObj
+				}
+				cur.Elements = elements
 				return nil, true, nil
 			}
 		case ast.OpMulEq:
@@ -2266,6 +2344,9 @@ func applyAugmentedOp(ctx context.Context, op ast.Op, currentVal, newVal object.
 		if r, ok := newVal.(*object.Set); ok {
 			switch op {
 			case ast.OpBitOrEq:
+				if errObj := checkSetMerge(cur, r); errObj != nil {
+					return nil, false, errObj
+				}
 				cur.InPlaceUnion(r)
 				return nil, true, nil
 			case ast.OpBitAndEq:
@@ -2275,6 +2356,9 @@ func applyAugmentedOp(ctx context.Context, op ast.Op, currentVal, newVal object.
 				cur.InPlaceDifference(r)
 				return nil, true, nil
 			case ast.OpBitXorEq:
+				if errObj := checkSetMerge(cur, r); errObj != nil {
+					return nil, false, errObj
+				}
 				cur.InPlaceSymmetricDifference(r)
 				return nil, true, nil
 			}
@@ -2646,6 +2730,10 @@ func newCompSource(iterable ast.Expression, variables []ast.Expression, addition
 // once per element with the comprehension environment bound; a non-nil
 // body result (an error or raised exception) stops the iteration and is
 // returned.
+// uncheckedRangeLen is the longest range a comprehension runs without
+// checking its context for cancellation.
+const uncheckedRangeLen = 1024
+
 func (s *compSource) run(ctx context.Context, env *object.Environment, sized func(int), body func(compEnv *object.Environment) object.Object) object.Object {
 	var compEnv *object.Environment
 	var step func(element object.Object) object.Object
@@ -2673,12 +2761,28 @@ func (s *compSource) run(ctx context.Context, env *object.Environment, sized fun
 				return errObj
 			}
 			if ok {
-				if sized != nil {
-					if n := rangeLen(start, stop, inc); n > 0 {
-						sized(n)
-					}
+				n := rangeLen(start, stop, inc)
+				if sized != nil && n > 0 {
+					sized(n)
 				}
+				if n <= uncheckedRangeLen {
+					// A short range cannot run long enough to need a
+					// cancellation check, and a check per batch would be a
+					// noticeable share of its cost.
+					for i := start; (inc > 0 && i < stop) || (inc < 0 && i > stop); i += inc {
+						if out := step(object.NewInteger(i)); out != nil {
+							return out
+						}
+					}
+					return nil
+				}
+				// Check the context as a for loop would, so a huge range stays
+				// cancellable.
+				cc := newContextChecker(ctx)
 				for i := start; (inc > 0 && i < stop) || (inc < 0 && i > stop); i += inc {
+					if err := cc.check(); err != nil {
+						return err
+					}
 					if out := step(object.NewInteger(i)); out != nil {
 						return out
 					}
@@ -2750,7 +2854,9 @@ func compileListComprehension(n *ast.ListComprehension) object.EvalFn {
 				if propagates(v) {
 					return v
 				}
-				result = append(result, v)
+				if errObj := appendElement(&result, v); errObj != nil {
+					return errObj
+				}
 				return nil
 			}
 			if len(clauses) > 0 {
@@ -2758,7 +2864,15 @@ func compileListComprehension(n *ast.ListComprehension) object.EvalFn {
 			}
 			return emit()
 		}
-		if err := src.run(ctx, env, func(size int) { result = make([]object.Object, 0, size) }, runBody); err != nil {
+		// Presize only within the limits; otherwise the appends grow the list
+		// and stop with the size error when it really gets too large.
+		presize := func(size int) {
+			if checkElementCount(size) == nil {
+				result = make([]object.Object, 0, min(size, maxPresize))
+				object.TrackSlice(result)
+			}
+		}
+		if err := src.run(ctx, env, presize, runBody); err != nil {
 			return err
 		}
 		return &object.List{Elements: result}
@@ -2804,6 +2918,9 @@ func compileDictComprehension(n *ast.DictComprehension) object.EvalFn {
 				if rerr != nil {
 					return rerr
 				}
+				if errObj := checkDictGrowth(result, hk); errObj != nil {
+					return errObj
+				}
 				result.Store(hk, k, v)
 				return nil
 			}
@@ -2812,7 +2929,12 @@ func compileDictComprehension(n *ast.DictComprehension) object.EvalFn {
 			}
 			return emit()
 		}
-		if err := src.run(ctx, env, func(size int) { result = object.NewDictSized(size) }, runBody); err != nil {
+		presize := func(size int) {
+			if size = min(size, maxPresize); checkDictSize(size) == nil {
+				result = object.NewDictSized(size)
+			}
+		}
+		if err := src.run(ctx, env, presize, runBody); err != nil {
 			return err
 		}
 		return result

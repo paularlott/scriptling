@@ -416,10 +416,12 @@ Returns:
 					defer stopTimer(timer)
 
 					for time.Now().Before(deadline) {
-						if data, err := os.ReadFile(path); err == nil {
-							if bytes.Contains(data, needle) {
-								return object.NewBoolean(true)
-							}
+						data, tooLarge, readErr := object.ReadFileLimited(path)
+						if tooLarge != nil {
+							return tooLarge
+						}
+						if readErr == nil && bytes.Contains(data, needle) {
+							return object.NewBoolean(true)
 						}
 
 						if !waitForNextPoll(ctx, timer, pollInterval) {
@@ -428,10 +430,12 @@ Returns:
 					}
 
 					// Final check
-					if data, err := os.ReadFile(path); err == nil {
-						if bytes.Contains(data, needle) {
-							return object.NewBoolean(true)
-						}
+					data, tooLarge, readErr := object.ReadFileLimited(path)
+					if tooLarge != nil {
+						return tooLarge
+					}
+					if readErr == nil && bytes.Contains(data, needle) {
+						return object.NewBoolean(true)
 					}
 					return object.NewBoolean(false)
 				},

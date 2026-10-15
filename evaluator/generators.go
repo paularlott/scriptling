@@ -427,6 +427,7 @@ func generatorIterFor(ctx context.Context, val object.Object, env *object.Enviro
 		return sliceIterator(o.Elements), nil
 	case *object.String:
 		elements := make([]object.Object, 0, len(o.StringValue()))
+		object.TrackSlice(elements)
 		for _, ch := range o.StringValue() {
 			elements = append(elements, object.NewString(string(ch)))
 		}

@@ -165,11 +165,16 @@ Returns the value of the environment variable key if it exists, None if not set 
 					return pathErrorException("cannot read directory", readErr)
 				}
 
-				elements := make([]object.Object, len(entries))
-				for i, entry := range entries {
-					elements[i] = object.NewString(entry.Name())
+				out, errObj := newResultList(ctx, len(entries))
+				if errObj != nil {
+					return errObj
 				}
-				return &object.List{Elements: elements}
+				for _, entry := range entries {
+					if errObj := out.add(object.NewString(entry.Name())); errObj != nil {
+						return errObj
+					}
+				}
+				return out.list()
 			},
 			HelpText: `listdir(path=".") - List directory contents
 

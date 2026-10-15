@@ -208,6 +208,7 @@ func (t *tarfileLibraryInstance) fnGetnames(ctx context.Context, kwargs object.K
 		return errors.NewError("TarFile.getnames: archive not open for reading")
 	}
 	elements := make([]object.Object, len(nd.headers))
+	object.TrackSlice(elements)
 	for i, hdr := range nd.headers {
 		elements[i] = object.NewString(hdr.Name)
 	}
@@ -233,6 +234,7 @@ func (t *tarfileLibraryInstance) fnRead(ctx context.Context, kwargs object.Kwarg
 	// Re-open and stream to the target member (tar is sequential).
 	var content string
 	var readErr error
+	var limitErr object.Object
 	object.RunBlocking(ctx, func() {
 		f, err := os.Open(nd.path)
 		if err != nil {
@@ -258,9 +260,13 @@ func (t *tarfileLibraryInstance) fnRead(ctx context.Context, kwargs object.Kwarg
 				return
 			}
 			if hdr.Name == name {
-				data, err := io.ReadAll(tr)
+				data, tooLarge, err := object.ReadAllLimited(tr, "archive entry")
 				if err != nil {
 					readErr = err
+					return
+				}
+				if tooLarge != nil {
+					limitErr = tooLarge
 					return
 				}
 				content = string(data)
@@ -270,6 +276,9 @@ func (t *tarfileLibraryInstance) fnRead(ctx context.Context, kwargs object.Kwarg
 	})
 	if readErr != nil {
 		return errors.NewError("TarFile.read: %s", readErr.Error())
+	}
+	if limitErr != nil {
+		return limitErr
 	}
 	return object.NewString(content)
 }
@@ -355,6 +364,7 @@ func (t *tarfileLibraryInstance) fnExtractall(ctx context.Context, kwargs object
 		return errors.NewError("TarFile.extractall: %s", extractErr.Error())
 	}
 	elements := make([]object.Object, len(paths))
+	object.TrackSlice(elements)
 	for i, p := range paths {
 		elements[i] = object.NewString(p)
 	}
@@ -566,7 +576,13 @@ func addPathToTar(w *tar.Writer, srcPath, arcname string, config fssecurity.Conf
 }
 
 func addFileToTar(w *tar.Writer, srcPath, arcname string) error {
-	info, err := os.Stat(srcPath)
+	// Stream the file in, so adding a large file does not hold it in memory.
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	info, err := src.Stat()
 	if err != nil {
 		return err
 	}
@@ -579,10 +595,6 @@ func addFileToTar(w *tar.Writer, srcPath, arcname string) error {
 	if err := w.WriteHeader(hdr); err != nil {
 		return err
 	}
-	data, err := os.ReadFile(srcPath)
-	if err != nil {
-		return err
-	}
-	_, err = w.Write(data)
+	_, err = io.CopyN(w, src, hdr.Size)
 	return err
 }

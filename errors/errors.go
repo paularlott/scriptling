@@ -86,6 +86,12 @@ func NewCallDepthExceededError(max int) *object.Error {
 	return &object.Error{Message: fmt.Sprintf("%s: maximum depth is %d", ErrCallDepthExceeded, max)}
 }
 
+// NewMemoryError creates an error that `except MemoryError` catches, for an
+// operation that would create a value larger than the interpreter allows.
+func NewMemoryError(format string, args ...interface{}) *object.Error {
+	return object.NewMemoryError(format, args...)
+}
+
 // NewPanicError creates a panic error with the panic value
 func NewPanicError(panicValue interface{}) *object.Error {
 	return &object.Error{Message: fmt.Sprintf("%s: %v", ErrPanic, panicValue)}

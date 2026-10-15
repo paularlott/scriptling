@@ -1,6 +1,9 @@
 package object
 
-import "fmt"
+import (
+	"fmt"
+	"unsafe"
+)
 
 // Iterator represents a Python-style iterator
 type Iterator struct {
@@ -77,12 +80,14 @@ func IterableToSlice(obj Object) ([]Object, bool) {
 		for _, ch := range iter.value {
 			elements = append(elements, &String{value: string(ch)})
 		}
+		TrackSliceWeighted(elements, int64(unsafe.Sizeof(Object(nil)))+stringObjectOverhead)
 		return elements, true
 	case *Bytes:
 		elements := make([]Object, len(iter.value))
 		for i, b := range iter.value {
 			elements[i] = NewInteger(int64(b))
 		}
+		TrackSlice(elements)
 		return elements, true
 	case *Iterator:
 		if iter.infinite {

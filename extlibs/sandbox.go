@@ -3,7 +3,6 @@ package extlibs
 import (
 	"context"
 	"io"
-	"os"
 	"path/filepath"
 
 	"github.com/paularlott/scriptling/conversion"
@@ -55,6 +54,26 @@ func GetSandboxFactory() SandboxFactory {
 	return sandboxState.factory
 }
 
+// resourceGuardSharer is implemented by instances (*scriptling.Scriptling)
+// that can share another interpreter's resource guard.
+type resourceGuardSharer interface {
+	ShareResourceGuard(guard *object.ResourceGuard)
+}
+
+// inheritResourceGuard gives a sandbox the guard of the interpreter that
+// created it, so the sandbox has the same memory and value limits and
+// its memory counts against the parent's budget: a script cannot escape its
+// limits by running code in sandboxes. Instances that cannot share a guard
+// keep their own.
+func inheritResourceGuard(instance SandboxInstance, guard *object.ResourceGuard) {
+	if guard == nil {
+		return
+	}
+	if sharer, ok := instance.(resourceGuardSharer); ok {
+		sharer.ShareResourceGuard(guard)
+	}
+}
+
 // sandboxEnv wraps a SandboxInstance and tracks execution state
 type sandboxEnv struct {
 	instance     SandboxInstance
@@ -84,6 +103,7 @@ func NewSandboxLibrary(allowedPaths []string) *object.Library {
 		if instance == nil {
 			return errors.NewError("sandbox factory returned nil")
 		}
+		inheritResourceGuard(instance, getEnvFromContext(ctx).ResourceGuard())
 
 		// Check for capture_output kwarg (default: false = discard output)
 		captureOutput, kwErr := kwargs.GetBool("capture_output", false)
@@ -258,8 +278,8 @@ func (env *sandboxEnv) execFile(ctx context.Context, kwargs object.Kwargs, args 
 		return &object.Null{}
 	}
 
-	content, readErr := os.ReadFile(path)
-	if readErr != nil {
+	content, tooLarge, readErr := object.ReadFileLimited(path)
+	if readErr != nil || tooLarge != nil {
 		env.exitCode = 1
 		return &object.Null{}
 	}

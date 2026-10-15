@@ -129,7 +129,7 @@ func TestBuildURLWithParams(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildURLWithParams(tt.baseURL, tt.params)
+			result := buildURLWithParamsRaw(tt.baseURL, tt.params)
 			if !containsStr(result, tt.wantContains) {
 				t.Errorf("buildURLWithParams(%q, %v) = %q, want to contain %q",
 					tt.baseURL, tt.params, result, tt.wantContains)

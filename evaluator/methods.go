@@ -109,7 +109,7 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 
 	// Handle library method calls (dictionaries)
 	if obj.Type() == object.DICT_OBJ {
-		return callDictMethod(ctx, obj.(*object.Dict), method, args, keywords, env)
+		return checkResult(callDictMethod(ctx, obj.(*object.Dict), method, args, keywords, env))
 	}
 
 	// Handle integer methods
@@ -124,22 +124,22 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 
 	// Handle list methods
 	if obj.Type() == object.LIST_OBJ {
-		return callListMethod(ctx, obj.(*object.List), method, args, keywords, env)
+		return checkResult(callListMethod(ctx, obj.(*object.List), method, args, keywords, env))
 	}
 
 	// Handle set methods
 	if obj.Type() == object.SET_OBJ {
-		return callSetMethod(ctx, obj.(*object.Set), method, args, keywords, env)
+		return checkResult(callSetMethod(ctx, obj.(*object.Set), method, args, keywords, env))
 	}
 
 	// Handle tuple methods
 	if obj.Type() == object.TUPLE_OBJ {
-		return callTupleMethod(ctx, obj.(*object.Tuple), method, args, env)
+		return checkResult(callTupleMethod(ctx, obj.(*object.Tuple), method, args, env))
 	}
 
 	// Handle FloatArray methods
 	if obj.Type() == object.FLOAT_ARRAY_OBJ {
-		return callFloatArrayMethod(obj.(*object.FloatArray), method, args)
+		return checkResult(callFloatArrayMethod(obj.(*object.FloatArray), method, args))
 	}
 
 	// Handle Instance method calls
@@ -179,12 +179,12 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 
 	// Default to string methods if object is a string
 	if obj.Type() == object.STRING_OBJ {
-		return callStringMethod(ctx, obj.(*object.String), method, args, keywords, env)
+		return checkResult(callStringMethod(ctx, obj.(*object.String), method, args, keywords, env))
 	}
 
 	// Bytes methods
 	if obj.Type() == object.BYTES_OBJ {
-		return callBytesMethod(ctx, obj.(*object.Bytes), method, args, keywords, env)
+		return checkResult(callBytesMethod(ctx, obj.(*object.Bytes), method, args, keywords, env))
 	}
 
 	return attributeError(obj, method)
@@ -293,7 +293,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		switch fn := pair.Value.(type) {
 		case *object.Builtin:
 			ctxWithEnv := SetEnvInContext(ctx, env)
-			return fn.Fn(ctxWithEnv, object.NewKwargs(keywords), args...)
+			return checkResult(fn.Fn(ctxWithEnv, object.NewKwargs(keywords), args...))
 		case *object.Function:
 			return applyFunctionWithContext(ctx, fn, args, keywords, env)
 		case *object.LambdaFunction:
@@ -409,6 +409,9 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(args) == 1 {
 			switch other := args[0].(type) {
 			case *object.Dict:
+				if errObj := checkDictMerge(dict, other); errObj != nil {
+					return errObj
+				}
 				dict.StoreFrom(other)
 			case *object.List:
 				for _, elem := range other.Elements {
@@ -427,6 +430,9 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 					hk, rerr := evalHashKeyChecked(ctx, pair[0])
 					if rerr != nil {
 						return rerr
+					}
+					if errObj := checkDictGrowth(dict, hk); errObj != nil {
+						return errObj
 					}
 					dict.Store(hk, pair[0], pair[1])
 				}
@@ -472,6 +478,9 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		var defaultVal object.Object = NULL
 		if len(args) == 2 {
 			defaultVal = args[1]
+		}
+		if errObj := checkDictGrowth(dict, key); errObj != nil {
+			return errObj
 		}
 		dict.Store(key, args[0], defaultVal)
 		return defaultVal
@@ -581,7 +590,9 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
 		}
-		list.Elements = append(list.Elements, args[0])
+		if errObj := appendElement(&list.Elements, args[0]); errObj != nil {
+			return errObj
+		}
 		return NULL
 	case "extend":
 		if err := errors.ExactArgs(args, 1); err != nil {
@@ -595,14 +606,22 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 			if !ok {
 				return errors.NewTypeError("iterable", inst.Type().String())
 			}
-			list.Elements = append(list.Elements, elems...)
+			grown, errObj := appendElements(list.Elements, elems...)
+			if errObj != nil {
+				return errObj
+			}
+			list.Elements = grown
 			return NULL
 		}
 		elements, err := args[0].AsList()
 		if err != nil {
 			return errors.ParameterError("iterable", err)
 		}
-		list.Elements = append(list.Elements, elements...)
+		grown, errObj := appendElements(list.Elements, elements...)
+		if errObj != nil {
+			return errObj
+		}
+		list.Elements = grown
 		return NULL
 	case "index":
 		if len(args) < 1 || len(args) > 3 {
@@ -710,7 +729,9 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 			i = len(list.Elements)
 		}
 		// Optimized insert: avoid intermediate slice allocation
-		list.Elements = append(list.Elements, nil)
+		if errObj := appendElement(&list.Elements, nil); errObj != nil {
+			return errObj
+		}
 		copy(list.Elements[i+1:], list.Elements[i:])
 		list.Elements[i] = args[1]
 		return NULL
@@ -741,6 +762,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 			return err
 		}
 		elements := make([]object.Object, len(list.Elements))
+		object.TrackSlice(elements)
 		copy(elements, list.Elements)
 		return &object.List{Elements: elements}
 	case "reverse":
@@ -852,6 +874,9 @@ func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args [
 			}
 			total += len(bb.BytesValue())
 		}
+		if errObj := checkSize("joined bytes", int64(total)); errObj != nil {
+			return errObj
+		}
 		out := make([]byte, 0, total)
 		sep := b.BytesValue()
 		for i, elem := range elements {
@@ -871,11 +896,20 @@ func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args [
 		maxSplit := -1
 		if len(args) == 2 {
 			if n, err := args[1].AsInt(); err == nil {
-				maxSplit = int(n)
+				maxSplit = int(clampMaxsplit(n, len(data)))
 			}
 		}
 		var parts [][]byte
+		limitParts := func(n int) int {
+			if maxSplit >= 0 {
+				return min(n, maxSplit+1)
+			}
+			return n
+		}
 		if len(args) == 0 || args[0].Type() == object.NULL_OBJ {
+			if errObj := checkBytesSplit(len(data), int64(limitParts(len(data)/2+1)), func() int { return limitParts(countBytesFields(data)) }); errObj != nil {
+				return errObj
+			}
 			parts = bytesFields(data)
 		} else {
 			sepObj, ok := args[0].(*object.Bytes)
@@ -886,6 +920,9 @@ func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args [
 			if len(sep) == 0 {
 				return errors.NewError("empty separator")
 			}
+			if errObj := checkBytesSplit(len(data), int64(limitParts(len(data)/len(sep)+1)), func() int { return limitParts(bytes.Count(data, sep) + 1) }); errObj != nil {
+				return errObj
+			}
 			if maxSplit < 0 {
 				parts = bytes.Split(data, sep)
 			} else {
@@ -893,6 +930,7 @@ func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args [
 			}
 		}
 		elems := make([]object.Object, len(parts))
+		object.TrackSlice(elems)
 		for i, p := range parts {
 			elems[i] = object.NewBytes(p)
 		}
@@ -947,10 +985,16 @@ func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args [
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
+		if errObj := checkSize("hex string", int64(len(b.BytesValue()))*2); errObj != nil {
+			return errObj
+		}
 		return object.NewString(hex.EncodeToString(b.BytesValue()))
 	case "base64":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
+		}
+		if errObj := checkSize("Base64 string", int64(base64.StdEncoding.EncodedLen(len(b.BytesValue())))); errObj != nil {
+			return errObj
 		}
 		return object.NewString(base64.StdEncoding.EncodeToString(b.BytesValue()))
 	case "length":
@@ -986,12 +1030,16 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				if err != nil {
 					return errors.ParameterError("maxsplit", err)
 				}
-				maxsplit = n
+				maxsplit = clampMaxsplit(n, len(str.StringValue()))
+			}
+			if errObj := checkSplitCount(str.StringValue(), "", maxsplit); errObj != nil {
+				return errObj
 			}
 			elements := whitespaceSplit(str.StringValue(), maxsplit)
 			list := &object.List{Elements: make([]object.Object, len(elements))}
+			object.TrackSlice(list.Elements)
 			for i, part := range elements {
-				list.Elements[i] = object.NewString(part)
+				list.Elements[i] = object.NewSubstring(part, str.StringValue())
 			}
 			return list
 		}
@@ -1003,6 +1051,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 
 		var parts []string
 		if len(args) == 1 {
+			if errObj := checkSplitCount(str.StringValue(), sep, -1); errObj != nil {
+				return errObj
+			}
 			parts = strings.Split(str.StringValue(), sep)
 		} else {
 			maxsplitObj := args[1]
@@ -1010,16 +1061,21 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			if err != nil {
 				return errors.ParameterError("maxsplit", err)
 			}
+			maxsplit = clampMaxsplit(maxsplit, len(str.StringValue()))
 			n := int(maxsplit + 1)
 			if maxsplit < 0 {
 				n = -1
+			}
+			if errObj := checkSplitCount(str.StringValue(), sep, int64(n)-1); errObj != nil {
+				return errObj
 			}
 			parts = strings.SplitN(str.StringValue(), sep, n)
 		}
 
 		elements := make([]object.Object, len(parts))
+		object.TrackSlice(elements)
 		for i, part := range parts {
-			elements[i] = object.NewString(part)
+			elements[i] = object.NewSubstring(part, str.StringValue())
 		}
 		return &object.List{Elements: elements}
 	case "rsplit":
@@ -1035,12 +1091,16 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				if err != nil {
 					return errors.ParameterError("maxsplit", err)
 				}
-				maxsplit = n
+				maxsplit = clampMaxsplit(n, len(str.StringValue()))
+			}
+			if errObj := checkSplitCount(str.StringValue(), "", maxsplit); errObj != nil {
+				return errObj
 			}
 			parts := rsplitFields(str.StringValue(), maxsplit)
 			elements := make([]object.Object, len(parts))
+			object.TrackSlice(elements)
 			for i, part := range parts {
-				elements[i] = object.NewString(part)
+				elements[i] = object.NewSubstring(part, str.StringValue())
 			}
 			return &object.List{Elements: elements}
 		}
@@ -1050,17 +1110,25 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		var parts []string
 		if len(args) == 1 {
+			if errObj := checkSplitCount(str.StringValue(), sep, -1); errObj != nil {
+				return errObj
+			}
 			parts = strings.Split(str.StringValue(), sep)
 		} else {
 			maxsplit, err := args[1].AsInt()
 			if err != nil {
 				return errors.ParameterError("maxsplit", err)
 			}
+			maxsplit = clampMaxsplit(maxsplit, len(str.StringValue()))
+			if errObj := checkSplitCount(str.StringValue(), sep, maxsplit); errObj != nil {
+				return errObj
+			}
 			parts = rsplitSep(str.StringValue(), sep, maxsplit)
 		}
 		elements := make([]object.Object, len(parts))
+		object.TrackSlice(elements)
 		for i, part := range parts {
-			elements[i] = object.NewString(part)
+			elements[i] = object.NewSubstring(part, str.StringValue())
 		}
 		return &object.List{Elements: elements}
 	case "replace":
@@ -1075,14 +1143,18 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err != nil {
 			return err
 		}
+		count := -1
 		if len(args) == 3 {
-			count, err := args[2].AsInt()
+			c, err := args[2].AsInt()
 			if err != nil {
 				return errors.ParameterError("count", err)
 			}
-			return object.NewString(strings.Replace(str.StringValue(), old, newVal, int(count)))
+			count = int(c)
 		}
-		return object.NewString(strings.ReplaceAll(str.StringValue(), old, newVal))
+		if errObj := checkReplaceSize(str.StringValue(), old, newVal, count); errObj != nil {
+			return errObj
+		}
+		return object.NewString(strings.Replace(str.StringValue(), old, newVal, count))
 	case "join":
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
@@ -1116,6 +1188,15 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				parts[i] = elem.Inspect()
 			}
 		}
+		if len(parts) > 1 {
+			total := int64(len(str.StringValue())) * int64(len(parts)-1)
+			for _, part := range parts {
+				total += int64(len(part))
+			}
+			if errObj := checkSize("joined string", total); errObj != nil {
+				return errObj
+			}
+		}
 		return object.NewString(strings.Join(parts, str.StringValue()))
 	case "capitalize":
 		if err := errors.ExactArgs(args, 0); err != nil {
@@ -1147,9 +1228,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			if errObj != nil {
 				return errors.ParameterError("chars", errObj)
 			}
-			return object.NewString(strings.Trim(str.StringValue(), chars))
+			return object.NewSubstring(strings.Trim(str.StringValue(), chars), str.StringValue())
 		}
-		return object.NewString(strings.TrimSpace(str.StringValue()))
+		return object.NewSubstring(strings.TrimSpace(str.StringValue()), str.StringValue())
 	case "lstrip":
 		if len(args) > 1 {
 			return errors.NewError("lstrip() takes at most 1 argument (%d given)", len(args))
@@ -1159,9 +1240,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			if errObj != nil {
 				return errors.ParameterError("chars", errObj)
 			}
-			return object.NewString(strings.TrimLeft(str.StringValue(), chars))
+			return object.NewSubstring(strings.TrimLeft(str.StringValue(), chars), str.StringValue())
 		}
-		return object.NewString(strings.TrimLeft(str.StringValue(), " \t\n\r\v\f"))
+		return object.NewSubstring(strings.TrimLeft(str.StringValue(), " \t\n\r\v\f"), str.StringValue())
 	case "rstrip":
 		if len(args) > 1 {
 			return errors.NewError("rstrip() takes at most 1 argument (%d given)", len(args))
@@ -1171,9 +1252,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			if errObj != nil {
 				return errors.ParameterError("chars", errObj)
 			}
-			return object.NewString(strings.TrimRight(str.StringValue(), chars))
+			return object.NewSubstring(strings.TrimRight(str.StringValue(), chars), str.StringValue())
 		}
-		return object.NewString(strings.TrimRight(str.StringValue(), " \t\n\r\v\f"))
+		return object.NewSubstring(strings.TrimRight(str.StringValue(), " \t\n\r\v\f"), str.StringValue())
 	case "startswith", "endswith":
 		if len(args) < 1 || len(args) > 3 {
 			return errors.NewError("%s() takes 1-3 arguments (%d given)", method, len(args))
@@ -1532,19 +1613,19 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}
 		}
 		return TRUE
-		case "isspace":
-			if err := errors.ExactArgs(args, 0); err != nil {
-				return err
-			}
-			if len(str.StringValue()) == 0 {
+	case "isspace":
+		if err := errors.ExactArgs(args, 0); err != nil {
+			return err
+		}
+		if len(str.StringValue()) == 0 {
+			return FALSE
+		}
+		for _, ch := range str.StringValue() {
+			if !unicode.IsSpace(ch) {
 				return FALSE
 			}
-			for _, ch := range str.StringValue() {
-				if !unicode.IsSpace(ch) {
-					return FALSE
-				}
-			}
-			return TRUE
+		}
+		return TRUE
 	case "isupper":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
@@ -1591,6 +1672,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if w <= len(str.StringValue()) {
 			return str
 		}
+		if errObj := checkWidth("padded string", int64(w)); errObj != nil {
+			return errObj
+		}
 		// Handle negative sign
 		if len(str.StringValue()) > 0 && (str.StringValue()[0] == '-' || str.StringValue()[0] == '+') {
 			var builder strings.Builder
@@ -1616,6 +1700,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		w := int(width)
 		if w <= len(str.StringValue()) {
 			return str
+		}
+		if errObj := checkWidth("padded string", int64(w)); errObj != nil {
+			return errObj
 		}
 		fillChar := " "
 		if len(args) == 2 {
@@ -1654,6 +1741,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if w <= len(str.StringValue()) {
 			return str
 		}
+		if errObj := checkWidth("padded string", int64(w)); errObj != nil {
+			return errObj
+		}
 		fillChar := " "
 		if len(args) == 2 {
 			fill, errObj2 := args[1].AsString()
@@ -1682,6 +1772,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		w := int(width)
 		if w <= len(str.StringValue()) {
 			return str
+		}
+		if errObj := checkWidth("padded string", int64(w)); errObj != nil {
+			return errObj
 		}
 		fillChar := " "
 		if len(args) == 2 {
@@ -1720,15 +1813,18 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				keepends = b
 			}
 		}
-		lines := []object.Object{}
 		text := str.StringValue()
+		if errObj := checkLineCount(text); errObj != nil {
+			return errObj
+		}
+		lines := []object.Object{}
 		start := 0
 		for i := 0; i < len(text); i++ {
 			if text[i] == '\n' {
 				if keepends {
-					lines = append(lines, object.NewString(text[start:i+1]))
+					lines = append(lines, object.NewSubstring(text[start:i+1], text))
 				} else {
-					lines = append(lines, object.NewString(text[start:i]))
+					lines = append(lines, object.NewSubstring(text[start:i], text))
 				}
 				start = i + 1
 			} else if text[i] == '\r' {
@@ -1737,16 +1833,17 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 					i++
 				}
 				if keepends {
-					lines = append(lines, object.NewString(text[start:i+1]))
+					lines = append(lines, object.NewSubstring(text[start:i+1], text))
 				} else {
-					lines = append(lines, object.NewString(text[start:end]))
+					lines = append(lines, object.NewSubstring(text[start:end], text))
 				}
 				start = i + 1
 			}
 		}
 		if start < len(text) {
-			lines = append(lines, object.NewString(text[start:]))
+			lines = append(lines, object.NewSubstring(text[start:], text))
 		}
+		object.TrackSlice(lines)
 		return &object.List{Elements: lines}
 	case "swapcase":
 		if len(args) != 0 {
@@ -1780,9 +1877,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}}
 		}
 		return &object.Tuple{Elements: []object.Object{
-			object.NewString(str.StringValue()[:idx]),
+			object.NewSubstring(str.StringValue()[:idx], str.StringValue()),
 			object.NewString(sep),
-			object.NewString(str.StringValue()[idx+len(sep):]),
+			object.NewSubstring(str.StringValue()[idx+len(sep):], str.StringValue()),
 		}}
 	case "rpartition":
 		if err := errors.ExactArgs(args, 1); err != nil {
@@ -1801,9 +1898,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}}
 		}
 		return &object.Tuple{Elements: []object.Object{
-			object.NewString(str.StringValue()[:idx]),
+			object.NewSubstring(str.StringValue()[:idx], str.StringValue()),
 			object.NewString(sep),
-			object.NewString(str.StringValue()[idx+len(sep):]),
+			object.NewSubstring(str.StringValue()[idx+len(sep):], str.StringValue()),
 		}}
 	case "removeprefix":
 		if err := errors.ExactArgs(args, 1); err != nil {
@@ -1814,7 +1911,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return err
 		}
 		if strings.HasPrefix(str.StringValue(), prefix) {
-			return object.NewString(str.StringValue()[len(prefix):])
+			return object.NewSubstring(str.StringValue()[len(prefix):], str.StringValue())
 		}
 		return str
 	case "removesuffix":
@@ -1826,7 +1923,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return err
 		}
 		if strings.HasSuffix(str.StringValue(), suffix) {
-			return object.NewString(str.StringValue()[:len(str.StringValue())-len(suffix)])
+			return object.NewSubstring(str.StringValue()[:len(str.StringValue())-len(suffix)], str.StringValue())
 		}
 		return str
 	case "encode":
@@ -1886,10 +1983,24 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}
 			tabsize = int(ts)
 		}
+		// Python removes tabs for a tab size of zero or less.
+		tabsize = max(tabsize, 0)
+		if tabs := strings.Count(str.StringValue(), "\t"); tabs > 0 && tabsize > 0 {
+			if int64(tabs) > absoluteMaxBytes/int64(tabsize) {
+				return object.NewMemoryError("expanded string too large")
+			}
+			// Each tab becomes at most tabsize spaces.
+			if errObj := checkWidth("expanded string", int64(len(str.StringValue())-tabs)+int64(tabs)*int64(tabsize)); errObj != nil {
+				return errObj
+			}
+		}
 		var result strings.Builder
 		col := 0
 		for _, ch := range str.StringValue() {
 			if ch == '\t' {
+				if tabsize == 0 {
+					continue
+				}
 				spaces := tabsize - (col % tabsize)
 				result.WriteString(strings.Repeat(" ", spaces))
 				col += spaces
@@ -2275,12 +2386,18 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 		for _, other := range sets {
 			switch method {
 			case "update":
+				if errObj := checkSetMerge(set, other); errObj != nil {
+					return errObj
+				}
 				set.InPlaceUnion(other)
 			case "intersection_update":
 				set.InPlaceIntersection(other)
 			case "difference_update":
 				set.InPlaceDifference(other)
 			case "symmetric_difference_update":
+				if errObj := checkSetMerge(set, other); errObj != nil {
+					return errObj
+				}
 				set.InPlaceSymmetricDifference(other)
 			}
 		}
@@ -2615,6 +2732,22 @@ func whitespaceSplit(s string, maxsplit int64) []string {
 
 // bytesFields splits data on runs of ASCII whitespace, like Python's
 // bytes.split() with no separator.
+// countBytesFields counts the fields bytesFields would return, without
+// building them.
+func countBytesFields(data []byte) int {
+	n := 0
+	inField := false
+	for _, c := range data {
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f' {
+			inField = false
+		} else if !inField {
+			inField = true
+			n++
+		}
+	}
+	return n
+}
+
 func bytesFields(data []byte) [][]byte {
 	var out [][]byte
 	start := -1

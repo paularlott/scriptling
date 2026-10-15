@@ -231,7 +231,11 @@ var stdinClass = &object.Class{
 					return &object.Error{Message: "read(): invalid stdin"}
 				}
 				var data []byte
-				object.RunBlocking(ctx, func() { data, _ = io.ReadAll(r) })
+				var limitErr object.Object
+				object.RunBlocking(ctx, func() { data, limitErr, _ = object.ReadAllLimited(r, "stdin") })
+				if limitErr != nil {
+					return limitErr
+				}
 				return object.NewString(string(data))
 			},
 			HelpText: `read() - Read all remaining data from stdin`,

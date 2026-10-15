@@ -2,14 +2,15 @@ package extlibs
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
@@ -17,6 +18,18 @@ import (
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/pool"
 )
+
+// parallelRequestOverhead estimates the memory requests.parallel holds per
+// request besides the response and the request's entries: the batch's slice
+// entries and the converted map's base size.
+const parallelRequestOverhead = 256
+
+// parallelRequestEntryBytes estimates the memory of one entry copied from a
+// request dict into its converted map.
+const parallelRequestEntryBytes = 64
+
+// parallelResultSlotBytes is the size of one slot of the result list.
+const parallelResultSlotBytes = int64(unsafe.Sizeof(object.Object(nil)))
 
 func RegisterRequestsLibrary(registrar interface{ RegisterLibrary(*object.Library) }, cfg ...*netsecurity.Config) {
 	lib := RequestsLibrary
@@ -80,22 +93,49 @@ var ResponseClass = &object.Class{
 	},
 }
 
-// createResponseInstance creates a new Response instance
+// createResponseInstance creates a Response for a request in a batch, where
+// every failure is a response with status 0: a response that does not fit
+// the limits becomes one too.
 func createResponseInstance(statusCode int, headers map[string]string, body []byte, url string) *object.Instance {
+	resp, errObj := newResponseInstance(statusCode, headers, body, url)
+	if errObj != nil {
+		resp, _ = newResponseInstance(0, nil, []byte(errObj.(*object.Error).Message), url)
+	}
+	return resp
+}
+
+// newResponseInstance creates a Response, or returns the error when the
+// response would not fit the limits.
+func newResponseInstance(statusCode int, headers map[string]string, body []byte, url string) (*object.Instance, object.Object) {
+	// The body was admitted as read; the response holds two more copies (the
+	// text and the bytes value), so admit those together before making them,
+	// and the headers as one value.
+	if errObj := object.CheckRoom("response", 2*int64(len(body))); errObj != nil {
+		return nil, errObj
+	}
+	var headerBytes int64
+	for k, v := range headers {
+		headerBytes += int64(len(k) + len(v))
+	}
+	if errObj := object.CheckAllocFor("response headers", headerBytes); errObj != nil {
+		return nil, errObj
+	}
+	text := object.NewString(string(body))
 	// Convert headers to object.Dict
 	headerDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
 	for k, v := range headers {
 		headerDict.SetByString(k, object.NewString(v))
 	}
 
-	return object.NewInstanceWithFields(ResponseClass, map[string]object.Object{
+	instance := object.NewInstanceWithFields(ResponseClass, map[string]object.Object{
 		"status_code": object.NewInteger(int64(statusCode)),
-		"text":        object.NewString(string(body)),
+		"text":        text,
 		"content":     object.NewBytes(body),
 		"headers":     headerDict,
-		"body":        object.NewString(string(body)), // deprecated alias of .text
+		"body":        text, // deprecated alias of .text, sharing its copy
 		"url":         object.NewString(url),
 	})
+	return instance, nil
 }
 
 // Exception types for requests library
@@ -109,7 +149,7 @@ var exceptionsNamespace = object.NewStringDict(map[string]object.Object{
 })
 
 // parseRequestOptions parses the options dict and returns timeout, headers, params, user, pass
-func parseRequestOptions(options map[string]object.Object) (int, map[string]string, map[string]string, string, string) {
+func parseRequestOptions(options map[string]object.Object) (int, map[string]string, map[string]string, string, string, object.Object) {
 	timeout := 5
 	headers := make(map[string]string)
 	params := make(map[string]string)
@@ -142,12 +182,16 @@ func parseRequestOptions(options map[string]object.Object) (int, map[string]stri
 			}
 		}
 	}
-	return timeout, headers, params, user, pass
+	if errObj := checkRequestFields(headers, params); errObj != nil {
+		return 0, nil, nil, "", "", errObj
+	}
+	return timeout, headers, params, user, pass, nil
 }
 
 // extractParams extracts params from a dict, converting all values to strings
 func extractParams(dict map[string]object.Object) map[string]string {
-	params := make(map[string]string)
+	params := make(map[string]string, len(dict))
+	object.TrackMap(params, int64(len(dict))*parallelRequestEntryBytes)
 	for key, value := range dict {
 		// Convert any value type to string (int, float, bool, etc.)
 		if strVal, err := object.CoerceWireString(value); err == nil {
@@ -158,7 +202,39 @@ func extractParams(dict map[string]object.Object) map[string]string {
 }
 
 // buildURLWithParams appends query parameters to a URL
-func buildURLWithParams(baseURL string, params map[string]string) string {
+func buildURLWithParams(baseURL string, params map[string]string) (string, object.Object) {
+	full := buildURLWithParamsRaw(baseURL, params)
+	// Encoding can triple a parameter's size: the URL is a value too.
+	if errObj := object.CheckAllocFor("request URL", int64(len(full))); errObj != nil {
+		return "", errObj
+	}
+	return full, nil
+}
+
+// checkRequestFields holds the converted headers and parameters, which the
+// request copies, to the interpreter's value limit as one value.
+// checkRequestFields admits the headers and parameters of a request: each
+// is a value on its own, and together they must fit in the memory left.
+func checkRequestFields(headers, params map[string]string) object.Object {
+	var total int64
+	for k, v := range headers {
+		n := int64(len(k) + len(v))
+		if errObj := object.CheckAllocFor("request header", n); errObj != nil {
+			return errObj
+		}
+		total += n
+	}
+	for k, v := range params {
+		n := int64(len(k) + len(v))
+		if errObj := object.CheckAllocFor("request parameter", n); errObj != nil {
+			return errObj
+		}
+		total += n
+	}
+	return object.CheckRoom("request headers and parameters", total)
+}
+
+func buildURLWithParamsRaw(baseURL string, params map[string]string) string {
 	if len(params) == 0 {
 		return baseURL
 	}
@@ -216,11 +292,21 @@ func extractRequestArgs(kwargs object.Kwargs, args []object.Object, hasData bool
 				return "", "", nil, errors.NewTypeError("STRING or BYTES", v.Type().String())
 			}
 		} else if hasData && k == "json" {
-			// Handle json parameter - convert to JSON string
-			jsonBytes, err := json.Marshal(conversion.ToGo(v))
+			// Handle json parameter - convert to JSON string, under the
+			// interpreter's limits: shared values convert once per reference
+			// and the encoded body is a value too.
+			goValue, limitErr := conversion.ToGoLimited(v)
+			if limitErr != nil {
+				return "", "", nil, limitErr
+			}
+			jsonBytes, err := json.Marshal(goValue)
 			if err != nil {
 				return "", "", nil, errors.NewError("failed to encode json: %s", err.Error())
 			}
+			if errObj := object.CheckAllocFor("request body", int64(len(jsonBytes))); errObj != nil {
+				return "", "", nil, errObj
+			}
+			object.TrackSlice(jsonBytes)
 			data = string(jsonBytes)
 			// Set Content-Type header if not already set
 			if _, hasHeaders := options["headers"]; !hasHeaders {
@@ -293,9 +379,15 @@ func newRequestsLibrary(client *http.Client) *object.Library {
 				if err != nil {
 					return err
 				}
-				timeout, headers, params, user, pass := parseRequestOptions(options)
+				timeout, headers, params, user, pass, errObj := parseRequestOptions(options)
+				if errObj != nil {
+					return errObj
+				}
 				// Build URL with query params
-				fullURL := buildURLWithParams(rawURL, params)
+				fullURL, errObj := buildURLWithParams(rawURL, params)
+				if errObj != nil {
+					return errObj
+				}
 				return httpRequestWithContext(ctx, "GET", fullURL, "", timeout, headers, user, pass, client)
 			},
 			HelpText: `get(url, **kwargs) - Send a GET request
@@ -319,9 +411,15 @@ Returns:
 				if err != nil {
 					return err
 				}
-				timeout, headers, params, user, pass := parseRequestOptions(options)
+				timeout, headers, params, user, pass, errObj := parseRequestOptions(options)
+				if errObj != nil {
+					return errObj
+				}
 				// POST can also have query params
-				fullURL := buildURLWithParams(url, params)
+				fullURL, errObj := buildURLWithParams(url, params)
+				if errObj != nil {
+					return errObj
+				}
 				return httpRequestWithContext(ctx, "POST", fullURL, data, timeout, headers, user, pass, client)
 			},
 			HelpText: `post(url, data=None, json=None, **kwargs) - Send a POST request
@@ -348,8 +446,14 @@ Returns:
 				if err != nil {
 					return err
 				}
-				timeout, headers, params, user, pass := parseRequestOptions(options)
-				fullURL := buildURLWithParams(url, params)
+				timeout, headers, params, user, pass, errObj := parseRequestOptions(options)
+				if errObj != nil {
+					return errObj
+				}
+				fullURL, errObj := buildURLWithParams(url, params)
+				if errObj != nil {
+					return errObj
+				}
 				return httpRequestWithContext(ctx, "PUT", fullURL, data, timeout, headers, user, pass, client)
 			},
 			HelpText: `put(url, data=None, json=None, **kwargs) - Send a PUT request
@@ -376,8 +480,14 @@ Returns:
 				if err != nil {
 					return err
 				}
-				timeout, headers, params, user, pass := parseRequestOptions(options)
-				fullURL := buildURLWithParams(rawURL, params)
+				timeout, headers, params, user, pass, errObj := parseRequestOptions(options)
+				if errObj != nil {
+					return errObj
+				}
+				fullURL, errObj := buildURLWithParams(rawURL, params)
+				if errObj != nil {
+					return errObj
+				}
 				return httpRequestWithContext(ctx, "DELETE", fullURL, "", timeout, headers, user, pass, client)
 			},
 			HelpText: `delete(url, **kwargs) - Send a DELETE request
@@ -400,8 +510,14 @@ Returns:
 				if err != nil {
 					return err
 				}
-				timeout, headers, params, user, pass := parseRequestOptions(options)
-				fullURL := buildURLWithParams(url, params)
+				timeout, headers, params, user, pass, errObj := parseRequestOptions(options)
+				if errObj != nil {
+					return errObj
+				}
+				fullURL, errObj := buildURLWithParams(url, params)
+				if errObj != nil {
+					return errObj
+				}
 				return httpRequestWithContext(ctx, "PATCH", fullURL, data, timeout, headers, user, pass, client)
 			},
 			HelpText: `patch(url, data=None, json=None, **kwargs) - Send a PATCH request
@@ -441,35 +557,83 @@ Returns:
 				}
 				maxParallel = clampRequestsMaxParallel(maxParallel)
 
+				// The batch's bookkeeping grows with the request count: the
+				// result list (a value, so held to the value limit), plus a
+				// converted map per request (held to the memory limit). Check
+				// both before building any of it.
+				if errObj := object.CheckElements(int64(len(requestList))); errObj != nil {
+					return errObj
+				}
+				// Everything the batch holds at once, as one total: the
+				// result list and the batch slices, plus each converted map,
+				// which copies every entry of its request dict.
+				batchBytes := int64(len(requestList)) * parallelRequestOverhead
+				for _, reqObj := range requestList {
+					if d, ok := reqObj.(*object.Dict); ok {
+						batchBytes += int64(len(d.Pairs)) * parallelRequestEntryBytes
+					}
+				}
+				// The result list is a value: its slots are checked above and
+				// charged below, so the preflight and the charges agree.
+				resultBytes := int64(len(requestList)) * parallelResultSlotBytes
+				if errObj := object.CheckRoom("parallel request batch", batchBytes+resultBytes); errObj != nil {
+					return errObj
+				}
 				results := make([]object.Object, len(requestList))
-				sem := make(chan struct{}, maxParallel)
+				object.TrackSlice(results)
 				var wg sync.WaitGroup
+
+				// Workers fetch for the calling interpreter: bind them to its
+				// guard so response bodies are charged to it and held to its
+				// limits.
+				guard := object.CurrentGuard()
+				if guard == nil {
+					guard = getEnvFromContext(ctx).ResourceGuard()
+				}
 
 				// Workers do pure-Go HTTP, not script — detach the environment from
 				// their context so the blocking HTTP call inside executeRequest does
 				// not try to release an interpreter lock the worker doesn't hold.
 				workerCtx := context.WithValue(ctx, "scriptling-env", (*object.Environment)(nil))
 
+				// Read the request dicts while this goroutine still holds the
+				// interpreter lock; workers only touch the converted maps.
+				reqDicts := make([]map[string]object.Object, len(requestList))
+				// The converted maps have no pointer of their own to charge;
+				// their estimated size rides on the slice that holds them.
+				object.TrackAlloc(&reqDicts[:1][0], batchBytes)
+				pending := make([]int, 0, len(requestList))
+				for i, reqObj := range requestList {
+					reqDict, dictErr := reqObj.AsDict()
+					if dictErr != nil {
+						results[i] = errors.NewTypeError("DICT", reqObj.Type().String())
+						continue
+					}
+					reqDicts[i] = reqDict
+					pending = append(pending, i)
+				}
+
 				// Release this goroutine's interpreter lock while the parallel batch
 				// runs, so other script goroutines can proceed meanwhile.
 				object.RunBlocking(ctx, func() {
-					for i, reqObj := range requestList {
-						reqDict, dictErr := reqObj.AsDict()
-						if dictErr != nil {
-							results[i] = errors.NewTypeError("DICT", reqObj.Type().String())
-							continue
-						}
-
+					// A fixed pool of max_parallel workers takes requests from
+					// a queue, so a long request list costs no goroutine each.
+					jobs := make(chan int)
+					workers := min(int(maxParallel), len(pending))
+					for range workers {
 						wg.Add(1)
-						go func(idx int, rd map[string]object.Object) {
+						go func() {
 							defer wg.Done()
-							sem <- struct{}{}
-							defer func() { <-sem }()
-
-							results[idx] = executeParallelRequest(workerCtx, rd, client)
-						}(i, reqDict)
+							defer object.BindGuard(guard)()
+							for idx := range jobs {
+								results[idx] = executeParallelRequest(workerCtx, reqDicts[idx], client)
+							}
+						}()
 					}
-
+					for _, i := range pending {
+						jobs <- i
+					}
+					close(jobs)
 					wg.Wait()
 				})
 				return &object.List{Elements: results}
@@ -513,7 +677,8 @@ Example:
 }
 
 func extractHeaders(dict map[string]object.Object) map[string]string {
-	headers := make(map[string]string)
+	headers := make(map[string]string, len(dict))
+	object.TrackMap(headers, int64(len(dict))*parallelRequestEntryBytes)
 	for key, value := range dict {
 		if strVal, err := value.AsString(); err == nil {
 			headers[key] = strVal
@@ -522,7 +687,46 @@ func extractHeaders(dict map[string]object.Object) map[string]string {
 	return headers
 }
 
+// checkOutgoingRequest admits everything an outgoing request is built from:
+// the URL, the body, each header and, when a user is given, the Basic Auth
+// header exactly as it will be sent. Each is a value on its own; together
+// they must fit in the memory left.
+func checkOutgoingRequest(url, body string, headers map[string]string, user, pass string) object.Object {
+	if errObj := object.CheckAllocFor("request URL", int64(len(url))); errObj != nil {
+		return errObj
+	}
+	if errObj := object.CheckAllocFor("request body", int64(len(body))); errObj != nil {
+		return errObj
+	}
+	total := int64(len(url) + len(body))
+	for k, v := range headers {
+		n := int64(len(k) + len(v))
+		if errObj := object.CheckAllocFor("request header", n); errObj != nil {
+			return errObj
+		}
+		total += n
+	}
+	if user != "" {
+		n := basicAuthHeaderBytes(user, pass)
+		if errObj := object.CheckAllocFor("request authorization", n); errObj != nil {
+			return errObj
+		}
+		total += n
+	}
+	return object.CheckRoom("request", total)
+}
+
+// basicAuthHeaderBytes is the size of the Authorization header SetBasicAuth
+// adds: the name, "Basic " and the padded Base64 of "user:pass".
+func basicAuthHeaderBytes(user, pass string) int64 {
+	credentials := len(user) + 1 + len(pass)
+	return int64(len("Authorization: Basic ") + base64.StdEncoding.EncodedLen(credentials))
+}
+
 func httpRequestWithContext(parentCtx context.Context, method, url, body string, timeoutSecs int, headers map[string]string, user, pass string, client *http.Client) object.Object {
+	if errObj := checkOutgoingRequest(url, body, headers, user, pass); errObj != nil {
+		return errObj
+	}
 	// Combine parent context with timeout
 	ctx, cancel := context.WithTimeout(parentCtx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
@@ -569,9 +773,14 @@ func httpRequestWithContext(parentCtx context.Context, method, url, body string,
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	var respBody []byte
+	var limitErr object.Object
+	object.RunBlocking(ctx, func() { respBody, limitErr, err = object.ReadAllLimited(resp.Body, "http response body") })
 	if err != nil {
 		return errors.NewError("http read error: %s", err.Error())
+	}
+	if limitErr != nil {
+		return limitErr
 	}
 
 	respHeaders := make(map[string]string)
@@ -581,7 +790,11 @@ func httpRequestWithContext(parentCtx context.Context, method, url, body string,
 		}
 	}
 
-	return createResponseInstance(resp.StatusCode, respHeaders, respBody, url)
+	instance, errObj := newResponseInstance(resp.StatusCode, respHeaders, respBody, url)
+	if errObj != nil {
+		return errObj
+	}
+	return instance
 }
 
 // executeParallelRequest executes a single request from a parallel batch spec dict.
@@ -622,11 +835,23 @@ func executeParallelRequest(ctx context.Context, spec map[string]object.Object, 
 	}
 
 	// Extract query params
+	params := map[string]string{}
 	if paramsObj, ok := spec["params"]; ok {
 		if d, err := paramsObj.AsDict(); err == nil {
-			params := extractParams(d)
-			urlStr = buildURLWithParams(urlStr, params)
+			params = extractParams(d)
 		}
+	}
+	// The worker is bound to the calling interpreter: converted fields and
+	// the encoded URL are held to its limits like the body below.
+	if errObj := checkRequestFields(headers, params); errObj != nil {
+		return createResponseInstance(0, nil, []byte(errObj.(*object.Error).Message), urlStr)
+	}
+	if len(params) > 0 {
+		full, errObj := buildURLWithParams(urlStr, params)
+		if errObj != nil {
+			return createResponseInstance(0, nil, []byte(errObj.(*object.Error).Message), urlStr)
+		}
+		urlStr = full
 	}
 
 	// Extract auth
@@ -645,10 +870,20 @@ func executeParallelRequest(ctx context.Context, spec map[string]object.Object, 
 	// Extract body — either 'data' (string) or 'json' (dict/list to encode)
 	body := ""
 	if jsonObj, ok := spec["json"]; ok {
-		jsonBytes, err := json.Marshal(conversion.ToGo(jsonObj))
+		// The worker is bound to the calling interpreter, so the converted
+		// value and the encoded body are held to its limits and charged.
+		goValue, limitErr := conversion.ToGoLimited(jsonObj)
+		if limitErr != nil {
+			return createResponseInstance(0, nil, []byte(limitErr.Message), urlStr)
+		}
+		jsonBytes, err := json.Marshal(goValue)
 		if err != nil {
 			return createResponseInstance(0, nil, []byte(fmt.Sprintf("failed to encode json: %s", err.Error())), urlStr)
 		}
+		if errObj := object.CheckAllocFor("request body", int64(len(jsonBytes))); errObj != nil {
+			return createResponseInstance(0, nil, []byte(errObj.(*object.Error).Message), urlStr)
+		}
+		object.TrackSlice(jsonBytes)
 		body = string(jsonBytes)
 		if _, hasContentType := headers["Content-Type"]; !hasContentType {
 			headers["Content-Type"] = "application/json"
@@ -659,5 +894,10 @@ func executeParallelRequest(ctx context.Context, spec map[string]object.Object, 
 		}
 	}
 
-	return httpRequestWithContext(ctx, method, urlStr, body, timeout, headers, user, pass, client)
+	// In a batch every failure is a response with status 0, as documented.
+	result := httpRequestWithContext(ctx, method, urlStr, body, timeout, headers, user, pass, client)
+	if errObj, ok := result.(*object.Error); ok {
+		return createResponseInstance(0, nil, []byte(errObj.Message), urlStr)
+	}
+	return result
 }

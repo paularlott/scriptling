@@ -212,7 +212,7 @@ var streamReaderClass = &object.Class{
 					if size >= 0 {
 						src = io.LimitReader(d.r, size)
 					}
-					data, rerr = io.ReadAll(src)
+					data, rerr = object.ReadAllLimitedErr(src, "stream data")
 				})
 				if d.closed.Load() {
 					return errors.NewError("read from a closed stream")

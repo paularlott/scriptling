@@ -48,7 +48,7 @@ var RegexClass = &object.Class{
 					return &object.Null{}
 				}
 
-				return createMatchInstance(groupsFromIndices(text, match), match[0], match[1], re.SubexpNames())
+				return createMatchInstance(text, groupsFromIndices(text, match), match[0], match[1], re.SubexpNames())
 			},
 			HelpText: `match(string) - Match pattern at start of string
 
@@ -76,7 +76,7 @@ Returns a Match object if the pattern matches at the beginning, or None if no ma
 					return &object.Null{}
 				}
 
-				return createMatchInstance(groupsFromIndices(text, match), match[0], match[1], re.SubexpNames())
+				return createMatchInstance(text, groupsFromIndices(text, match), match[0], match[1], re.SubexpNames())
 			},
 			HelpText: `search(string) - Search for pattern anywhere in string
 
@@ -104,19 +104,21 @@ Returns a Match object for the first match, or None if no match found.`,
 				if numGroups == 0 {
 					matches := re.FindAllString(text, -1)
 					elements := make([]object.Object, len(matches))
+					object.TrackSlice(elements)
 					for i, match := range matches {
-						elements[i] = object.NewString(match)
+						elements[i] = object.NewSubstring(match, text)
 					}
 					return &object.List{Elements: elements}
 				}
 
 				matches := re.FindAllStringSubmatchIndex(text, -1)
 				elements := make([]object.Object, len(matches))
+				object.TrackSlice(elements)
 				for i, match := range matches {
 					if numGroups == 1 {
 						start, end := match[2], match[3]
 						if start >= 0 && end >= 0 {
-							elements[i] = object.NewString(text[start:end])
+							elements[i] = object.NewSubstring(text[start:end], text)
 						} else {
 							elements[i] = object.NewString("")
 						}
@@ -124,10 +126,11 @@ Returns a Match object for the first match, or None if no match found.`,
 					}
 
 					groupElements := make([]object.Object, numGroups)
+					object.TrackSlice(groupElements)
 					for j := 0; j < numGroups; j++ {
 						start, end := match[(j+1)*2], match[(j+1)*2+1]
 						if start >= 0 && end >= 0 {
-							groupElements[j] = object.NewString(text[start:end])
+							groupElements[j] = object.NewSubstring(text[start:end], text)
 						} else {
 							groupElements[j] = object.NewString("")
 						}
@@ -162,6 +165,7 @@ If there are no capturing groups, returns a list of strings for the full matches
 
 				allMatches := re.FindAllStringSubmatchIndex(text, -1)
 				elements := make([]object.Object, len(allMatches))
+				object.TrackSlice(elements)
 				for i, match := range allMatches {
 					// Build groups from submatch indices
 					groups := make([]string, 0)
@@ -172,7 +176,7 @@ If there are no capturing groups, returns a list of strings for the full matches
 							groups = append(groups, "")
 						}
 					}
-					elements[i] = createMatchInstance(groups, match[0], match[1], re.SubexpNames())
+					elements[i] = createMatchInstance(text, groups, match[0], match[1], re.SubexpNames())
 				}
 				return &object.List{Elements: elements}
 			},
@@ -251,6 +255,7 @@ var MatchClass = &object.Class{
 					return &object.Tuple{Elements: []object.Object{}}
 				}
 				elements := make([]object.Object, len(groups)-1)
+				object.TrackSlice(elements)
 				for i := 1; i < len(groups); i++ {
 					elements[i-1] = groups[i]
 				}
@@ -335,13 +340,16 @@ func createRegexInstance(pattern string, flags int64) *object.Instance {
 	})
 }
 
-// Helper function to create a Match instance
-func createMatchInstance(groups []string, start, end int, groupNames []string) *object.Instance {
+// Helper function to create a Match instance. text is the string matched
+// against: the groups are substrings of it.
+func createMatchInstance(text string, groups []string, start, end int, groupNames []string) *object.Instance {
 	groupObjects := make([]object.Object, len(groups))
+	object.TrackSlice(groupObjects)
 	for i, group := range groups {
-		groupObjects[i] = object.NewString(group)
+		groupObjects[i] = object.NewSubstring(group, text)
 	}
 	nameObjects := make([]object.Object, len(groups))
+	object.TrackSlice(nameObjects)
 	for i := range nameObjects {
 		name := ""
 		if i < len(groupNames) {
@@ -538,7 +546,7 @@ var ReLibrary = object.NewLibrary(ReLibraryName, map[string]*object.Builtin{
 				}
 			}
 
-			return createMatchInstance(groups, match[0], match[1], re.SubexpNames())
+			return createMatchInstance(text, groups, match[0], match[1], re.SubexpNames())
 		},
 		HelpText: `match(pattern, string, flags=0) - Match pattern at start of string
 
@@ -594,7 +602,7 @@ Flags:
 				}
 			}
 
-			return createMatchInstance(groups, match[0], match[1], re.SubexpNames())
+			return createMatchInstance(text, groups, match[0], match[1], re.SubexpNames())
 		},
 		HelpText: `search(pattern, string, flags=0) - Search for pattern anywhere in string
 
@@ -637,16 +645,18 @@ Flags:
 
 			matches := re.FindAllStringSubmatch(text, -1)
 			elements := make([]object.Object, len(matches))
+			object.TrackSlice(elements)
 			numGroups := re.NumSubexp()
 			for i, match := range matches {
 				if numGroups == 0 {
-					elements[i] = object.NewString(match[0])
+					elements[i] = object.NewSubstring(match[0], text)
 				} else if numGroups == 1 {
-					elements[i] = object.NewString(match[1])
+					elements[i] = object.NewSubstring(match[1], text)
 				} else {
 					groupElements := make([]object.Object, numGroups)
+					object.TrackSlice(groupElements)
 					for j := 1; j <= numGroups; j++ {
-						groupElements[j-1] = object.NewString(match[j])
+						groupElements[j-1] = object.NewSubstring(match[j], text)
 					}
 					elements[i] = &object.Tuple{Elements: groupElements}
 				}
@@ -689,8 +699,9 @@ Flags:
 
 			allMatches := re.FindAllStringSubmatchIndex(text, -1)
 			elements := make([]object.Object, len(allMatches))
+			object.TrackSlice(elements)
 			for i, match := range allMatches {
-				elements[i] = createMatchInstance(groupsFromIndices(text, match), match[0], match[1], re.SubexpNames())
+				elements[i] = createMatchInstance(text, groupsFromIndices(text, match), match[0], match[1], re.SubexpNames())
 			}
 			return &object.List{Elements: elements}
 		},
@@ -786,7 +797,7 @@ Flags:
 					// Add text before match
 					resultBuilder = append(resultBuilder, text[lastEnd:match[0]]...)
 
-					matchObj := createMatchInstance(groupsFromIndices(text, match), match[0], match[1], re.SubexpNames())
+					matchObj := createMatchInstance(text, groupsFromIndices(text, match), match[0], match[1], re.SubexpNames())
 
 					// Call the replacement function
 					var resultObj object.Object
@@ -944,8 +955,9 @@ substitutions made.`,
 			}
 			parts := re.Split(text, splitN)
 			elements := make([]object.Object, len(parts))
+			object.TrackSlice(elements)
 			for i, part := range parts {
-				elements[i] = object.NewString(part)
+				elements[i] = object.NewSubstring(part, text)
 			}
 			return &object.List{Elements: elements}
 		},
@@ -1049,7 +1061,7 @@ Returns a string with all special regex characters escaped.`,
 				}
 			}
 
-			return createMatchInstance(groups, match[0], match[1], re.SubexpNames())
+			return createMatchInstance(text, groups, match[0], match[1], re.SubexpNames())
 		},
 		HelpText: `fullmatch(pattern, string, flags=0) - Match entire string
 

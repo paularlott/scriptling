@@ -27,3 +27,7 @@ func goid() int64 {
 // getg returns the address of the current goroutine's runtime descriptor.
 // Implemented in goid_amd64.s and goid_arm64.s.
 func getg() uintptr
+
+// sampleGoid identifies the calling goroutine for spreading memory samples
+// across shards. It is goid where that is cheap.
+func sampleGoid() int64 { return goid() }

@@ -20,3 +20,8 @@ func goid() int64 {
 	}
 	return id
 }
+
+// sampleGoid identifies the calling goroutine for spreading memory samples
+// across shards. Reading the id is expensive on these architectures, so every
+// goroutine shares one shard.
+func sampleGoid() int64 { return 0 }

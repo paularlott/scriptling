@@ -1,5 +1,7 @@
 package object
 
+import "math"
+
 // Set represents a set of unique objects. A frozen set (Python frozenset)
 // is a Set with Frozen set: it rejects mutation, hashes by content, and
 // prints as frozenset(...). The algebra methods below carry the receiver's
@@ -8,6 +10,9 @@ package object
 type Set struct {
 	Elements map[string]Object
 	Frozen   bool
+	// charged is the element count already charged to the interpreter's
+	// memory accounting; it fits in Frozen's padding, so it costs no space.
+	charged uint32
 }
 
 func (s *Set) Type() ObjectType { return SET_OBJ }
@@ -53,6 +58,32 @@ func (s *Set) Freeze() *Set {
 // interpreter and then delegates to AddKeyed.
 func (s *Set) add(obj Object) {
 	s.Elements[DictKey(obj)] = obj
+	if accountingOn.Load() {
+		s.noteGrowth()
+	}
+}
+
+// setEntryWeight is the estimated memory per set element charged against an
+// interpreter's memory limit: the map entry, its key string and bucket
+// overhead.
+const setEntryWeight = 64
+
+// SetEntryWeight is setEntryWeight for callers outside the package.
+const SetEntryWeight = setEntryWeight
+
+// noteGrowth charges map growth the way a map grows: when the element count
+// passes what was charged, the charge doubles.
+func (s *Set) noteGrowth() {
+	n := uint32(min(len(s.Elements), math.MaxUint32/2))
+	if n <= s.charged {
+		return
+	}
+	next := max(s.charged*2, 8)
+	for next < n {
+		next *= 2
+	}
+	trackAlloc(s, int64(next-s.charged)*setEntryWeight)
+	s.charged = next
 }
 
 // remove removes an element from the set using DictKey for hashing.
@@ -215,6 +246,9 @@ func (s *Set) CreateIterator() *Iterator {
 // AddKeyed adds an element with a pre-computed key (used when __hash__ is involved)
 func (s *Set) AddKeyed(key string, obj Object) {
 	s.Elements[key] = obj
+	if accountingOn.Load() {
+		s.noteGrowth()
+	}
 }
 
 // ContainsKeyed checks membership using a pre-computed key

@@ -60,6 +60,7 @@ func shallowCopy(obj object.Object) object.Object {
 	switch o := obj.(type) {
 	case *object.List:
 		elements := make([]object.Object, len(o.Elements))
+		object.TrackSlice(elements)
 		copy(elements, o.Elements)
 		return &object.List{Elements: elements}
 	case *object.Dict:
@@ -117,6 +118,7 @@ func deepCopyDepth(ctx context.Context, obj object.Object, memo map[object.Objec
 			return c
 		}
 		result := &object.List{Elements: make([]object.Object, len(v.Elements))}
+		object.TrackSlice(result.Elements)
 		memo[obj] = result
 		for i, e := range v.Elements {
 			copied := deepCopyDepth(ctx, e, memo, depth-1)
@@ -135,6 +137,7 @@ func deepCopyDepth(ctx context.Context, obj object.Object, memo map[object.Objec
 			return c
 		}
 		result := &object.Tuple{Elements: make([]object.Object, len(v.Elements))}
+		object.TrackSlice(result.Elements)
 		memo[obj] = result
 		for i, e := range v.Elements {
 			copied := deepCopyDepth(ctx, e, memo, depth-1)
@@ -183,6 +186,7 @@ func deepCopyDepth(ctx context.Context, obj object.Object, memo map[object.Objec
 		return result
 	case *object.FloatArray:
 		data := make([]float64, len(v.Data))
+		object.TrackSlice(data)
 		copy(data, v.Data)
 		shape := make([]int, len(v.Shape))
 		copy(shape, v.Shape)

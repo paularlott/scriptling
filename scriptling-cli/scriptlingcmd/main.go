@@ -151,6 +151,22 @@ func buildRootCommand() *cli.Command {
 				EnvVars:      []string{"SCRIPTLING_PROGRAM_CACHE_MAX_BYTES"},
 				ConfigPath:   []string{"cache.program_max_bytes"},
 			},
+			&cli.Int64Flag{
+				Name:         "memory-limit",
+				Usage:        "Estimated memory each interpreter may hold, in bytes (0 = no limit)",
+				DefaultValue: 0,
+				Global:       true,
+				EnvVars:      []string{"SCRIPTLING_MEMORY_LIMIT"},
+				ConfigPath:   []string{"limits.memory_bytes"},
+			},
+			&cli.Int64Flag{
+				Name:         "max-value-bytes",
+				Usage:        "Largest single string, bytes value or container (list, tuple, dict, set) one operation may create, in bytes (0 = no limit)",
+				DefaultValue: 0,
+				Global:       true,
+				EnvVars:      []string{"SCRIPTLING_MAX_VALUE_BYTES"},
+				ConfigPath:   []string{"limits.max_value_bytes"},
+			},
 			&cli.StringFlag{
 				Name:    "code",
 				Usage:   "Execute inline code string",
@@ -403,6 +419,8 @@ func buildRootCommand() *cli.Command {
 		},
 		PreRun: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
 			scriptling.SetProgramCacheMaxBytes(programCacheBudget(cmd.GetInt64("program-cache-max-bytes")))
+			scriptling.SetMemoryLimit(max(cmd.GetInt64("memory-limit"), 0))
+			scriptling.SetMaxValueBytes(max(cmd.GetInt64("max-value-bytes"), 0))
 
 			// JSON-RPC stdio mode uses stdout as the protocol stream, so logs
 			// must go to stderr to avoid corrupting responses.

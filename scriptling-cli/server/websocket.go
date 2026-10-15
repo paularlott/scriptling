@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/paularlott/scriptling"
@@ -87,6 +89,28 @@ func isWebSocketRequest(r *http.Request) bool {
 }
 
 // handleWebSocketUpgrade handles a WebSocket upgrade request
+// liveWebSocketHandlers counts WebSocket handlers running in the process. A
+// hijacked connection outlives http.Server.Close, so a handler can still be
+// setting up its interpreter while a newer server resets the runtime state it
+// reads; NewServer waits for them first.
+var liveWebSocketHandlers sync.WaitGroup
+
+// waitWebSocketHandlers waits up to d for running WebSocket handlers to end,
+// reporting whether they did.
+func waitWebSocketHandlers(d time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		liveWebSocketHandlers.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
 func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, path string) {
 	route := extlibs.RuntimeState.WebSocketRoutes[path]
 	if route == nil {
@@ -135,7 +159,13 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, 
 	// request) carry over, but its cancellation does not: the handler outlives
 	// the HTTP request once the connection is hijacked.
 	handlerCtx := context.WithoutCancel(ctx)
-	s.runWebSocketHandler(handlerCtx, route.Handler, clientObj, wsConn, path, connID)
+	liveWebSocketHandlers.Add(1)
+	func() {
+		// Done must run even if the handler panics (net/http recovers the
+		// panic), or every later server waits the full grace period.
+		defer liveWebSocketHandlers.Done()
+		s.runWebSocketHandler(handlerCtx, route.Handler, clientObj, wsConn, path, connID)
+	}()
 
 	// Cleanup after handler returns
 	extlibs.RuntimeState.Lock()

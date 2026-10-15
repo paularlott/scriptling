@@ -705,7 +705,7 @@ func taskContext(ctx context.Context, env *object.Environment) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx = evaluator.SetEnvInContext(ctx, env)
+	ctx = evaluator.SetEnvInContext(evaluator.WithEvaluator(ctx), env)
 	return evaluator.SetCallDepthInContext(ctx, evaluator.NewCallDepth(evaluator.DefaultMaxCallDepth))
 }
 
@@ -760,6 +760,13 @@ func prepareBackgroundTask(promise *Promise, handler string, fnArgs []object.Obj
 	// read the source Environment from another goroutine.
 	var snapshot *object.CallableSnapshot
 	var globalEnv *object.Environment
+	// The task runs under the caller's limits and memory budget, so starting
+	// work in the background is no way around them. It is not part of the
+	// caller's run, though: that run's context is cancelled when the call
+	// returns, so the task starts from the host's context and registers its
+	// own run on the shared guard.
+	parentGuard := env.ResourceGuard()
+	ctx = object.DetachRun(ctx)
 	if !isDotted {
 		globalEnv = env.GetGlobal()
 		snapshot = globalEnv.SnapshotCallables()
@@ -782,6 +789,8 @@ func prepareBackgroundTask(promise *Promise, handler string, fnArgs []object.Obj
 		// Registered first so it runs last: the name stays claimed until the
 		// promise has been resolved, including on the panic path below.
 		defer releaseTaskName(promise)
+		ctx, endRun := parentGuard.StartRun(ctx)
+		defer endRun()
 		defer func() {
 			if !daemon {
 				RuntimeState.TaskWG.Done()
@@ -809,7 +818,9 @@ func prepareBackgroundTask(promise *Promise, handler string, fnArgs []object.Obj
 				return
 			}
 
+			inheritResourceGuard(scriptling, parentGuard)
 			newEnv := object.NewEnvironment()
+			newEnv.SetResourceGuard(parentGuard)
 			if err := loadLibraryIntoEnvWithContext(ctx, scriptling, libName, newEnv); err != nil {
 				promise.set(nil, fmt.Errorf("failed to load library %s: %v", libName, err))
 				return
@@ -847,7 +858,9 @@ func prepareBackgroundTask(promise *Promise, handler string, fnArgs []object.Obj
 					return
 				}
 
+				inheritResourceGuard(scriptling, parentGuard)
 				newEnv = object.NewEnvironment()
+				newEnv.SetResourceGuard(parentGuard)
 
 				// Set up import callback so the function can import libraries
 				newEnv.SetImportCallbackWithContext(func(importCtx context.Context, libName string) error {
@@ -864,6 +877,7 @@ func prepareBackgroundTask(promise *Promise, handler string, fnArgs []object.Obj
 				// sys.modules) and the imported bindings are copied into the
 				// task environment.
 				newEnv = object.NewEnvironment()
+				newEnv.SetResourceGuard(parentGuard)
 				newEnv.SetOutputWriter(parentWriter)
 				newEnv.SetErrorWriter(parentErrWriter)
 				if parentImport != nil {
@@ -994,9 +1008,16 @@ func startSharedTask(ctx context.Context, handler string, fnArgs []object.Object
 		RuntimeState.TaskWG.Add(1)
 	}
 
+	// Like a background task, a shared task outlives the call that started
+	// it: it leaves that call's run and registers its own on the guard.
+	guard := env.ResourceGuard()
+	ctx = object.DetachRun(ctx)
+
 	go func() {
 		// Registered first so it runs last — see startBackgroundTask.
 		defer releaseTaskName(promise)
+		ctx, endRun := guard.StartRun(ctx)
+		defer endRun()
 		defer func() {
 			if !daemon {
 				RuntimeState.TaskWG.Done()

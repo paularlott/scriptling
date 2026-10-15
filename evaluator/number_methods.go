@@ -53,6 +53,9 @@ func callIntegerMethod(i *object.Integer, method string, args []object.Object) o
 		if length < 0 {
 			return errors.NewValueError("to_bytes() length must be non-negative")
 		}
+		if errObj := checkSize("bytes", length); errObj != nil {
+			return errObj
+		}
 		byteorder := "big"
 		if len(args) == 2 {
 			s, serr := args[1].AsString()

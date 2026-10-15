@@ -102,19 +102,34 @@ func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 		opts.ensureAscii = b
 	}
 
+	opts.nodes = new(int64)
 	raw, rerr := objectToJSONRaw(args[0], make(map[object.Object]struct{}), opts)
 	if rerr != nil {
 		return rerr
+	}
+	// Check the text before the indented copy and the result string are
+	// made from it.
+	if errObj := object.CheckAllocFor("JSON", int64(len(raw))); errObj != nil {
+		return errObj
 	}
 	out := []byte(raw)
 	// hasIndent distinguishes indent=0 (newline-separated, no spaces, as in
 	// Python) from no indent argument at all (fully compact).
 	if hasIndent {
+		// Indenting grows the text by about one indent per nesting level per
+		// value: a generous estimate of that is the memory needed to build
+		// it, while the value limit applies to the exact result afterwards.
+		if errObj := object.CheckRoom("JSON", int64(len(out))*2+int64(*opts.nodes)*int64(len(indent)+1)); errObj != nil {
+			return errObj
+		}
 		var ind bytes.Buffer
 		if err := json.Indent(&ind, out, "", indent); err != nil {
 			return errors.NewError("json serialize error: %s", err.Error())
 		}
 		out = ind.Bytes()
+		if errObj := object.CheckAllocFor("JSON", int64(len(out))); errObj != nil {
+			return errObj
+		}
 	}
 	return object.NewString(string(out))
 }
@@ -196,13 +211,43 @@ type jsonOpts struct {
 	keySep      string
 	sortKeys    bool
 	ensureAscii bool
+	// nodes counts the values rendered so far. A value shared by several
+	// containers renders once per reference, so every jsonBudgetEvery values
+	// the memory the walk is holding is checked against the room left; the
+	// value limit applies to the text itself as it is assembled.
+	nodes *int64
+	// depth is how deeply nested the value being rendered is; past
+	// maxJSONDumpDepth the Go stack is at risk, so rendering stops.
+	depth int
 }
+
+const jsonBudgetEvery = 1024
+
+// jsonNodeBytes estimates the transient memory each rendered value costs.
+const jsonNodeBytes = 48
+
+// maxJSONDumpDepth bounds nesting when rendering, as maxJSONDepth does when
+// parsing.
+const maxJSONDumpDepth = 10000
 
 // objectToJSONRaw renders obj as JSON text. Containers are assembled here —
 // rather than via encoding/json's map/array marshaling — so dict keys keep
 // the dict's insertion order and Python's separators apply at every level.
 // Leaves go through encoding/json with HTML escaping off, matching Python.
 func objectToJSONRaw(obj object.Object, seen map[object.Object]struct{}, opts jsonOpts) (json.RawMessage, object.Object) {
+	if opts.nodes != nil {
+		*opts.nodes++
+		if *opts.nodes&(jsonBudgetEvery-1) == 0 {
+			if errObj := object.CheckRoom("JSON", *opts.nodes*jsonNodeBytes); errObj != nil {
+				return nil, errObj
+			}
+		}
+	}
+	// opts is passed by value, so each level below sees its own depth.
+	opts.depth++
+	if opts.depth > maxJSONDumpDepth {
+		return nil, object.NewMemoryError("value too deeply nested to serialize (more than %d levels)", maxJSONDumpDepth)
+	}
 	encodeLeaf := func(v interface{}) (json.RawMessage, object.Object) {
 		var buf bytes.Buffer
 		enc := json.NewEncoder(&buf)
@@ -279,6 +324,11 @@ func objectToJSONRaw(obj object.Object, seen map[object.Object]struct{}, opts js
 				return nil, verr
 			}
 			buf.Write(valJSON)
+			// The text is a value in the making: refuse it as soon as it
+			// outgrows the limit rather than finishing the container.
+			if errObj := object.CheckAllocFor("JSON", int64(buf.Len())); errObj != nil {
+				return nil, errObj
+			}
 		}
 		buf.WriteByte('}')
 		return json.RawMessage(buf.Bytes()), nil
@@ -296,6 +346,10 @@ func objectToJSONRaw(obj object.Object, seen map[object.Object]struct{}, opts js
 func encodeJSONString(s string, ensureAscii bool) json.RawMessage {
 	var b strings.Builder
 	b.Grow(len(s) + 2)
+	// Escaping can grow a string sixfold (\uXXXX per byte); the builder
+	// below is unchecked, so a string whose escaped form cannot be within the
+	// limit is caught by the caller's checks on the assembled text. Nothing
+	// more to do here when the input itself is small.
 	b.WriteByte('"')
 	for _, r := range s {
 		switch {
@@ -344,6 +398,9 @@ func assembleJSONSeq(elements []object.Object, seen map[object.Object]struct{}, 
 			return nil, err
 		}
 		buf.Write(elJSON)
+		if errObj := object.CheckAllocFor("JSON", int64(buf.Len())); errObj != nil {
+			return nil, errObj
+		}
 	}
 	buf.WriteByte(']')
 	return json.RawMessage(buf.Bytes()), nil

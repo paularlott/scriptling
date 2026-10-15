@@ -8,10 +8,10 @@ import (
 	"testing/fstest"
 )
 
-// testRegistry keeps scheme tests isolated from the process-wide default.
-var testRegistry = NewSchemeRegistry()
-
 func TestRegisterSchemeValidation(t *testing.T) {
+	// A fresh registry per run keeps scheme tests isolated from the
+	// process-wide default and from earlier runs (-count, -shuffle).
+	testRegistry := NewSchemeRegistry()
 	opener := func(source string, insecure bool, cacheDir string) (*Bundle, error) {
 		return nil, errors.New("not called")
 	}
@@ -32,6 +32,9 @@ func TestRegisterSchemeValidation(t *testing.T) {
 }
 
 func TestSchemeSyntaxAndRouting(t *testing.T) {
+	// A fresh registry per run keeps scheme tests isolated from the
+	// process-wide default and from earlier runs (-count, -shuffle).
+	testRegistry := NewSchemeRegistry()
 	if err := testRegistry.Register("scheme-for-test", func(source string, insecure bool, cacheDir string) (*Bundle, error) {
 		return nil, errors.New("not called")
 	}); err != nil {
@@ -73,6 +76,9 @@ func TestSchemeSyntaxAndRouting(t *testing.T) {
 }
 
 func TestFetchBundleRoutesCustomScheme(t *testing.T) {
+	// A fresh registry per run keeps scheme tests isolated from the
+	// process-wide default and from earlier runs (-count, -shuffle).
+	testRegistry := NewSchemeRegistry()
 	mapFS := fstest.MapFS{
 		"manifest.toml": &fstest.MapFile{Data: []byte("name = \"schemepkg\"\nversion = \"1.0.0\"\n")},
 		"lib/mod.py":    &fstest.MapFile{Data: []byte("def value():\n    return 'from scheme'\n")},
@@ -230,6 +236,9 @@ func TestSchemeSyntaxIgnoresRegistration(t *testing.T) {
 }
 
 func TestUnregisterSchemeAllowsReclaim(t *testing.T) {
+	// A fresh registry per run keeps scheme tests isolated from the
+	// process-wide default and from earlier runs (-count, -shuffle).
+	testRegistry := NewSchemeRegistry()
 	opener := func(source string, insecure bool, cacheDir string) (*Bundle, error) {
 		return nil, errors.New("not called")
 	}

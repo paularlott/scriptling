@@ -107,7 +107,7 @@ func (c *dockerClient) doJSON(ctx context.Context, method, path string, body, ou
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != wantStatus {
-		b, _ := io.ReadAll(resp.Body)
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 	if out != nil {
@@ -151,7 +151,7 @@ func (c *dockerClient) Pull(ctx context.Context, image string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("pull failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 	// Scan streaming response for error objects.
@@ -223,7 +223,7 @@ func (c *dockerClient) ExecStream(ctx context.Context, nameOrID string, command 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("exec start failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 
@@ -300,7 +300,7 @@ func (c *dockerClient) ImageRemove(ctx context.Context, image string) error {
 		return nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("image remove failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 	io.Copy(io.Discard, resp.Body)

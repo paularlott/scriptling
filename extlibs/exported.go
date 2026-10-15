@@ -1,4 +1,9 @@
 // Package extlibs provides external libraries that need explicit registration
+//
+// The Go entry points in this file (Grep, Extract, FindPaths and so on) run
+// outside any interpreter, so no memory or value limit applies to them unless
+// the calling goroutine is bound to a guard with object.BindGuard. Results
+// are bounded only by the input.
 package extlibs
 
 import (
@@ -12,6 +17,7 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
+	"github.com/paularlott/scriptling/object"
 )
 
 // This file exports the grep/find/sed worker functions as a plain-Go API that
@@ -182,10 +188,14 @@ func Grep(ctx context.Context, needle, path string, opts GrepOptions) ([]GrepMat
 	fopts := toFileopsOptions(opts.Recursive, opts.IgnoreCase, opts.FollowLinks, opts.Glob, opts.MaxSize)
 
 	var matches []matchResult
+	var errObj object.Object
 	if info.IsDir() {
-		matches = inst.searchDir(ctx, path, re, fopts)
+		matches, errObj = inst.searchDir(ctx, path, re, fopts)
 	} else {
-		matches = inst.searchFile(path, re, fopts)
+		matches, errObj = inst.searchFile(ctx, path, re, fopts, newNativeBudget(ctx, "grep matches"))
+	}
+	if errObj != nil {
+		return nil, fmt.Errorf("grep: %s", errObj.Inspect())
 	}
 
 	out := make([]GrepMatch, len(matches))
@@ -259,7 +269,11 @@ func Find(ctx context.Context, root string, opts FindOptions) ([]string, error) 
 	}
 
 	inst := &findLibraryInstance{config: config}
-	return inst.findPaths(ctx, root, fopts), nil
+	paths, errObj := inst.findPathsChecked(ctx, root, fopts)
+	if errObj != nil {
+		return nil, fmt.Errorf("find: %s", errObj.Inspect())
+	}
+	return paths, nil
 }
 
 // FindEntries is like Find but returns FindEntry records with size, mtime, and
@@ -285,7 +299,11 @@ func FindEntries(ctx context.Context, root string, opts FindOptions) ([]FindEntr
 	fopts.includeHash = opts.IncludeHash
 
 	inst := &findLibraryInstance{config: config}
-	return inst.findEntries(ctx, root, fopts), nil
+	entries, errObj := inst.findEntriesChecked(ctx, root, fopts)
+	if errObj != nil {
+		return nil, fmt.Errorf("find: %s", errObj.Inspect())
+	}
+	return entries, nil
 }
 
 // SedReplace replaces every occurrence of old with replacement in the file (or
@@ -366,10 +384,14 @@ func SedExtract(ctx context.Context, pattern, path string, opts SedOptions) ([]E
 	fopts := toFileopsOptions(opts.Recursive, opts.IgnoreCase, opts.FollowLinks, opts.Glob, opts.MaxSize)
 
 	var results []extractResult
+	var errObj object.Object
 	if info.IsDir() {
-		results = inst.extractDir(ctx, path, re, fopts)
+		results, errObj = inst.extractDir(ctx, path, re, fopts)
 	} else {
-		results = inst.extractFile(path, re, fopts)
+		results, errObj = inst.extractFile(ctx, path, re, fopts, newNativeBudget(ctx, "extracted matches"))
+	}
+	if errObj != nil {
+		return nil, fmt.Errorf("sed: %s", errObj.Inspect())
 	}
 
 	out := make([]ExtractMatch, len(results))
@@ -408,9 +430,12 @@ func EditFile(ctx context.Context, path, search, replace string) (int, error) {
 		return 0, errors.New("edit: search text is empty")
 	}
 
-	content, err := os.ReadFile(path)
+	content, tooLarge, err := object.ReadFileLimited(path)
 	if err != nil {
 		return 0, fmt.Errorf("edit: cannot read file: %w", err)
+	}
+	if tooLarge != nil {
+		return 0, fmt.Errorf("edit: %s", tooLarge.(*object.Error).Message)
 	}
 
 	count := strings.Count(string(content), search)

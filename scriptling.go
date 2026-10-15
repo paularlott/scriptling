@@ -2,7 +2,6 @@ package scriptling
 
 import (
 	"context"
-	stderrors "errors"
 	"fmt"
 	"io"
 	"os"
@@ -111,13 +110,22 @@ type Scriptling struct {
 	scriptLibraries     map[string]*scriptLibrary
 	libraryLoader       LibraryLoader
 	sourceFile          string
+	guard               *object.ResourceGuard
 }
 
-func New() *Scriptling {
+// New creates an interpreter. Its resource limits follow the process defaults
+// (see SetMemoryLimit and SetMaxValueBytes) unless options such as
+// WithMemoryLimit and WithMaxValueBytes give it limits of its own.
+func New(opts ...Option) *Scriptling {
 	p := &Scriptling{
 		env:                 object.NewEnvironment(),
 		registeredLibraries: make(map[string]*object.Library),
 		scriptLibraries:     make(map[string]*scriptLibrary),
+		guard:               object.NewResourceGuard(),
+	}
+	p.env.SetResourceGuard(p.guard)
+	for _, opt := range opts {
+		opt(p)
 	}
 
 	// Register import builtin
@@ -471,16 +479,11 @@ func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (result 
 		ctx = evaluator.ContextWithSourceFile(ctx, p.sourceFile)
 	}
 
-	// Register with the process-wide memory guard (see SetMemoryLimit). With
-	// no limit set this is a single atomic load and ctx is returned unchanged.
-	ctx, releaseGuard := memGuard.track(ctx)
-	defer releaseGuard()
-
-	result = evaluator.EvalWithContext(ctx, program, p.env)
-	if stderrors.Is(context.Cause(ctx), ErrMemoryLimitExceeded) {
-		// The evaluator only sees a cancelled context; name the real reason.
-		result = errors.NewError("%s: script cancelled because the process heap exceeded the configured limit (%d bytes)", ErrMemoryLimitExceeded.Error(), MemoryLimit())
-	}
+	// Register the run with the interpreter's resource guard so it can be
+	// cancelled for going over the memory limit. With no limit in force ctx
+	// is returned unchanged.
+	ctx, release := p.guard.StartRun(ctx)
+	result = p.endRun(ctx, release, evaluator.EvalWithContext(ctx, program, p.env))
 	return p.handleResult(result, "")
 }
 
@@ -723,9 +726,11 @@ func (p *Scriptling) Reset() {
 // (both Go and script libraries) with the parent but starts with a fresh,
 // isolated environment. Already-imported libraries are NOT copied; each clone
 // re-evaluates script libraries on first import, so no mutable state is shared.
-// Useful for per-request / multi-tenant isolation.
+// The clone has the same resource limit settings as the parent but its own
+// memory accounting. Useful for per-request / multi-tenant isolation.
 func (p *Scriptling) Clone() *Scriptling {
 	child := New()
+	child.guard.CopyLimits(p.guard)
 
 	// Share library registrations (definitions only, not imported state)
 	for name, lib := range p.registeredLibraries {
@@ -831,8 +836,9 @@ func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, a
 	objArgs, objKwargs := convertArgsAndKwargs(args, nil)
 
 	// 3. Call the function using evaluator
-	ctx = evaluator.WithEvaluator(ctx)
-	result := evaluator.ApplyFunctionGIL(ctx, fn, objArgs, objKwargs, p.env)
+	ctx, release := p.guard.StartRun(ctx)
+	ctx = evaluator.EnsureCallDepth(evaluator.WithEvaluator(ctx))
+	result := p.endRun(ctx, release, evaluator.ApplyFunctionGIL(ctx, fn, objArgs, objKwargs, p.env))
 	return p.handleResult(result, fmt.Sprintf("function '%s'", name))
 }
 
@@ -877,8 +883,9 @@ func (p *Scriptling) CreateInstanceWithContext(ctx context.Context, className st
 	objArgs, objKwargs := convertArgsAndKwargs(args, nil)
 
 	// Create the instance using evaluator
-	ctx = evaluator.WithEvaluator(ctx)
-	instance := evaluator.ApplyFunctionGIL(ctx, class, objArgs, objKwargs, p.env)
+	ctx, release := p.guard.StartRun(ctx)
+	ctx = evaluator.EnsureCallDepth(evaluator.WithEvaluator(ctx))
+	instance := p.endRun(ctx, release, evaluator.ApplyFunctionGIL(ctx, class, objArgs, objKwargs, p.env))
 	return p.handleResult(instance, fmt.Sprintf("class '%s'", className))
 }
 
@@ -922,8 +929,9 @@ func (p *Scriptling) CallMethodWithContext(ctx context.Context, obj object.Objec
 	objArgs, objKwargs := convertArgsAndKwargs(args, instance)
 
 	// Call the method using evaluator
-	ctx = evaluator.WithEvaluator(ctx)
-	result := evaluator.ApplyFunctionGIL(ctx, method, objArgs, objKwargs, p.env)
+	ctx, release := p.guard.StartRun(ctx)
+	ctx = evaluator.EnsureCallDepth(evaluator.WithEvaluator(ctx))
+	result := p.endRun(ctx, release, evaluator.ApplyFunctionGIL(ctx, method, objArgs, objKwargs, p.env))
 	return p.handleResult(result, fmt.Sprintf("method '%s' on class '%s'", methodName, instance.Class.Name))
 }
 

@@ -178,6 +178,7 @@ func (z *zipfileLibraryInstance) fnRead(ctx context.Context, kwargs object.Kwarg
 
 	var content string
 	var readErr error
+	var limitErr object.Object
 	object.RunBlocking(ctx, func() {
 		for _, f := range nd.reader.File {
 			if f.Name == name {
@@ -187,9 +188,13 @@ func (z *zipfileLibraryInstance) fnRead(ctx context.Context, kwargs object.Kwarg
 					return
 				}
 				defer rc.Close()
-				data, err := io.ReadAll(rc)
+				data, tooLarge, err := object.ReadAllLimited(rc, "archive entry")
 				if err != nil {
 					readErr = err
+					return
+				}
+				if tooLarge != nil {
+					limitErr = tooLarge
 					return
 				}
 				content = string(data)
@@ -200,6 +205,9 @@ func (z *zipfileLibraryInstance) fnRead(ctx context.Context, kwargs object.Kwarg
 	})
 	if readErr != nil {
 		return errors.NewError("ZipFile.read: %s", readErr.Error())
+	}
+	if limitErr != nil {
+		return limitErr
 	}
 	return object.NewString(content)
 }
@@ -465,15 +473,17 @@ func addPathToZip(w *zip.Writer, srcPath, arcname string, config fssecurity.Conf
 }
 
 func addFileToZip(w *zip.Writer, srcPath, arcname string) error {
-	data, err := os.ReadFile(srcPath)
+	// Stream the file in, so adding a large file does not hold it in memory.
+	src, err := os.Open(srcPath)
 	if err != nil {
 		return err
 	}
+	defer src.Close()
 	f, err := w.Create(arcname)
 	if err != nil {
 		return err
 	}
-	_, err = f.Write(data)
+	_, err = io.Copy(f, src)
 	return err
 }
 

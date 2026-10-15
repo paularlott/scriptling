@@ -15,6 +15,7 @@ import (
 
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling/extlibs/messaging/shared"
+	"github.com/paularlott/scriptling/object"
 )
 
 // discordClient implements shared.ScriptSender and embeds *shared.Bot.
@@ -322,7 +323,7 @@ func resolveMedia(source string, isBase64 bool) (data []byte, isURL bool, err er
 		return nil, true, nil
 	}
 	if _, statErr := os.Stat(source); statErr == nil {
-		data, err = os.ReadFile(source)
+		data, err = object.ReadFileLimitedErr(source)
 		return
 	}
 	return nil, false, fmt.Errorf("discord: cannot resolve media source %q", source)
@@ -381,7 +382,7 @@ func (c *discordClient) downloadAttachment(ctx context.Context, url string) ([]b
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	return object.ReadAllLimitedErr(resp.Body, "Discord response")
 }
 
 func (c *discordClient) getGatewayURL(ctx context.Context) (string, error) {

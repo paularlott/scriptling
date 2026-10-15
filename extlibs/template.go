@@ -3,6 +3,7 @@ package extlibs
 import (
 	"bytes"
 	"context"
+	stderrors "errors"
 	htmltemplate "html/template"
 	texttemplate "text/template"
 
@@ -21,23 +22,61 @@ func getTemplateSet(self *object.Instance) *parsedTemplateSet {
 	return pt
 }
 
-func renderTemplateSet(pt *parsedTemplateSet, name string, data interface{}) (string, error) {
-	var buf bytes.Buffer
+func renderTemplateSet(ctx context.Context, pt *parsedTemplateSet, name string, data interface{}) (string, error) {
+	out := &renderWriter{ctx: ctx, limit: object.MaxValueBytes()}
 	var err error
 	if pt.html != nil {
 		if name == "" {
-			err = pt.html.Execute(&buf, data)
+			err = pt.html.Execute(out, data)
 		} else {
-			err = pt.html.ExecuteTemplate(&buf, name, data)
+			err = pt.html.ExecuteTemplate(out, name, data)
 		}
 	} else {
 		if name == "" {
-			err = pt.text.Execute(&buf, data)
+			err = pt.text.Execute(out, data)
 		} else {
-			err = pt.text.ExecuteTemplate(&buf, name, data)
+			err = pt.text.ExecuteTemplate(out, name, data)
 		}
 	}
-	return buf.String(), err
+	return out.buf.String(), err
+}
+
+// errRenderTooLarge stops a render whose output passes the value limit.
+var errRenderTooLarge = stderrors.New("rendered output exceeds the value limit")
+
+// errRenderNoRoom stops a render whose output no longer fits in the memory
+// limit.
+var errRenderNoRoom = stderrors.New("rendered output exceeds the memory limit")
+
+// renderWriter collects template output, stopping the render (Go templates
+// stop at the first write error) when the output passes the interpreter's
+// value limit or the call is cancelled.
+type renderWriter struct {
+	ctx   context.Context
+	limit int64
+	buf   bytes.Buffer
+}
+
+func (w *renderWriter) Write(p []byte) (int, error) {
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
+	size := int64(w.buf.Len() + len(p))
+	if w.limit > 0 && size > w.limit {
+		return 0, errRenderTooLarge
+	}
+	growing := size > int64(w.buf.Cap())
+	if growing && object.CheckRoom("rendered template", object.GrowthRoom(w.buf.Cap(), int(size))) != nil {
+		return 0, errRenderNoRoom
+	}
+	n, err := w.buf.Write(p)
+	if growing {
+		// Charge the new backing array; the old one is credited once freed.
+		if b := w.buf.Bytes(); cap(b) > 0 {
+			object.TrackAlloc(&b[:1][0], int64(cap(b)))
+		}
+	}
+	return n, err
 }
 
 func newSetInstance(pt *parsedTemplateSet) *object.Instance {
@@ -116,7 +155,19 @@ Example:
 					return errors.NewError("Set not initialised")
 				}
 
-				result, execErr := renderTemplateSet(pt, name, conversion.ToGo(data))
+				// Shared script values convert once per reference, so the
+				// data is converted under the interpreter's limits.
+				goData, limitErr := conversion.ToGoLimited(data)
+				if limitErr != nil {
+					return limitErr
+				}
+				result, execErr := renderTemplateSet(ctx, pt, name, goData)
+				if stderrors.Is(execErr, errRenderNoRoom) {
+					return object.NewMemoryError("%s: no room for the rendered template", object.ErrMemoryLimitExceeded)
+				}
+				if stderrors.Is(execErr, errRenderTooLarge) {
+					return object.NewMemoryError("rendered template too large: the limit is %d bytes", object.MaxValueBytes())
+				}
 				if execErr != nil {
 					return errors.NewError("template render error: %s", execErr.Error())
 				}

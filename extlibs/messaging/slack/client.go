@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"mime/multipart"
 	"net/http"
 	"strings"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling/extlibs/messaging/shared"
+	"github.com/paularlott/scriptling/object"
 )
 
 // slackClient implements shared.ScriptSender and embeds *shared.Bot.
@@ -294,7 +294,7 @@ func (c *slackClient) Download(ctx context.Context, ref string) ([]byte, error) 
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	return object.ReadAllLimitedErr(resp.Body, "Slack response")
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────

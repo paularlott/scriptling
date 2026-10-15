@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling/extlibs/messaging/shared"
+	"github.com/paularlott/scriptling/object"
 )
 
 const apiBase = "https://api.telegram.org/bot"
@@ -357,7 +357,7 @@ func resolveMedia(source string, isBase64 bool) (data []byte, isURL bool, fileID
 		return nil, true, "", nil
 	}
 	if _, statErr := os.Stat(source); statErr == nil {
-		data, err = os.ReadFile(source)
+		data, err = object.ReadFileLimitedErr(source)
 		return
 	}
 	return nil, false, source, nil
@@ -447,7 +447,7 @@ func (c *telegramClient) downloadFile(ctx context.Context, fileID string) ([]byt
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	return object.ReadAllLimitedErr(resp.Body, "Telegram response")
 }
 
 func (c *telegramClient) getUpdates(ctx context.Context, offset int64, timeout int) ([]map[string]interface{}, error) {

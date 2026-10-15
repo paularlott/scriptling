@@ -3,6 +3,7 @@ package stdlib
 import (
 	"context"
 	"strings"
+	"unsafe"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
@@ -95,7 +96,9 @@ var stringIOClass = &object.Class{
 					if err != nil {
 						return errors.NewTypeError("STRING", args[1].Type().String())
 					}
-					data.buf.WriteString(s)
+					if errObj := data.write(s); errObj != nil {
+						return errObj
+					}
 				}
 				inst.SetField(sioKey, &stringIOHolder{data: data})
 				return &object.Null{}
@@ -114,8 +117,10 @@ var stringIOClass = &object.Class{
 				if err != nil {
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
-				n, _ := data.buf.WriteString(s)
-				return object.NewInteger(int64(n))
+				if errObj := data.write(s); errObj != nil {
+					return errObj
+				}
+				return object.NewInteger(int64(len(s)))
 			},
 			HelpText: `write(s) - Write string s to buffer; returns number of characters written`,
 		},
@@ -260,8 +265,12 @@ var stringIOClass = &object.Class{
 				if int(pos) > len(content) {
 					pos = int64(len(content))
 				}
+				// Reset drops the old backing array (its charge is credited back
+				// when it is collected) and the kept prefix gets a new one.
 				data.buf.Reset()
-				data.buf.WriteString(content[:pos])
+				if errObj := data.write(content[:pos]); errObj != nil {
+					return errObj
+				}
 				if data.pos > int(pos) {
 					data.pos = int(pos)
 				}
@@ -321,7 +330,9 @@ func stringIONew(ctx context.Context, kwargs object.Kwargs, args ...object.Objec
 		if err != nil {
 			return errors.NewTypeError("STRING", args[0].Type().String())
 		}
-		data.buf.WriteString(s)
+		if errObj := data.write(s); errObj != nil {
+			return errObj
+		}
 	}
 	inst.SetField(sioKey, &stringIOHolder{data: data})
 	return inst
@@ -344,7 +355,47 @@ func (w *StringIOWriter) Write(p []byte) (int, error) {
 	if w.data.closed {
 		return 0, nil
 	}
-	return w.data.buf.Write(p)
+	if errObj := w.data.writeBytes(p); errObj != nil {
+		if e, ok := errObj.(*object.Error); ok && strings.HasPrefix(e.Message, object.ErrMemoryLimitExceeded.Error()) {
+			return 0, object.ErrOutputNoRoom
+		}
+		return 0, object.ErrOutputLimitExceeded
+	}
+	return len(p), nil
+}
+
+// write appends s to the buffer within the interpreter's limits.
+func (d *stringIOData) write(s string) object.Object {
+	return d.grow(len(s), func() { d.buf.WriteString(s) })
+}
+
+// writeBytes appends p to the buffer within the interpreter's limits.
+func (d *stringIOData) writeBytes(p []byte) object.Object {
+	return d.grow(len(p), func() { d.buf.Write(p) })
+}
+
+// grow checks that n more bytes keep the buffer within the interpreter's
+// limits, runs the append, and reports a new backing array to the memory
+// accounting. The charge belongs to the backing array itself, so it is
+// credited back once a reset or a later growth lets the old array go.
+func (d *stringIOData) grow(n int, appendFn func()) object.Object {
+	size := d.buf.Len() + n
+	if errObj := object.CheckAllocFor("StringIO buffer", int64(size)); errObj != nil {
+		return errObj
+	}
+	oldCap := d.buf.Cap()
+	if size > oldCap {
+		if errObj := object.CheckRoom("StringIO buffer", object.GrowthRoom(oldCap, size)); errObj != nil {
+			return errObj
+		}
+	}
+	appendFn()
+	if d.buf.Cap() != oldCap && d.buf.Len() > 0 {
+		// strings.Builder.String shares the builder's array (no copy), so the
+		// charge is attached to the new backing array itself.
+		object.TrackAlloc(unsafe.StringData(d.buf.String()), int64(d.buf.Cap()))
+	}
+	return nil
 }
 
 var IOLibrary = object.NewLibrary(IOLibraryName, map[string]*object.Builtin{

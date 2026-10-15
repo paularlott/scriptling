@@ -1,7 +1,6 @@
 package file
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -103,8 +102,8 @@ func buildLibrary(inst *libraryInstance) *object.Library {
 					return &object.Error{Message: "ensure: " + err.Error()}
 				}
 
-				existing, err := os.ReadFile(path)
-				if err == nil && bytes.Equal(existing, []byte(content)) {
+				_, err := os.Stat(path)
+				if object.FileEquals(path, []byte(content)) {
 					return object.NewString(StatusUnchanged)
 				}
 
@@ -668,7 +667,7 @@ func insertBlock(lines []string, blockLines []string, position, insertAfter, pat
 // readFileLines reads a file and splits it into lines. existed is false when the
 // file does not exist; trailingNL reports whether the original ended with "\n".
 func readFileLines(path string) (lines []string, trailingNL, existed bool, err error) {
-	raw, readErr := os.ReadFile(path)
+	raw, readErr := object.ReadFileLimitedErr(path)
 	if readErr != nil {
 		if os.IsNotExist(readErr) {
 			return nil, true, false, nil

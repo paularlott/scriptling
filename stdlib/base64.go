@@ -19,7 +19,11 @@ var Base64Library = object.NewLibrary(Base64LibraryName, map[string]*object.Buil
 			if errObj != nil {
 				return errObj
 			}
-			// Python's base64.b64encode returns bytes.
+			// Python's base64.b64encode returns bytes. Check the result
+			// before encoding rather than after.
+			if errObj := object.CheckAllocFor("Base64 result", int64(base64.StdEncoding.EncodedLen(len(data)))); errObj != nil {
+				return errObj
+			}
 			encoded := base64.StdEncoding.EncodeToString(data)
 			return object.NewBytesFromString(encoded)
 		},

@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"math"
 	"math/big"
 	"strings"
+	"unsafe"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
@@ -17,20 +19,48 @@ func RegisterSecretsLibrary(registrar interface{ RegisterLibrary(*object.Library
 	registrar.RegisterLibrary(SecretsLibrary)
 }
 
+// maxTokenBytes bounds a token request far above any useful size, so the size
+// arithmetic below cannot overflow.
+const maxTokenBytes = 1 << 40
+
+// tokenByteCount reads a token function's byte-count argument (default 32).
+func tokenByteCount(name string, args []object.Object) (int, object.Object) {
+	n := int64(32)
+	if len(args) > 0 {
+		if intVal, ok := args[0].(*object.Integer); ok {
+			n = intVal.IntValue()
+		}
+	}
+	if n < 1 {
+		return 0, errors.NewError("%s requires a positive number of bytes", name)
+	}
+	if n > maxTokenBytes || n > int64(math.MaxInt) {
+		return 0, object.NewMemoryError("%s: %d bytes is too large", name, n)
+	}
+	return int(n), nil
+}
+
+// checkToken checks a token of resultBytes against the value limit, and the
+// raw random bytes held alongside it against the memory limit.
+func checkToken(what string, rawBytes, resultBytes int64) object.Object {
+	if errObj := object.CheckAllocFor(what, resultBytes); errObj != nil {
+		return errObj
+	}
+	return object.CheckRoom(what, rawBytes+resultBytes)
+}
+
 // SecretsLibrary provides cryptographically strong random number generation
 // NOTE: This is an extended library and not enabled by default
 var SecretsLibrary = object.NewLibrary(SecretsLibraryName, map[string]*object.Builtin{
 	"token_bytes": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			nbytes := 32 // Default
-			if len(args) > 0 {
-				if intVal, ok := args[0].(*object.Integer); ok {
-					nbytes = int(intVal.IntValue())
-				}
+			nbytes, errObj := tokenByteCount("token_bytes", args)
+			if errObj != nil {
+				return errObj
 			}
-
-			if nbytes < 1 {
-				return errors.NewError("token_bytes requires a positive number of bytes")
+			// Each byte becomes an integer in the returned list.
+			if errObj := checkToken("token list", int64(nbytes), int64(nbytes)*int64(unsafe.Sizeof(object.Object(nil)))); errObj != nil {
+				return errObj
 			}
 
 			bytes := make([]byte, nbytes)
@@ -41,6 +71,7 @@ var SecretsLibrary = object.NewLibrary(SecretsLibraryName, map[string]*object.Bu
 
 			// Return as a list of integers (bytes)
 			elements := make([]object.Object, nbytes)
+			object.TrackSlice(elements)
 			for i, b := range bytes {
 				elements[i] = object.NewInteger(int64(b))
 			}
@@ -60,15 +91,13 @@ Example:
 
 	"token_hex": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			nbytes := 32 // Default
-			if len(args) > 0 {
-				if intVal, ok := args[0].(*object.Integer); ok {
-					nbytes = int(intVal.IntValue())
-				}
+			nbytes, errObj := tokenByteCount("token_hex", args)
+			if errObj != nil {
+				return errObj
 			}
-
-			if nbytes < 1 {
-				return errors.NewError("token_hex requires a positive number of bytes")
+			// The token is two hex characters per byte.
+			if errObj := checkToken("hex token", int64(nbytes), int64(nbytes)*2); errObj != nil {
+				return errObj
 			}
 
 			bytes := make([]byte, nbytes)
@@ -93,15 +122,14 @@ Example:
 
 	"token_urlsafe": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			nbytes := 32 // Default
-			if len(args) > 0 {
-				if intVal, ok := args[0].(*object.Integer); ok {
-					nbytes = int(intVal.IntValue())
-				}
+			nbytes, errObj := tokenByteCount("token_urlsafe", args)
+			if errObj != nil {
+				return errObj
 			}
-
-			if nbytes < 1 {
-				return errors.NewError("token_urlsafe requires a positive number of bytes")
+			// The token is the URL-safe Base64 encoding of the bytes (built
+			// padded, then trimmed).
+			if errObj := checkToken("URL-safe token", int64(nbytes), int64(base64.URLEncoding.EncodedLen(nbytes))); errObj != nil {
+				return errObj
 			}
 
 			bytes := make([]byte, nbytes)
@@ -175,6 +203,14 @@ Example:
 
 			if k.IntValue() < 1 {
 				return errors.NewError("randbits requires a positive number of bits")
+			}
+			// Integers are 64-bit, so more bits cannot be represented; refusing
+			// them also stops a huge k sizing a huge allocation.
+			if k.IntValue() > 63 {
+				return &object.Error{
+					Message:       "randbits() supports at most 63 bits",
+					ExceptionType: object.ExceptionTypeOverflowError,
+				}
 			}
 
 			// Generate a random big integer with exactly k bits

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/pool"
 )
 
@@ -113,7 +114,7 @@ func (c *client) doJSON(ctx context.Context, method, path string, query map[stri
 	}
 	defer resp.Body.Close()
 
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := object.ReadAllLimitedErr(resp.Body, "Nomad response")
 	if err != nil {
 		return err
 	}

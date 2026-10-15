@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"math"
@@ -187,6 +188,7 @@ const (
 	ExceptionTypeRuntimeError      = "RuntimeError"
 	ExceptionTypeZeroDivisionError = "ZeroDivisionError"
 	ExceptionTypeOverflowError     = "OverflowError"
+	ExceptionTypeMemoryError       = "MemoryError"
 	ExceptionTypeIndexError        = "IndexError"
 	ExceptionTypeKeyError          = "KeyError"
 	ExceptionTypeAttributeError    = "AttributeError"
@@ -438,8 +440,16 @@ func NewFloat(v float64) *Float {
 }
 
 func NewString(v string) *String {
-	return &String{value: v}
+	str := &String{value: v}
+	if accountingOn.Load() {
+		trackString(str)
+	}
+	return str
 }
+
+// stringObjectOverhead approximates the bytes a String costs beyond its text:
+// the object itself and the string header it holds.
+const stringObjectOverhead = int64(unsafe.Sizeof(String{})) + 16
 
 type Boolean struct {
 	value bool
@@ -535,13 +545,24 @@ func NewBytes(b []byte) *Bytes {
 	}
 	cp := make([]byte, len(b))
 	copy(cp, b)
-	return &Bytes{value: cp}
+	obj := &Bytes{value: cp}
+	if accountingOn.Load() {
+		trackBytes(obj)
+	}
+	return obj
 }
+
+// bytesObjectOverhead approximates the bytes a Bytes costs beyond its data.
+const bytesObjectOverhead = int64(unsafe.Sizeof(Bytes{})) + 16
 
 // NewBytesFromString returns a Bytes object whose contents are the UTF-8
 // encoding of s. This is the equivalent of Python's str.encode("utf-8").
 func NewBytesFromString(s string) *Bytes {
-	return &Bytes{value: []byte(s)}
+	obj := &Bytes{value: []byte(s)}
+	if accountingOn.Load() {
+		trackBytes(obj)
+	}
+	return obj
 }
 
 // BytesValue returns the underlying byte slice. Callers MUST NOT mutate the
@@ -1132,6 +1153,14 @@ type gilLock struct {
 	mu    sync.Mutex
 	owner atomic.Int64 // goroutine id of the current holder, 0 when free
 
+	// guard is the interpreter's resource guard, nil when it has none. While
+	// a goroutine holds the lock it is bound to guard (see bindGuard), and
+	// boundPrev keeps the binding to restore on release. Only the holder
+	// touches boundPrev.
+	guard     *ResourceGuard
+	boundPrev *ResourceGuard
+	bound     bool // the holder's goroutine was bound by bind
+
 	// Context-aware waiters. Unlock broadcasts by closing notify, so a
 	// cancellable waiter wakes the moment the lock frees rather than on a
 	// polling interval. waiters is only incremented along the contended
@@ -1290,7 +1319,26 @@ func (e *Environment) EnterGIL() bool {
 	}
 	g.mu.Lock()
 	g.owner.Store(id)
+	g.bind(id)
 	return true
+}
+
+// bind attaches the holder's goroutine to the interpreter's guard. The caller
+// must hold the lock.
+func (g *gilLock) bind(id int64) {
+	if g.guard != nil && g.guard.needsBinding() {
+		g.boundPrev = bindGuard(id, g.guard)
+		g.bound = true
+	}
+}
+
+// unbind restores the binding bind replaced. The caller must hold the lock.
+func (g *gilLock) unbind(id int64) {
+	if g.bound {
+		unbindGuard(id, g.boundPrev)
+		g.boundPrev = nil
+		g.bound = false
+	}
 }
 
 // EnterGILWithContext acquires the interpreter lock while allowing a
@@ -1314,6 +1362,7 @@ func (e *Environment) EnterGILWithContext(ctx context.Context) (acquired, entere
 	}
 	if g.mu.TryLock() {
 		g.owner.Store(id)
+		g.bind(id)
 		return true, true
 	}
 
@@ -1337,6 +1386,7 @@ func (e *Environment) EnterGILWithContext(ctx context.Context) (acquired, entere
 		// parking so the wakeup cannot be lost.
 		if g.mu.TryLock() {
 			g.owner.Store(id)
+			g.bind(id)
 			return true, true
 		}
 		select {
@@ -1345,6 +1395,7 @@ func (e *Environment) EnterGILWithContext(ctx context.Context) (acquired, entere
 		case <-notify:
 			if g.mu.TryLock() {
 				g.owner.Store(id)
+				g.bind(id)
 				return true, true
 			}
 			// Another waiter won this generation; re-register on the next.
@@ -1358,6 +1409,7 @@ func (e *Environment) ExitGIL() {
 		return
 	}
 	g := e.root.gil
+	g.unbind(g.owner.Load())
 	g.owner.Store(0)
 	g.mu.Unlock()
 	g.broadcastUnlock()
@@ -1379,14 +1431,37 @@ func (e *Environment) RunUnlocked(fn func()) {
 		fn() // not the holder — must not touch the lock
 		return
 	}
+	// The goroutine stays bound to the guard while it blocks: what it reads
+	// is for this interpreter. Another goroutine may take the lock meanwhile
+	// and overwrite boundPrev, so keep this holder's copy.
+	prev, bound := g.boundPrev, g.bound
 	g.owner.Store(0)
 	g.mu.Unlock()
 	g.broadcastUnlock()
 	defer func() {
 		g.mu.Lock()
 		g.owner.Store(id)
+		g.boundPrev, g.bound = prev, bound
 	}()
 	fn()
+}
+
+// SetResourceGuard gives the interpreter that owns e's lock a resource guard.
+// Set it before the interpreter runs; environments sharing the lock share the
+// guard.
+func (e *Environment) SetResourceGuard(guard *ResourceGuard) {
+	if e.root != nil && e.root.gil != nil {
+		e.root.gil.guard = guard
+	}
+}
+
+// ResourceGuard returns the guard of the interpreter that owns e's lock, nil
+// when it has none.
+func (e *Environment) ResourceGuard() *ResourceGuard {
+	if e == nil || e.root == nil || e.root.gil == nil {
+		return nil
+	}
+	return e.root.gil.guard
 }
 
 // AcquireCallEnvironment returns a function-call environment, reusing an idle
@@ -1866,9 +1941,68 @@ func (e *Environment) IsNonlocal(name string) bool {
 	return e.nonlocals != nil && e.nonlocals[name]
 }
 
-// EnableOutputCapture enables output capture for this environment
+// EnableOutputCapture enables output capture for this environment. Captured
+// output is one value handed back to the host, so it is held to the
+// interpreter's value limit: a write that would take it over fails with
+// ErrOutputLimitExceeded.
 func (e *Environment) EnableOutputCapture() {
-	e.output = &strings.Builder{}
+	e.output = &captureBuffer{env: e}
+}
+
+// ErrOutputLimitExceeded is returned by a write to captured output that would
+// take it over the interpreter's value limit.
+var ErrOutputLimitExceeded = stderrors.New("captured output exceeds the value limit")
+
+// ErrOutputNoRoom is returned by a write to captured output that would not
+// fit in the interpreter's memory limit. It matches ErrOutputLimitExceeded.
+var ErrOutputNoRoom = fmt.Errorf("%w: no room within the memory limit", ErrOutputLimitExceeded)
+
+// captureBuffer collects captured output up to the interpreter's value limit.
+type captureBuffer struct {
+	strings.Builder
+	env *Environment
+}
+
+func (b *captureBuffer) Write(p []byte) (int, error) {
+	if err := b.reserve(len(p)); err != nil {
+		return 0, err
+	}
+	oldCap := b.Cap()
+	n, err := b.Builder.Write(p)
+	b.track(oldCap)
+	return n, err
+}
+
+func (b *captureBuffer) WriteString(s string) (int, error) {
+	if err := b.reserve(len(s)); err != nil {
+		return 0, err
+	}
+	oldCap := b.Cap()
+	n, err := b.Builder.WriteString(s)
+	b.track(oldCap)
+	return n, err
+}
+
+// reserve checks that n more bytes keep the output within the interpreter's
+// value limit and, once the buffer may grow, within its memory limit.
+func (b *captureBuffer) reserve(n int) error {
+	g := b.env.ResourceGuard()
+	size := int64(b.Len() + n)
+	if limit := g.MaxValueBytes(); limit > 0 && size > limit {
+		return ErrOutputLimitExceeded
+	}
+	if size > int64(b.Cap()) && accountingOn.Load() && size >= sampleInterval.Load() && checkRoom(g, "captured output", GrowthRoom(b.Cap(), int(size))) != nil {
+		return ErrOutputNoRoom
+	}
+	return nil
+}
+
+// track charges a backing array the last write allocated; its charge is
+// credited back once a later growth or GetOutput lets it go.
+func (b *captureBuffer) track(oldCap int) {
+	if b.Cap() != oldCap && b.Len() > 0 && accountingOn.Load() {
+		trackAlloc(unsafe.StringData(b.String()), int64(b.Cap()))
+	}
 }
 
 // SetOutputWriter sets a custom writer for output
@@ -1894,7 +2028,12 @@ func (e *Environment) GetOutput() string {
 	if e.output == nil {
 		return ""
 	}
-	if builder, ok := e.output.(*strings.Builder); ok {
+	switch builder := e.output.(type) {
+	case *captureBuffer:
+		result := builder.String()
+		builder.Reset()
+		return result
+	case *strings.Builder:
 		result := builder.String()
 		builder.Reset()
 		return result
@@ -2338,7 +2477,13 @@ func NewDict() *Dict {
 
 // NewDictSized returns an empty, insertion-ordered dict with room for n pairs.
 func NewDictSized(n int) *Dict {
-	return &Dict{Pairs: make(map[string]DictPair, n), order: make([]orderEntry, 0, n)}
+	d := &Dict{Pairs: make(map[string]DictPair, n), order: make([]orderEntry, 0, n)}
+	if accountingOn.Load() && n > 0 {
+		// Presized storage is held from the start; Store only charges when
+		// the order array grows past it.
+		trackAlloc(&d.order[:1][0], int64(n)*dictEntryWeight)
+	}
+	return d
 }
 
 // Store inserts or updates key → value, extending the insertion order for
@@ -2356,9 +2501,24 @@ func (d *Dict) Store(canonical string, key Object, value Object) {
 	}
 	d.nextSeq++
 	d.Pairs[canonical] = DictPair{Key: key, Value: value, seq: d.nextSeq}
+	oldCap := cap(d.order)
 	d.order = append(d.order, orderEntry{key: canonical, seq: d.nextSeq})
+	if cap(d.order) != oldCap && accountingOn.Load() {
+		// The order array grows with the map, so its slots also stand in for
+		// the map's buckets, which have no pointer to attach a charge to.
+		trackAlloc(&d.order[0], int64(cap(d.order))*dictEntryWeight)
+	}
 	d.writeThrough(key, value)
 }
+
+// dictEntryWeight is the estimated memory per dict entry charged against an
+// interpreter's memory limit: the order slot plus the map entry and its share
+// of bucket overhead.
+const dictEntryWeight = int64(unsafe.Sizeof(orderEntry{})) + 64
+
+// DictEntryWeight is the estimated memory per dict entry, for checking a
+// dict's size before it is presized.
+const DictEntryWeight = dictEntryWeight
 
 // writeThrough applies a Store to the owning instance (an obj.__dict__ view).
 // Only string keys name attributes; others stay in the view alone.
@@ -3010,7 +3170,11 @@ func (i *Instance) SetField(name string, val Object) {
 	if i.overflowOrder == nil {
 		i.overflowOrder = make([]string, 0, 8) // one allocation for the common case
 	}
+	oldCap := cap(i.overflowOrder)
 	i.overflowOrder = append(i.overflowOrder, name)
+	if cap(i.overflowOrder) != oldCap && accountingOn.Load() {
+		trackAlloc(&i.overflowOrder[0], int64(cap(i.overflowOrder))*dictEntryWeight)
+	}
 }
 
 // DeleteField removes the named field if present.
@@ -3301,18 +3465,21 @@ func CloneObject(obj Object) Object {
 		return obj
 	case *FloatArray:
 		data := make([]float64, len(v.Data))
+		TrackSlice(data)
 		copy(data, v.Data)
 		shape := make([]int, len(v.Shape))
 		copy(shape, v.Shape)
 		return &FloatArray{Data: data, Shape: shape}
 	case *List:
 		elems := make([]Object, len(v.Elements))
+		TrackSlice(elems)
 		for i, e := range v.Elements {
 			elems[i] = CloneObject(e)
 		}
 		return &List{Elements: elems}
 	case *Tuple:
 		elems := make([]Object, len(v.Elements))
+		TrackSlice(elems)
 		for i, e := range v.Elements {
 			elems[i] = CloneObject(e)
 		}
@@ -3326,6 +3493,7 @@ func CloneObject(obj Object) Object {
 		return out
 	case *Set:
 		elements := make(map[string]Object, len(v.Elements))
+		TrackMap(elements, int64(len(v.Elements))*setEntryWeight)
 		for k, e := range v.Elements {
 			elements[k] = CloneObject(e)
 		}

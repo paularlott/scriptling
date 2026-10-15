@@ -13,10 +13,12 @@ func NewFloatArray1D(data []float64) *FloatArray {
 	if data == nil {
 		data = []float64{}
 	}
+	TrackSlice(data)
 	return &FloatArray{Data: data, Shape: []int{len(data)}}
 }
 
 func NewFloatArray2D(data []float64, rows, cols int) *FloatArray {
+	TrackSlice(data)
 	return &FloatArray{Data: data, Shape: []int{rows, cols}}
 }
 

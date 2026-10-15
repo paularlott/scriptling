@@ -266,10 +266,22 @@ while runtime.server_running():
 		t.Fatalf("expected at least 2 response lines, got %d: %s", len(lines), out.String())
 	}
 
+	// The server handles requests concurrently, so responses can arrive in
+	// either order; match them to their requests by id.
+	responses := make(map[float64]map[string]interface{}, len(lines))
+	for _, line := range lines {
+		var resp map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &resp); err != nil {
+			t.Fatalf("parse response %q: %v", line, err)
+		}
+		id, _ := resp["id"].(float64)
+		responses[id] = resp
+	}
+
 	// Validate handshake response.
-	var hsResp map[string]interface{}
-	if err := json.Unmarshal([]byte(lines[0]), &hsResp); err != nil {
-		t.Fatalf("parse handshake response: %v", err)
+	hsResp, ok := responses[1]
+	if !ok {
+		t.Fatalf("no handshake response (id 1): %s", out.String())
 	}
 	result, ok := hsResp["result"].(map[string]interface{})
 	if !ok {
@@ -295,9 +307,9 @@ while runtime.server_running():
 	}
 
 	// Validate function.call response.
-	var callResp map[string]interface{}
-	if err := json.Unmarshal([]byte(lines[1]), &callResp); err != nil {
-		t.Fatalf("parse call response: %v", err)
+	callResp, ok := responses[2]
+	if !ok {
+		t.Fatalf("no function.call response (id 2): %s", out.String())
 	}
 	callResult, ok := callResp["result"].(map[string]interface{})
 	if !ok {

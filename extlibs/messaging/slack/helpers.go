@@ -2,7 +2,8 @@ package slack
 
 import (
 	"encoding/base64"
-	"os"
+
+	"github.com/paularlott/scriptling/object"
 )
 
 func decodeBase64(s string) ([]byte, error) {
@@ -10,5 +11,5 @@ func decodeBase64(s string) ([]byte, error) {
 }
 
 func readFile(path string) ([]byte, error) {
-	return os.ReadFile(path)
+	return object.ReadFileLimitedErr(path)
 }
