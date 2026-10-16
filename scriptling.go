@@ -482,8 +482,8 @@ func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (result 
 	// Register the run with the interpreter's resource guard so it can be
 	// cancelled for going over the memory limit. With no limit in force ctx
 	// is returned unchanged.
-	ctx, release := p.guard.StartRun(ctx)
-	result = p.endRun(ctx, release, evaluator.EvalWithContext(ctx, program, p.env))
+	ctx, run := p.guard.StartRun(ctx)
+	result = p.endRun(run, evaluator.EvalWithContext(ctx, program, p.env))
 	return p.handleResult(result, "")
 }
 
@@ -836,9 +836,9 @@ func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, a
 	objArgs, objKwargs := convertArgsAndKwargs(args, nil)
 
 	// 3. Call the function using evaluator
-	ctx, release := p.guard.StartRun(ctx)
+	ctx, run := p.guard.StartRun(ctx)
 	ctx = evaluator.EnsureCallDepth(evaluator.WithEvaluator(ctx))
-	result := p.endRun(ctx, release, evaluator.ApplyFunctionGIL(ctx, fn, objArgs, objKwargs, p.env))
+	result := p.endRun(run, evaluator.ApplyFunctionGIL(ctx, fn, objArgs, objKwargs, p.env))
 	return p.handleResult(result, fmt.Sprintf("function '%s'", name))
 }
 
@@ -883,9 +883,9 @@ func (p *Scriptling) CreateInstanceWithContext(ctx context.Context, className st
 	objArgs, objKwargs := convertArgsAndKwargs(args, nil)
 
 	// Create the instance using evaluator
-	ctx, release := p.guard.StartRun(ctx)
+	ctx, run := p.guard.StartRun(ctx)
 	ctx = evaluator.EnsureCallDepth(evaluator.WithEvaluator(ctx))
-	instance := p.endRun(ctx, release, evaluator.ApplyFunctionGIL(ctx, class, objArgs, objKwargs, p.env))
+	instance := p.endRun(run, evaluator.ApplyFunctionGIL(ctx, class, objArgs, objKwargs, p.env))
 	return p.handleResult(instance, fmt.Sprintf("class '%s'", className))
 }
 
@@ -929,9 +929,9 @@ func (p *Scriptling) CallMethodWithContext(ctx context.Context, obj object.Objec
 	objArgs, objKwargs := convertArgsAndKwargs(args, instance)
 
 	// Call the method using evaluator
-	ctx, release := p.guard.StartRun(ctx)
+	ctx, run := p.guard.StartRun(ctx)
 	ctx = evaluator.EnsureCallDepth(evaluator.WithEvaluator(ctx))
-	result := p.endRun(ctx, release, evaluator.ApplyFunctionGIL(ctx, method, objArgs, objKwargs, p.env))
+	result := p.endRun(run, evaluator.ApplyFunctionGIL(ctx, method, objArgs, objKwargs, p.env))
 	return p.handleResult(result, fmt.Sprintf("method '%s' on class '%s'", methodName, instance.Class.Name))
 }
 

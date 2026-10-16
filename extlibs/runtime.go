@@ -789,8 +789,8 @@ func prepareBackgroundTask(promise *Promise, handler string, fnArgs []object.Obj
 		// Registered first so it runs last: the name stays claimed until the
 		// promise has been resolved, including on the panic path below.
 		defer releaseTaskName(promise)
-		ctx, endRun := parentGuard.StartRun(ctx)
-		defer endRun()
+		ctx, run := parentGuard.StartRun(ctx)
+		defer run.End()
 		defer func() {
 			if !daemon {
 				RuntimeState.TaskWG.Done()
@@ -1016,8 +1016,8 @@ func startSharedTask(ctx context.Context, handler string, fnArgs []object.Object
 	go func() {
 		// Registered first so it runs last — see startBackgroundTask.
 		defer releaseTaskName(promise)
-		ctx, endRun := guard.StartRun(ctx)
-		defer endRun()
+		ctx, run := guard.StartRun(ctx)
+		defer run.End()
 		defer func() {
 			if !daemon {
 				RuntimeState.TaskWG.Done()

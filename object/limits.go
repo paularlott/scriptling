@@ -218,9 +218,15 @@ type ResourceGuard struct {
 	// stop-the-world collection on every refusal.
 	lastForcedGC atomic.Int64
 
-	runsMu  sync.Mutex
-	runs    map[uint64]context.CancelCauseFunc
-	nextRun uint64
+	// Runs are cancelled by generation: a run remembers the generation it
+	// started in and is cancelled once the guard has moved past it. No run
+	// holds a channel or a cancel function of its own.
+	cancelGen atomic.Uint64
+	active    atomic.Int64
+	// causeCtx is a cancelled context carrying ErrMemoryLimitExceeded, made
+	// on the first cancellation so context.Cause works on a cancelled run.
+	causeOnce sync.Once
+	causeCtx  context.Context
 }
 
 // NewResourceGuard returns a guard whose limits all follow the process
@@ -314,26 +320,15 @@ func (g *ResourceGuard) Usage() ResourceUsage {
 
 // StartRun registers a top-level run so the guard can cancel it if the
 // interpreter goes over its memory limit. It returns the context the run must
-// use and a release function to defer. With no memory limit in force it
-// returns ctx unchanged and costs nothing more.
-func (g *ResourceGuard) StartRun(ctx context.Context) (context.Context, func()) {
+// use and the run to end when it is over. With no memory limit in force it
+// returns ctx unchanged and a nil run, and costs nothing more.
+func (g *ResourceGuard) StartRun(ctx context.Context) (context.Context, *Run) {
 	if g == nil || g.MemoryLimit() <= 0 {
-		return ctx, noRun
+		return ctx, nil
 	}
-	parent := ctx
-	ctx, cancel := context.WithCancelCause(ctx)
-	// Remember the context the run was started from, so work that outlives
-	// the run (a background task) can leave the run's cancellation behind.
-	ctx = context.WithValue(ctx, runParentKey{}, parent)
-	g.runsMu.Lock()
-	if g.runs == nil {
-		g.runs = make(map[uint64]context.CancelCauseFunc)
-	}
-	g.nextRun++
-	id := g.nextRun
-	g.runs[id] = cancel
 	g.cancelling.Store(false)
-	g.runsMu.Unlock()
+	r := &Run{parent: ctx, guard: g, gen: g.cancelGen.Load()}
+	g.active.Add(1)
 	// Memory retained from earlier calls may already be over the limit (it
 	// was lowered, or set after the memory was allocated). A call that never
 	// allocates would not notice, so check before it starts. Rate limited
@@ -341,15 +336,96 @@ func (g *ResourceGuard) StartRun(ctx context.Context) (context.Context, func()) 
 	// globals sit over its limit must not pay a collection per call. Memory
 	// the host has released is seen by the next check after the interval.
 	if lim := g.MemoryLimit(); g.used.Load() > lim && !g.reclaim(func() bool { return g.used.Load() <= lim }) {
-		cancel(ErrMemoryLimitExceeded)
+		r.cancelled.Store(true)
 		g.cancellations.Add(1)
 	}
-	return ctx, func() {
-		g.runsMu.Lock()
-		delete(g.runs, id)
-		g.runsMu.Unlock()
-		cancel(nil)
+	return r, r
+}
+
+// Run is one top-level execution registered on a guard, and the context the
+// execution runs under: the context it was started from plus the guard's
+// cancellation. The guard cancels a run by moving its generation on, which
+// the evaluator sees at its next periodic check and Err reports; Done is the
+// parent's channel, so work blocked on it finishes its current operation
+// before it is stopped. That keeps a run to one small allocation.
+type Run struct {
+	parent    context.Context
+	guard     *ResourceGuard
+	gen       uint64
+	cancelled atomic.Bool
+	ended     atomic.Bool
+}
+
+// runKey is the context key under which a run finds itself.
+type runKey struct{}
+
+// Deadline is the parent's.
+func (r *Run) Deadline() (time.Time, bool) { return r.parent.Deadline() }
+
+// Done is the parent's channel: the guard's cancellation is reported by Err
+// and seen by the evaluator's periodic check, not by a channel.
+func (r *Run) Done() <-chan struct{} { return r.parent.Done() }
+
+// Err reports the parent's error, or context.Canceled once the guard has
+// cancelled the run or the run has ended.
+func (r *Run) Err() error {
+	if err := r.parent.Err(); err != nil {
+		return err
 	}
+	if r.Cancelled() || r.ended.Load() {
+		return context.Canceled
+	}
+	return nil
+}
+
+// Value finds the run itself, the memory-limit cause once the run is
+// cancelled for it, and otherwise the parent's values.
+func (r *Run) Value(key any) any {
+	if key == (runKey{}) {
+		return r
+	}
+	if r.Cancelled() {
+		if v := r.guard.memoryLimitCause().Value(key); v != nil {
+			return v
+		}
+	}
+	return r.parent.Value(key)
+}
+
+// Cancelled reports whether the guard has cancelled the run for its memory
+// limit.
+func (r *Run) Cancelled() bool {
+	if r == nil {
+		return false
+	}
+	return r.cancelled.Load() || r.guard.cancelGen.Load() != r.gen
+}
+
+// End ends the run. A nil run (no memory limit) ends nothing.
+func (r *Run) End() {
+	if r == nil {
+		return
+	}
+	if !r.ended.Swap(true) {
+		r.guard.active.Add(-1)
+	}
+}
+
+// RunFromContext returns the run ctx belongs to, nil when it belongs to none.
+func RunFromContext(ctx context.Context) *Run {
+	r, _ := ctx.Value(runKey{}).(*Run)
+	return r
+}
+
+// memoryLimitCause returns a cancelled context whose cause is
+// ErrMemoryLimitExceeded, so context.Cause on a cancelled run reports it.
+func (g *ResourceGuard) memoryLimitCause() context.Context {
+	g.causeOnce.Do(func() {
+		ctx, cancel := context.WithCancelCause(context.Background())
+		cancel(ErrMemoryLimitExceeded)
+		g.causeCtx = ctx
+	})
+	return g.causeCtx
 }
 
 // fits reports whether n more bytes keep the estimate within lim, without
@@ -359,9 +435,6 @@ func (g *ResourceGuard) fits(n, lim int64) bool {
 	return used <= lim && n <= lim-used
 }
 
-// runParentKey marks a run's context with the context it was started from.
-type runParentKey struct{}
-
 // DetachRun returns ctx without the cancellation of any run it belongs to: a
 // run's context is cancelled when the run ends, so work that should outlive
 // it (a fire-and-forget background task) starts from the context the
@@ -369,31 +442,22 @@ type runParentKey struct{}
 // kept; values added inside the run are not.
 func DetachRun(ctx context.Context) context.Context {
 	for {
-		parent, ok := ctx.Value(runParentKey{}).(context.Context)
-		if !ok {
+		r := RunFromContext(ctx)
+		if r == nil {
 			return ctx
 		}
-		ctx = parent
+		ctx = r.parent
 	}
 }
 
-// noRun is the release function of a run that was not registered.
+// noRun is the release function of a binding that was not made.
 func noRun() {}
 
 // cancelRuns stops every run registered on the guard.
 func (g *ResourceGuard) cancelRuns() {
 	g.cancelling.Store(true)
-	g.runsMu.Lock()
-	cancels := make([]context.CancelCauseFunc, 0, len(g.runs))
-	for id, cancel := range g.runs {
-		cancels = append(cancels, cancel)
-		delete(g.runs, id)
-	}
-	g.runsMu.Unlock()
-	for _, cancel := range cancels {
-		cancel(ErrMemoryLimitExceeded)
-	}
-	g.cancellations.Add(uint64(len(cancels)))
+	g.cancelGen.Add(1)
+	g.cancellations.Add(uint64(max(g.active.Load(), 0)))
 }
 
 func (g *ResourceGuard) charge(w int64) {

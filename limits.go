@@ -1,9 +1,6 @@
 package scriptling
 
 import (
-	"context"
-	stderrors "errors"
-
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
@@ -136,9 +133,9 @@ func (p *Scriptling) ResourceUsage() ResourceUsage {
 
 // endRun ends a run started with the guard's StartRun and turns a
 // memory-limit cancellation into an error that names the limit.
-func (p *Scriptling) endRun(runCtx context.Context, release func(), result object.Object) object.Object {
-	cancelledForMemory := runCtx.Err() != nil && stderrors.Is(context.Cause(runCtx), ErrMemoryLimitExceeded)
-	release()
+func (p *Scriptling) endRun(run *object.Run, result object.Object) object.Object {
+	cancelledForMemory := run.Cancelled()
+	run.End()
 	if cancelledForMemory {
 		// The evaluator only saw a cancelled context; name the real reason.
 		return errors.NewError("%s: the interpreter's estimated memory exceeded its limit of %d bytes", ErrMemoryLimitExceeded.Error(), p.MemoryLimit())

@@ -237,6 +237,7 @@ const contextCheckBatch = 10
 type contextChecker struct {
 	ctx      context.Context
 	done     <-chan struct{}
+	run      *object.Run
 	counter  int
 	resolved bool
 }
@@ -259,7 +260,12 @@ func (cc *contextChecker) checkBatch() object.Object {
 	cc.counter = 0
 	if !cc.resolved {
 		cc.done = cc.ctx.Done()
+		cc.run = object.RunFromContext(cc.ctx)
 		cc.resolved = true
+	}
+	// A run cancelled for its memory limit has no channel: ask it.
+	if cc.run.Cancelled() {
+		return checkContext(cc.ctx)
 	}
 	if cc.done == nil {
 		return nil

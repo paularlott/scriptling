@@ -165,8 +165,13 @@ func TestNilResourceGuardUsesDefaults(t *testing.T) {
 	if g.MemoryLimit() != 123 || g.MaxValueBytes() != 456 {
 		t.Fatalf("nil guard: %d %d", g.MemoryLimit(), g.MaxValueBytes())
 	}
-	if _, release := g.StartRun(context.Background()); release == nil {
-		t.Fatal("nil guard StartRun returned no release")
+	if ctx, run := g.StartRun(context.Background()); run != nil || ctx != context.Background() {
+		t.Fatal("nil guard StartRun registered a run")
+	}
+	var none *Run
+	none.End() // ending no run is fine
+	if none.Cancelled() {
+		t.Fatal("no run reports cancelled")
 	}
 }
 
@@ -636,17 +641,23 @@ func TestStartRunAndMemoryCancellation(t *testing.T) {
 
 	// No limit: the context passes through untouched.
 	ctx := context.Background()
-	got, release := g.StartRun(ctx)
-	if got != ctx {
+	got, run := g.StartRun(ctx)
+	if got != ctx || run != nil {
 		t.Fatal("StartRun wrapped the context with no memory limit")
 	}
-	release()
+	run.End()
 
 	g.SetMemoryLimit(1 << 20)
-	runCtx, release := g.StartRun(ctx)
-	defer release()
-	other, releaseOther := g.StartRun(ctx)
-	defer releaseOther()
+	runCtx, run := g.StartRun(ctx)
+	defer run.End()
+	other, otherRun := g.StartRun(ctx)
+	defer otherRun.End()
+	if RunFromContext(runCtx) != run || RunFromContext(context.WithValue(runCtx, "k", 1)) != run {
+		t.Fatal("the run is not found from its context")
+	}
+	if runCtx.Err() != nil || run.Cancelled() {
+		t.Fatal("a fresh run is cancelled")
+	}
 
 	// Hold more than the limit live and charge it: both runs are cancelled.
 	env := NewEnvironment()
@@ -655,14 +666,17 @@ func TestStartRunAndMemoryCancellation(t *testing.T) {
 	held := NewString(strings.Repeat("m", 2<<20))
 	env.ExitGIL()
 
+	// Cancellation is reported by the run, not by a channel: the run's Done
+	// is its parent's, so a blocked operation finishes before it is stopped.
 	for _, c := range []context.Context{runCtx, other} {
-		select {
-		case <-c.Done():
-		case <-time.After(5 * time.Second):
-			t.Fatal("run not cancelled over the memory limit")
+		if !RunFromContext(c).Cancelled() || c.Err() != context.Canceled {
+			t.Fatalf("run not cancelled over the memory limit: %v", c.Err())
 		}
 		if !stderrors.Is(context.Cause(c), ErrMemoryLimitExceeded) {
 			t.Fatalf("cancellation cause = %v", context.Cause(c))
+		}
+		if c.Done() != ctx.Done() {
+			t.Fatal("a run's Done is not its parent's")
 		}
 	}
 	if n := g.Usage().MemoryLimitCancellations; n != 2 {
@@ -670,12 +684,76 @@ func TestStartRunAndMemoryCancellation(t *testing.T) {
 	}
 	runtime.KeepAlive(held)
 
-	// A new run clears the cancelling state.
-	_, releaseNew := g.StartRun(ctx)
+	// A new run clears the cancelling state; with the memory still held it
+	// is cancelled at once by the retained-memory check.
+	newCtx, newRun := g.StartRun(ctx)
 	if g.cancelling.Load() {
 		t.Fatal("new run did not clear the cancelling state")
 	}
-	releaseNew()
+	if !newRun.Cancelled() || !stderrors.Is(context.Cause(newCtx), ErrMemoryLimitExceeded) {
+		t.Fatal("a run started with the memory still held was not cancelled")
+	}
+	newRun.End()
+	if g.active.Load() != 2 {
+		t.Fatalf("active runs = %d, want the two still deferred", g.active.Load())
+	}
+}
+
+// Cancellation is by generation: runs started after it are not cancelled by
+// it, and an ended run's context is cancelled.
+func TestRunGenerations(t *testing.T) {
+	withDefaults(t)
+	g := NewResourceGuard()
+	g.SetMemoryLimit(1 << 40)
+	ctx := context.Background()
+	first, firstRun := g.StartRun(ctx)
+	g.cancelRuns()
+	second, secondRun := g.StartRun(ctx)
+	if !firstRun.Cancelled() || first.Err() != context.Canceled {
+		t.Fatal("the run active at the cancellation was not cancelled")
+	}
+	if secondRun.Cancelled() || second.Err() != nil || context.Cause(second) != nil {
+		t.Fatal("a run started after the cancellation is cancelled")
+	}
+	if n := g.Usage().MemoryLimitCancellations; n != 1 {
+		t.Fatalf("cancellations = %d, want 1", n)
+	}
+	secondRun.End()
+	secondRun.End() // ending twice is harmless
+	if second.Err() != context.Canceled {
+		t.Fatal("an ended run's context is not cancelled")
+	}
+	firstRun.End()
+	if g.active.Load() != 0 {
+		t.Fatalf("active runs = %d after all ended", g.active.Load())
+	}
+}
+
+// A run started from a cancellable host context reports the host's
+// cancellation and deadline as its own.
+func TestRunFollowsHostContext(t *testing.T) {
+	withDefaults(t)
+	g := NewResourceGuard()
+	g.SetMemoryLimit(1 << 40)
+	host, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	ctx, run := g.StartRun(host)
+	defer run.End()
+	if _, ok := ctx.Deadline(); !ok {
+		t.Fatal("the host deadline is lost")
+	}
+	cancel()
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("the host's cancellation does not close Done")
+	}
+	if ctx.Err() != context.DeadlineExceeded && ctx.Err() != context.Canceled {
+		t.Fatalf("Err = %v", ctx.Err())
+	}
+	if run.Cancelled() {
+		t.Fatal("host cancellation counted as a memory cancellation")
+	}
 }
 
 // Garbage that takes the estimate over the limit is collected rather than
@@ -684,8 +762,8 @@ func TestGarbageOverLimitIsReclaimed(t *testing.T) {
 	withDefaults(t)
 	g := NewResourceGuard()
 	g.SetMemoryLimit(8 << 20)
-	runCtx, release := g.StartRun(context.Background())
-	defer release()
+	runCtx, run := g.StartRun(context.Background())
+	defer run.End()
 
 	env := NewEnvironment()
 	env.SetResourceGuard(g)
@@ -988,15 +1066,15 @@ func TestDetachRun(t *testing.T) {
 
 	g := NewResourceGuard()
 	g.SetMemoryLimit(1 << 40)
-	outer, releaseOuter := g.StartRun(host)
-	inner, releaseInner := g.StartRun(context.WithValue(outer, key{}, "inside"))
+	outer, outerRun := g.StartRun(host)
+	inner, innerRun := g.StartRun(context.WithValue(outer, key{}, "inside"))
 
 	detached := DetachRun(inner)
 	if detached != host {
 		t.Fatal("DetachRun did not return the host context")
 	}
-	releaseInner()
-	releaseOuter()
+	innerRun.End()
+	outerRun.End()
 	if outer.Err() == nil {
 		t.Fatal("ending a run did not cancel its context")
 	}
