@@ -134,12 +134,12 @@ func TestBuiltinType(t *testing.T) {
 		input    object.Object
 		expected string
 	}{
-		{object.NewInteger(42), "INTEGER"},
-		{object.NewFloat(3.14), "FLOAT"},
-		{object.NewString("hello"), "STRING"},
-		{object.NewBoolean(true), "BOOLEAN"},
-		{&object.List{Elements: []object.Object{}}, "LIST"},
-		{&object.Dict{Pairs: make(map[string]object.DictPair)}, "DICT"},
+		{object.NewInteger(42), "int"},
+		{object.NewFloat(3.14), "float"},
+		{object.NewString("hello"), "str"},
+		{object.NewBoolean(true), "bool"},
+		{&object.List{Elements: []object.Object{}}, "list"},
+		{&object.Dict{Pairs: make(map[string]object.DictPair)}, "dict"},
 	}
 
 	for _, tt := range tests {
@@ -490,8 +490,8 @@ except Exception as e:
     t = type(e)
 t`, "KeyError"},
 		{"constructed value reports class too", `type(ValueError("not raised"))`, "ValueError"},
-		{"other types unchanged", `type(1)`, "INTEGER"},
-		{"string type unchanged", `type("x")`, "STRING"},
+		{"other types unchanged", `type(1)`, "int"},
+		{"string type unchanged", `type("x")`, "str"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

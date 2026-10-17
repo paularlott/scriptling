@@ -82,11 +82,11 @@ assert eb >= bytes()
 # ── Bytes survives every binary-producing/consuming library ────────────────
 # hashlib with bytes input → bytes output → re-encodable
 h = hashlib.sha256(bytes("hello")).digest()
-assert type(h) == "BYTES"
+assert type(h) == "bytes"
 assert base64.b64encode(h) == base64.b64encode(hashlib.sha256("hello").digest())
 # hmac with bytes input
 m = hmac.new(bytes("key"), bytes("msg"), "sha256").digest()
-assert type(m) == "BYTES"
+assert type(m) == "bytes"
 # base64 round-trip via bytes
 roundtrip = base64.b64decode(base64.b64encode(bytes("payload")))
 assert roundtrip == bytes("payload")

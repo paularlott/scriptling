@@ -117,12 +117,12 @@ func TestMethodCalls(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{`5.type()`, "INTEGER"},
-		{`3.14.type()`, "FLOAT"},
-		{`"hello".type()`, "STRING"},
-		{`True.type()`, "BOOLEAN"},
-		{`[1, 2].type()`, "LIST"},
-		{`{"a": "b"}.type()`, "DICT"},
+		{`5.type()`, "int"},
+		{`3.14.type()`, "float"},
+		{`"hello".type()`, "str"},
+		{`True.type()`, "bool"},
+		{`[1, 2].type()`, "list"},
+		{`{"a": "b"}.type()`, "dict"},
 	}
 
 	for _, tt := range tests {

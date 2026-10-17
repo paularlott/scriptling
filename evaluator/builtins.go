@@ -80,7 +80,7 @@ sleep, socket reads, file I/O and Queue operations release the lock on their own
 	},
 	"map": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			return mapFunction(ctx, kwargs, args...)
+			return withIterTypeName(mapFunction(ctx, kwargs, args...), iterTypeNameMap)
 		},
 		HelpText: `map(function, iterable, ...) - Apply function to every item
 
@@ -90,7 +90,7 @@ Use list(map(...)) to get a list.`,
 	},
 	"filter": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			return filterFunction(ctx, kwargs, args...)
+			return withIterTypeName(filterFunction(ctx, kwargs, args...), iterTypeNameFilter)
 		},
 		HelpText: `filter(function, iterable) - Filter elements by function
 
@@ -268,27 +268,14 @@ Returns the number of items in a string, bytes, list, dict, or tuple.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			obj := args[0]
-			if instance, ok := obj.(*object.Instance); ok {
-				return object.NewString(instance.Class.Name)
-			}
-			// An exception reports the class it was raised as ("ValueError"),
-			// not the generic wrapper type: except blocks need to tell them
-			// apart without message sniffing.
-			if exc, ok := obj.(*object.Exception); ok && exc.ExceptionType != "" {
-				return object.NewString(exc.ExceptionType)
-			}
-			// Frozen sets are their own type name, unlike every other
-			// built-in value (which reports the UPPER_CASE object type).
-			if s, ok := obj.(*object.Set); ok && s.Frozen {
-				return object.NewString("frozenset")
-			}
-			return object.NewString(obj.Type().String())
+			return typeOf(args[0])
 		},
 		HelpText: `type(obj) - Return the type of an object
 
-Returns a string representing the type of the object. For exceptions this is
-the class it was raised as (e.g. "ValueError"), not the generic "EXCEPTION".`,
+Returns the type's name as a string, as Python's type(obj).__name__ spells it:
+"int", "str", "list", "NoneType", "function", "list_iterator", the class name
+for an instance, and the class it was raised as for an exception (e.g.
+"ValueError"). type(x) == int and type(x).__name__ work as in Python.`,
 	},
 	"str": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -1124,7 +1111,6 @@ Equivalent to (a // b, a % b) for integers.`,
 			}
 
 			obj := args[0]
-			objType := obj.Type().String()
 
 			for _, typeArg := range typeArgs {
 				// Check for class type (before AsString, since Class.AsString returns name)
@@ -1180,58 +1166,10 @@ Equivalent to (a // b, a % b) for integers.`,
 					return errors.NewError("isinstance() arg 2 must be a type, string, or tuple of types")
 				}
 
-				checkType := strings.ToUpper(typeName)
-				// frozenset and set are distinct types: a frozen set is not a set.
-				if typeName == "frozenset" {
-					if s, ok := obj.(*object.Set); ok && s.Frozen {
-						return TRUE
-					}
-					continue
-				}
-				if typeName == "set" {
-					if s, ok := obj.(*object.Set); ok && !s.Frozen {
-						return TRUE
-					}
-					continue
-				}
-				switch checkType {
-				case "INT", "INTEGER":
-					checkType = "INTEGER"
-				case "STR", "STRING":
-					checkType = "STRING"
-				case "FLOAT":
-					checkType = "FLOAT"
-				case "BOOL", "BOOLEAN":
-					checkType = "BOOLEAN"
-				case "LIST":
-					checkType = "LIST"
-				case "DICT":
-					checkType = "DICT"
-				case "TUPLE":
-					checkType = "TUPLE"
-				case "FUNCTION":
-					checkType = "FUNCTION"
-				case "NONE", "NULL", "NONETYPE":
-					checkType = "NULL"
-				case "SLICE":
-					checkType = "SLICE"
-				}
-				// bool is a subclass of int in Python, and scriptling
-				// Booleans already behave as ints in arithmetic.
-				if checkType == "INTEGER" {
-					if _, ok := obj.(*object.Boolean); ok {
-						return TRUE
-					}
-				}
-				if objType == checkType {
+				// A type name is what type() reports for the type ("int",
+				// "NoneType", a class name), matched exactly.
+				if isinstanceOfTypeName(obj, typeName) {
 					return TRUE
-				}
-				if inst, ok := obj.(*object.Instance); ok {
-					for c := inst.Class; c != nil; c = c.BaseClass {
-						if strings.EqualFold(c.Name, typeName) {
-							return TRUE
-						}
-					}
 				}
 			}
 			return FALSE
@@ -1239,9 +1177,9 @@ Equivalent to (a // b, a % b) for integers.`,
 		HelpText: `isinstance(object, type) - Return True if object is of the given type
 
 Supports bare type names: isinstance(x, dict), isinstance(x, int)
-Also supports string type names: isinstance(x, "dict"), isinstance(x, "int")
+Also supports type names as type() reports them: isinstance(x, "dict"),
+isinstance(x, "int"), isinstance(x, "NoneType"), isinstance(obj, "MyClass")
 Supports tuple/list of types: isinstance(x, (dict, list, tuple))
-Type names: int, str, float, bool, list, dict, tuple, function, None
 Also works with class types: isinstance(obj, MyClass)`,
 	},
 	"chr": {
@@ -1290,7 +1228,9 @@ The argument must be a string of exactly one character.`,
 			case *object.List, *object.Tuple, *object.String, *object.Iterator, *object.FloatArray,
 				*object.Dict, *object.DictKeys, *object.DictValues, *object.DictItems:
 				// Dicts and their views reverse insertion order (Python 3.8+).
-				return object.NewReversedIterator(args[0])
+				// Named before reversing: reversing consumes an iterator.
+				name := reversedTypeNameOf(args[0])
+				return object.NewReversedIterator(args[0]).SetTypeName(name)
 			default:
 				return errors.NewTypeError("sequence (LIST, TUPLE, STRING, ITERATOR, FLOAT_ARRAY, DICT)", args[0].Type().String())
 			}
@@ -1923,7 +1863,14 @@ is provided, returns default. Otherwise raises StopIteration.`,
 	},
 	"iter": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			return iterFunction(ctx, kwargs, args...)
+			r := iterFunction(ctx, kwargs, args...)
+			// iter() of an iterator is the iterator itself: keep its name.
+			if len(args) == 1 && r != args[0] {
+				if name := iterTypeNameOf(args[0]); name != nil {
+					return withIterTypeName(r, name)
+				}
+			}
+			return r
 		},
 		HelpText: `iter(obj) - Return an iterator for an object
 

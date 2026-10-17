@@ -331,7 +331,7 @@ func nativeBoolToBooleanObject(input bool) *object.Boolean {
 
 func objectsEqual(a, b object.Object) bool {
 	if a.Type() != b.Type() {
-		// type() reports type names as strings ("INTEGER") while int, str,
+		// type() reports type names as strings ("int") while int, str,
 		// ... are builtins; `type(x) is int` / `type(x) == int` — a Python
 		// idiom — must bridge the two representations.
 		return typeBridgeEqual(a, b)
@@ -354,27 +354,10 @@ func objectsEqual(a, b object.Object) bool {
 	}
 }
 
-// normalizeTypeName folds a scriptling/Python type name ("int", "STR",
-// "NoneType", "INTEGER") onto its canonical object-type string.
-func normalizeTypeName(name string) string {
-	switch strings.ToUpper(name) {
-	case "INT":
-		return "INTEGER"
-	case "STR":
-		return "STRING"
-	case "BOOL":
-		return "BOOLEAN"
-	case "NONE", "NONETYPE":
-		return "NULL"
-	default:
-		return strings.ToUpper(name)
-	}
-}
-
 // typeBridgeEqual reports whether a type-name string and a type builtin
-// (int, str, dict, ..., or an exception constructor) name the same type, so
-// the scriptling idiom type(x) == "INTEGER" and the Python idiom
-// type(x) == int agree.
+// (int, str, dict, ..., or an exception constructor) name the same type:
+// type() returns names, so type(x) == int compares the name with the
+// builtin's.
 func typeBridgeEqual(a, b object.Object) bool {
 	var name string
 	var t object.Object
@@ -397,7 +380,7 @@ func typeBridgeEqual(a, b object.Object) bool {
 	} else {
 		return false
 	}
-	return normalizeTypeName(name) == normalizeTypeName(typeName)
+	return name == typeName
 }
 
 // evalObjectsEqualChecked compares a and b for equality, dispatching to a
@@ -447,7 +430,7 @@ func isInstanceOperand(obj object.Object) bool {
 func objectsDeepEqual(a, b object.Object) bool {
 	if a.Type() != b.Type() {
 		// Same bridge as objectsEqual: type-name strings and type builtins
-		// ("INTEGER" vs int) name the same type.
+		// ("int" vs int) name the same type.
 		return typeBridgeEqual(a, b)
 	}
 	// Instances with a Go-native __eq__ (dataclasses, namedtuples, enums)

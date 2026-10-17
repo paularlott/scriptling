@@ -39,7 +39,7 @@ print("Registered echo handler on responder (msg type 200)")
 # Register a math handler: doubles a number (msg type 201)
 def double_handler(msg):
     payload = msg["payload"]
-    if type(payload) == "DICT" and "value" in payload:
+    if type(payload) == "dict" and "value" in payload:
         val = payload["value"]
         return {"result": val * 2}
     return {"error": "expected {value: number}"}

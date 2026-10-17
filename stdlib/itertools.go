@@ -3,6 +3,7 @@ package stdlib
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/evaliface"
@@ -1664,4 +1665,20 @@ func notIterableError(obj object.Object) object.Object {
 		return errors.NewError("%s", object.InfiniteIteratorMessage)
 	}
 	return errors.NewTypeError("iterable", obj.Type().String())
+}
+
+// Itertools iterators report their function's name as their type, as in
+// Python: type(itertools.chain()) is "chain".
+func init() {
+	for name, fn := range ItertoolsLibrary.Functions() {
+		typeName := object.NewString(name)
+		inner := fn.Fn
+		fn.Fn = func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			r := inner(ctx, kwargs, args...)
+			if it, ok := r.(*object.Iterator); ok && !slices.Contains(args, r) {
+				it.SetTypeName(typeName)
+			}
+			return r
+		}
+	}
 }

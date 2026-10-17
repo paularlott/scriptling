@@ -810,7 +810,7 @@ dict_eq = {"a": 1} == {"a": 1}
 }
 
 func TestRegressionIsinstanceStringStillWorks(t *testing.T) {
-	// Ensure string-based isinstance still works (backwards compatibility)
+	// Ensure string-based isinstance works with the names type() reports
 	p := New()
 	_, err := p.Eval(`
 r1 = isinstance(42, "int")
@@ -819,7 +819,7 @@ r3 = isinstance(3.14, "float")
 r4 = isinstance({}, "dict")
 r5 = isinstance([], "list")
 r6 = isinstance(True, "bool")
-r7 = isinstance(None, "None")
+r7 = isinstance(None, "NoneType")
 `)
 	if err != nil {
 		t.Fatalf("Eval failed: %v", err)

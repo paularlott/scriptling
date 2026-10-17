@@ -3,7 +3,7 @@
 # Creation
 s = set([1, 2, 3])
 assert len(s) == 3
-assert type(s) == "SET"
+assert type(s) == "set"
 
 s2 = set([1, 2, 2, 3])
 assert len(s2) == 3 # Uniqueness

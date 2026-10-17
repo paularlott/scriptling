@@ -20,13 +20,13 @@ func TestGossipLibraryRegistered(t *testing.T) {
 
 	result, err := p.Eval(`
 import scriptling.net.gossip as gossip
-type(gossip) == "DICT"
+type(gossip) == "module"
 `)
 	if err != nil {
 		t.Fatalf("script error: %v", err)
 	}
 	if b, _ := result.AsBool(); !b {
-		t.Error("expected gossip library to have type DICT")
+		t.Error("expected gossip library to have type module")
 	}
 }
 
@@ -122,7 +122,7 @@ c = gossip.create(bind_addr="127.0.0.1:0")
 c.start()
 n = c.local_node()
 c.stop()
-[type(n) == "DICT", "id" in n, "addr" in n, "state" in n, "metadata" in n, "tags" in n]
+[type(n) == "dict", "id" in n, "addr" in n, "state" in n, "metadata" in n, "tags" in n]
 `)
 	if err != nil {
 		t.Fatalf("script error: %v", err)
@@ -154,7 +154,7 @@ c.delete_metadata("role")
 after_delete = c.get_metadata("role")
 
 c.stop()
-[role, type(missing) == "NULL", type(after_delete) == "NULL"]
+[role, type(missing) == "NoneType", type(after_delete) == "NoneType"]
 `)
 	if err != nil {
 		t.Fatalf("script error: %v", err)
@@ -179,7 +179,7 @@ func TestGossipDecodeJSON(t *testing.T) {
 	result, err := p.Eval(`
 import json
 d = json.loads('{"x": 1, "y": "hello"}')
-[type(d) == "DICT", d["x"] == 1, d["y"] == "hello"]
+[type(d) == "dict", d["x"] == 1, d["y"] == "hello"]
 `)
 	if err != nil {
 		t.Fatalf("script error: %v", err)
@@ -260,7 +260,7 @@ id = c.node_id()
 node = c.get_node(id)
 missing = c.get_node("00000000-0000-0000-0000-000000000000")
 c.stop()
-[type(node) == "DICT", node["id"] == id, type(missing) == "NULL"]
+[type(node) == "dict", node["id"] == id, type(missing) == "NoneType"]
 `)
 	if err != nil {
 		t.Fatalf("script error: %v", err)
@@ -339,7 +339,7 @@ c = gossip.create(bind_addr="127.0.0.1:0")
 c.start()
 cands = c.candidates()
 c.stop()
-type(cands) == "LIST"
+type(cands) == "list"
 `)
 	if err != nil {
 		t.Fatalf("script error: %v", err)

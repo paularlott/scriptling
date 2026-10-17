@@ -104,7 +104,7 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 		if len(keywords) > 0 {
 			return errors.NewError("type() does not accept keyword arguments")
 		}
-		return object.NewString(obj.Type().String())
+		return typeOf(obj)
 	}
 
 	// Handle library method calls (dictionaries)

@@ -66,13 +66,13 @@ func TestMulticastLibraryRegistered(t *testing.T) {
 
 	result, err := p.Eval(`
 import scriptling.net.multicast as mc
-type(mc) == "DICT"
+type(mc) == "module"
 `)
 	if err != nil {
 		t.Fatalf("script error: %v", err)
 	}
 	if b, _ := result.AsBool(); !b {
-		t.Error("expected multicast library to have type DICT")
+		t.Error("expected multicast library to have type module")
 	}
 }
 

@@ -7,7 +7,7 @@ assert b == bytes("")
 
 # ── bytes constructor: from string ─────────────────────────────────────────
 b = bytes("hi")
-assert type(b) == "BYTES"
+assert type(b) == "bytes"
 assert len(b) == 2
 assert b.decode() == "hi"
 
@@ -140,7 +140,7 @@ assert bytes("hi").hex() == "6869"  # sanity
 # ── hashlib/hmac round-trip via Bytes ──────────────────────────────────────
 import hashlib
 d = hashlib.sha256("hello").digest()
-assert type(d) == "BYTES"
+assert type(d) == "bytes"
 # Verify the digest can be re-encoded as base64 / hex without corruption
 import base64
 assert len(base64.b64encode(d)) > 0

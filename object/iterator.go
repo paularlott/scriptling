@@ -7,19 +7,21 @@ import (
 
 // Iterator represents a Python-style iterator
 type Iterator struct {
-	next     func() (Object, bool) // Returns (value, hasNext)
-	consumed bool                  // Track if iterator has been exhausted
+	next func() (Object, bool) // Returns (value, hasNext)
 	// length is the element count when statically known (range); -1
 	// otherwise. len() reports it, matching Python where only range among
 	// the lazy iterators has a length.
 	length int64
+	// rangeState, for range iterators, reports the next value, the stop
+	// and the step, so the values left can be indexed without iterating.
+	rangeState func() (next, stop, step int64)
+	// typeName is what type() reports ("range", "map"); nil is "iterator".
+	typeName *String
+	consumed bool // Track if iterator has been exhausted
 	// infinite marks an iterator that never ends (itertools count, cycle,
 	// repeat and lazy wrappers of them), so collecting it into a list
 	// fails fast instead of allocating until memory runs out.
 	infinite bool
-	// rangeState, for range iterators, reports the next value, the stop
-	// and the step, so the values left can be indexed without iterating.
-	rangeState func() (next, stop, step int64)
 }
 
 // RangeRemaining reports, for a range iterator, the values it has yet to
@@ -205,6 +207,7 @@ func NewRangeIterator(start, stop, step int64) *Iterator {
 	}
 
 	return &Iterator{
+		typeName:   rangeTypeName,
 		length:     length,
 		rangeState: func() (int64, int64, int64) { return current, stop, step },
 		next: func() (Object, bool) {
@@ -283,13 +286,13 @@ func emptyIterator() *Iterator {
 // exhausted input (Python semantics). An error or raised exception yielded
 // by an input is passed through unwrapped so the consumer propagates it.
 func NewZipIterator(iterables []Object) *Iterator {
-	return newZipIterator(iterables, false)
+	return newZipIterator(iterables, false).SetTypeName(zipTypeName)
 }
 
 // NewStrictZipIterator is zip(..., strict=True): inputs of different lengths
 // raise ValueError when the shortest one runs out.
 func NewStrictZipIterator(iterables []Object) *Iterator {
-	return newZipIterator(iterables, true)
+	return newZipIterator(iterables, true).SetTypeName(zipTypeName)
 }
 
 // zipLengthError is Python's strict zip() error for argument j (0-based)
@@ -367,7 +370,7 @@ func newZipIterator(iterables []Object, strict bool) *Iterator {
 func NewEnumerateIterator(iterable Object, start int64) *Iterator {
 	src, ok := IterSource(iterable)
 	if !ok {
-		return emptyIterator()
+		return emptyIterator().SetTypeName(enumerateTypeName)
 	}
 	index := start
 	it := NewIterator(func() (Object, bool) {
@@ -383,6 +386,7 @@ func NewEnumerateIterator(iterable Object, start int64) *Iterator {
 		return tuple, true
 	})
 	it.infinite = isInfinite(iterable)
+	it.typeName = enumerateTypeName
 	return it
 }
 

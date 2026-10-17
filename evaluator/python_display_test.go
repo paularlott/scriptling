@@ -230,7 +230,7 @@ str(b) + "|" + b.decode() + "|" + str(len(b))`)
 		t.Errorf("expected b'hi'|hi|2, got %s", result.StringValue())
 	}
 
-	if got := testEval(`type(b"\\x00")`); got.Inspect() != "BYTES" {
+	if got := testEval(`type(b"\\x00")`); got.Inspect() != "bytes" {
 		t.Errorf("bytes literal type: got %s", got.Inspect())
 	}
 	// A variable named b (the prefix must not eat identifiers).
@@ -436,8 +436,8 @@ type(b) + "|" + str(len(b)) + "|" + b.decode() + "|" + str("hi".encode())`)
 	if !ok {
 		t.Fatalf("object is not String. got=%T (%+v)", s, s)
 	}
-	if result.StringValue() != "BYTES|6|héllo|b'hi'" {
-		t.Errorf("expected BYTES|6|héllo|b'hi', got %s", result.StringValue())
+	if result.StringValue() != "bytes|6|héllo|b'hi'" {
+		t.Errorf("expected bytes|6|héllo|b'hi', got %s", result.StringValue())
 	}
 
 	asciiErr := `try:

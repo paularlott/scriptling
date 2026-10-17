@@ -1,7 +1,7 @@
 # Implicit tuple packing in assignment
 t = 1, 2, 3
 assert t == (1, 2, 3)
-assert type(t) == "TUPLE"
+assert type(t) == "tuple"
 
 # Single element with trailing comma (bare)
 s = 42,
@@ -11,14 +11,14 @@ assert s[0] == 42
 
 # Single element with trailing comma (parenthesised) — the main case
 t = (42,)
-assert type(t) == "TUPLE"
+assert type(t) == "tuple"
 assert len(t) == 1
 assert t[0] == 42
 assert t == (42,)
 
 # Empty tuple
 e = ()
-assert type(e) == "TUPLE"
+assert type(e) == "tuple"
 assert len(e) == 0
 
 # Multi-element parenthesised
@@ -34,7 +34,7 @@ assert t3[1][1] == 4
 # Tuple concatenation
 a = (1,) + (2, 3)
 assert a == (1, 2, 3)
-assert type(a) == "TUPLE"
+assert type(a) == "tuple"
 
 b = (1, 2) + (3,)
 assert b == (1, 2, 3)

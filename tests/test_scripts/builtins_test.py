@@ -114,7 +114,7 @@ assert h1 != h3
 x = [1, 2, 3]
 id1 = id(x)
 id2 = id(x)
-assert type(id1) == "INTEGER"
+assert type(id1) == "int"
 
 # Test format
 result = format(42)
