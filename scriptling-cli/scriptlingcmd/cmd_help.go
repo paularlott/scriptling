@@ -34,7 +34,7 @@ func helpCmd() *cli.Command {
 		},
 		Run: func(ctx context.Context, cmd *cli.Command) error {
 			allowedPaths := bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths"))
-			disabledLibs := cmd.GetStringSlice("disable-lib")
+			disabledLibs := effectiveDisabledLibs(cmd)
 			cwd, err := os.Getwd()
 			if err != nil {
 				return fmt.Errorf("failed to determine current working directory: %w", err)
