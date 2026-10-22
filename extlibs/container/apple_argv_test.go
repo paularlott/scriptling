@@ -13,8 +13,9 @@ import (
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
 )
 
-// fakeAppleCLI puts a `container` executable first on PATH that records its
-// arguments, one per line, and prints a container ID. It returns the log path.
+// fakeAppleCLI points the Apple driver at a fake `container` executable that
+// records its arguments, one per line, and prints a container ID. It returns
+// the log path.
 func fakeAppleCLI(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -23,7 +24,9 @@ func fakeAppleCLI(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(dir, "container"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	saved := overrideAppleCLI
+	overrideAppleCLI = filepath.Join(dir, "container")
+	t.Cleanup(func() { overrideAppleCLI = saved })
 	return log
 }
 

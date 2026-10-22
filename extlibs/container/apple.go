@@ -51,7 +51,7 @@ func optionValues(values ...string) error {
 }
 
 func (c *appleClient) run(ctx context.Context, args ...string) (string, error) {
-	out, err := exec.CommandContext(ctx, "container", args...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, appleCLI(), args...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
 
@@ -63,7 +63,7 @@ func (c *appleClient) Login(ctx context.Context, server, username, password stri
 	if err := optionValues(username); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, "container", "registry", "login", "--username", username, "--password-stdin", "--", server)
+	cmd := exec.CommandContext(ctx, appleCLI(), "registry", "login", "--username", username, "--password-stdin", "--", server)
 	cmd.Stdin = strings.NewReader(password)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("login: %s", strings.TrimSpace(string(out)))
@@ -116,7 +116,7 @@ func (c *appleClient) ExecStream(ctx context.Context, nameOrID string, command [
 	args = append(args, "--", nameOrID)
 	args = append(args, command...)
 
-	cmd := exec.CommandContext(ctx, "container", args...)
+	cmd := exec.CommandContext(ctx, appleCLI(), args...)
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {

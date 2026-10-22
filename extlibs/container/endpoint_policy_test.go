@@ -27,8 +27,8 @@ func dockerAPI(hits *atomic.Int32) http.HandlerFunc {
 // resetSockets restores the package-level operator endpoints after a test.
 func resetSockets(t *testing.T) {
 	t.Helper()
-	docker, podman := overrideDockerSocket, overrridePodmanSocket
-	t.Cleanup(func() { overrideDockerSocket, overrridePodmanSocket = docker, podman })
+	docker, podman, apple := overrideDockerSocket, overrridePodmanSocket, overrideAppleCLI
+	t.Cleanup(func() { overrideDockerSocket, overrridePodmanSocket, overrideAppleCLI = docker, podman, apple })
 }
 
 func evalContainer(t *testing.T, dockerSock string, paths fssecurity.Config, policy *netsecurity.Config, script string) (string, error) {

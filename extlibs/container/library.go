@@ -3,7 +3,6 @@ package container
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"sort"
 	"sync"
 	"time"
@@ -20,6 +19,14 @@ const (
 
 	DefaultDockerSocket = "/var/run/docker.sock"
 	DefaultPodmanSocket = "/var/run/podman.sock"
+
+	// DefaultAppleCLI is where Apple's installer puts the `container` CLI.
+	// The Apple driver runs it from this fixed path rather than looking it
+	// up on PATH, where a script able to write to a PATH directory could
+	// put a program of the same name. Like the Docker and Podman endpoints,
+	// it is the operator's, so it is used even where scripts may not start
+	// processes themselves.
+	DefaultAppleCLI = "/usr/local/bin/container"
 )
 
 var (
@@ -27,6 +34,7 @@ var (
 	libraryOnce           sync.Once
 	overrideDockerSocket  string
 	overrridePodmanSocket string
+	overrideAppleCLI      string
 )
 
 // Register registers the scriptling.container library with the given registrar.
@@ -50,6 +58,10 @@ type Options struct {
 	// DockerSock and PodmanSock override the default operator endpoints
 	// (empty = default). They are trusted and never checked.
 	DockerSock, PodmanSock string
+
+	// AppleCLI is the absolute path of Apple's `container` CLI (empty =
+	// DefaultAppleCLI). It is never looked up on PATH.
+	AppleCLI string
 
 	// Paths is the filesystem jail. When it restricts paths, a Unix socket a
 	// script names in Client(socket=...) and every host path a script binds
@@ -77,6 +89,9 @@ func RegisterWithOptions(registrar interface{ RegisterLibrary(*object.Library) }
 	if opts.PodmanSock != "" {
 		overrridePodmanSocket = opts.PodmanSock
 	}
+	if opts.AppleCLI != "" {
+		overrideAppleCLI = opts.AppleCLI
+	}
 	paths := opts.Paths
 	paths.AllowedPaths = fssecurity.NormalizeAllowedPaths(paths.AllowedPaths)
 	if paths.AllowedPaths != nil || opts.Policy != nil || opts.DenyPrivileged {
@@ -102,18 +117,21 @@ func RegisterWithOptions(registrar interface{ RegisterLibrary(*object.Library) }
 func buildLibrary(restrict *endpointPolicy) *object.Library {
 	b := object.NewLibraryBuilder(LibraryName, LibraryDesc)
 
-	b.FunctionWithHelp("runtimes", func() []any {
+	b.FunctionWithHelp("runtimes", func(ctx context.Context) []any {
 		available := []any{}
-		for _, driver := range []string{DriverDocker, DriverPodman, DriverApple} {
-			if isAvailable(driver) {
-				available = append(available, driver)
+		object.RunBlocking(ctx, func() {
+			for _, driver := range []string{DriverDocker, DriverPodman, DriverApple} {
+				if isAvailable(ctx, driver) {
+					available = append(available, driver)
+				}
 			}
-		}
+		})
 		return available
 	}, `runtimes() - List available container runtimes
 
-Returns a list of container runtime names that are currently available and running
-on this system. Possible values: "docker", "podman", "apple".
+Returns the container runtimes Client() can use: "docker" and "podman" when
+their configured endpoint answers, "apple" when the Apple container CLI is
+installed at its fixed path. Nothing is run to find out.
 
 Returns:
   list: Available runtime names e.g. ["docker", "podman"]
@@ -151,22 +169,25 @@ Example:
 	return b.Build()
 }
 
-// isAvailable checks whether a runtime daemon/CLI is reachable.
-func isAvailable(driver string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+// isAvailable reports whether Client(driver) can reach its runtime, without
+// starting anything: Docker and Podman are asked over the operator's
+// endpoint, the one Client() talks to, and the Apple driver is available when
+// its CLI is installed at the fixed path it is run from.
+func isAvailable(ctx context.Context, driver string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	var cmd *exec.Cmd
 	switch driver {
-	case DriverDocker:
-		cmd = exec.CommandContext(ctx, "docker", "info")
-	case DriverPodman:
-		cmd = exec.CommandContext(ctx, "podman", "info")
+	case DriverDocker, DriverPodman:
+		endpoint := dockerSocket()
+		if driver == DriverPodman {
+			endpoint = podmanSocket()
+		}
+		c, err := newDockerClient(endpoint, nil)
+		return err == nil && c.ping(ctx)
 	case DriverApple:
-		cmd = exec.CommandContext(ctx, "container", "system", "status")
-	default:
-		return false
+		return appleCLIInstalled()
 	}
-	return cmd.Run() == nil
+	return false
 }
 
 // runDriverErr runs a container-driver call with the interpreter lock released

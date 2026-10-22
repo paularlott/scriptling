@@ -117,6 +117,17 @@ type endpointPolicy struct {
 	denyPrivileged bool                // refuse run(privileged=True)
 }
 
+// ping reports whether the daemon at the client's endpoint answers its ping.
+func (c *dockerClient) ping(ctx context.Context) bool {
+	resp, err := c.do(ctx, http.MethodGet, "/_ping", nil)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+	return resp.StatusCode == http.StatusOK
+}
+
 func newEndpointPolicy(paths fssecurity.Config, guard *netsecurity.Guard) *endpointPolicy {
 	p := &endpointPolicy{paths: paths, guard: guard}
 	if guard != nil {

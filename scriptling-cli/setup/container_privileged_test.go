@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 
@@ -21,5 +22,19 @@ container.Client("docker").run("alpine", privileged=True)`
 		if denied != deny {
 			t.Errorf("deny=%v: err=%v", deny, err)
 		}
+	}
+}
+
+// The Apple driver's CLI is the operator's, run from a fixed path, so it is
+// available with the subprocess library disabled, as Docker and Podman are.
+func TestScriptlingContainerAppleWithoutSubprocess(t *testing.T) {
+	p := scriptling.New()
+	Scriptling(p, nil, false, nil, []string{"subprocess"}, nil, logslog.New(logslog.Config{Level: "error"}), "/nonexistent/docker.sock", "", false)
+	_, err := p.Eval("import scriptling.container as container\ncontainer.Client(\"apple\")")
+	if err != nil && runtime.GOOS == "darwin" {
+		t.Fatalf("apple driver with subprocess disabled: %v", err)
+	}
+	if _, err := p.Eval("import subprocess"); err == nil {
+		t.Fatal("subprocess is registered")
 	}
 }

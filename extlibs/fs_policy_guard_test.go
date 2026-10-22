@@ -21,6 +21,7 @@ var pathCheck = regexp.MustCompile(`\bIsPathAllowed\(|\bCheckPath\(|\bcheckPathS
 // allowed-paths policy, each reviewed: none can be given a path by a script.
 var fsPolicyExempt = map[string]string{
 	"netsecurity/netsecurity.go": "LoadConfig reads the operator's network policy file",
+	"container/apple_cli.go":     "stats the operator's Apple container CLI path, never a script's",
 }
 
 // Every library file that touches the filesystem must also apply the
