@@ -83,10 +83,12 @@ type Config struct {
 
 	// AllowHosts, when non-empty, is an allowlist: only listed hosts may be
 	// contacted. Listed hosts are trusted — their resolved IPs bypass the
-	// loopback/private/link-local categories (that is the way to grant a
-	// script access to an internal service by name). Entries are exact
-	// hostnames (case-insensitive) or domain suffixes written with a leading
-	// dot (".corp.example.com" matches the domain and any subdomain).
+	// loopback/private/reserved categories (that is the way to grant a
+	// script access to an internal service by name). DeniedCIDRs still
+	// applies to them, and a link-local answer (cloud metadata lives there)
+	// still needs an AllowedCIDRs entry. Entries are exact hostnames
+	// (case-insensitive) or domain suffixes written with a leading dot
+	// (".corp.example.com" matches the domain and any subdomain).
 	AllowHosts []string
 
 	// DenyHosts always wins, regardless of any other setting. Same entry
@@ -462,16 +464,20 @@ func (g *Guard) resolve(ctx context.Context, host string) ([]net.IP, error) {
 		return nil, fmt.Errorf("no addresses resolved for %q", host)
 	}
 
-	// Trusted (allowlisted) hosts may resolve anywhere — that is their grant.
-	// Every other host must have every answer pass the address policy, so a
-	// mixed public/private answer set cannot slip a blocked address through.
+	// Every answer must pass the address policy, so a mixed public/private
+	// answer set cannot slip a blocked address through. Trusted
+	// (allowlisted) hosts get the lighter check: their grant covers the
+	// loopback, private and reserved categories, but not explicit denies or
+	// link-local addresses.
 	trusted := matchHost(g.allowHosts, host)
 	ips := make([]net.IP, len(addrs))
 	for i, ia := range addrs {
-		if !trusted {
-			if cerr := g.checkIP(ia.IP); cerr != nil {
-				return nil, cerr
-			}
+		check := g.checkIP
+		if trusted {
+			check = g.checkTrustedIP
+		}
+		if cerr := check(ia.IP); cerr != nil {
+			return nil, cerr
 		}
 		ips[i] = ia.IP
 	}
@@ -584,6 +590,31 @@ func (g *Guard) checkIP(ip net.IP) error {
 		}
 	case ip.IsMulticast():
 		return fmt.Errorf("%w: multicast address %s is not allowed", ErrPolicy, ip)
+	}
+	return nil
+}
+
+// checkTrustedIP is the address policy for an allowlisted host's answers.
+// The allowlist grants the loopback, private and reserved categories (the way
+// to reach an internal service by name), but DeniedCIDRs still wins and a
+// link-local address still needs an explicit AllowedCIDRs entry: otherwise a
+// suffix entry such as ".corp.example", whose names an attacker may be able
+// to point anywhere, would reach cloud metadata or ranges the operator denied.
+func (g *Guard) checkTrustedIP(ip net.IP) error {
+	if g.allowAll {
+		return nil
+	}
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4 // normalize IPv4-mapped IPv6, e.g. ::ffff:169.254.169.254
+	}
+	if g.containsIP(g.denied, ip) {
+		return fmt.Errorf("%w: address %s is in a denied range", ErrPolicy, ip)
+	}
+	if g.containsIP(g.allowed, ip) {
+		return nil
+	}
+	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return fmt.Errorf("%w: link-local address %s is not allowed", ErrPolicy, ip)
 	}
 	return nil
 }
