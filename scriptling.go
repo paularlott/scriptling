@@ -449,6 +449,17 @@ func (p *Scriptling) EvalWithTimeout(timeout time.Duration, input string) (objec
 	return p.EvalWithContext(ctx, input)
 }
 
+// PanicError is the error EvalWithContext returns when evaluation panics.
+// Its message is the panic value only, so it is safe to show or send on; the
+// Go stack trace, which names source files and functions, is kept in Stack
+// for the host to log.
+type PanicError struct {
+	Value any    // the value passed to panic
+	Stack []byte // the goroutine's stack at the panic
+}
+
+func (e *PanicError) Error() string { return fmt.Sprintf("%s: %v", errors.ErrPanic, e.Value) }
+
 // EvalWithContext executes script with context for timeout/cancellation.
 // This method is safe against deep recursion (via call depth tracking) and
 // recovers from panics during script execution.
@@ -457,9 +468,8 @@ func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (result 
 	// folding, evaluator code, and builtins all share the same public contract.
 	defer func() {
 		if r := recover(); r != nil {
-			stackTrace := string(debug.Stack())
 			result = errors.NewPanicError(r)
-			err = fmt.Errorf("script panic: %v\n%s", r, stackTrace)
+			err = &PanicError{Value: r, Stack: debug.Stack()}
 		}
 	}()
 
