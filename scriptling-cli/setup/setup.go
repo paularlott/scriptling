@@ -169,7 +169,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.FindLibraryName, func() { extlibs.RegisterFindLibrary(p, allowedPaths) })
 	reg(extlibs.SedLibraryName, func() { extlibs.RegisterSedLibrary(p, allowedPaths) })
 	reg(extlibs.ContainerLibraryName, func() { scriptlingcontainer.Register(p, dockerSock, podmanSock) })
-	reg(extlibs.NomadLibraryName, func() { scriptlingnomad.Register(p) })
+	reg(extlibs.NomadLibraryName, func() { scriptlingnomad.Register(p, netPolicy...) })
 	reg(extlibs.WaitForLibraryName, func() { extlibs.RegisterWaitForLibrary(p, netPolicy...) })
 	reg(extlibs.WebSocketLibraryName, func() { extlibs.RegisterWebSocketLibrary(p, netPolicy...) })
 	reg(extlibs.TemplateHTMLLibraryName, func() { extlibs.RegisterTemplateHTMLLibrary(p) })

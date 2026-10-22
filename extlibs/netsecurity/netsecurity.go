@@ -1,6 +1,6 @@
 // Package netsecurity restricts outbound network access for script-facing
 // libraries (requests, wait_for, websocket, scriptling.ai, scriptling.mcp,
-// scriptling.net.unicast).
+// scriptling.net.unicast, scriptling.nomad).
 //
 // # SECURITY MODEL
 //
@@ -469,9 +469,22 @@ func (g *Guard) resolve(ctx context.Context, host string) ([]net.IP, error) {
 // The client carries Config.ClientTimeout as its end-to-end cap — zero (the
 // default) leaves requests bounded only by their own per-request timeouts.
 func (g *Guard) HTTPClient() *http.Client {
+	return g.httpClient(false)
+}
+
+// InsecureHTTPClient is HTTPClient with TLS certificate verification turned
+// off, for script libraries that offer an explicit insecure option. Every
+// policy check still applies; only the certificate is not verified.
+func (g *Guard) InsecureHTTPClient() *http.Client {
+	return g.httpClient(true)
+}
+
+func (g *Guard) httpClient(insecureSkipVerify bool) *http.Client {
+	inner := g.NewTransport()
+	inner.TLSClientConfig.InsecureSkipVerify = insecureSkipVerify
 	return &http.Client{
 		Transport: &guardTransport{
-			inner: g.NewTransport(),
+			inner: inner,
 			guard: g,
 		},
 		Timeout: g.clientTimeout,

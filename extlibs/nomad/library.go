@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling/conversion"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -20,26 +21,39 @@ var (
 )
 
 // Register registers the scriptling.nomad library with the given registrar.
-func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
+// An optional network policy restricts which addresses clients may reach.
+func Register(registrar interface{ RegisterLibrary(*object.Library) }, cfg ...*netsecurity.Config) {
+	if len(cfg) > 0 && cfg[0] != nil {
+		guard, gerr := netsecurity.NewGuard(cfg[0])
+		if gerr != nil {
+			guard = netsecurity.FailClosed(gerr)
+		}
+		registrar.RegisterLibrary(buildLibrary(guard))
+		return
+	}
 	libraryOnce.Do(func() {
-		library = buildLibrary()
+		library = buildLibrary(nil)
 	})
 	registrar.RegisterLibrary(library)
 }
 
-func buildLibrary() *object.Library {
+func buildLibrary(guard *netsecurity.Guard) *object.Library {
 	b := object.NewLibraryBuilder(LibraryName, LibraryDesc)
+	t := newTransports(guard)
 
 	b.FunctionWithHelp("Client", func(ctx context.Context, kwargs object.Kwargs, addr string) (object.Object, error) {
 		token := kwargs.MustGetString("token", "")
 		insecure := kwargs.MustGetBool("insecure", false)
 		timeoutSecs := kwargs.MustGetFloat("timeout", DefaultTimeout.Seconds())
-		c := newClient(addr, token, insecure, time.Duration(timeoutSecs*float64(time.Second)))
+		c, err := newClient(addr, token, insecure, time.Duration(timeoutSecs*float64(time.Second)), t)
+		if err != nil {
+			return nil, err
+		}
 		return newClientInstance(c), nil
 	}, `Client(addr, **kwargs) - Create a Nomad client
 
 Parameters:
-  addr (str): Nomad HTTP API address, e.g. "http://127.0.0.1:4646"
+  addr (str): Nomad HTTP API address, e.g. "http://127.0.0.1:4646" (no query or fragment)
   token (str, optional): ACL token, sent as the X-Nomad-Token header. Default: ""
   insecure (bool, optional): Skip TLS certificate verification. Default: False
   timeout (float, optional): Per-request HTTP timeout in seconds. Default: 10

@@ -11,8 +11,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/pool"
 )
@@ -34,17 +36,16 @@ type client struct {
 }
 
 // newClient builds a client from an address, ACL token, TLS skip-verify flag,
-// and per-request timeout (0 = use DefaultTimeout).
+// per-request timeout (0 = use DefaultTimeout) and transports.
 //
-// The underlying connection pool (transport) is shared via the scriptling
-// pool package, keeping the two entirely separate depending on
-// insecureSkipVerify: a Client() call that opts into skipping TLS
-// verification for its own Nomad cluster never affects the transport used by
-// TLS-verified clients (nomad or otherwise) elsewhere in the process. Only
-// the per-request timeout is customized per instance.
-func newClient(addr, token string, insecureSkipVerify bool, timeout time.Duration) *client {
+// The address must not carry a query or fragment: API paths are appended to
+// it, and either would let the address override them.
+func newClient(addr, token string, insecureSkipVerify bool, timeout time.Duration, t *transports) (*client, error) {
 	if addr == "" {
 		addr = DefaultAddr
+	}
+	if strings.ContainsAny(addr, "?#") {
+		return nil, fmt.Errorf("nomad address must not contain a query or fragment: %q", addr)
 	}
 	addr = strings.TrimRight(addr, "/")
 
@@ -52,18 +53,47 @@ func newClient(addr, token string, insecureSkipVerify bool, timeout time.Duratio
 		timeout = DefaultTimeout
 	}
 
-	var transport http.RoundTripper
-	if insecureSkipVerify {
-		transport = pool.GetInsecureHTTPClient().Transport
-	} else {
-		transport = pool.GetHTTPClient().Transport
+	base := t.client(insecureSkipVerify)
+	if t.guarded && base.Timeout > 0 && base.Timeout < timeout {
+		timeout = base.Timeout // the network policy's client_timeout cap
 	}
 
 	return &client{
-		httpClient: &http.Client{Transport: transport, Timeout: timeout},
+		httpClient: &http.Client{Transport: base.Transport, Timeout: timeout},
 		baseURL:    addr,
 		token:      token,
+	}, nil
+}
+
+// transports supplies the base HTTP clients for one library registration.
+//
+// Without a network policy the connection pools are shared via the scriptling
+// pool package, keeping the two entirely separate depending on
+// insecureSkipVerify: a Client() call that opts into skipping TLS
+// verification for its own Nomad cluster never affects the transport used by
+// TLS-verified clients (nomad or otherwise) elsewhere in the process. With a
+// policy, both come from the guard and are built once per registration.
+type transports struct {
+	secure, insecure func() *http.Client
+	guarded          bool
+}
+
+func newTransports(guard *netsecurity.Guard) *transports {
+	if guard == nil {
+		return &transports{secure: pool.GetHTTPClient, insecure: pool.GetInsecureHTTPClient}
 	}
+	return &transports{
+		secure:   sync.OnceValue(guard.HTTPClient),
+		insecure: sync.OnceValue(guard.InsecureHTTPClient),
+		guarded:  true,
+	}
+}
+
+func (t *transports) client(insecureSkipVerify bool) *http.Client {
+	if insecureSkipVerify {
+		return t.insecure()
+	}
+	return t.secure()
 }
 
 func (c *client) url(path string, query map[string]string) string {
