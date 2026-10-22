@@ -158,6 +158,7 @@ type Server struct {
 	notFoundHandler       string
 	staticRoutes          map[string]staticRoute
 	webRootZip            *zip.ReadCloser // non-nil when WebRoot is a .zip file
+	webRootZipFS          zipWebRoot      // index of webRootZip's servable files
 	mu                    sync.RWMutex
 	watcher               *fsnotify.Watcher
 	reloadMu              sync.Mutex // guards reloadMCP and reloadDebounce

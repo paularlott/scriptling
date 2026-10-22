@@ -244,6 +244,11 @@ func NewServer(config ServerConfig) (*Server, error) {
 			return nil, fmt.Errorf("failed to open web root zip %s: %w", config.WebRoot, err)
 		}
 		s.webRootZip = zr
+		var skipped []string
+		s.webRootZipFS, skipped = newZipWebRoot(&zr.Reader)
+		for _, name := range skipped {
+			Log.Warn("Web root zip member not served: its name is not a valid relative path", "zip", config.WebRoot, "member", name)
+		}
 	}
 
 	setupTransferred = true

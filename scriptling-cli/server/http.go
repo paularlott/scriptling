@@ -8,12 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
-	"mime"
 	"net"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -448,44 +445,13 @@ func (s *Server) serveFromBundle(w http.ResponseWriter, r *http.Request) {
 		s.serveNotFound(w, r)
 		return
 	}
-
-	// Normalise the URL path: strip leading slash, never allow traversal.
-	urlPath := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
-	if urlPath == "." {
-		urlPath = ""
-	}
-	candidates := []string{urlPath, urlPath + "/index.html"}
-	if urlPath == "" {
-		candidates = []string{"index.html"}
-	}
-
-	for _, candidate := range candidates {
-		if !fs.ValidPath(candidate) {
-			continue
-		}
-		info, err := fs.Stat(s.webRootFS, candidate)
-		if err != nil || info.IsDir() {
-			continue
-		}
-		data, err := fs.ReadFile(s.webRootFS, candidate)
-		if err != nil {
-			continue
-		}
-		Log.Trace("Serving file from bundle webroot", "file", candidate)
-		if ct := mime.TypeByExtension(path.Ext(candidate)); ct != "" {
-			w.Header().Set("Content-Type", ct)
-		}
-		w.Write(data)
-		return
-	}
-	Log.Trace("Bundle webroot entry not found", "path", urlPath)
-	s.serveNotFound(w, r)
+	s.serveWebRoot(w, r, s.webRootFS, "bundle webroot")
 }
 
 // serveFromDir serves a file from the web root directory. Containment is
 // provided by os.DirFS: candidate paths are validated with fs.ValidPath and
 // resolved relative to webRoot only, so ".." and absolute paths can never
-// escape it. Mirrors serveFromBundle.
+// escape it.
 func (s *Server) serveFromDir(w http.ResponseWriter, r *http.Request) {
 	webRoot, err := filepath.Abs(s.config.WebRoot)
 	if err != nil {
@@ -493,72 +459,14 @@ func (s *Server) serveFromDir(w http.ResponseWriter, r *http.Request) {
 		s.serveNotFound(w, r)
 		return
 	}
-	rootFS := os.DirFS(webRoot)
-
-	// Normalise the URL path: strip leading slash, never allow traversal.
-	urlPath := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
-	if urlPath == "." {
-		urlPath = ""
-	}
-	candidates := []string{urlPath, urlPath + "/index.html"}
-	if urlPath == "" {
-		candidates = []string{"index.html"}
-	}
-
-	for _, candidate := range candidates {
-		if !fs.ValidPath(candidate) {
-			continue
-		}
-		info, err := fs.Stat(rootFS, candidate)
-		if err != nil || info.IsDir() {
-			continue
-		}
-		data, err := fs.ReadFile(rootFS, candidate)
-		if err != nil {
-			continue
-		}
-		Log.Trace("Serving file from web root", "file", candidate)
-		if ct := mime.TypeByExtension(path.Ext(candidate)); ct != "" {
-			w.Header().Set("Content-Type", ct)
-		}
-		w.Write(data)
-		return
-	}
-	Log.Trace("Web root file not found", "web_root", webRoot, "path", urlPath)
-	s.serveNotFound(w, r)
+	s.serveWebRoot(w, r, os.DirFS(webRoot), "web root")
 }
 
-// serveFromZip serves a file from the web root zip archive
+// serveFromZip serves a file from the web root zip archive, through the index
+// built when it was opened: only members with valid relative names are
+// reachable, the same rule the directory and bundle web roots apply.
 func (s *Server) serveFromZip(w http.ResponseWriter, r *http.Request) {
-	// Normalise the URL path: strip leading slash, never allow traversal
-	urlPath := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
-	if urlPath == "." {
-		urlPath = ""
-	}
-
-	candidates := []string{urlPath, urlPath + "/index.html"}
-	if urlPath == "" {
-		candidates = []string{"index.html"}
-	}
-
-	for _, candidate := range candidates {
-		for _, f := range s.webRootZip.File {
-			if f.Name == candidate && !f.FileInfo().IsDir() {
-				Log.Trace("Serving file from web root zip", "file", f.Name)
-				rc, err := f.Open()
-				if err != nil {
-					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-					return
-				}
-				w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(f.Name)))
-				io.Copy(w, rc)
-				rc.Close()
-				return
-			}
-		}
-	}
-	Log.Trace("Web root zip entry not found", "path", urlPath)
-	s.serveNotFound(w, r)
+	s.serveWebRoot(w, r, s.webRootZipFS, "web root zip")
 }
 
 // serveNotFound calls the not_found handler or returns a plain 404
