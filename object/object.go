@@ -186,6 +186,7 @@ const (
 	ExceptionTypeImportError       = "ImportError"
 	ExceptionTypeStopIteration     = "StopIteration"
 	ExceptionTypeRuntimeError      = "RuntimeError"
+	ExceptionTypeRecursionError    = "RecursionError"
 	ExceptionTypeZeroDivisionError = "ZeroDivisionError"
 	ExceptionTypeOverflowError     = "OverflowError"
 	ExceptionTypeMemoryError       = "MemoryError"

@@ -282,6 +282,12 @@ type genState struct {
 	cursor  int
 	started bool
 	done    bool
+
+	// depthCtx and depth cache the call-depth tracker of the context the
+	// generator was last resumed under: a loop resumes it under the same
+	// context every time, and finding the tracker walks the context chain.
+	depthCtx context.Context
+	depth    *CallDepth
 }
 
 // newGenerator constructs the generator object for a call to a generator
@@ -318,6 +324,33 @@ func generatorNext(ctx context.Context, g *object.Instance, env *object.Environm
 	if st.done {
 		return genStopIteration()
 	}
+	// Resuming the body is a call: it nests in Go, so a generator whose body
+	// resumes another (yield next(g(n + 1))) recursed past the call depth
+	// limit to a fatal stack overflow. The charge is here, not where the
+	// generator is created, because a generator is often made shallow and
+	// resumed deep. At the limit the generator finishes, so the caller sees
+	// the error rather than a stopped iteration. The depth is released
+	// explicitly, not deferred: with this many returns a defer would not be
+	// inlined, and resuming is the hot path.
+	if ctx != st.depthCtx {
+		st.depthCtx, st.depth = ctx, GetCallDepthFromContext(ctx)
+	}
+	cd := st.depth
+	if cd == nil {
+		return generatorResume(ctx, g, env, st, finish)
+	}
+	if !cd.Enter() {
+		finish()
+		return cd.LimitError()
+	}
+	r := generatorResume(ctx, g, env, st, finish)
+	cd.Exit()
+	return r
+}
+
+// generatorResume runs a generator's body from its cursor to the next yield,
+// return or error.
+func generatorResume(ctx context.Context, g *object.Instance, env *object.Environment, st *genState, finish func()) object.Object {
 	genv := st.env
 
 	for {

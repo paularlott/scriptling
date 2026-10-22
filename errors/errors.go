@@ -117,9 +117,14 @@ func NewCancelledError() *object.Error {
 	return &object.Error{Message: ErrCancelled}
 }
 
-// NewCallDepthExceededError creates a call depth exceeded error
+// NewCallDepthExceededError creates the error for recursion past the call
+// depth limit: a RecursionError, as Python raises, which `except
+// RecursionError` (and RuntimeError or Exception) catches.
 func NewCallDepthExceededError(max int) *object.Error {
-	return &object.Error{Message: fmt.Sprintf("%s: maximum depth is %d", ErrCallDepthExceeded, max)}
+	return &object.Error{
+		Message:       fmt.Sprintf("%s: maximum depth is %d", ErrCallDepthExceeded, max),
+		ExceptionType: object.ExceptionTypeRecursionError,
+	}
 }
 
 // NewMemoryError creates an error that `except MemoryError` catches, for an
