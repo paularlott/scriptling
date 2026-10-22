@@ -961,7 +961,7 @@ func promiseObject(promise *Promise) object.Object {
 					if result == nil {
 						return &object.Null{}
 					}
-					return result
+					return errors.ForCaller(ctx, result)
 				},
 				HelpText: "get() - Wait for and return the result",
 			},

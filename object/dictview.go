@@ -10,7 +10,7 @@ func (d *Dict) CreateIterator() *Iterator {
 	keys := d.OrderedKeys()
 
 	index := 0
-	return &Iterator{
+	return trackIterator(&Iterator{
 		next: func() (Object, bool) {
 			for index < len(keys) {
 				key := keys[index]
@@ -21,7 +21,7 @@ func (d *Dict) CreateIterator() *Iterator {
 			}
 			return nil, false
 		},
-	}
+	})
 }
 
 // DictKeys represents a view of a dictionary's keys
@@ -57,7 +57,7 @@ func (dk *DictKeys) CreateIterator() *Iterator {
 	keys := dk.Dict.OrderedKeys()
 
 	index := 0
-	return &Iterator{
+	return trackIterator(&Iterator{
 		next: func() (Object, bool) {
 			for index < len(keys) {
 				key := keys[index]
@@ -71,7 +71,7 @@ func (dk *DictKeys) CreateIterator() *Iterator {
 			}
 			return nil, false
 		},
-	}
+	})
 }
 
 // DictValues represents a view of a dictionary's values
@@ -97,7 +97,7 @@ func (dv *DictValues) CreateIterator() *Iterator {
 	keys := dv.Dict.OrderedKeys()
 
 	index := 0
-	return &Iterator{
+	return trackIterator(&Iterator{
 		next: func() (Object, bool) {
 			for index < len(keys) {
 				key := keys[index]
@@ -110,7 +110,7 @@ func (dv *DictValues) CreateIterator() *Iterator {
 			}
 			return nil, false
 		},
-	}
+	})
 }
 
 // DictItems represents a view of a dictionary's items
@@ -136,7 +136,7 @@ func (di *DictItems) CreateIterator() *Iterator {
 	keys := di.Dict.OrderedKeys()
 
 	index := 0
-	return &Iterator{
+	return trackIterator(&Iterator{
 		next: func() (Object, bool) {
 			for index < len(keys) {
 				key := keys[index]
@@ -148,5 +148,5 @@ func (di *DictItems) CreateIterator() *Iterator {
 			}
 			return nil, false
 		},
-	}
+	})
 }

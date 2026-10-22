@@ -3078,16 +3078,34 @@ type Instance struct {
 }
 
 // NewInstance creates an empty instance of the given class. Use the field
-// accessor methods (SetField, GetField, …) to populate it.
+// accessor methods (SetField, GetField, …) to populate it. Every instance is
+// created here so its memory is accounted: instances that reference only each
+// other are held by no counted container.
 func NewInstance(class *Class) *Instance {
-	return &Instance{Class: class}
+	i := &Instance{Class: class}
+	if accountingOn.Load() {
+		trackInstance(i)
+	}
+	return i
+}
+
+// instanceObjectOverhead approximates the bytes an Instance holds before any
+// overflow fields: the object itself, inline field storage included.
+const instanceObjectOverhead = int64(unsafe.Sizeof(Instance{})) + 16
+
+// trackInstance keeps NewInstance small enough to inline: it only calls out
+// when accounting is on.
+//
+//go:noinline
+func trackInstance(i *Instance) {
+	trackAlloc(i, instanceObjectOverhead)
 }
 
 // NewInstanceWithFields creates an instance of the given class pre-populated
 // with the supplied fields. The map is consumed (copied into the instance's
 // storage); a nil map yields an empty instance.
 func NewInstanceWithFields(class *Class, fields map[string]Object) *Instance {
-	i := &Instance{Class: class}
+	i := NewInstance(class)
 	for k, v := range fields {
 		i.SetField(k, v)
 	}
@@ -3499,7 +3517,7 @@ func CloneObject(obj Object) Object {
 		}
 		return &Set{Elements: elements, Frozen: v.Frozen}
 	case *Instance:
-		clone := &Instance{Class: v.Class}
+		clone := NewInstance(v.Class)
 		v.RangeFields(func(k string, val Object) bool {
 			clone.SetField(k, CloneObject(val))
 			return true

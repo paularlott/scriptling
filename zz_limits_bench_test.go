@@ -72,3 +72,7 @@ for i in range(20000):
     total = total + i * 2 - 1
 `)
 }
+
+func BenchmarkLimits_Instances(b *testing.B) {
+	benchLimitedScript(b, instanceBenchScript)
+}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/object"
@@ -112,6 +113,45 @@ env2.exit_code()
 	}
 	if n, _ := result.AsInt(); n == 0 {
 		t.Fatal("sandbox holding more than the parent's memory limit succeeded")
+	}
+}
+
+// A sandbox building a chain no counted container holds is stopped while it
+// runs by the parent's memory limit, and cannot catch the stop.
+func TestSandboxObjectChainStoppedByParentLimit(t *testing.T) {
+	p, _ := setupLimitedSandbox(t, scriptling.WithMemoryLimit(1<<20), scriptling.WithMaxValueBytes(0))
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	_, err := p.EvalWithContext(ctx, `
+import scriptling.runtime as runtime
+env = runtime.sandbox.create()
+env.exec("""
+class N:
+    def __init__(self, p):
+        self.p = p
+x = None
+i = 0
+while i < 2000000:
+    try:
+        x = N(x)
+    except:
+        pass
+    i += 1
+""")
+steps = env.get("i")
+`)
+	if ctx.Err() != nil {
+		t.Fatal("the caller's context expired; the limit did not stop the sandbox")
+	}
+	if err == nil {
+		steps, _ := p.GetVar("steps")
+		if n, ok := steps.(int64); ok && n >= 1000000 {
+			t.Fatalf("sandbox ran %d of 2000000 steps under a 1 MiB limit", n)
+		}
+		return
+	}
+	if !strings.Contains(err.Error(), "memory limit exceeded") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

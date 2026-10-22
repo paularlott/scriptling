@@ -263,9 +263,10 @@ func (cc *contextChecker) checkBatch() object.Object {
 		cc.run = object.RunFromContext(cc.ctx)
 		cc.resolved = true
 	}
-	// A run cancelled for its memory limit has no channel: ask it.
+	// A run cancelled for its memory limit has no channel, so its Done never
+	// fires: stop on the run's own state. The host names the memory limit.
 	if cc.run.Cancelled() {
-		return checkContext(cc.ctx)
+		return errors.NewMemoryLimitStopError()
 	}
 	if cc.done == nil {
 		return nil
@@ -2022,7 +2023,7 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 		}
 		return enumValueLookup(class, args[0])
 	}
-	instance := object.NewInstanceWithFields(class, make(map[string]object.Object))
+	instance := object.NewInstance(class)
 
 	// Call __init__ if it exists, walking the base class chain
 	var initMethod object.Object
@@ -3639,6 +3640,18 @@ func applyFinallyResult(result, finallyResult object.Object) object.Object {
 // block does, the protected exception keeps propagating — letting a raise in
 // finally replace it would give a handler the chance to swallow an exit or a
 // security refusal.
+// isProtected reports whether result must pass every except clause and
+// __exit__ untouched: SystemExit and PermissionError (security violations are
+// not for scripts to swallow), and the errors that end the run (timeout,
+// cancellation, memory-limit stop), after which a handler would only let the
+// script keep running.
+func isProtected(result object.Object) bool {
+	if exc, ok := result.(*object.Exception); ok {
+		return exc.IsSystemExit() || exc.IsPermissionError()
+	}
+	return errors.IsRunStop(result)
+}
+
 func applyProtectedFinallyResult(result, finallyResult object.Object) object.Object {
 	return result
 }

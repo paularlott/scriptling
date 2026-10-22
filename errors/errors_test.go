@@ -215,6 +215,7 @@ func TestErrorConstants(t *testing.T) {
 	constants := map[string]string{
 		ErrTimeout:            "execution timeout",
 		ErrCancelled:          "execution cancelled",
+		ErrMemoryLimitStop:    "memory limit exceeded",
 		ErrDivisionByZero:     "division by zero",
 		ErrIndexOutOfRange:    "index out of range",
 		ErrKeyNotFound:        "key not found",

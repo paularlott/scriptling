@@ -73,7 +73,7 @@ func shallowCopy(obj object.Object) object.Object {
 	case *object.Tuple:
 		return o // immutable, safe to share
 	case *object.Instance:
-		clone := &object.Instance{Class: o.Class}
+		clone := object.NewInstance(o.Class)
 		o.RangeFields(func(k string, v object.Object) bool {
 			clone.SetField(k, v)
 			return true
@@ -222,7 +222,7 @@ func deepCopyDepth(ctx context.Context, obj object.Object, memo map[object.Objec
 				return result
 			}
 		}
-		result := &object.Instance{Class: v.Class}
+		result := object.NewInstance(v.Class)
 		memo[obj] = result
 		var errCopy object.Object
 		v.RangeFields(func(k string, val object.Object) bool {

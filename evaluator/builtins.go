@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unsafe"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
@@ -1070,7 +1071,7 @@ Equivalent to (a // b, a % b) for integers.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			return &object.Property{Getter: args[0]}
+			return trackWrapper(&object.Property{Getter: args[0]})
 		},
 		HelpText: `property(fget) - Return a property attribute. Use as @property decorator.`,
 	},
@@ -1080,7 +1081,7 @@ Equivalent to (a // b, a % b) for integers.`,
 				return err
 			}
 			// Wrap in a StaticMethod so callInstanceMethod skips prepending self
-			return &object.StaticMethod{Fn: args[0]}
+			return trackWrapper(&object.StaticMethod{Fn: args[0]})
 		},
 		HelpText: `staticmethod(f) - Return a static method for function f. Use as @staticmethod decorator.`,
 	},
@@ -1089,7 +1090,7 @@ Equivalent to (a // b, a % b) for integers.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			return &object.ClassMethod{Fn: args[0]}
+			return trackWrapper(&object.ClassMethod{Fn: args[0]})
 		},
 		HelpText: `classmethod(f) - Return a class method for function f. Use as @classmethod decorator.`,
 	},
@@ -1932,7 +1933,7 @@ Checks the full inheritance chain. issubclass(C, C) is True.`,
 			case *object.Tuple:
 				return o // immutable, safe to return same object
 			case *object.Instance:
-				clone := &object.Instance{Class: o.Class}
+				clone := object.NewInstance(o.Class)
 				o.RangeFields(func(k string, v object.Object) bool {
 					clone.SetField(k, v)
 					return true
@@ -2622,9 +2623,35 @@ func init() {
 		if name == "Exception" || name == "BaseException" || name == "StopIteration" || name == "KeyboardInterrupt" ||
 			strings.HasSuffix(name, "Error") || strings.HasSuffix(name, "Exception") {
 			exceptionBuiltins[b] = name
+			b.Fn = trackExceptions(b.Fn)
 		}
 	}
 }
+
+// trackExceptions wraps an exception constructor so the exceptions a script
+// creates are memory-accounted: one can hold another through its args, and
+// its message is a copy of the first argument's text.
+func trackExceptions(fn object.BuiltinFunction) object.BuiltinFunction {
+	return func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		result := fn(ctx, kwargs, args...)
+		if e, ok := result.(*object.Exception); ok {
+			object.TrackAlloc(e, exceptionObjectSize+int64(len(e.Message))+int64(cap(e.Args))*16)
+		}
+		return result
+	}
+}
+
+// trackWrapper reports a property, staticmethod or classmethod a script
+// creates: each holds another value and can be chained, out of reach of any
+// counted container.
+func trackWrapper[T any](w *T) *T {
+	object.TrackAlloc(w, int64(unsafe.Sizeof(*w))+16)
+	return w
+}
+
+// exceptionObjectSize is the memory an Exception object holds before its
+// message and arguments.
+const exceptionObjectSize = int64(unsafe.Sizeof(object.Exception{})) + 16
 
 // exceptionConstructor builds the constructor for a built-in exception type.
 func exceptionConstructor(name string) *object.Builtin {

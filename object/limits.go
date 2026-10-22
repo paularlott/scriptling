@@ -23,8 +23,8 @@ import (
 // Every interpreter (an environment tree sharing one interpreter lock) can
 // carry a ResourceGuard holding two limits:
 //
-//   - a memory limit: the estimated memory held by the strings, bytes and
-//     container storage the interpreter has created;
+//   - a memory limit: the estimated memory held by the strings, bytes,
+//     container storage and objects the interpreter has created;
 //   - a value limit: the largest single string, bytes value or container one
 //     operation may build.
 //
@@ -35,8 +35,10 @@ import (
 //
 // Go cannot attribute heap memory to an interpreter, so memory is estimated.
 // The allocation points that let a script hold memory (string and bytes
-// creation, list backing arrays, dict, set and attribute storage) report their
-// size; one allocation in roughly every SampleInterval bytes is sampled, in
+// creation, list backing arrays, dict, set and attribute storage, and the
+// objects that can reference each other outside any container: instances,
+// functions, lambdas, classes, iterators, exceptions, partials and method
+// wrappers) report their size; one allocation in roughly every SampleInterval bytes is sampled, in
 // the same way Go's own heap profiler samples, and the sample is charged to
 // the interpreter running on the current goroutine. A runtime cleanup attached
 // to the sampled object credits the charge back once the object is collected.
@@ -45,7 +47,7 @@ import (
 //
 // Small scalars (ints, floats) and objects created outside those points are
 // not counted directly. They are only retained in quantity through the
-// containers that are.
+// objects that are.
 
 // InheritLimit makes an interpreter's limit follow the process-wide default.
 const InheritLimit int64 = -1

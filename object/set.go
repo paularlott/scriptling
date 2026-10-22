@@ -231,7 +231,7 @@ func (s *Set) CreateIterator() *Iterator {
 	}
 
 	index := 0
-	return &Iterator{
+	return trackIterator(&Iterator{
 		next: func() (Object, bool) {
 			if index >= len(elements) {
 				return nil, false
@@ -240,7 +240,7 @@ func (s *Set) CreateIterator() *Iterator {
 			index++
 			return val, true
 		},
-	}
+	})
 }
 
 // AddKeyed adds an element with a pre-computed key (used when __hash__ is involved)

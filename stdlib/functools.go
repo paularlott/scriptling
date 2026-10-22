@@ -2,6 +2,7 @@ package stdlib
 
 import (
 	"context"
+	"unsafe"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/evaliface"
@@ -227,7 +228,9 @@ Example:
 				partialKwargs[k] = v
 			}
 
-			return &object.Builtin{
+			// A partial holds its arguments, which can be another partial:
+			// account for it so a chain of them is within the memory limit.
+			partial := &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					allArgs := make([]object.Object, len(partialArgs)+len(args))
 					copy(allArgs, partialArgs)
@@ -258,6 +261,8 @@ Example:
 				},
 				HelpText: "Partial function application",
 			}
+			object.TrackAlloc(partial, partialObjectSize+int64(len(partialArgs)+len(partialKwargs))*16)
+			return partial
 		},
 		HelpText: `partial(func, *args, **kwargs) - Create a partial function application
 
@@ -278,3 +283,7 @@ Example:
   add_five(3)  # 8`,
 	},
 }, nil, "Higher-order functions and operations on callable objects")
+
+// partialObjectSize approximates a partial: its Builtin, the closure and the
+// keyword map header.
+const partialObjectSize = int64(unsafe.Sizeof(object.Builtin{})) + 128

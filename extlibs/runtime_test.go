@@ -2,10 +2,12 @@ package extlibs
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -966,5 +968,33 @@ func BenchmarkRuntimeAtomicAdd(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		addFn.Fn(ctx, object.Kwargs{})
+	}
+}
+
+// A background task whose own run was stopped hands the caller an ordinary
+// error the caller's script can catch; the caller's run is not stopped.
+func TestPromiseGetDowngradesTaskRunStop(t *testing.T) {
+	for _, stop := range []object.Object{errors.NewTimeoutError(), errors.NewCancelledError(), errors.NewMemoryLimitStopError()} {
+		promise := newPromise("stopped")
+		promise.set(stop, nil)
+		get, _ := promiseObject(promise).(*object.Builtin).Attributes["get"].(*object.Builtin)
+		result := get.Fn(context.Background(), object.Kwargs{})
+		if errors.IsRunStop(result) {
+			t.Fatalf("%s: get() passed the task's run stop to a live caller", stop.Inspect())
+		}
+		e, ok := result.(*object.Error)
+		if !ok || !strings.Contains(e.Message, "background task stopped") {
+			t.Fatalf("%s: got %v, want an ordinary async error", stop.Inspect(), result)
+		}
+	}
+
+	// A caller whose own run has stopped keeps the stop.
+	promise := newPromise("stopped")
+	promise.set(errors.NewTimeoutError(), nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	get, _ := promiseObject(promise).(*object.Builtin).Attributes["get"].(*object.Builtin)
+	if result := get.Fn(ctx, object.Kwargs{}); !errors.IsRunStop(result) {
+		t.Fatalf("a stopped caller should keep the stop, got %v", result)
 	}
 }

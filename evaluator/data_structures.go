@@ -677,7 +677,7 @@ func evalPropertyIndexExpression(prop, index object.Object) object.Object {
 			if len(args) != 1 {
 				return errors.NewError("setter() takes exactly 1 argument")
 			}
-			return &object.Property{Getter: p.Getter, Setter: args[0]}
+			return trackWrapper(&object.Property{Getter: p.Getter, Setter: args[0]})
 		},
 	}
 }

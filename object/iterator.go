@@ -49,7 +49,7 @@ func (it *Iterator) Infinite() bool {
 
 // NewInfiniteIterator creates an iterator that never ends.
 func NewInfiniteIterator(nextFn func() (Object, bool)) *Iterator {
-	return &Iterator{next: nextFn, length: -1, infinite: true}
+	return trackIterator(&Iterator{next: nextFn, length: -1, infinite: true})
 }
 
 // Len returns the iterator's length when statically known (range iterators).
@@ -184,13 +184,31 @@ func (it *Iterator) Next() (Object, bool) {
 	return val, hasNext
 }
 
+// trackIterator reports a new iterator to memory accounting: an iterator can
+// hold another value (filter(None, [x]), reversed([x])) out of reach of any
+// counted container.
+func trackIterator(it *Iterator) *Iterator {
+	if accountingOn.Load() {
+		trackIteratorAlloc(it)
+	}
+	return it
+}
+
+// iteratorObjectSize approximates an iterator and the closure it runs.
+const iteratorObjectSize = int64(unsafe.Sizeof(Iterator{})) + 64
+
+//go:noinline
+func trackIteratorAlloc(it *Iterator) {
+	trackAlloc(it, iteratorObjectSize)
+}
+
 // NewIterator creates an iterator with a custom next function
 // This allows creating iterators that can call functions with proper context
 func NewIterator(nextFn func() (Object, bool)) *Iterator {
-	return &Iterator{
+	return trackIterator(&Iterator{
 		next:   nextFn,
 		length: -1,
-	}
+	})
 }
 
 // RangeIterator creates an iterator for range(start, stop, step). Range is
@@ -206,7 +224,7 @@ func NewRangeIterator(start, stop, step int64) *Iterator {
 		length = (start - stop - step - 1) / -step
 	}
 
-	return &Iterator{
+	return trackIterator(&Iterator{
 		typeName:   rangeTypeName,
 		length:     length,
 		rangeState: func() (int64, int64, int64) { return current, stop, step },
@@ -225,7 +243,7 @@ func NewRangeIterator(start, stop, step int64) *Iterator {
 			current += step
 			return val, true
 		},
-	}
+	})
 }
 
 // IsPropagating reports whether a value yielded by an iterator is an internal
@@ -272,13 +290,13 @@ func isInfinite(obj Object) bool {
 
 // emptyIterator returns an already-exhausted iterator.
 func emptyIterator() *Iterator {
-	return &Iterator{
+	return trackIterator(&Iterator{
 		next: func() (Object, bool) {
 			return nil, false
 		},
 		consumed: true,
 		length:   -1,
-	}
+	})
 }
 
 // ZipIterator creates an iterator that zips multiple iterables together.
@@ -396,7 +414,7 @@ func NewReversedIterator(iterable Object) *Iterator {
 		if fa.Is2D() {
 			index := fa.Rows() - 1
 			cols := fa.Cols()
-			return &Iterator{
+			return trackIterator(&Iterator{
 				next: func() (Object, bool) {
 					if index < 0 {
 						return nil, false
@@ -407,10 +425,10 @@ func NewReversedIterator(iterable Object) *Iterator {
 					index--
 					return NewFloatArray1D(rowData), true
 				},
-			}
+			})
 		}
 		index := len(fa.Data) - 1
-		return &Iterator{
+		return trackIterator(&Iterator{
 			next: func() (Object, bool) {
 				if index < 0 {
 					return nil, false
@@ -419,19 +437,19 @@ func NewReversedIterator(iterable Object) *Iterator {
 				index--
 				return val, true
 			},
-		}
+		})
 	}
 
 	// Convert iterable to slice - need to copy to avoid modifying original
 	srcElements, ok := IterableToSlice(iterable)
 	if !ok {
 		// Return empty iterator for invalid types
-		return &Iterator{
+		return trackIterator(&Iterator{
 			next: func() (Object, bool) {
 				return nil, false
 			},
 			consumed: true,
-		}
+		})
 	}
 
 	// Make a copy so we don't affect the original
@@ -440,7 +458,7 @@ func NewReversedIterator(iterable Object) *Iterator {
 
 	index := len(elements) - 1
 
-	return &Iterator{
+	return trackIterator(&Iterator{
 		next: func() (Object, bool) {
 			if index < 0 {
 				return nil, false
@@ -451,5 +469,5 @@ func NewReversedIterator(iterable Object) *Iterator {
 
 			return val, true
 		},
-	}
+	})
 }

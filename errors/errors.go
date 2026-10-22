@@ -1,6 +1,7 @@
 package errors
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/paularlott/scriptling/object"
@@ -8,8 +9,11 @@ import (
 
 // Common error types
 const (
-	ErrTimeout            = "execution timeout"
-	ErrCancelled          = "execution cancelled"
+	ErrTimeout   = "execution timeout"
+	ErrCancelled = "execution cancelled"
+	// ErrMemoryLimitStop stops a run that went over its memory limit. Unlike
+	// other errors a script cannot catch or suppress it.
+	ErrMemoryLimitStop    = "memory limit exceeded"
 	ErrDivisionByZero     = "division by zero"
 	ErrIndexOutOfRange    = "index out of range"
 	ErrKeyNotFound        = "key not found"
@@ -74,6 +78,38 @@ func NewTypeErrorTagged(format string, args ...interface{}) *object.Error {
 // NewTimeoutError creates a timeout error
 func NewTimeoutError() *object.Error {
 	return &object.Error{Message: ErrTimeout}
+}
+
+// IsRunStop reports whether obj is an error that ends the run it occurs in: a
+// timeout or cancellation of the run's context, or the memory-limit stop.
+// try/except and with blocks let these through, so a script cannot keep
+// running after its host has stopped it.
+func IsRunStop(obj object.Object) bool {
+	e, ok := obj.(*object.Error)
+	if !ok {
+		return false
+	}
+	switch e.Message {
+	case ErrTimeout, ErrCancelled, ErrMemoryLimitStop:
+		return true
+	}
+	return false
+}
+
+// ForCaller returns a result produced by another run (a background task) for
+// a caller to use. That run being stopped does not stop a caller whose own run
+// is live, so its stop becomes an ordinary error the caller can catch.
+func ForCaller(ctx context.Context, result object.Object) object.Object {
+	if IsRunStop(result) && ctx.Err() == nil {
+		return NewError("async error: background task stopped: %s", result.(*object.Error).Message)
+	}
+	return result
+}
+
+// NewMemoryLimitStopError creates the error that stops a run over its memory
+// limit; try/except and with blocks let it through.
+func NewMemoryLimitStopError() *object.Error {
+	return &object.Error{Message: ErrMemoryLimitStop}
 }
 
 // NewCancelledError creates a cancellation error

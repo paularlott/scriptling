@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unsafe"
 
 	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
@@ -1788,6 +1789,9 @@ func compileFunctionStatement(n *ast.FunctionStatement) object.EvalFn {
 			CompilerOwned:    true,
 			GeneratorPlan:    generatorPlan,
 		}
+		// Functions can hold each other through their defaults, out of reach
+		// of any counted container, so their memory is accounted.
+		object.TrackAlloc(fn, functionObjectSize)
 		var result object.Object = fn
 		for i := len(decorators) - 1; i >= 0; i-- {
 			dec := decorators[i](ctx, env)
@@ -1820,7 +1824,7 @@ func compileLambda(n *ast.Lambda) object.EvalFn {
 		if fail != nil {
 			return fail
 		}
-		return &object.LambdaFunction{
+		fn := &object.LambdaFunction{
 			Parameters:       n.Parameters,
 			DefaultValues:    n.GetDefaultValues(),
 			Variadic:         n.GetVariadic(),
@@ -1836,8 +1840,20 @@ func compileLambda(n *ast.Lambda) object.EvalFn {
 			CompiledDefaults: defaults,
 			ResolvedDefaults: resolved,
 		}
+		object.TrackAlloc(fn, lambdaObjectSize)
+		return fn
 	}
 }
+
+// functionObjectSize and lambdaObjectSize approximate the memory of the
+// function object a def or lambda creates.
+const (
+	functionObjectSize = int64(unsafe.Sizeof(object.Function{})) + 16
+	lambdaObjectSize   = int64(unsafe.Sizeof(object.LambdaFunction{})) + 16
+	// classObjectSize is a class statement's class, its method map header
+	// and its class-body environment.
+	classObjectSize = int64(unsafe.Sizeof(object.Class{})+unsafe.Sizeof(object.Environment{})) + 64
+)
 
 // evalCompiledExpressions is evalExpressionsWithContext over pre-compiled
 // expressions: on the first propagating value it returns the one-element
@@ -3266,9 +3282,10 @@ func compileWith(n *ast.WithStatement) object.EvalFn {
 		}
 
 		// If the body raised and __exit__ returned a truthy value, suppress the
-		// exception (Python's __exit__ contract). A raise from the __exit__
-		// result's own __bool__ propagates rather than being coerced.
-		if (isRaised(result) || object.IsError(result)) && exitResult != nil {
+		// exception (Python's __exit__ contract), unless it is protected (see
+		// isProtected). A raise from the __exit__ result's own __bool__
+		// propagates rather than being coerced.
+		if (isRaised(result) || object.IsError(result)) && exitResult != nil && !isProtected(result) {
 			suppress, serr := evalTruthy(ctx, exitResult, env)
 			if serr != nil {
 				return serr
@@ -3320,11 +3337,10 @@ func compileTry(n *ast.TryStatement) object.EvalFn {
 		// exception *value* (Raised == false) is not a raise and must not be
 		// caught here — only genuinely propagating exceptions are.
 		if isRaised(result) || object.IsError(result) {
-			// SystemExit exceptions should NOT be caught by except blocks
-			// sys.exit() always exits the program, regardless of try/except
-			// PermissionError exceptions also bypass try/except — security violations
-			// must not be silently swallowed by scripts.
-			if exc, ok := result.(*object.Exception); ok && (exc.IsSystemExit() || exc.IsPermissionError()) {
+			// SystemExit, PermissionError and the errors that end the run
+			// (timeout, cancellation, memory-limit stop) are never caught:
+			// see isProtected.
+			if isProtected(result) {
 				// Execute finally block before propagating. The protected
 				// exception wins over whatever the finally block does.
 				if finallyFn != nil {
@@ -3416,7 +3432,7 @@ func compileTry(n *ast.TryStatement) object.EvalFn {
 		// the in-flight result is a protected exception (SystemExit,
 		// PermissionError), which nothing may replace, whichever block raised it.
 		if finallyFn != nil {
-			if exc, ok := result.(*object.Exception); ok && (exc.IsSystemExit() || exc.IsPermissionError()) {
+			if isProtected(result) {
 				result = applyProtectedFinallyResult(result, runBlock(ctx, env, finallyFn, finallyLine))
 			} else {
 				result = applyFinallyResult(result, runBlock(ctx, env, finallyFn, finallyLine))
@@ -3535,6 +3551,9 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 			FieldNames:  annotatedNames,
 			AssignNames: assignNames,
 		}
+		// A class statement in a loop can chain classes through class
+		// attributes, out of reach of any counted container.
+		object.TrackAlloc(class, classObjectSize)
 
 		// Handle base class inheritance
 		if baseClassFn != nil {
