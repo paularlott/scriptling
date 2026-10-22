@@ -3,6 +3,7 @@ package extlibs
 import (
 	"bytes"
 	"context"
+	stderrors "errors"
 	"net"
 	"net/http"
 	"os"
@@ -99,11 +100,36 @@ func waitForNextPoll(ctx context.Context, timer *time.Timer, pollInterval time.D
 	return ok
 }
 
+// probePort reports whether a TCP connection to address succeeds within a
+// second. With a guard the dial goes through the network policy, and a policy
+// rejection is returned as an error rather than reported as a closed port.
+func probePort(ctx context.Context, guard *netsecurity.Guard, address string) (bool, error) {
+	if guard == nil {
+		conn, err := net.DialTimeout("tcp", address, time.Second)
+		if err != nil {
+			return false, nil
+		}
+		conn.Close()
+		return true, nil
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	conn, err := guard.Dial(dialCtx, "tcp", address)
+	if err != nil {
+		if stderrors.Is(err, netsecurity.ErrPolicy) {
+			return false, err
+		}
+		return false, nil
+	}
+	conn.Close()
+	return true, nil
+}
+
 // WaitForLibrary is the wait_for library (no network policy)
 var WaitForLibrary = newWaitForLibrary(nil)
 
 // newWaitForLibrary builds the wait_for library. A non-nil guard routes its
-// HTTP checks through the network policy.
+// HTTP and port checks through the network policy.
 func newWaitForLibrary(guard *netsecurity.Guard) *object.Library {
 	return object.NewLibrary(WaitForLibraryName,
 		map[string]*object.Builtin{
@@ -246,9 +272,11 @@ Returns:
 					defer stopTimer(timer)
 
 					for time.Now().Before(deadline) {
-						conn, err := net.DialTimeout("tcp", address, time.Second)
-						if err == nil {
-							conn.Close()
+						open, policyErr := probePort(ctx, guard, address)
+						if policyErr != nil {
+							return errors.NewError("%s", policyErr.Error())
+						}
+						if open {
 							return object.NewBoolean(true)
 						}
 
@@ -258,11 +286,11 @@ Returns:
 					}
 
 					// Final check
-					if conn, err := net.DialTimeout("tcp", address, time.Second); err == nil {
-						conn.Close()
-						return object.NewBoolean(true)
+					open, policyErr := probePort(ctx, guard, address)
+					if policyErr != nil {
+						return errors.NewError("%s", policyErr.Error())
 					}
-					return object.NewBoolean(false)
+					return object.NewBoolean(open)
 				},
 				HelpText: `port(host, port, timeout=30, poll_rate=1) - Wait for a TCP port to be open
 
@@ -275,7 +303,9 @@ Parameters:
   poll_rate (float): Time between checks in seconds (default: 1)
 
 Returns:
-  bool: True if port is open, False if timeout exceeded`,
+  bool: True if port is open, False if timeout exceeded
+
+Raises an error if a configured network policy denies the address.`,
 			},
 			"http": {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -352,6 +382,8 @@ Returns:
 							if statusMatch {
 								return object.NewBoolean(true)
 							}
+						} else if stderrors.Is(httpErr, netsecurity.ErrPolicy) {
+							return errors.NewError("http error: %s", httpErr.Error())
 						}
 
 						if !waitForNextPoll(ctx, timer, pollInterval) {
@@ -372,6 +404,8 @@ Returns:
 						if statusMatch {
 							return object.NewBoolean(true)
 						}
+					} else if stderrors.Is(httpErr, netsecurity.ErrPolicy) {
+						return errors.NewError("http error: %s", httpErr.Error())
 					}
 					return object.NewBoolean(false)
 				},
@@ -386,7 +420,9 @@ Parameters:
   status_code (int): Expected HTTP status code (default: 200)
 
 Returns:
-  bool: True if endpoint responds with expected status, False if timeout exceeded`,
+  bool: True if endpoint responds with expected status, False if timeout exceeded
+
+Raises an error if a configured network policy denies the URL.`,
 			},
 			"file_content": {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

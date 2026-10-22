@@ -1,10 +1,14 @@
 package extlibs
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs/netsecurity"
@@ -27,23 +31,65 @@ websocket.connect("`+strings.Replace(srv.URL, "http", "ws", 1)+`")`)
 	}
 }
 
-// TestNetworkWaitForPolicy: wait_for's HTTP probes share the guard.
+// TestNetworkWaitForPolicy: wait_for's HTTP and port probes share the guard,
+// and a policy denial raises instead of being reported as "not ready".
 func TestNetworkWaitForPolicy(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }))
 	defer srv.Close()
+	port := srv.Listener.Addr().(*net.TCPAddr).Port
+
+	// Loopback is allowed, so only the IP-literal rule can deny the first two;
+	// the third is denied by name resolving to loopback.
+	pLiteral := scriptling.New()
+	RegisterWaitForLibrary(pLiteral, &netsecurity.Config{AllowLoopback: true})
+	pDefault := scriptling.New()
+	RegisterWaitForLibrary(pDefault, &netsecurity.Config{})
+	for _, tc := range []struct {
+		p      *scriptling.Scriptling
+		script string
+	}{
+		{pLiteral, `wait_for.http("` + srv.URL + `", timeout=5)`},
+		{pLiteral, `wait_for.port("127.0.0.1", ` + strconv.Itoa(port) + `, timeout=5)`},
+		{pDefault, `wait_for.port("localhost", ` + strconv.Itoa(port) + `, timeout=5)`},
+	} {
+		p, script := tc.p, tc.script
+		start := time.Now()
+		out, ok := pEvalErr(t, p, "import scriptling.wait_for as wait_for\n"+script)
+		if ok || !strings.Contains(out, "network policy") {
+			t.Errorf("POLICY-BYPASS [wait_for]: %s: ok=%v err=%s", script, ok, out)
+		}
+		if time.Since(start) > 3*time.Second {
+			t.Errorf("%s: policy denial should fail fast, took %v", script, time.Since(start))
+		}
+	}
+	if hits.Load() != 0 {
+		t.Errorf("POLICY-BYPASS [wait_for]: denied probe reached the server %d times", hits.Load())
+	}
+}
+
+// TestNetworkWaitForPolicyPermits: addresses the policy allows still probe
+// normally, open or closed.
+func TestNetworkWaitForPolicyPermits(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
 
 	p := scriptling.New()
-	RegisterWaitForLibrary(p, &netsecurity.Config{AllowLoopback: true})
-	// A policy-denied probe never connects: wait_for sees it as "not ready"
-	// and returns False at the timeout. The security property is that no
-	// request reaches the (existing) server.
+	RegisterWaitForLibrary(p, &netsecurity.Config{AllowLoopback: true, AllowIPLiterals: true})
 	result, err := p.Eval(`import scriptling.wait_for as wait_for
-wait_for.http("` + srv.URL + `", timeout=1)`)
-	if err != nil {
-		t.Fatalf("eval: %v", err)
+wait_for.port("127.0.0.1", ` + strconv.Itoa(port) + `, timeout=2)`)
+	if err != nil || result.Inspect() != "True" {
+		t.Fatalf("open permitted port: result=%v err=%v", result, err)
 	}
-	if result.Inspect() != "False" {
-		t.Errorf("POLICY-BYPASS [wait_for]: denied probe reported ready: %s", result.Inspect())
+
+	ln.Close()
+	result, err = p.Eval(`import scriptling.wait_for as wait_for
+wait_for.port("127.0.0.1", ` + strconv.Itoa(port) + `, timeout=1, poll_rate=0.2)`)
+	if err != nil || result.Inspect() != "False" {
+		t.Fatalf("closed permitted port: result=%v err=%v", result, err)
 	}
 }
 

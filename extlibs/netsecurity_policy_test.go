@@ -125,12 +125,9 @@ func TestWaitForHTTPNetworkPolicy(t *testing.T) {
 
 	p2 := scriptling.New()
 	RegisterWaitForLibrary(p2, &netsecurity.Config{})
-	result, err = p2.Eval("import scriptling.wait_for as wait_for\nwait_for.http('" + srv.URL + "', timeout=1)")
-	if err != nil {
-		t.Fatalf("wait_for eval: %v", err)
-	}
-	if result.Inspect() != "False" {
-		t.Error("policy-blocked wait_for.http should return False, not error")
+	_, err = p2.Eval("import scriptling.wait_for as wait_for\nwait_for.http('" + srv.URL + "', timeout=1)")
+	if err == nil || !strings.Contains(err.Error(), "network policy") {
+		t.Errorf("policy-blocked wait_for.http should raise a network policy error, got: %v", err)
 	}
 }
 

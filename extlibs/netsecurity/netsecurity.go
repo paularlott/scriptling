@@ -32,6 +32,7 @@ package netsecurity
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -43,6 +44,11 @@ import (
 	"github.com/BurntSushi/toml"
 	"golang.org/x/net/http2"
 )
+
+// ErrPolicy is wrapped by every error that reports a policy denial, so
+// callers can tell a refusal from an ordinary network failure with
+// errors.Is, including through http.Client's *url.Error.
+var ErrPolicy = errors.New("network policy")
 
 // Config holds the outbound network policy for a library registration.
 // The zero value plus a non-nil pointer enables safe-default blocking.
@@ -191,7 +197,7 @@ func (g *Guard) Resolver() *net.Resolver {
 // FailClosed returns a Guard that rejects every URL and dial with an error
 // derived from err. Use it when a Config fails to compile.
 func FailClosed(err error) *Guard {
-	return &Guard{failErr: fmt.Errorf("network policy disabled by invalid configuration: %w", err)}
+	return &Guard{failErr: fmt.Errorf("%w disabled by invalid configuration: %w", ErrPolicy, err)}
 }
 
 // NewGuard compiles a Config into a Guard. Invalid CIDRs or malformed DNS
@@ -306,17 +312,17 @@ func (g *Guard) CheckURL(u *url.URL) error {
 		return g.failErr
 	}
 	if u == nil {
-		return fmt.Errorf("network policy: no URL")
+		return fmt.Errorf("%w: no URL", ErrPolicy)
 	}
 
 	switch u.Scheme {
 	case "https", "wss":
 	case "http", "ws":
 		if g.requireHTTPS && !g.allowAll {
-			return fmt.Errorf("network policy: %s requires https", u.Scheme)
+			return fmt.Errorf("%w: %s requires https", ErrPolicy, u.Scheme)
 		}
 	default:
-		return fmt.Errorf("network policy: unsupported scheme %q", u.Scheme)
+		return fmt.Errorf("%w: unsupported scheme %q", ErrPolicy, u.Scheme)
 	}
 
 	return g.CheckHost(u.Hostname())
@@ -336,18 +342,18 @@ func (g *Guard) CheckHost(host string) error {
 
 	host = strings.ToLower(host)
 	if host == "" {
-		return fmt.Errorf("network policy: no host")
+		return fmt.Errorf("%w: no host", ErrPolicy)
 	}
 
 	if matchHost(g.denyHosts, host) {
-		return fmt.Errorf("network policy: host %q is denied", host)
+		return fmt.Errorf("%w: host %q is denied", ErrPolicy, host)
 	}
 
 	if ip := net.ParseIP(host); ip != nil {
 		// IP literal: blocked outright unless allowed, then still subject to
 		// the address categories.
 		if !g.allowIPLiterals && !g.containsIP(g.allowed, ip) {
-			return fmt.Errorf("network policy: IP literals are not allowed")
+			return fmt.Errorf("%w: IP literals are not allowed", ErrPolicy)
 		}
 		if err := g.checkIP(ip); err != nil {
 			return err
@@ -356,7 +362,7 @@ func (g *Guard) CheckHost(host string) error {
 	}
 
 	if len(g.allowHosts) > 0 && !matchHost(g.allowHosts, host) {
-		return fmt.Errorf("network policy: host %q is not in the allowed host list", host)
+		return fmt.Errorf("%w: host %q is not in the allowed host list", ErrPolicy, host)
 	}
 
 	return nil
@@ -371,7 +377,7 @@ func (g *Guard) DialContext(ctx context.Context, network, addr string) (net.Conn
 	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return nil, fmt.Errorf("network policy: invalid address %q", addr)
+		return nil, fmt.Errorf("%w: invalid address %q", ErrPolicy, addr)
 	}
 	ips, err := g.resolve(ctx, host)
 	if err != nil {
@@ -397,7 +403,7 @@ func (g *Guard) DialContext(ctx context.Context, network, addr string) (net.Conn
 func (g *Guard) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
-		return nil, fmt.Errorf("network policy: invalid address %q", addr)
+		return nil, fmt.Errorf("%w: invalid address %q", ErrPolicy, addr)
 	}
 	if err := g.CheckHost(host); err != nil {
 		return nil, err
@@ -423,7 +429,7 @@ func (g *Guard) resolve(ctx context.Context, host string) ([]net.IP, error) {
 	host = strings.ToLower(host)
 
 	if matchHost(g.denyHosts, host) {
-		return nil, fmt.Errorf("network policy: host %q is denied", host)
+		return nil, fmt.Errorf("%w: host %q is denied", ErrPolicy, host)
 	}
 
 	if ip := net.ParseIP(host); ip != nil {
@@ -521,7 +527,7 @@ func (g *Guard) checkIP(ip net.IP) error {
 	}
 
 	if g.containsIP(g.denied, ip) {
-		return fmt.Errorf("network policy: address %s is in a denied range", ip)
+		return fmt.Errorf("%w: address %s is in a denied range", ErrPolicy, ip)
 	}
 	if g.containsIP(g.allowed, ip) {
 		return nil
@@ -529,27 +535,27 @@ func (g *Guard) checkIP(ip net.IP) error {
 
 	switch {
 	case ip.IsUnspecified():
-		return fmt.Errorf("network policy: unspecified address %s is not allowed", ip)
+		return fmt.Errorf("%w: unspecified address %s is not allowed", ErrPolicy, ip)
 	case ip.IsLoopback():
 		if !g.allowLoopback {
-			return fmt.Errorf("network policy: loopback address %s is not allowed", ip)
+			return fmt.Errorf("%w: loopback address %s is not allowed", ErrPolicy, ip)
 		}
 	case g.containsIP(reservedNets, ip):
 		// After loopback/unspecified: ::/96 also holds :: and ::1, which keep
 		// their own categories (and allow_loopback still governs ::1).
 		if !g.allowReservedIPs {
-			return fmt.Errorf("network policy: reserved address %s is not allowed", ip)
+			return fmt.Errorf("%w: reserved address %s is not allowed", ErrPolicy, ip)
 		}
 	case ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast():
 		// No toggle: link-local hosts the cloud metadata endpoints among
 		// other infrastructure. Allow via an explicit AllowedCIDRs entry.
-		return fmt.Errorf("network policy: link-local address %s is not allowed", ip)
+		return fmt.Errorf("%w: link-local address %s is not allowed", ErrPolicy, ip)
 	case ip.IsPrivate():
 		if !g.allowPrivateIPs {
-			return fmt.Errorf("network policy: private address %s is not allowed", ip)
+			return fmt.Errorf("%w: private address %s is not allowed", ErrPolicy, ip)
 		}
 	case ip.IsMulticast():
-		return fmt.Errorf("network policy: multicast address %s is not allowed", ip)
+		return fmt.Errorf("%w: multicast address %s is not allowed", ErrPolicy, ip)
 	}
 	return nil
 }
