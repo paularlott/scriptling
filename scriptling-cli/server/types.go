@@ -156,7 +156,7 @@ type Server struct {
 	jsonrpcServerOnce     sync.Once
 	middleware            string
 	notFoundHandler       string
-	staticRoutes          map[string]string
+	staticRoutes          map[string]staticRoute
 	webRootZip            *zip.ReadCloser // non-nil when WebRoot is a .zip file
 	mu                    sync.RWMutex
 	watcher               *fsnotify.Watcher

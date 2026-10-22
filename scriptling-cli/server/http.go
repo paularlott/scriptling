@@ -242,9 +242,8 @@ func (s *Server) buildMux() http.Handler {
 		mux.HandleFunc(path, s.handleScriptRequest)
 	}
 
-	for path, dir := range s.staticRoutes {
-		fs := http.FileServer(http.Dir(dir))
-		mux.Handle(path, http.StripPrefix(path, fs))
+	for path, route := range s.staticRoutes {
+		mux.Handle(path, http.StripPrefix(path, route.handler()))
 	}
 
 	// Web root: serve files not matched by any route, fall through to 404 handler

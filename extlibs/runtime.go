@@ -338,7 +338,7 @@ func RegisterRuntimeLibrary(registrar interface{ RegisterLibrary(*object.Library
 // If allowedPaths is nil, all paths are allowed (no restrictions).
 // If allowedPaths is empty slice, no paths are allowed (deny all).
 func RegisterRuntimeLibraryAll(registrar interface{ RegisterLibrary(*object.Library) }, allowedPaths []string) {
-	httpLib := HTTPSubLibrary
+	httpLib := NewHTTPSubLibrary(allowedPaths)
 	kvLib := NewKVSubLibraryWithSecurity(allowedPaths)
 	syncLib := SyncSubLibrary
 	sandboxLib := NewSandboxLibrary(allowedPaths)

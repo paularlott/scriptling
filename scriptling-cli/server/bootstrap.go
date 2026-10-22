@@ -24,7 +24,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 		wsHandlers:           make(map[string]string),
 		jsonrpcMethods:       make(map[string]string),
 		jsonrpcNotifications: make(map[string]string),
-		staticRoutes:         make(map[string]string),
+		staticRoutes:         make(map[string]staticRoute),
 		bearerExpected:       "Bearer " + config.BearerToken,
 		scriptDone:           make(chan struct{}),
 		serverRunningCh:      make(chan struct{}),
@@ -381,7 +381,7 @@ func (s *Server) collectRoutes() {
 		if route.Static {
 			// key is "GET path" for static routes; extract the path
 			_, path, _ := strings.Cut(key, " ")
-			s.staticRoutes[path] = route.StaticDir
+			s.staticRoutes[path] = staticRoute{dir: route.StaticDir, allowed: route.StaticAllowed}
 		} else {
 			s.handlers[key] = route.Handler
 		}

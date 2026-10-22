@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"net"
 	"net/url"
 	"os"
@@ -40,6 +41,10 @@ type RouteInfo struct {
 	Handler   string
 	Static    bool
 	StaticDir string
+	// StaticAllowed is the --allowed-paths set in force when the static route
+	// was registered (absolute); nil means unrestricted. The server serves
+	// only files that resolve inside it, and hides dotfiles and listings.
+	StaticAllowed []string
 }
 
 // WebSocketRouteInfo stores information about a registered WebSocket route
@@ -617,58 +622,66 @@ Parameters:
 	}
 }
 
-var HTTPSubLibrary = object.NewLibrary(RuntimeHTTPLibraryName, map[string]*object.Builtin{
-	"get":    httpVerbEntry("GET"),
-	"post":   httpVerbEntry("POST"),
-	"put":    httpVerbEntry("PUT"),
-	"patch":  httpVerbEntry("PATCH"),
-	"delete": httpVerbEntry("DELETE"),
+// HTTPSubLibrary is the runtime.http library with no filesystem restriction.
+var HTTPSubLibrary = NewHTTPSubLibrary(nil)
 
-	"route": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 1); err != nil {
-				return err
-			}
+// NewHTTPSubLibrary builds the runtime.http library. allowedPaths restricts the
+// directories static() may serve, as --allowed-paths restricts the filesystem
+// libraries: nil leaves them unrestricted, an empty slice denies every one.
+func NewHTTPSubLibrary(allowedPaths []string) *object.Library {
+	paths := fssecurity.Config{AllowedPaths: fssecurity.NormalizeAllowedPaths(allowedPaths)}
+	return object.NewLibrary(RuntimeHTTPLibraryName, map[string]*object.Builtin{
+		"get":    httpVerbEntry("GET"),
+		"post":   httpVerbEntry("POST"),
+		"put":    httpVerbEntry("PUT"),
+		"patch":  httpVerbEntry("PATCH"),
+		"delete": httpVerbEntry("DELETE"),
 
-			path, err := args[0].AsString()
-			if err != nil {
-				return err
-			}
+		"route": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
 
-			var methods []string
-			if m := kwargs.Get("methods"); m != nil {
-				if list, e := m.AsList(); e == nil {
-					for _, item := range list {
-						if method, e := item.AsString(); e == nil {
-							methods = append(methods, strings.ToUpper(method))
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				var methods []string
+				if m := kwargs.Get("methods"); m != nil {
+					if list, e := m.AsList(); e == nil {
+						for _, item := range list {
+							if method, e := item.AsString(); e == nil {
+								methods = append(methods, strings.ToUpper(method))
+							}
 						}
 					}
 				}
-			}
-			if len(methods) == 0 {
-				methods = []string{"GET", "POST", "PUT", "DELETE"}
-			}
+				if len(methods) == 0 {
+					methods = []string{"GET", "POST", "PUT", "DELETE"}
+				}
 
-			// Decorator form: @http.route("/path", methods=["GET","POST"])
-			if len(args) == 1 {
-				return makeHTTPDecorator(ctx, func(ref string) {
-					for _, m := range methods {
-						registerHTTPRoute(m, path, ref)
-					}
-				})
-			}
+				// Decorator form: @http.route("/path", methods=["GET","POST"])
+				if len(args) == 1 {
+					return makeHTTPDecorator(ctx, func(ref string) {
+						for _, m := range methods {
+							registerHTTPRoute(m, path, ref)
+						}
+					})
+				}
 
-			// Imperative form: route("/path", "lib.func", methods=["GET","POST"])
-			handler, err := args[1].AsString()
-			if err != nil {
-				return err
-			}
-			for _, m := range methods {
-				registerHTTPRoute(m, path, handler)
-			}
-			return &object.Null{}
-		},
-		HelpText: `route(path, handler=None, methods=["GET","POST","PUT","DELETE"]) - Register a route for multiple methods, or use as decorator
+				// Imperative form: route("/path", "lib.func", methods=["GET","POST"])
+				handler, err := args[1].AsString()
+				if err != nil {
+					return err
+				}
+				for _, m := range methods {
+					registerHTTPRoute(m, path, handler)
+				}
+				return &object.Null{}
+			},
+			HelpText: `route(path, handler=None, methods=["GET","POST","PUT","DELETE"]) - Register a route for multiple methods, or use as decorator
 
 Decorator form:
   @http.route("/api", methods=["GET", "POST"])
@@ -677,43 +690,43 @@ Decorator form:
 
 Imperative form:
   runtime.http.route("/api", "handlers.api", methods=["GET", "POST"])`,
-	},
-
-	"middleware": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 1); err != nil {
-				return err
-			}
-
-			// Decorator form: @http.middleware
-			if fn, ok := args[0].(*object.Function); ok {
-				env := evaluator.GetEnvFromContext(ctx)
-				ref := resolveModuleRef(env, fn.Name)
-				if ref == "" {
-					return errors.NewError("cannot determine module name for @http.middleware decorator")
-				}
-				RuntimeState.Lock()
-				RuntimeState.Middleware = ref
-				RuntimeState.Unlock()
-				return fn
-			}
-
-			// Imperative form: middleware("lib.func")
-			handler, err := args[0].AsString()
-			if err != nil {
-				return err
-			}
-
-			RuntimeState.Lock()
-			if RuntimeState.ServerStarted {
-				fmt.Fprintf(os.Stderr, "warning: runtime.http.middleware registered after start_server() — will not be applied\n")
-			}
-			RuntimeState.Middleware = handler
-			RuntimeState.Unlock()
-
-			return &object.Null{}
 		},
-		HelpText: `middleware(handler) - Register middleware for all routes and protocol endpoints, or use as bare decorator
+
+		"middleware": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+
+				// Decorator form: @http.middleware
+				if fn, ok := args[0].(*object.Function); ok {
+					env := evaluator.GetEnvFromContext(ctx)
+					ref := resolveModuleRef(env, fn.Name)
+					if ref == "" {
+						return errors.NewError("cannot determine module name for @http.middleware decorator")
+					}
+					RuntimeState.Lock()
+					RuntimeState.Middleware = ref
+					RuntimeState.Unlock()
+					return fn
+				}
+
+				// Imperative form: middleware("lib.func")
+				handler, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				RuntimeState.Lock()
+				if RuntimeState.ServerStarted {
+					fmt.Fprintf(os.Stderr, "warning: runtime.http.middleware registered after start_server() — will not be applied\n")
+				}
+				RuntimeState.Middleware = handler
+				RuntimeState.Unlock()
+
+				return &object.Null{}
+			},
+			HelpText: `middleware(handler) - Register middleware for all routes and protocol endpoints, or use as bare decorator
 
 Decorator form:
   @http.middleware
@@ -732,38 +745,48 @@ enabled, for the /mcp and /json-rpc endpoints too — so one middleware can
 authenticate API clients, MCP clients, and JSON-RPC callers alike. When a
 middleware is registered it replaces static --bearer-token checking on the
 protocol endpoints.`,
-	},
-
-	"static": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 2); err != nil {
-				return err
-			}
-
-			path, err := args[0].AsString()
-			if err != nil {
-				return err
-			}
-
-			directory, err := args[1].AsString()
-			if err != nil {
-				return err
-			}
-
-			RuntimeState.Lock()
-			if RuntimeState.ServerStarted {
-				fmt.Fprintf(os.Stderr, "warning: runtime.http.static %q registered after start_server() — route will not be served\n", path)
-			}
-			RuntimeState.Routes["GET "+path] = &RouteInfo{
-				Methods:   []string{"GET"},
-				Static:    true,
-				StaticDir: directory,
-			}
-			RuntimeState.Unlock()
-
-			return &object.Null{}
 		},
-		HelpText: `static(path, directory) - Register a static file serving route
+
+		"static": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 2); err != nil {
+					return err
+				}
+
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				directory, err := args[1].AsString()
+				if err != nil {
+					return err
+				}
+
+				// Under --allowed-paths a static route may only publish a
+				// directory inside the allowed paths: serving it would otherwise
+				// hand its files to remote clients, and to the script itself.
+				if paths.AllowedPaths != nil && !paths.IsPathAllowed(directory) {
+					return errors.NewPermissionError("access denied: static directory '%s' is outside allowed directories", directory)
+				}
+
+				RuntimeState.Lock()
+				if RuntimeState.ServerStarted {
+					fmt.Fprintf(os.Stderr, "warning: runtime.http.static %q registered after start_server() — route will not be served\n", path)
+				}
+				RuntimeState.Routes["GET "+path] = &RouteInfo{
+					Methods:   []string{"GET"},
+					Static:    true,
+					StaticDir: directory,
+					// The server confines what it serves from the directory to
+					// the same paths, so symlinks inside it cannot lead out.
+					StaticAllowed: paths.AllowedPaths,
+				}
+				RuntimeState.Unlock()
+
+				return &object.Null{}
+			},
+			HelpText: `static(path, directory) - Register a static file serving route
 
 Parameters:
   path (string): URL path prefix for static files (e.g., "/assets")
@@ -771,37 +794,37 @@ Parameters:
 
 Example:
   runtime.http.static("/assets", "./public")`,
-	},
-
-	"json": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 1); err != nil {
-				return err
-			}
-
-			statusCode := int64(200)
-			var data object.Object = &object.Null{}
-
-			if len(args) >= 2 {
-				if code, err := args[0].AsInt(); err == nil {
-					statusCode = code
-				}
-				data = args[1]
-			} else {
-				data = args[0]
-			}
-
-			if c := kwargs.Get("status"); c != nil {
-				if code, e := c.AsInt(); e == nil {
-					statusCode = code
-				}
-			}
-
-			return httpResponse(statusCode, map[string]string{
-				"Content-Type": "application/json",
-			}, data)
 		},
-		HelpText: `json(status_code, data) - Create a JSON response
+
+		"json": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+
+				statusCode := int64(200)
+				var data object.Object = &object.Null{}
+
+				if len(args) >= 2 {
+					if code, err := args[0].AsInt(); err == nil {
+						statusCode = code
+					}
+					data = args[1]
+				} else {
+					data = args[0]
+				}
+
+				if c := kwargs.Get("status"); c != nil {
+					if code, e := c.AsInt(); e == nil {
+						statusCode = code
+					}
+				}
+
+				return httpResponse(statusCode, map[string]string{
+					"Content-Type": "application/json",
+				}, data)
+			},
+			HelpText: `json(status_code, data) - Create a JSON response
 
 Parameters:
   status_code (int): HTTP status code (e.g., 200, 404, 500)
@@ -813,36 +836,36 @@ Returns:
 Example:
   return runtime.http.json(200, {"status": "ok"})
   return runtime.http.json(404, {"error": "Not found"})`,
-	},
-
-	"redirect": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 1); err != nil {
-				return err
-			}
-
-			location, err := args[0].AsString()
-			if err != nil {
-				return err
-			}
-
-			statusCode := int64(302)
-			if len(args) > 1 {
-				if code, e := args[1].AsInt(); e == nil {
-					statusCode = code
-				}
-			}
-			if c := kwargs.Get("status"); c != nil {
-				if code, e := c.AsInt(); e == nil {
-					statusCode = code
-				}
-			}
-
-			return httpResponse(statusCode, map[string]string{
-				"Location": location,
-			}, object.NewString(""))
 		},
-		HelpText: `redirect(location, status=302) - Create a redirect response
+
+		"redirect": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+
+				location, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				statusCode := int64(302)
+				if len(args) > 1 {
+					if code, e := args[1].AsInt(); e == nil {
+						statusCode = code
+					}
+				}
+				if c := kwargs.Get("status"); c != nil {
+					if code, e := c.AsInt(); e == nil {
+						statusCode = code
+					}
+				}
+
+				return httpResponse(statusCode, map[string]string{
+					"Location": location,
+				}, object.NewString(""))
+			},
+			HelpText: `redirect(location, status=302) - Create a redirect response
 
 Parameters:
   location (string): URL to redirect to
@@ -854,37 +877,37 @@ Returns:
 Example:
   return runtime.http.redirect("/new-location")
   return runtime.http.redirect("/permanent", status=301)`,
-	},
-
-	"html": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 1); err != nil {
-				return err
-			}
-
-			statusCode := int64(200)
-			var htmlContent object.Object = object.NewString("")
-
-			if len(args) >= 2 {
-				if code, err := args[0].AsInt(); err == nil {
-					statusCode = code
-				}
-				htmlContent = args[1]
-			} else {
-				htmlContent = args[0]
-			}
-
-			if c := kwargs.Get("status"); c != nil {
-				if code, e := c.AsInt(); e == nil {
-					statusCode = code
-				}
-			}
-
-			return httpResponse(statusCode, map[string]string{
-				"Content-Type": "text/html; charset=utf-8",
-			}, htmlContent)
 		},
-		HelpText: `html(status_code, content) - Create an HTML response
+
+		"html": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+
+				statusCode := int64(200)
+				var htmlContent object.Object = object.NewString("")
+
+				if len(args) >= 2 {
+					if code, err := args[0].AsInt(); err == nil {
+						statusCode = code
+					}
+					htmlContent = args[1]
+				} else {
+					htmlContent = args[0]
+				}
+
+				if c := kwargs.Get("status"); c != nil {
+					if code, e := c.AsInt(); e == nil {
+						statusCode = code
+					}
+				}
+
+				return httpResponse(statusCode, map[string]string{
+					"Content-Type": "text/html; charset=utf-8",
+				}, htmlContent)
+			},
+			HelpText: `html(status_code, content) - Create an HTML response
 
 Parameters:
   status_code (int): HTTP status code
@@ -895,37 +918,37 @@ Returns:
 
 Example:
   return runtime.http.html(200, "<h1>Hello World</h1>")`,
-	},
-
-	"text": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 1); err != nil {
-				return err
-			}
-
-			statusCode := int64(200)
-			var textContent object.Object = object.NewString("")
-
-			if len(args) >= 2 {
-				if code, err := args[0].AsInt(); err == nil {
-					statusCode = code
-				}
-				textContent = args[1]
-			} else {
-				textContent = args[0]
-			}
-
-			if c := kwargs.Get("status"); c != nil {
-				if code, e := c.AsInt(); e == nil {
-					statusCode = code
-				}
-			}
-
-			return httpResponse(statusCode, map[string]string{
-				"Content-Type": "text/plain; charset=utf-8",
-			}, textContent)
 		},
-		HelpText: `text(status_code, content) - Create a plain text response
+
+		"text": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+
+				statusCode := int64(200)
+				var textContent object.Object = object.NewString("")
+
+				if len(args) >= 2 {
+					if code, err := args[0].AsInt(); err == nil {
+						statusCode = code
+					}
+					textContent = args[1]
+				} else {
+					textContent = args[0]
+				}
+
+				if c := kwargs.Get("status"); c != nil {
+					if code, e := c.AsInt(); e == nil {
+						statusCode = code
+					}
+				}
+
+				return httpResponse(statusCode, map[string]string{
+					"Content-Type": "text/plain; charset=utf-8",
+				}, textContent)
+			},
+			HelpText: `text(status_code, content) - Create a plain text response
 
 Parameters:
   status_code (int): HTTP status code
@@ -936,48 +959,48 @@ Returns:
 
 Example:
   return runtime.http.text(200, "Hello World")`,
-	},
+		},
 
-	"parse_query": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 1); err != nil {
-				return err
-			}
+		"parse_query": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
 
-			queryString, err := args[0].AsString()
-			if err != nil {
-				return err
-			}
+				queryString, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
 
-			values, parseErr := url.ParseQuery(queryString)
-			if parseErr != nil {
-				return errors.NewError("failed to parse query string: %s", parseErr.Error())
-			}
+				values, parseErr := url.ParseQuery(queryString)
+				if parseErr != nil {
+					return errors.NewError("failed to parse query string: %s", parseErr.Error())
+				}
 
-			pairs := make(map[string]object.DictPair)
-			for key, vals := range values {
-				keyObj := object.NewString(key)
-				dk := object.DictKey(keyObj)
-				if len(vals) == 1 {
-					pairs[dk] = object.DictPair{
-						Key:   keyObj,
-						Value: object.NewString(vals[0]),
-					}
-				} else {
-					elements := make([]object.Object, len(vals))
-					for i, v := range vals {
-						elements[i] = object.NewString(v)
-					}
-					pairs[dk] = object.DictPair{
-						Key:   keyObj,
-						Value: &object.List{Elements: elements},
+				pairs := make(map[string]object.DictPair)
+				for key, vals := range values {
+					keyObj := object.NewString(key)
+					dk := object.DictKey(keyObj)
+					if len(vals) == 1 {
+						pairs[dk] = object.DictPair{
+							Key:   keyObj,
+							Value: object.NewString(vals[0]),
+						}
+					} else {
+						elements := make([]object.Object, len(vals))
+						for i, v := range vals {
+							elements[i] = object.NewString(v)
+						}
+						pairs[dk] = object.DictPair{
+							Key:   keyObj,
+							Value: &object.List{Elements: elements},
+						}
 					}
 				}
-			}
 
-			return &object.Dict{Pairs: pairs}
-		},
-		HelpText: `parse_query(query_string) - Parse a URL query string
+				return &object.Dict{Pairs: pairs}
+			},
+			HelpText: `parse_query(query_string) - Parse a URL query string
 
 Parameters:
   query_string (string): Query string to parse (with or without leading ?)
@@ -987,43 +1010,43 @@ Returns:
 
 Example:
   params = runtime.http.parse_query("name=John&age=30")`,
-	},
-
-	"not_found": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 1); err != nil {
-				return err
-			}
-
-			// Decorator form: @http.not_found
-			if fn, ok := args[0].(*object.Function); ok {
-				env := evaluator.GetEnvFromContext(ctx)
-				ref := resolveModuleRef(env, fn.Name)
-				if ref == "" {
-					return errors.NewError("cannot determine module name for @http.not_found decorator")
-				}
-				RuntimeState.Lock()
-				RuntimeState.NotFoundHandler = ref
-				RuntimeState.Unlock()
-				return fn
-			}
-
-			// Imperative form: not_found("lib.func")
-			handler, err := args[0].AsString()
-			if err != nil {
-				return err
-			}
-
-			RuntimeState.Lock()
-			if RuntimeState.ServerStarted {
-				fmt.Fprintf(os.Stderr, "warning: runtime.http.not_found registered after start_server() — will not be applied\n")
-			}
-			RuntimeState.NotFoundHandler = handler
-			RuntimeState.Unlock()
-
-			return &object.Null{}
 		},
-		HelpText: `not_found(handler) - Register a 404 handler, or use as bare decorator
+
+		"not_found": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+
+				// Decorator form: @http.not_found
+				if fn, ok := args[0].(*object.Function); ok {
+					env := evaluator.GetEnvFromContext(ctx)
+					ref := resolveModuleRef(env, fn.Name)
+					if ref == "" {
+						return errors.NewError("cannot determine module name for @http.not_found decorator")
+					}
+					RuntimeState.Lock()
+					RuntimeState.NotFoundHandler = ref
+					RuntimeState.Unlock()
+					return fn
+				}
+
+				// Imperative form: not_found("lib.func")
+				handler, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				RuntimeState.Lock()
+				if RuntimeState.ServerStarted {
+					fmt.Fprintf(os.Stderr, "warning: runtime.http.not_found registered after start_server() — will not be applied\n")
+				}
+				RuntimeState.NotFoundHandler = handler
+				RuntimeState.Unlock()
+
+				return &object.Null{}
+			},
+			HelpText: `not_found(handler) - Register a 404 handler, or use as bare decorator
 
 Decorator form:
   @http.not_found
@@ -1036,46 +1059,46 @@ Imperative form:
 The handler receives the request object and should return a response.
 It is called when no route matches the request path, or when a static
 asset is not found.`,
-	},
-
-	"websocket": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.MinArgs(args, 1); err != nil {
-				return err
-			}
-
-			path, err := args[0].AsString()
-			if err != nil {
-				return err
-			}
-
-			// Decorator form: @http.websocket("/ws")
-			if len(args) == 1 {
-				return makeHTTPDecorator(ctx, func(ref string) {
-					RuntimeState.Lock()
-					RuntimeState.WebSocketRoutes[path] = &WebSocketRouteInfo{Handler: ref}
-					RuntimeState.Unlock()
-				})
-			}
-
-			// Imperative form: websocket("/ws", "lib.func")
-			handler, err := args[1].AsString()
-			if err != nil {
-				return err
-			}
-
-			RuntimeState.Lock()
-			if RuntimeState.ServerStarted {
-				fmt.Fprintf(os.Stderr, "warning: runtime.http.websocket %q registered after start_server() — route will not be served\n", path)
-			}
-			RuntimeState.WebSocketRoutes[path] = &WebSocketRouteInfo{
-				Handler: handler,
-			}
-			RuntimeState.Unlock()
-
-			return &object.Null{}
 		},
-		HelpText: `websocket(path, handler=None) - Register a WebSocket route, or use as decorator
+
+		"websocket": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				// Decorator form: @http.websocket("/ws")
+				if len(args) == 1 {
+					return makeHTTPDecorator(ctx, func(ref string) {
+						RuntimeState.Lock()
+						RuntimeState.WebSocketRoutes[path] = &WebSocketRouteInfo{Handler: ref}
+						RuntimeState.Unlock()
+					})
+				}
+
+				// Imperative form: websocket("/ws", "lib.func")
+				handler, err := args[1].AsString()
+				if err != nil {
+					return err
+				}
+
+				RuntimeState.Lock()
+				if RuntimeState.ServerStarted {
+					fmt.Fprintf(os.Stderr, "warning: runtime.http.websocket %q registered after start_server() — route will not be served\n", path)
+				}
+				RuntimeState.WebSocketRoutes[path] = &WebSocketRouteInfo{
+					Handler: handler,
+				}
+				RuntimeState.Unlock()
+
+				return &object.Null{}
+			},
+			HelpText: `websocket(path, handler=None) - Register a WebSocket route, or use as decorator
 
 Decorator form:
   @http.websocket("/ws")
@@ -1090,8 +1113,9 @@ Imperative form:
   runtime.http.websocket("/chat", "handlers.chat_handler")
 
 The handler receives a WebSocketClient object and runs for the connection lifetime.`,
-	},
-}, map[string]object.Object{
-	"Request":         RequestClass,
-	"WebSocketClient": WebSocketClientClass,
-}, "HTTP server route registration and response helpers")
+		},
+	}, map[string]object.Object{
+		"Request":         RequestClass,
+		"WebSocketClient": WebSocketClientClass,
+	}, "HTTP server route registration and response helpers")
+}
