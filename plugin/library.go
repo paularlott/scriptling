@@ -37,6 +37,13 @@ type LibraryUnregistrar interface {
 // context is available. Use ReleaseWithContext for request-scoped cleanup.
 const DefaultReleaseTimeout = 2 * time.Second
 
+// RegisterLibraries registers the compiled-in plugins, the scriptling.plugin
+// control library and every plugin the manager holds on the registrar, with
+// process execution allowed. A plugin whose name the registrar already has
+// (a registered library, or a module its library loader supplies) is skipped
+// with a manager warning rather than shadowing it, so set the interpreter's
+// library loader before calling this. pol is the optional host security
+// policy.
 func RegisterLibraries(registrar Registrar, manager *Manager, policy ...*Policy) {
 	var pol *Policy
 	if len(policy) > 0 {
@@ -45,13 +52,6 @@ func RegisterLibraries(registrar Registrar, manager *Manager, policy ...*Policy)
 	RegisterLibrariesConfigured(registrar, manager, pol, true)
 }
 
-// RegisterLibrariesConfigured is RegisterLibraries with control over process
-// execution. A stdio/executable plugin is a subprocess the script names and
-// starts, so script-driven plugin.load() of an executable is allowed only
-// where the host allows subprocesses: with allowProcesses false, the control
-// library loads through an HTTP-only scope, so load()/load_path() of an
-// executable is refused while HTTP(S) plugins (not subprocesses) still work.
-// pol is the optional host security policy, as for RegisterLibraries.
 // SubprocessLibraryName is the library name whose absence from the enabled set
 // means the host has disabled process execution ("--no-subprocess",
 // "--disable-lib subprocess"). Kept here so callers can derive allowProcesses
@@ -69,6 +69,13 @@ func ProcessesAllowed(disabledLibs []string) bool {
 	return true
 }
 
+// RegisterLibrariesConfigured is RegisterLibraries with control over process
+// execution. A stdio/executable plugin is a subprocess the script names and
+// starts, so script-driven plugin.load() of an executable is allowed only
+// where the host allows subprocesses: with allowProcesses false, the control
+// library loads through an HTTP-only scope, so load()/load_path() of an
+// executable is refused while HTTP(S) plugins (not subprocesses) still work.
+// pol is the optional host security policy, as for RegisterLibraries.
 func RegisterLibrariesConfigured(registrar Registrar, manager *Manager, pol *Policy, allowProcesses bool) {
 	// Compiled-in plugins register first: scripts import them as plugin.<name>
 	// exactly like discovered plugins, and the compiled-in library wins when

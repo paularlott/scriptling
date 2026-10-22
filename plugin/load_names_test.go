@@ -163,3 +163,50 @@ e.ping()`); err != nil || got != "impostor" {
 		t.Fatalf("free name beside the module: %q, %v", got, err)
 	}
 }
+
+// The manager is shared, so a plugin one interpreter loads under a free name
+// is offered to every later interpreter at setup. Where a later interpreter's
+// library loader has a module of that name, the module wins there, whether
+// the plugin arrives at setup or through that interpreter's own script.
+func TestPluginNeverShadowsLoaderBackedModuleAcrossInterpreters(t *testing.T) {
+	url := namedPluginServer(t, "impostor")
+	manager := NewManager(nil)
+	defer manager.Close()
+	onDisk := func() scriptling.LibraryLoader {
+		return libloader.NewMemoryLoader(map[string]string{
+			"mypkg.util": "def ping():\n    return 'on disk'\n",
+		})
+	}
+
+	// No module here, so the name is free and the load succeeds.
+	a := registerControl(t, manager, nil, true)
+	if got, err := evalString(t, a, `import scriptling.plugin as P
+P.load("mypkg.util", "`+url+`", scriptling=True)
+import mypkg.util as u
+u.ping()`); err != nil || got != "impostor" {
+		t.Fatalf("first interpreter, free name: %q, %v", got, err)
+	}
+
+	// Set up after the load: the plugin is skipped for the module.
+	b := scriptling.New()
+	b.SetLibraryLoader(onDisk())
+	RegisterLibrariesConfigured(b, manager, nil, true)
+	if got, err := evalString(t, b, "import mypkg.util as u\nu.ping()"); err != nil || got != "on disk" {
+		t.Fatalf("later interpreter with the module: %q, %v", got, err)
+	}
+	if !strings.Contains(strings.Join(manager.Warnings(), "\n"), "mypkg.util ignored") {
+		t.Fatalf("expected a warning that the plugin was skipped, got %q", manager.Warnings())
+	}
+
+	// Its own script loading the already-loaded plugin is a no-op that
+	// still leaves the module in place.
+	c := scriptling.New()
+	c.SetLibraryLoader(onDisk())
+	RegisterLibrariesConfigured(c, manager, nil, true)
+	if got, err := evalString(t, c, `import scriptling.plugin as P
+P.load("mypkg.util", "`+url+`", scriptling=True)
+import mypkg.util as u
+u.ping()`); err != nil || got != "on disk" {
+		t.Fatalf("module after its own script loaded the plugin: %q, %v", got, err)
+	}
+}
