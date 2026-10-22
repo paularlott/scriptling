@@ -2270,7 +2270,7 @@ func compareObjectsCtx(ctx context.Context, a, b object.Object, env *object.Envi
 			}
 		}
 	}
-	return compareObjects(a, b), nil
+	return compareForSort(ctx, a, b, env)
 }
 
 // boolNumber returns 0 or 1 for a boolean, giving booleans Python's ordering:
@@ -2305,6 +2305,12 @@ func roundHalfEven(v float64) float64 {
 // (__lt__ with reflected __gt__, then __eq__) via compareObjectsCtx.
 // Incomparable values are an error, never a silent no-op.
 func compareForSort(ctx context.Context, left, right object.Object, env *object.Environment) (int, object.Object) {
+	return compareForSortDepth(ctx, left, right, env, 0)
+}
+
+// compareForSortDepth is compareForSort at a nesting depth; past
+// maxCompareDepth nested sequences it raises RecursionError.
+func compareForSortDepth(ctx context.Context, left, right object.Object, env *object.Environment, depth int) (int, object.Object) {
 	switch l := left.(type) {
 	case *object.Integer:
 		if r, ok := right.(*object.Integer); ok {
@@ -2350,11 +2356,17 @@ func compareForSort(ctx context.Context, left, right object.Object, env *object.
 		return compareObjectsCtx(ctx, left, right, env)
 	case *object.Tuple:
 		if r, ok := right.(*object.Tuple); ok {
-			return compareElements(ctx, l.Elements, r.Elements, env)
+			if l == r {
+				return 0, nil
+			}
+			return compareElements(ctx, l.Elements, r.Elements, env, depth)
 		}
 	case *object.List:
 		if r, ok := right.(*object.List); ok {
-			return compareElements(ctx, l.Elements, r.Elements, env)
+			if l == r {
+				return 0, nil
+			}
+			return compareElements(ctx, l.Elements, r.Elements, env, depth)
 		}
 	}
 	return 0, &object.Exception{
@@ -2375,112 +2387,20 @@ func cmpFloats(a, b float64) int {
 	return 0
 }
 
-func compareObjects(a, b object.Object) int {
-	switch av := a.(type) {
-	case *object.Integer:
-		switch bv := b.(type) {
-		case *object.Integer:
-			if av.IntValue() < bv.IntValue() {
-				return -1
-			} else if av.IntValue() > bv.IntValue() {
-				return 1
-			}
-			return 0
-		case *object.Float:
-			af := float64(av.IntValue())
-			if af < bv.FloatValue() {
-				return -1
-			} else if af > bv.FloatValue() {
-				return 1
-			}
-			return 0
-		case *object.Boolean:
-			return cmpFloats(float64(av.IntValue()), boolNumber(bv.BoolValue()))
-		}
-	case *object.Float:
-		switch bv := b.(type) {
-		case *object.Float:
-			if av.FloatValue() < bv.FloatValue() {
-				return -1
-			} else if av.FloatValue() > bv.FloatValue() {
-				return 1
-			}
-			return 0
-		case *object.Integer:
-			bf := float64(bv.IntValue())
-			if av.FloatValue() < bf {
-				return -1
-			} else if av.FloatValue() > bf {
-				return 1
-			}
-			return 0
-		case *object.Boolean:
-			return cmpFloats(av.FloatValue(), boolNumber(bv.BoolValue()))
-		}
-	case *object.Boolean:
-		af := boolNumber(av.BoolValue())
-		switch bv := b.(type) {
-		case *object.Boolean:
-			return cmpFloats(af, boolNumber(bv.BoolValue()))
-		case *object.Integer:
-			return cmpFloats(af, float64(bv.IntValue()))
-		case *object.Float:
-			return cmpFloats(af, bv.FloatValue())
-		}
-	case *object.String:
-		if bv, ok := b.(*object.String); ok {
-			if av.StringValue() < bv.StringValue() {
-				return -1
-			} else if av.StringValue() > bv.StringValue() {
-				return 1
-			}
-			return 0
-		}
-	case *object.Tuple:
-		if bv, ok := b.(*object.Tuple); ok {
-			return compareElementsLenient(av.Elements, bv.Elements)
-		}
-	case *object.List:
-		if bv, ok := b.(*object.List); ok {
-			return compareElementsLenient(av.Elements, bv.Elements)
-		}
-	}
-	// For incomparable types, return 0 (no swap)
-	return 0
-}
-
 // compareElements compares two element slices lexicographically, mirroring
-// Python's tuple/list ordering. Used by compareObjects for Tuple and List.
-
-// compareElementsLenient is the error-blind element comparison used inside
-// legacy compareObjects; sorting and ordering operators use the strict
-// compareElements, which raises on incomparable elements like Python.
-func compareElementsLenient(a, b []object.Object) int {
+// Python's tuple/list ordering. A sequence compared with itself is equal
+// without walking it (compareForSortDepth checks), so a self-containing list
+// orders against itself instead of recursing forever.
+func compareElements(ctx context.Context, a, b []object.Object, env *object.Environment, depth int) (int, object.Object) {
+	if depth >= maxCompareDepth {
+		return 0, errCompareTooDeep()
+	}
 	n := len(a)
 	if len(b) < n {
 		n = len(b)
 	}
 	for i := 0; i < n; i++ {
-		if c := compareObjects(a[i], b[i]); c != 0 {
-			return c
-		}
-	}
-	if len(a) < len(b) {
-		return -1
-	}
-	if len(a) > len(b) {
-		return 1
-	}
-	return 0
-}
-
-func compareElements(ctx context.Context, a, b []object.Object, env *object.Environment) (int, object.Object) {
-	n := len(a)
-	if len(b) < n {
-		n = len(b)
-	}
-	for i := 0; i < n; i++ {
-		c, errObj := compareForSort(ctx, a[i], b[i], env)
+		c, errObj := compareForSortDepth(ctx, a[i], b[i], env, depth+1)
 		if errObj != nil {
 			return 0, errObj
 		}

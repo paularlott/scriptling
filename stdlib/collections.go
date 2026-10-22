@@ -557,8 +557,15 @@ Example:
 						if !ok {
 							return errors.NewTypeErrorTagged("'%s' not supported between instances of '%s' and '%s'", name, typename.StringValue(), args[1].Type().String())
 						}
-						cmp, okc := compareSequences(fieldValues(args[0].(*object.Instance)), ov)
-						if !okc {
+						cmp, okc := compareSequences(fieldValues(args[0].(*object.Instance)), ov, 0)
+						if okc == compareTooDeep {
+							return &object.Exception{
+								Message:       "maximum recursion depth exceeded in comparison",
+								ExceptionType: "RecursionError",
+								Raised:        true,
+							}
+						}
+						if okc != compareOK {
 							return errors.NewTypeErrorTagged("'%s' not supported between values of incomparable types in '%s'", name, typename.StringValue())
 						}
 						return object.NewBoolean(keep(cmp))
@@ -946,21 +953,31 @@ func sliceElements(vals []object.Object, sl *object.Slice) []object.Object {
 	return out
 }
 
+// compareResult says whether compareValues could order its operands.
+type compareResult int
+
+const (
+	compareOK           compareResult = iota
+	compareIncomparable               // a TypeError
+	compareTooDeep                    // nested past object.MaxReprDepth: a RecursionError
+)
+
 // compareValues orders two scalar or tuple values like Python (numbers
 // numerically across int/float, strings lexicographically, tuples
-// element-wise); ok is false for incomparable types.
-func compareValues(a, b object.Object) (int, bool) {
+// element-wise). Tuples recurse in Go, so nesting past object.MaxReprDepth
+// is refused rather than overflowing the stack.
+func compareValues(a, b object.Object, depth int) (int, compareResult) {
 	if af, err := a.AsFloat(); err == nil {
 		if _, isStr := a.(*object.String); !isStr {
 			if bf, err := b.AsFloat(); err == nil {
 				if _, isStr := b.(*object.String); !isStr {
 					switch {
 					case af < bf:
-						return -1, true
+						return -1, compareOK
 					case af > bf:
-						return 1, true
+						return 1, compareOK
 					}
-					return 0, true
+					return 0, compareOK
 				}
 			}
 		}
@@ -968,31 +985,39 @@ func compareValues(a, b object.Object) (int, bool) {
 	as, aok := a.(*object.String)
 	bs, bok := b.(*object.String)
 	if aok && bok {
-		return strings.Compare(as.StringValue(), bs.StringValue()), true
+		return strings.Compare(as.StringValue(), bs.StringValue()), compareOK
 	}
 	at, aok := a.(*object.Tuple)
 	bt, bok := b.(*object.Tuple)
 	if aok && bok {
-		return compareSequences(at.Elements, bt.Elements)
+		return compareSequences(at.Elements, bt.Elements, depth+1)
 	}
-	return 0, false
+	return 0, compareIncomparable
 }
 
-func compareSequences(a, b []object.Object) (int, bool) {
+// compareSequences orders two element slices lexicographically; elements
+// that are the same object are equal without being compared, as in Python.
+func compareSequences(a, b []object.Object, depth int) (int, compareResult) {
+	if depth >= object.MaxReprDepth {
+		return 0, compareTooDeep
+	}
 	for i := 0; i < len(a) && i < len(b); i++ {
-		c, ok := compareValues(a[i], b[i])
-		if !ok {
-			return 0, false
+		if a[i] == b[i] {
+			continue
+		}
+		c, res := compareValues(a[i], b[i], depth)
+		if res != compareOK {
+			return 0, res
 		}
 		if c != 0 {
-			return c, true
+			return c, compareOK
 		}
 	}
 	switch {
 	case len(a) < len(b):
-		return -1, true
+		return -1, compareOK
 	case len(a) > len(b):
-		return 1, true
+		return 1, compareOK
 	}
-	return 0, true
+	return 0, compareOK
 }

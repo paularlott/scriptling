@@ -181,7 +181,7 @@ func TestObjectsDeepEqual(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := objectsDeepEqual(tt.a, tt.b)
+			got, _ := objectsDeepEqual(tt.a, tt.b)
 			if got != tt.want {
 				t.Errorf("objectsDeepEqual() = %v, want %v", got, tt.want)
 			}

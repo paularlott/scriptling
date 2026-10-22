@@ -1064,9 +1064,9 @@ func flattenConcatChain(expr ast.Expression) []object.EvalFn {
 // evalConcatChain is concatFolder over pre-compiled operands. The folding
 // rules are identical: a leading run of strings is joined through one buffer;
 // the first non-string operand closes the run and folding continues through
-// evalInfixExpression; an error stops the walk and is returned. A raised
-// exception that is not an Error is folded, not treated as a failure — the
-// original checks IsError only.
+// evalInfixExpression. A propagating value (an error, or an exception being
+// raised) stops the walk and is returned, so `name + ": " + f()` raises what
+// f() raised; it was once folded as an operand and surfaced as a TypeError.
 func evalConcatChain(ctx context.Context, env *object.Environment, leaves []object.EvalFn) object.Object {
 	var buf strings.Builder
 	buffed := false
@@ -1074,12 +1074,12 @@ func evalConcatChain(ctx context.Context, env *object.Environment, leaves []obje
 
 	for _, leaf := range leaves {
 		val := leaf(ctx, env)
-		if object.IsError(val) {
+		if propagates(val) {
 			return val
 		}
 		if acc != nil {
 			acc = evalInfixExpression(ctx, ast.OpAdd, acc, val, env)
-			if object.IsError(acc) {
+			if propagates(acc) {
 				return acc
 			}
 			continue
@@ -1095,7 +1095,7 @@ func evalConcatChain(ctx context.Context, env *object.Environment, leaves []obje
 			buf.Reset()
 			buffed = false
 			acc = evalInfixExpression(ctx, ast.OpAdd, acc, val, env)
-			if object.IsError(acc) {
+			if propagates(acc) {
 				return acc
 			}
 		} else {

@@ -660,7 +660,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 			end = len(list.Elements)
 		}
 		for i := start; i < end; i++ {
-			eq, rerr := evalObjectsEqualChecked(ctx, list.Elements[i], value, env)
+			eq, rerr := searchEqual(ctx, list.Elements[i], value, env)
 			if rerr != nil {
 				return rerr
 			}
@@ -676,7 +676,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		value := args[0]
 		count := int64(0)
 		for _, elem := range list.Elements {
-			eq, rerr := evalObjectsEqualChecked(ctx, elem, value, env)
+			eq, rerr := searchEqual(ctx, elem, value, env)
 			if rerr != nil {
 				return rerr
 			}
@@ -741,7 +741,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		}
 		value := args[0]
 		for i, elem := range list.Elements {
-			eq, rerr := evalObjectsEqualChecked(ctx, elem, value, env)
+			eq, rerr := searchEqual(ctx, elem, value, env)
 			if rerr != nil {
 				return rerr
 			}
@@ -2209,7 +2209,7 @@ func callTupleMethod(ctx context.Context, tuple *object.Tuple, method string, ar
 		}
 		count := int64(0)
 		for _, elem := range tuple.Elements {
-			eq, rerr := evalObjectsEqualChecked(ctx, elem, args[0], env)
+			eq, rerr := searchEqual(ctx, elem, args[0], env)
 			if rerr != nil {
 				return rerr
 			}
@@ -2253,7 +2253,7 @@ func callTupleMethod(ctx context.Context, tuple *object.Tuple, method string, ar
 			end = len(tuple.Elements)
 		}
 		for i := start; i < end; i++ {
-			eq, rerr := evalObjectsEqualChecked(ctx, tuple.Elements[i], args[0], env)
+			eq, rerr := searchEqual(ctx, tuple.Elements[i], args[0], env)
 			if rerr != nil {
 				return rerr
 			}

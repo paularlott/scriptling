@@ -417,7 +417,17 @@ func evalObjectsEqualChecked(ctx context.Context, a, b object.Object, env *objec
 	}
 	// Containers compare by value, as Python's == does (the `in` operator
 	// already used deep equality; count/index/remove agree through here).
-	return objectsDeepEqual(a, b), nil
+	return objectsDeepEqual(a, b)
+}
+
+// searchEqual is the equality Python's membership tests and list/tuple
+// count, index and remove use: an element that is the object sought matches
+// without being compared, so [nan].index(nan) finds it.
+func searchEqual(ctx context.Context, elem, value object.Object, env *object.Environment) (bool, object.Object) {
+	if elem == value {
+		return true, nil
+	}
+	return evalObjectsEqualChecked(ctx, elem, value, env)
 }
 
 // isInstanceOperand reports whether obj is a class instance (and therefore
@@ -427,12 +437,40 @@ func isInstanceOperand(obj object.Object) bool {
 	return ok
 }
 
-// objectsDeepEqual compares two objects for deep equality (handles lists, tuples, dicts)
-func objectsDeepEqual(a, b object.Object) bool {
+// maxCompareDepth caps how deeply nested containers compare. Comparison
+// recurses in Go, and a stack overflow is a fatal error that ends the whole
+// process, so past this depth comparing raises RecursionError, as Python
+// does. It matches object.MaxReprDepth: a value nested deeper cannot be
+// printed either.
+const maxCompareDepth = object.MaxReprDepth
+
+// errCompareTooDeep is the RecursionError raised past maxCompareDepth.
+func errCompareTooDeep() object.Object {
+	return &object.Exception{
+		Message:       "maximum recursion depth exceeded in comparison",
+		ExceptionType: "RecursionError",
+		Raised:        true,
+	}
+}
+
+// objectsDeepEqual compares two objects for deep equality (handles lists,
+// tuples, dicts). The second return is a RecursionError when the values nest
+// deeper than maxCompareDepth.
+func objectsDeepEqual(a, b object.Object) (bool, object.Object) {
+	return deepEqual(a, b, 0)
+}
+
+// deepEqual is objectsDeepEqual at a nesting depth. Values that are the same
+// object are equal without being compared, as in Python: a container is equal
+// to itself (so a self-containing list does not recurse forever), and inside
+// a container the same float is equal to itself, so [nan] == [nan] when both
+// hold one NaN. The identity checks sit in the type arms as concrete pointer
+// comparisons, which are cheaper than comparing the interfaces.
+func deepEqual(a, b object.Object, depth int) (bool, object.Object) {
 	if a.Type() != b.Type() {
 		// Same bridge as objectsEqual: type-name strings and type builtins
 		// ("int" vs int) name the same type.
-		return typeBridgeEqual(a, b)
+		return typeBridgeEqual(a, b), nil
 	}
 	// Instances with a Go-native __eq__ (dataclasses, namedtuples, enums)
 	// compare by value even nested in containers. Script-level __eq__
@@ -442,78 +480,97 @@ func objectsDeepEqual(a, b object.Object) bool {
 		if method, has := aInst.Class.Methods["__eq__"]; has {
 			if eqFn, isBuiltin := method.(*object.Builtin); isBuiltin {
 				if r, ok := eqFn.Fn(context.Background(), object.NewKwargs(nil), a, b).(*object.Boolean); ok {
-					return r.BoolValue()
+					return r.BoolValue(), nil
 				}
-				return false
+				return false, nil
 			}
 		}
-		return a == b
+		return a == b, nil
 	}
 	switch av := a.(type) {
 	case *object.Integer:
-		return av.IntValue() == b.(*object.Integer).IntValue()
+		return av.IntValue() == b.(*object.Integer).IntValue(), nil
 	case *object.Float:
-		return av.FloatValue() == b.(*object.Float).FloatValue()
+		bv := b.(*object.Float)
+		return av.FloatValue() == bv.FloatValue() || (depth > 0 && av == bv), nil
 	case *object.String:
-		return av.StringValue() == b.(*object.String).StringValue()
+		return av.StringValue() == b.(*object.String).StringValue(), nil
 	case *object.Bytes:
-		return av.Equal(b.(*object.Bytes))
+		return av.Equal(b.(*object.Bytes)), nil
 	case *object.Boolean:
-		return av.BoolValue() == b.(*object.Boolean).BoolValue()
+		return av.BoolValue() == b.(*object.Boolean).BoolValue(), nil
 	case *object.Null:
-		return true
+		return true, nil
 	case *object.List:
 		bv := b.(*object.List)
+		if av == bv {
+			return true, nil
+		}
 		if len(av.Elements) != len(bv.Elements) {
-			return false
+			return false, nil
+		}
+		if depth >= maxCompareDepth {
+			return false, errCompareTooDeep()
 		}
 		for i, elem := range av.Elements {
-			if !objectsDeepEqual(elem, bv.Elements[i]) {
-				return false
+			if eq, err := deepEqual(elem, bv.Elements[i], depth+1); !eq || err != nil {
+				return false, err
 			}
 		}
-		return true
+		return true, nil
 	case *object.Tuple:
 		bv := b.(*object.Tuple)
+		if av == bv {
+			return true, nil
+		}
 		if len(av.Elements) != len(bv.Elements) {
-			return false
+			return false, nil
+		}
+		if depth >= maxCompareDepth {
+			return false, errCompareTooDeep()
 		}
 		for i, elem := range av.Elements {
-			if !objectsDeepEqual(elem, bv.Elements[i]) {
-				return false
+			if eq, err := deepEqual(elem, bv.Elements[i], depth+1); !eq || err != nil {
+				return false, err
 			}
 		}
-		return true
+		return true, nil
 	case *object.Dict:
 		bv := b.(*object.Dict)
+		if av == bv {
+			return true, nil
+		}
 		if len(av.Pairs) != len(bv.Pairs) {
-			return false
+			return false, nil
+		}
+		if depth >= maxCompareDepth {
+			return false, errCompareTooDeep()
 		}
 		for key, pairA := range av.Pairs {
 			pairB, ok := bv.Pairs[key]
 			if !ok {
-				return false
+				return false, nil
 			}
-			if !objectsDeepEqual(pairA.Value, pairB.Value) {
-				return false
+			if eq, err := deepEqual(pairA.Value, pairB.Value, depth+1); !eq || err != nil {
+				return false, err
 			}
 		}
-		return true
+		return true, nil
 	case *object.Set:
 		// Sets are keyed by DictKey (identity hash), so equal key sets means
 		// equal sets regardless of insertion/iteration order.
 		bv := b.(*object.Set)
 		if len(av.Elements) != len(bv.Elements) {
-			return false
+			return false, nil
 		}
 		for key := range av.Elements {
 			if _, ok := bv.Elements[key]; !ok {
-				return false
+				return false, nil
 			}
 		}
-		return true
+		return true, nil
 	default:
-		return a == b // Reference equality for other types
+		return a == b, nil // Reference equality for other types
 	}
 }
 
@@ -753,10 +810,12 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				return &object.Tuple{Elements: elements}
 			}
 			return errors.NewTypeError("int", right.Type().String())
-		case ast.OpEq:
-			return nativeBoolToBooleanObject(objectsDeepEqual(left, right))
-		case ast.OpNeq:
-			return nativeBoolToBooleanObject(!objectsDeepEqual(left, right))
+		case ast.OpEq, ast.OpNeq:
+			eq, rerr := objectsDeepEqual(left, right)
+			if rerr != nil {
+				return rerr
+			}
+			return nativeBoolToBooleanObject(eq == (operator == ast.OpEq))
 		}
 	case *object.List:
 		switch operator {
@@ -3382,7 +3441,11 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 				}
 				continue
 			}
-			if objectsDeepEqual(left, elem) {
+			eq, rerr := objectsDeepEqual(left, elem)
+			if rerr != nil {
+				return rerr
+			}
+			if eq {
 				return TRUE
 			}
 		}
@@ -3402,7 +3465,11 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 				}
 				continue
 			}
-			if objectsDeepEqual(left, elem) {
+			eq, rerr := objectsDeepEqual(left, elem)
+			if rerr != nil {
+				return rerr
+			}
+			if eq {
 				return TRUE
 			}
 		}
@@ -3457,7 +3524,11 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 				}
 				continue
 			}
-			if objectsDeepEqual(left, pair.Value) {
+			eq, rerr := objectsDeepEqual(left, pair.Value)
+			if rerr != nil {
+				return rerr
+			}
+			if eq {
 				return TRUE
 			}
 		}
@@ -3491,8 +3562,14 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 					if eq {
 						return TRUE
 					}
-				} else if objectsDeepEqual(val, pair.Value) {
-					return TRUE
+				} else {
+					eq, rerr := objectsDeepEqual(val, pair.Value)
+					if rerr != nil {
+						return rerr
+					}
+					if eq {
+						return TRUE
+					}
 				}
 			}
 		}
@@ -3529,7 +3606,7 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 			return errors.NewTypeError("iterable", right.Type().String())
 		}
 		for _, e := range elems {
-			eq, rerr := evalObjectsEqualChecked(ctx, left, e, env)
+			eq, rerr := searchEqual(ctx, e, left, env)
 			if rerr != nil {
 				return rerr
 			}
