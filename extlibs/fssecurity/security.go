@@ -1,10 +1,37 @@
 package fssecurity
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+// ErrPathNotAllowed is the error a path outside the allowed paths wraps.
+var ErrPathNotAllowed = errors.New("path is outside allowed directories")
+
+// DeniedError reports a path outside the allowed paths. It wraps
+// ErrPathNotAllowed, so callers that turn Go errors into script errors can
+// raise it as a PermissionError.
+type DeniedError struct {
+	Path string
+}
+
+func (e *DeniedError) Error() string {
+	return fmt.Sprintf("access denied: path '%s' is outside allowed directories", e.Path)
+}
+
+func (e *DeniedError) Unwrap() error { return ErrPathNotAllowed }
+
+// CheckPath returns a *DeniedError when path is outside the allowed paths,
+// nil otherwise. A nil Config allows everything.
+func (c *Config) CheckPath(path string) error {
+	if c == nil || c.IsPathAllowed(path) {
+		return nil
+	}
+	return &DeniedError{Path: path}
+}
 
 // Config holds the configuration for file system security
 type Config struct {

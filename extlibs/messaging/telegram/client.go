@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/paularlott/logger"
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/extlibs/messaging/shared"
 	"github.com/paularlott/scriptling/object"
 )
@@ -25,6 +26,7 @@ type telegramClient struct {
 	*shared.Bot
 	token      string
 	httpClient *http.Client
+	files      *fssecurity.Config // local files scripts may send; nil = unrestricted
 	log        logger.Logger
 }
 
@@ -177,7 +179,7 @@ func (c *telegramClient) SendRichMessage(ctx context.Context, dest string, msg *
 	}
 	if msg.Image != "" {
 		// Send image with text as caption
-		data, isURL, fileID, err := resolveMedia(msg.Image, false)
+		data, isURL, fileID, err := c.resolveMedia(msg.Image, false)
 		if err != nil {
 			return err
 		}
@@ -348,13 +350,22 @@ func (c *telegramClient) postMultipart(ctx context.Context, method string, field
 	return result, nil
 }
 
-func resolveMedia(source string, isBase64 bool) (data []byte, isURL bool, fileID string, err error) {
+func (c *telegramClient) resolveMedia(source string, isBase64 bool) (data []byte, isURL bool, fileID string, err error) {
 	if isBase64 {
 		data, err = base64.StdEncoding.DecodeString(source)
 		return
 	}
 	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
 		return nil, true, "", nil
+	}
+	if err := c.files.CheckPath(source); err != nil {
+		// A source that is not a local file is a Telegram file ID. Never
+		// look outside the allowed paths: a name that cannot be a file ID
+		// (it has a path separator) is refused, any other is sent as an ID.
+		if strings.ContainsAny(source, `/\`) {
+			return nil, false, "", err
+		}
+		return nil, false, source, nil
 	}
 	if _, statErr := os.Stat(source); statErr == nil {
 		data, err = object.ReadFileLimitedErr(source)
@@ -364,7 +375,7 @@ func resolveMedia(source string, isBase64 bool) (data []byte, isURL bool, fileID
 }
 
 func (c *telegramClient) sendDocument(ctx context.Context, dest, source, fileName, caption string, isBase64 bool) (map[string]interface{}, error) {
-	data, isURL, fileID, err := resolveMedia(source, isBase64)
+	data, isURL, fileID, err := c.resolveMedia(source, isBase64)
 	if err != nil {
 		return nil, err
 	}
@@ -393,7 +404,7 @@ func (c *telegramClient) sendDocument(ctx context.Context, dest, source, fileNam
 }
 
 func (c *telegramClient) sendPhoto(ctx context.Context, dest, source, caption string, isBase64 bool) (map[string]interface{}, error) {
-	data, isURL, fileID, err := resolveMedia(source, isBase64)
+	data, isURL, fileID, err := c.resolveMedia(source, isBase64)
 	if err != nil {
 		return nil, err
 	}

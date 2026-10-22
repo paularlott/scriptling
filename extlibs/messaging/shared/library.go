@@ -2,10 +2,12 @@ package shared
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/evaliface"
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -84,6 +86,25 @@ func envFromContext(ctx context.Context) *object.Environment {
 		return env
 	}
 	return object.NewEnvironment()
+}
+
+// FilePolicy is the policy for the local files a client may send: nil when
+// allowedPaths is nil (unrestricted), so the check costs nothing then.
+func FilePolicy(allowedPaths []string) *fssecurity.Config {
+	if allowedPaths == nil {
+		return nil
+	}
+	return &fssecurity.Config{AllowedPaths: fssecurity.NormalizeAllowedPaths(allowedPaths)}
+}
+
+// scriptError turns a messaging backend error into the script's error. A
+// local file outside the allowed paths is a PermissionError, as in the
+// filesystem libraries; anything else is an ordinary error.
+func scriptError(op string, err error) object.Object {
+	if stderrors.Is(err, fssecurity.ErrPathNotAllowed) {
+		return errors.NewPermissionError("%s: %s", op, err.Error())
+	}
+	return errors.NewError("%s: %s", op, err.Error())
 }
 
 // runBlockingErr runs fn (a network call to a messaging backend) with the
@@ -174,7 +195,7 @@ func BuildCtxDict(c *Ctx) *object.Dict {
 			}
 			if dict, ok := args[0].(*object.Dict); ok {
 				if err := c.ReplyRich(goCtx, richMessageFromDict(dict)); err != nil {
-					return errors.NewError("reply: %s", err.Error())
+					return scriptError("reply", err)
 				}
 				return &object.Null{}
 			}
@@ -184,7 +205,7 @@ func BuildCtxDict(c *Ctx) *object.Dict {
 				opts.Keyboard = keyboardFromObject(kb)
 			}
 			if err := c.Reply(goCtx, text, opts); err != nil {
-				return errors.NewError("reply: %s", err.Error())
+				return scriptError("reply", err)
 			}
 			return &object.Null{}
 		},
@@ -193,7 +214,7 @@ func BuildCtxDict(c *Ctx) *object.Dict {
 	d.SetByString("typing", &object.Builtin{
 		Fn: func(goCtx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := c.Typing(goCtx); err != nil {
-				return errors.NewError("typing: %s", err.Error())
+				return scriptError("typing", err)
 			}
 			return &object.Null{}
 		},
@@ -206,7 +227,7 @@ func BuildCtxDict(c *Ctx) *object.Dict {
 				text, _ = args[0].AsString()
 			}
 			if err := c.Answer(goCtx, text); err != nil {
-				return errors.NewError("answer: %s", err.Error())
+				return scriptError("answer", err)
 			}
 			return &object.Null{}
 		},
@@ -216,7 +237,7 @@ func BuildCtxDict(c *Ctx) *object.Dict {
 		Fn: func(goCtx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			data, err := c.Download(goCtx)
 			if err != nil {
-				return errors.NewError("download: %s", err.Error())
+				return scriptError("download", err)
 			}
 			if data == nil {
 				return &object.Null{}
@@ -465,7 +486,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 				// Accept string or dict (rich message)
 				if d, ok := args[2].(*object.Dict); ok {
 					if err := runBlockingErr(ctx, func() error { return s.SendRichMessage(ctx, dest, richMessageFromDict(d)) }); err != nil {
-						return errors.NewError("send_message: %s", err.Error())
+						return scriptError("send_message", err)
 					}
 					return &object.Null{}
 				}
@@ -480,7 +501,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 					opts.Keyboard = keyboardFromObject(kb)
 				}
 				if err := runBlockingErr(ctx, func() error { return s.SendMessage(ctx, dest, text, opts) }); err != nil {
-					return errors.NewError("send_message: %s", err.Error())
+					return scriptError("send_message", err)
 				}
 				return &object.Null{}
 			},
@@ -505,7 +526,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 					return errors.NewTypeError("DICT", args[2].Type().String())
 				}
 				if err := runBlockingErr(ctx, func() error { return s.SendRichMessage(ctx, dest, richMessageFromDict(d)) }); err != nil {
-					return errors.NewError("send_rich_message: %s", err.Error())
+					return scriptError("send_rich_message", err)
 				}
 				return &object.Null{}
 			},
@@ -525,7 +546,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 				msgID, _ := args[2].AsString()
 				text, _ := args[3].AsString()
 				if err := runBlockingErr(ctx, func() error { return s.EditMessage(ctx, dest, msgID, text) }); err != nil {
-					return errors.NewError("edit_message: %s", err.Error())
+					return scriptError("edit_message", err)
 				}
 				return &object.Null{}
 			},
@@ -544,7 +565,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 				dest, _ := args[1].AsString()
 				msgID, _ := args[2].AsString()
 				if err := runBlockingErr(ctx, func() error { return s.DeleteMessage(ctx, dest, msgID) }); err != nil {
-					return errors.NewError("delete_message: %s", err.Error())
+					return scriptError("delete_message", err)
 				}
 				return &object.Null{}
 			},
@@ -566,7 +587,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 				caption := kwargs.MustGetString("caption", "")
 				isB64 := kwargs.MustGetBool("base64", false)
 				if err := runBlockingErr(ctx, func() error { return s.SendFile(ctx, dest, source, fileName, caption, isB64) }); err != nil {
-					return errors.NewError("send_file: %s", err.Error())
+					return scriptError("send_file", err)
 				}
 				return &object.Null{}
 			},
@@ -584,7 +605,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 				}
 				dest, _ := args[1].AsString()
 				if err := runBlockingErr(ctx, func() error { return s.SendTyping(ctx, dest) }); err != nil {
-					return errors.NewError("typing: %s", err.Error())
+					return scriptError("typing", err)
 				}
 				return &object.Null{}
 			},
@@ -612,7 +633,7 @@ func SharedBuiltins() map[string]*object.Builtin {
 					text, _ = args[3].AsString()
 				}
 				if err := runBlockingErr(ctx, func() error { return s.AckCallback(ctx, id, token, text) }); err != nil {
-					return errors.NewError("answer_callback: %s", err.Error())
+					return scriptError("answer_callback", err)
 				}
 				return &object.Null{}
 			},

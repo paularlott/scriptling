@@ -12,22 +12,65 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/pool"
 	"github.com/shirou/gopsutil/v3/process"
 )
 
+// RegisterWaitForLibrary registers the wait_for library with an optional
+// network policy and no filesystem restrictions.
 func RegisterWaitForLibrary(registrar interface{ RegisterLibrary(*object.Library) }, cfg ...*netsecurity.Config) {
-	lib := WaitForLibrary
+	RegisterWaitForLibraryConfigured(registrar, nil, cfg...)
+}
+
+// RegisterWaitForLibraryConfigured registers the wait_for library with
+// filesystem and network restrictions. allowedPaths confines file, dir and
+// file_content as it does the os and pathlib libraries (nil = unrestricted,
+// empty = deny all); cfg is the network policy for port and http.
+func RegisterWaitForLibraryConfigured(registrar interface{ RegisterLibrary(*object.Library) }, allowedPaths []string, cfg ...*netsecurity.Config) {
+	var guard *netsecurity.Guard
 	if len(cfg) > 0 && cfg[0] != nil {
-		guard, gerr := netsecurity.NewGuard(cfg[0])
+		g, gerr := netsecurity.NewGuard(cfg[0])
 		if gerr != nil {
-			guard = netsecurity.FailClosed(gerr)
+			g = netsecurity.FailClosed(gerr)
 		}
-		lib = newWaitForLibrary(guard)
+		guard = g
 	}
-	registrar.RegisterLibrary(lib)
+	if guard == nil && allowedPaths == nil {
+		registrar.RegisterLibrary(WaitForLibrary)
+		return
+	}
+	paths := &fssecurity.Config{AllowedPaths: fssecurity.NormalizeAllowedPaths(allowedPaths)}
+	registrar.RegisterLibrary(newWaitForLibrary(guard, paths))
+}
+
+// waitForStat stats path once paths allows it. A path outside the allowed
+// paths is a PermissionError, checked on every poll so a path that appears
+// later (say as a symlink out) is caught too.
+func waitForStat(paths *fssecurity.Config, path string) (os.FileInfo, object.Object) {
+	if !paths.IsPathAllowed(path) {
+		return nil, errors.NewPermissionError("access denied: path '%s' is outside allowed directories", path)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, nil
+	}
+	return info, nil
+}
+
+// waitForContains reports whether the file at path contains needle, once
+// paths allows it.
+func waitForContains(paths *fssecurity.Config, path string, needle []byte) (bool, object.Object) {
+	if !paths.IsPathAllowed(path) {
+		return false, errors.NewPermissionError("access denied: path '%s' is outside allowed directories", path)
+	}
+	data, tooLarge, readErr := object.ReadFileLimited(path)
+	if tooLarge != nil {
+		return false, tooLarge
+	}
+	return readErr == nil && bytes.Contains(data, needle), nil
 }
 
 // parseWaitOptions parses common wait options from args and kwargs
@@ -125,12 +168,13 @@ func probePort(ctx context.Context, guard *netsecurity.Guard, address string) (b
 	return true, nil
 }
 
-// WaitForLibrary is the wait_for library (no network policy)
-var WaitForLibrary = newWaitForLibrary(nil)
+// WaitForLibrary is the wait_for library (no network or filesystem policy)
+var WaitForLibrary = newWaitForLibrary(nil, &fssecurity.Config{})
 
 // newWaitForLibrary builds the wait_for library. A non-nil guard routes its
-// HTTP and port checks through the network policy.
-func newWaitForLibrary(guard *netsecurity.Guard) *object.Library {
+// HTTP and port checks through the network policy; paths confines its file,
+// dir and file_content checks.
+func newWaitForLibrary(guard *netsecurity.Guard, paths *fssecurity.Config) *object.Library {
 	return object.NewLibrary(WaitForLibraryName,
 		map[string]*object.Builtin{
 			"file": {
@@ -155,7 +199,11 @@ func newWaitForLibrary(guard *netsecurity.Guard) *object.Library {
 					defer stopTimer(timer)
 
 					for time.Now().Before(deadline) {
-						if _, err := os.Stat(path); err == nil {
+						info, denied := waitForStat(paths, path)
+						if denied != nil {
+							return denied
+						}
+						if info != nil {
 							return object.NewBoolean(true)
 						}
 
@@ -165,10 +213,11 @@ func newWaitForLibrary(guard *netsecurity.Guard) *object.Library {
 					}
 
 					// Final check
-					if _, err := os.Stat(path); err == nil {
-						return object.NewBoolean(true)
+					info, denied := waitForStat(paths, path)
+					if denied != nil {
+						return denied
 					}
-					return object.NewBoolean(false)
+					return object.NewBoolean(info != nil)
 				},
 				HelpText: `file(path, timeout=30, poll_rate=1) - Wait for a file to exist
 
@@ -180,7 +229,9 @@ Parameters:
   poll_rate (float): Time between checks in seconds (default: 1)
 
 Returns:
-  bool: True if file exists, False if timeout exceeded`,
+  bool: True if file exists, False if timeout exceeded
+
+Raises PermissionError if the path is outside the allowed paths.`,
 			},
 			"dir": {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -204,10 +255,12 @@ Returns:
 					defer stopTimer(timer)
 
 					for time.Now().Before(deadline) {
-						if info, err := os.Stat(path); err == nil {
-							if info.IsDir() {
-								return object.NewBoolean(true)
-							}
+						info, denied := waitForStat(paths, path)
+						if denied != nil {
+							return denied
+						}
+						if info != nil && info.IsDir() {
+							return object.NewBoolean(true)
 						}
 
 						if !waitForNextPoll(ctx, timer, pollInterval) {
@@ -216,12 +269,11 @@ Returns:
 					}
 
 					// Final check
-					if info, err := os.Stat(path); err == nil {
-						if info.IsDir() {
-							return object.NewBoolean(true)
-						}
+					info, denied := waitForStat(paths, path)
+					if denied != nil {
+						return denied
 					}
-					return object.NewBoolean(false)
+					return object.NewBoolean(info != nil && info.IsDir())
 				},
 				HelpText: `dir(path, timeout=30, poll_rate=1) - Wait for a directory to exist
 
@@ -233,7 +285,9 @@ Parameters:
   poll_rate (float): Time between checks in seconds (default: 1)
 
 Returns:
-  bool: True if directory exists, False if timeout exceeded`,
+  bool: True if directory exists, False if timeout exceeded
+
+Raises PermissionError if the path is outside the allowed paths.`,
 			},
 			"port": {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -452,11 +506,11 @@ Raises an error if a configured network policy denies the URL.`,
 					defer stopTimer(timer)
 
 					for time.Now().Before(deadline) {
-						data, tooLarge, readErr := object.ReadFileLimited(path)
-						if tooLarge != nil {
-							return tooLarge
+						found, errObj := waitForContains(paths, path, needle)
+						if errObj != nil {
+							return errObj
 						}
-						if readErr == nil && bytes.Contains(data, needle) {
+						if found {
 							return object.NewBoolean(true)
 						}
 
@@ -466,14 +520,11 @@ Raises an error if a configured network policy denies the URL.`,
 					}
 
 					// Final check
-					data, tooLarge, readErr := object.ReadFileLimited(path)
-					if tooLarge != nil {
-						return tooLarge
+					found, errObj := waitForContains(paths, path, needle)
+					if errObj != nil {
+						return errObj
 					}
-					if readErr == nil && bytes.Contains(data, needle) {
-						return object.NewBoolean(true)
-					}
-					return object.NewBoolean(false)
+					return object.NewBoolean(found)
 				},
 				HelpText: `file_content(path, content, timeout=30, poll_rate=1) - Wait for file to contain content
 
@@ -486,7 +537,9 @@ Parameters:
   poll_rate (float): Time between checks in seconds (default: 1)
 
 Returns:
-  bool: True if file contains the content, False if timeout exceeded`,
+  bool: True if file contains the content, False if timeout exceeded
+
+Raises PermissionError if the path is outside the allowed paths.`,
 			},
 			"process_name": {
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

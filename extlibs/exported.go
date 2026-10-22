@@ -32,7 +32,7 @@ import (
 
 // ErrPathNotAllowed is returned when a requested path falls outside the
 // AllowedPaths configured on the options struct.
-var ErrPathNotAllowed = errors.New("path is outside allowed directories")
+var ErrPathNotAllowed = fssecurity.ErrPathNotAllowed
 
 // GrepOptions controls a Grep search.
 //

@@ -136,7 +136,7 @@ func TestBuildName_FallbackToID(t *testing.T) {
 func TestResolveMedia_Base64(t *testing.T) {
 	original := []byte("hello binary data")
 	encoded := base64.StdEncoding.EncodeToString(original)
-	data, isURL, fileID, err := resolveMedia(encoded, true)
+	data, isURL, fileID, err := (&telegramClient{}).resolveMedia(encoded, true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestResolveMedia_Base64(t *testing.T) {
 }
 
 func TestResolveMedia_URL(t *testing.T) {
-	_, isURL, _, err := resolveMedia("https://example.com/photo.jpg", false)
+	_, isURL, _, err := (&telegramClient{}).resolveMedia("https://example.com/photo.jpg", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestResolveMedia_URL(t *testing.T) {
 }
 
 func TestResolveMedia_FileID(t *testing.T) {
-	data, isURL, fileID, err := resolveMedia("AgACAgIAAxkBAAIBf2Z", false)
+	data, isURL, fileID, err := (&telegramClient{}).resolveMedia("AgACAgIAAxkBAAIBf2Z", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

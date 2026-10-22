@@ -182,7 +182,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 		scriptlingcontainer.RegisterConfigured(p, dockerSock, podmanSock, fssecurity.Config{AllowedPaths: allowedPaths}, firstPolicy(netPolicy))
 	})
 	reg(extlibs.NomadLibraryName, func() { scriptlingnomad.Register(p, netPolicy...) })
-	reg(extlibs.WaitForLibraryName, func() { extlibs.RegisterWaitForLibrary(p, netPolicy...) })
+	reg(extlibs.WaitForLibraryName, func() { extlibs.RegisterWaitForLibraryConfigured(p, allowedPaths, netPolicy...) })
 	reg(extlibs.WebSocketLibraryName, func() { extlibs.RegisterWebSocketLibrary(p, netPolicy...) })
 	reg(extlibs.TemplateHTMLLibraryName, func() { extlibs.RegisterTemplateHTMLLibrary(p) })
 	reg(extlibs.TemplateTextLibraryName, func() { extlibs.RegisterTemplateTextLibrary(p) })
@@ -217,9 +217,9 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 		agent.RegisterInteract(p)
 	}
 
-	reg(telegram.LibraryName, func() { telegram.Register(p, log) })
-	reg(discord.LibraryName, func() { discord.Register(p, log, netPolicy...) })
-	reg(slack.LibraryName, func() { slack.Register(p, log, netPolicy...) })
+	reg(telegram.LibraryName, func() { telegram.RegisterConfigured(p, log, allowedPaths) })
+	reg(discord.LibraryName, func() { discord.RegisterConfigured(p, log, allowedPaths, netPolicy...) })
+	reg(slack.LibraryName, func() { slack.RegisterConfigured(p, log, allowedPaths, netPolicy...) })
 	reg(messagingconsole.LibraryName, func() { messagingconsole.Register(p) })
 
 	reg(extlibs.MCPLibraryName, func() {

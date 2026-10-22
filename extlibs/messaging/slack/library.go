@@ -27,8 +27,15 @@ func newClientInstance(c *slackClient, builtins map[string]*object.Builtin) *obj
 // network policy governs URLs scripts pass to download() and answer_callback()
 // that are not Slack's own hosts.
 func NewLibrary(log logger.Logger, cfg ...*netsecurity.Config) *object.Library {
+	return NewLibraryConfigured(log, nil, cfg...)
+}
+
+// NewLibraryConfigured is NewLibrary with file uploads confined to
+// allowedPaths (nil = unrestricted, empty = deny all), as the os library is.
+func NewLibraryConfigured(log logger.Logger, allowedPaths []string, cfg ...*netsecurity.Config) *object.Library {
 	builtins := shared.SharedBuiltins()
 	external := shared.NewExternalURLs(platformDomains, 30*time.Second, cfg...)
+	files := shared.FilePolicy(allowedPaths)
 
 	builtins["client"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -51,6 +58,7 @@ func NewLibrary(log logger.Logger, cfg ...*netsecurity.Config) *object.Library {
 			}
 			c := newClient(botToken, appToken, log)
 			c.external = external
+			c.files = files
 			inst := newClientInstance(c, builtins)
 			if rawList, errObj := kwargs.GetList("allowed_users", nil); errObj == nil && rawList != nil && len(rawList) > 0 {
 				allowed := make(map[string]bool, len(rawList))
@@ -104,8 +112,14 @@ func NewLibrary(log logger.Logger, cfg ...*netsecurity.Config) *object.Library {
 
 // Register registers the slack library with a Scriptling instance.
 func Register(registrar interface{ RegisterLibrary(*object.Library) }, log logger.Logger, cfg ...*netsecurity.Config) {
+	RegisterConfigured(registrar, log, nil, cfg...)
+}
+
+// RegisterConfigured registers the slack library with file uploads confined
+// to allowedPaths (nil = unrestricted, empty = deny all).
+func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, log logger.Logger, allowedPaths []string, cfg ...*netsecurity.Config) {
 	if log == nil {
 		log = logger.NewNullLogger()
 	}
-	registrar.RegisterLibrary(NewLibrary(log.WithGroup("slack"), cfg...))
+	registrar.RegisterLibrary(NewLibraryConfigured(log.WithGroup("slack"), allowedPaths, cfg...))
 }

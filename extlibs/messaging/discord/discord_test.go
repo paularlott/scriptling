@@ -129,7 +129,7 @@ func TestBuildName(t *testing.T) {
 }
 
 func TestResolveMediaBase64(t *testing.T) {
-	data, isURL, err := resolveMedia("aGVsbG8=", true)
+	data, isURL, err := (&discordClient{}).resolveMedia("aGVsbG8=", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestResolveMediaBase64(t *testing.T) {
 }
 
 func TestResolveMediaURL(t *testing.T) {
-	_, isURL, err := resolveMedia("https://example.com/img.png", false)
+	_, isURL, err := (&discordClient{}).resolveMedia("https://example.com/img.png", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestResolveMediaURL(t *testing.T) {
 }
 
 func TestResolveMediaUnknown(t *testing.T) {
-	_, _, err := resolveMedia("not-a-file-or-url", false)
+	_, _, err := (&discordClient{}).resolveMedia("not-a-file-or-url", false)
 	if err == nil {
 		t.Error("expected error for unknown source")
 	}

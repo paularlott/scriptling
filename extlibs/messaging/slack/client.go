@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/paularlott/logger"
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/extlibs/messaging/shared"
 	"github.com/paularlott/scriptling/object"
 )
@@ -22,6 +23,7 @@ type slackClient struct {
 	appToken   string // xapp-... — used for Socket Mode
 	httpClient *http.Client
 	external   *shared.ExternalURLs // script-supplied URLs; nil = platform rules only
+	files      *fssecurity.Config   // local files scripts may upload; nil = unrestricted
 	log        logger.Logger
 	gateway    *socketGateway
 }
@@ -423,7 +425,7 @@ func (c *slackClient) uploadFile(ctx context.Context, channelID, source, fileNam
 		isURL = true
 	} else {
 		var err error
-		data, err = readFile(source)
+		data, err = readFile(c.files, source)
 		if err != nil {
 			return err
 		}

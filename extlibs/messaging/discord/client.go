@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/paularlott/logger"
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/extlibs/messaging/shared"
 	"github.com/paularlott/scriptling/object"
 )
@@ -25,6 +26,7 @@ type discordClient struct {
 	httpClient *http.Client
 	botUserID  string
 	external   *shared.ExternalURLs // script-supplied URLs; nil = platform rules only
+	files      *fssecurity.Config   // local files scripts may send; nil = unrestricted
 	log        logger.Logger
 	gateway    *gateway
 }
@@ -320,13 +322,16 @@ func (c *discordClient) ackInteraction(ctx context.Context, id, token string) er
 	return nil
 }
 
-func resolveMedia(source string, isBase64 bool) (data []byte, isURL bool, err error) {
+func (c *discordClient) resolveMedia(source string, isBase64 bool) (data []byte, isURL bool, err error) {
 	if isBase64 {
 		data, err = base64.StdEncoding.DecodeString(source)
 		return
 	}
 	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
 		return nil, true, nil
+	}
+	if err := c.files.CheckPath(source); err != nil {
+		return nil, false, err
 	}
 	if _, statErr := os.Stat(source); statErr == nil {
 		data, err = object.ReadFileLimitedErr(source)
@@ -336,7 +341,7 @@ func resolveMedia(source string, isBase64 bool) (data []byte, isURL bool, err er
 }
 
 func (c *discordClient) sendFile(ctx context.Context, channelID, source, fileName, content string, isBase64 bool) (map[string]interface{}, error) {
-	data, isURL, err := resolveMedia(source, isBase64)
+	data, isURL, err := c.resolveMedia(source, isBase64)
 	if err != nil {
 		return nil, err
 	}

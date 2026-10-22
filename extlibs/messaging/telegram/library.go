@@ -23,7 +23,15 @@ func newClientInstance(c *telegramClient, builtins map[string]*object.Builtin) *
 
 // NewLibrary creates the scriptling.messaging.telegram library.
 func NewLibrary(log logger.Logger) *object.Library {
+	return NewLibraryConfigured(log, nil)
+}
+
+// NewLibraryConfigured is NewLibrary with the local files scripts may send
+// confined to allowedPaths (nil = unrestricted, empty = deny all), as the os
+// library is.
+func NewLibraryConfigured(log logger.Logger, allowedPaths []string) *object.Library {
 	builtins := shared.SharedBuiltins()
+	files := shared.FilePolicy(allowedPaths)
 
 	// Telegram-specific: client constructor
 	builtins["client"] = &object.Builtin{
@@ -39,6 +47,7 @@ func NewLibrary(log logger.Logger) *object.Library {
 				return errors.NewError("telegram.client: token must not be empty")
 			}
 			c := newClient(token, log)
+			c.files = files
 			inst := newClientInstance(c, builtins)
 			// allowed_users kwarg installs a default auth handler
 			if rawList, errObj := kwargs.GetList("allowed_users", nil); errObj == nil && rawList != nil && len(rawList) > 0 {
@@ -69,8 +78,15 @@ func NewLibrary(log logger.Logger) *object.Library {
 
 // Register registers the telegram library with a Scriptling instance.
 func Register(registrar interface{ RegisterLibrary(*object.Library) }, log logger.Logger) {
+	RegisterConfigured(registrar, log, nil)
+}
+
+// RegisterConfigured registers the telegram library with the local files
+// scripts may send confined to allowedPaths (nil = unrestricted, empty = deny
+// all).
+func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, log logger.Logger, allowedPaths []string) {
 	if log == nil {
 		log = logger.NewNullLogger()
 	}
-	registrar.RegisterLibrary(NewLibrary(log.WithGroup("telegram")))
+	registrar.RegisterLibrary(NewLibraryConfigured(log.WithGroup("telegram"), allowedPaths))
 }
