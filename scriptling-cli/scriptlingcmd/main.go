@@ -341,7 +341,7 @@ func buildRootCommand() *cli.Command {
 			},
 			&cli.StringSliceFlag{
 				Name:       "allowed-hosts",
-				Usage:      "Host name the HTTP server answers (repeatable, \".example.com\" for a domain and subdomains); a loopback-bound server answers only loopback names otherwise, blocking DNS rebinding",
+				Usage:      "Host name the HTTP server answers (repeatable, \".example.com\" or \"*.example.com\" for a domain and subdomains). Besides these the server answers loopback names, and when not bound to loopback also IP literals and its own host name; any other Host gets 421, which blocks DNS rebinding. List the DNS name or the public name a reverse proxy forwards here",
 				EnvVars:    []string{"SCRIPTLING_ALLOWED_HOSTS"},
 				ConfigPath: []string{"server.allowed_hosts"},
 			},

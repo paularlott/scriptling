@@ -1,9 +1,12 @@
 package server
 
 import (
+	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
+	"sync"
 )
 
 // hostPolicy decides which Host headers the server answers, the standard
@@ -14,26 +17,53 @@ import (
 //
 //   - Bound to loopback (127.0.0.0/8, ::1, localhost): only loopback names
 //     (localhost, *.localhost, loopback IPs) and AllowedHosts are answered.
-//   - Bound anywhere else: with AllowedHosts set, loopback names, IP literals
-//     (a browser cannot rebind an IP literal) and AllowedHosts are answered;
-//     without it, every Host is (the server cannot know its public names).
+//   - Bound anywhere else: loopback names, IP literals (a browser cannot
+//     rebind an IP literal), the machine's own host name as the OS reports
+//     it and its first label, and AllowedHosts are answered. Any other name
+//     the server is reached by (a DNS name, or the public name a reverse
+//     proxy forwards in Host) must be listed in AllowedHosts; the refusal
+//     says so.
 type hostPolicy struct {
-	enforce bool
 	allowIP bool     // IP literals are answered (non-loopback binds)
 	allowed []string // AllowedHosts: exact names, or ".suffix" for a domain and its subdomains
 }
 
+// localHostname reports the machine's host name; a variable so tests can
+// set it.
+var localHostname = os.Hostname
+
 func newHostPolicy(listenAddr string, allowedHosts []string) hostPolicy {
-	allowed := make([]string, 0, len(allowedHosts))
+	allowed := make([]string, 0, len(allowedHosts)+2)
 	for _, h := range allowedHosts {
-		if h = normalizeHostName(h); h != "" {
+		if h = normalizeAllowedHost(h); h != "" {
 			allowed = append(allowed, h)
 		}
 	}
 	if isLoopbackListen(listenAddr) {
-		return hostPolicy{enforce: true, allowed: allowed}
+		return hostPolicy{allowed: allowed}
 	}
-	return hostPolicy{enforce: len(allowed) > 0, allowIP: true, allowed: allowed}
+	if name, err := localHostname(); err == nil {
+		if name = normalizeHostName(name); name != "" {
+			allowed = append(allowed, name)
+			if short, _, found := strings.Cut(name, "."); found && short != "" {
+				allowed = append(allowed, short)
+			}
+		}
+	}
+	return hostPolicy{allowIP: true, allowed: allowed}
+}
+
+// normalizeAllowedHost prepares an AllowedHosts entry: lowercased, without
+// a trailing dot, brackets or a port, and with "*.example.com" taken as
+// ".example.com" (the domain and its subdomains). An entry that is only a
+// port, or empty, is dropped.
+func normalizeAllowedHost(entry string) string {
+	entry = strings.TrimSpace(entry)
+	if host, _, err := net.SplitHostPort(entry); err == nil {
+		entry = host
+	}
+	entry = strings.TrimPrefix(entry, "*")
+	return normalizeHostName(entry)
 }
 
 // isLoopbackListen reports whether a listen address only accepts loopback
@@ -61,9 +91,6 @@ func normalizeHostName(h string) string {
 
 // allows reports whether the server answers a request with this Host header.
 func (p hostPolicy) allows(hostHeader string) bool {
-	if !p.enforce {
-		return true
-	}
 	host, _, err := net.SplitHostPort(hostHeader)
 	if err != nil {
 		host = hostHeader
@@ -87,15 +114,21 @@ func (p hostPolicy) allows(hostHeader string) bool {
 }
 
 // hostCheckMiddleware refuses a request whose Host the server does not
-// answer, before any route runs.
+// answer, before any route runs. The first refusal of each Host name is
+// logged at warning level, so an operator whose server is reached by a name
+// it does not know (a DNS name, a reverse proxy forwarding the public name)
+// sees what to list in --allowed-hosts; repeats stay at debug level so a
+// rebinding attempt cannot flood the log.
 func (s *Server) hostCheckMiddleware(next http.Handler) http.Handler {
-	if !s.hosts.enforce {
-		return next
-	}
+	var refused sync.Map // host name -> struct{}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.hosts.allows(r.Host) {
-			Log.Debug("Refused request for a host this server does not answer", "host", r.Host, "path", r.URL.Path, "remote", r.RemoteAddr)
-			http.Error(w, "Host not allowed", http.StatusMisdirectedRequest)
+			if _, seen := refused.LoadOrStore(r.Host, struct{}{}); !seen {
+				Log.Warn("Refused request for a host this server does not answer; list it with --allowed-hosts if it is yours", "host", r.Host, "path", r.URL.Path, "remote", r.RemoteAddr)
+			} else {
+				Log.Debug("Refused request for a host this server does not answer", "host", r.Host, "path", r.URL.Path, "remote", r.RemoteAddr)
+			}
+			http.Error(w, fmt.Sprintf("Host %q is not a name this server answers; list it with --allowed-hosts", r.Host), http.StatusMisdirectedRequest)
 			return
 		}
 		next.ServeHTTP(w, r)

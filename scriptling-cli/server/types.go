@@ -131,10 +131,13 @@ type ServerConfig struct {
 	JSONRPCCorsOrigins []string
 
 	// AllowedHosts lists the Host names the server answers besides its
-	// defaults (see hostPolicy): exact names, or ".example.com" for a domain
-	// and its subdomains. A server bound to loopback answers only loopback
-	// names unless they are listed here, which defeats DNS rebinding; one
-	// bound elsewhere answers every Host unless this is set.
+	// defaults (see hostPolicy): exact names, or ".example.com" (also
+	// written "*.example.com") for a domain and its subdomains; a port on an
+	// entry is ignored. A server bound to loopback answers only loopback
+	// names; one bound elsewhere also answers IP literals and the machine's
+	// own host name. Every other Host is refused with 421, which defeats DNS
+	// rebinding, so a DNS name the server is reached by, or the public name
+	// a reverse proxy forwards, must be listed here.
 	AllowedHosts []string
 }
 
