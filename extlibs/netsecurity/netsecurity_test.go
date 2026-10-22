@@ -269,6 +269,7 @@ func TestHostListsIgnoreTrailingDotAndCase(t *testing.T) {
 	for _, raw := range []string{
 		"http://localhost./", "http://LOCALHOST./", "http://localhost../",
 		"http://db.svc.internal./", "http://vault.corp/", "http://vault.corp./",
+		"http://svc.internal/", "http://SVC.internal./",
 	} {
 		if err := g.CheckURL(mustURL(t, raw)); err == nil || !strings.Contains(err.Error(), "is denied") {
 			t.Errorf("CheckURL(%s) should be denied, got: %v", raw, err)
@@ -279,9 +280,14 @@ func TestHostListsIgnoreTrailingDotAndCase(t *testing.T) {
 	}
 
 	gAllow := mustGuard(t, &Config{AllowHosts: []string{"api.example.com", ".corp.example.com."}})
-	for _, raw := range []string{"https://api.example.com./", "https://API.Example.COM/", "https://x.corp.example.com./"} {
+	for _, raw := range []string{"https://api.example.com./", "https://API.Example.COM/", "https://x.corp.example.com./", "https://corp.example.com/"} {
 		if err := gAllow.CheckURL(mustURL(t, raw)); err != nil {
 			t.Errorf("CheckURL(%s) should be allowed, got: %v", raw, err)
+		}
+	}
+	for _, raw := range []string{"https://evilcorp.example.com/", "https://corp.example.com.evil/", "https://example.com/"} {
+		if err := gAllow.CheckURL(mustURL(t, raw)); err == nil {
+			t.Errorf("CheckURL(%s) must not match the suffix rule", raw)
 		}
 	}
 	// A trusted host stays trusted in its absolute form.

@@ -84,7 +84,7 @@ type Config struct {
 	// loopback/private/link-local categories (that is the way to grant a
 	// script access to an internal service by name). Entries are exact
 	// hostnames (case-insensitive) or domain suffixes written with a leading
-	// dot (".corp.example.com" matches any subdomain).
+	// dot (".corp.example.com" matches the domain and any subdomain).
 	AllowHosts []string
 
 	// DenyHosts always wins, regardless of any other setting. Same entry
@@ -121,7 +121,7 @@ type Config struct {
 // hostRule is one compiled host-list entry: exact match or domain suffix.
 type hostRule struct {
 	exact  string
-	suffix string // including leading dot, e.g. ".corp.example.com"
+	suffix string // including leading dot, e.g. ".corp.example.com"; also matches the bare domain
 }
 
 // Guard is an immutable, compiled network policy. It is safe for concurrent
@@ -641,7 +641,8 @@ func matchHost(rules []hostRule, host string) bool {
 			if host == r.exact {
 				return true
 			}
-		} else if strings.HasSuffix(host, r.suffix) {
+		} else if strings.HasSuffix(host, r.suffix) || host == r.suffix[1:] {
+			// A suffix rule covers the domain itself as well as subdomains.
 			return true
 		}
 	}
