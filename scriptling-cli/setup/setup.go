@@ -180,7 +180,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 
 	reg(extlibs.MulticastLibraryName, func() { scriptlingmulticast.Register(p, netPolicy...) })
 	reg(extlibs.UnicastLibraryName, func() { scriptlingunicast.Register(p, netPolicy...) })
-	reg(extlibs.GossipLibraryName, func() { scriptlinggossip.Register(p, log) })
+	reg(extlibs.GossipLibraryName, func() { scriptlinggossip.Register(p, log, netPolicy...) })
 	reg(extlibs.ResolveLibraryName, func() { scriptlingresolve.Register(p, scriptResolver(netPolicy)) })
 	reg(extlibs.FileProvisionLibraryName, func() {
 		provisionfile.RegisterConfigured(p, fssecurity.Config{AllowedPaths: allowedPaths})

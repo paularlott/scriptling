@@ -19,6 +19,7 @@ import (
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -1171,7 +1172,7 @@ Parameters:
 	}
 }
 
-func buildLibrary() *object.Library {
+func buildLibrary(guard *netsecurity.Guard) *object.Library {
 	return object.NewLibrary(LibraryName, map[string]*object.Builtin{
 		"create": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -1407,6 +1408,17 @@ func buildLibrary() *object.Library {
 					}
 				}
 
+				if guard != nil {
+					// Every outbound connection, to joined peers and to peers
+					// learned from the cluster, goes through the network
+					// policy. Gossip addresses are IPs, so the address rules
+					// apply rather than the URL IP-literal rule. UDP
+					// datagrams bypass the dialer, so all traffic goes over
+					// TCP.
+					config.DialFunc = guard.DialContext
+					config.ForceReliableTransport = true
+				}
+
 				var httpServer *http.Server
 				switch transport {
 				case "http":
@@ -1460,7 +1472,7 @@ Advanced configuration:
   fan_out_multiplier (float): Fan-out scaling factor (default: 1.0)
   ttl_multiplier (float): TTL scaling factor (default: 1.0)
   state_exchange_multiplier (float): State exchange scaling (default: 0.8)
-  force_reliable_transport (bool): Force TCP for all messages (default: False)
+  force_reliable_transport (bool): Force TCP for all messages (default: False; always on under a network policy)
   prefer_ipv6 (bool): Prefer IPv6 for DNS resolution (default: False)
   node_cleanup_interval (string): Dead node cleanup interval (default: "20s")
   node_retention_time (string): How long to keep dead nodes (default: "1h")
@@ -1504,13 +1516,16 @@ func httpAdvertiseURL(advertise string, addr net.Addr) (string, error) {
 	return "http://" + addr.String(), nil
 }
 
-func Register(registrar interface{ RegisterLibrary(*object.Library) }, loggerInstance logger.Logger) {
+// Register registers the library. An optional network policy restricts every
+// outbound connection a cluster makes: denied addresses are refused, private
+// clusters need allow_cidrs, and all traffic is carried over TCP.
+func Register(registrar interface{ RegisterLibrary(*object.Library) }, loggerInstance logger.Logger, cfg ...*netsecurity.Config) {
 	if loggerInstance == nil {
 		loggerInstance = logger.NewNullLogger()
 	}
 	libraryOnce.Do(func() {
 		log = loggerInstance
-		library = buildLibrary()
+		library = buildLibrary(nil)
 		extlibs.RegisterCleanup(func() {
 			// Take the clusters out under the lock, then stop them without
 			// it: stopping can wait for in-flight requests.
@@ -1526,5 +1541,13 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }, loggerIns
 			}
 		})
 	})
+	if len(cfg) > 0 && cfg[0] != nil {
+		guard, gerr := netsecurity.NewGuard(cfg[0])
+		if gerr != nil {
+			guard = netsecurity.FailClosed(gerr)
+		}
+		registrar.RegisterLibrary(buildLibrary(guard))
+		return
+	}
 	registrar.RegisterLibrary(library)
 }

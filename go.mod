@@ -14,7 +14,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/paularlott/cli v0.10.2
-	github.com/paularlott/gossip v0.27.0
+	github.com/paularlott/gossip v0.28.0
 	github.com/paularlott/jsonrpc v0.2.0
 	github.com/paularlott/logger v0.4.0
 	github.com/paularlott/mcp v0.32.4

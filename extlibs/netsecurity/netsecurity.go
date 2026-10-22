@@ -1,8 +1,8 @@
 // Package netsecurity restricts outbound network access for script-facing
 // libraries (requests, wait_for, websocket, scriptling.ai, scriptling.mcp,
-// scriptling.net.unicast, scriptling.net.multicast, scriptling.nomad, and
-// endpoints or URLs scripts pass to scriptling.container and the Slack and
-// Discord messaging libraries).
+// scriptling.net.unicast, scriptling.net.multicast, scriptling.net.gossip,
+// scriptling.nomad, and endpoints or URLs scripts pass to scriptling.container
+// and the Slack and Discord messaging libraries).
 //
 // # SECURITY MODEL
 //
