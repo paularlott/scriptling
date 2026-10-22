@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"unsafe"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/evaliface"
@@ -1658,6 +1659,8 @@ func collectIterable(ctx context.Context, obj object.Object) ([]object.Object, o
 		if it.Infinite() {
 			return nil, errors.NewError("%s", object.InfiniteIteratorMessage)
 		}
+		// Collecting an iterator builds a container, so it is held to the
+		// interpreter's limits as a list growing by append is.
 		var elems []object.Object
 		for {
 			v, more := it.Next()
@@ -1667,7 +1670,16 @@ func collectIterable(ctx context.Context, obj object.Object) ([]object.Object, o
 			if object.IsPropagating(v) {
 				return nil, v
 			}
+			if n := int64(len(elems) + 1); !object.AllocWithin(n * slotBytes) {
+				if errObj := object.CheckElements(n); errObj != nil {
+					return nil, errObj
+				}
+			}
+			grown := cap(elems)
 			elems = append(elems, v)
+			if cap(elems) != grown {
+				object.TrackSlice(elems)
+			}
 		}
 	}
 	elems, ok := object.IterableToSlice(obj)
@@ -1676,6 +1688,9 @@ func collectIterable(ctx context.Context, obj object.Object) ([]object.Object, o
 	}
 	return elems, nil
 }
+
+// slotBytes is the size of one element slot of a collected container.
+const slotBytes = int64(unsafe.Sizeof(object.Object(nil)))
 
 // notIterableError is the error for an argument that cannot be collected
 // into a list: a clear message for an infinite iterator, else a TypeError.

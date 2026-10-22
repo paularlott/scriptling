@@ -477,9 +477,20 @@ func deepEqual(a, b object.Object, depth int) (bool, object.Object) {
 	// needs an evaluation context and is only dispatched by the checked
 	// top-level comparison.
 	if aInst, ok := a.(*object.Instance); ok {
+		// Inside a container, an element that is the object it is compared
+		// with is equal without asking it, as in Python.
+		if depth > 0 && a == b {
+			return true, nil
+		}
 		if method, has := aInst.Class.Methods["__eq__"]; has {
 			if eqFn, isBuiltin := method.(*object.Builtin); isBuiltin {
-				if r, ok := eqFn.Fn(context.Background(), object.NewKwargs(nil), a, b).(*object.Boolean); ok {
+				// The depth travels with the call, so a Go-backed container
+				// comparing its own elements stays within the nesting limit.
+				r := eqFn.Fn(object.WithCompareDepth(context.Background(), depth+1), object.NewKwargs(nil), a, b)
+				if propagates(r) {
+					return false, r
+				}
+				if r, ok := r.(*object.Boolean); ok {
 					return r.BoolValue(), nil
 				}
 				return false, nil
@@ -676,6 +687,16 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 		return TRUE
 	}
 
+	// Reflected arithmetic: an instance on the right handles an operator a
+	// non-instance on the left cannot (2 * d calls d.__rmul__(2)).
+	if rInst, ok := right.(*object.Instance); ok {
+		if _, leftInst := left.(*object.Instance); !leftInst {
+			if result := evalReflectedArithmetic(ctx, operator, left, rInst, env); result != nil {
+				return result
+			}
+		}
+	}
+
 	switch l := left.(type) {
 	case *object.Integer:
 		switch r := right.(type) {
@@ -777,6 +798,12 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 		// dunder on the right operand.
 		if result := evalReflectedInstanceComparison(ctx, operator, left, right, env); result != nil {
 			return result
+		}
+		// As in Python, an operand of another class may handle it reflected.
+		if rInst, ok := right.(*object.Instance); ok && rInst.Class != l.Class {
+			if result := evalReflectedArithmetic(ctx, operator, left, rInst, env); result != nil {
+				return result
+			}
 		}
 	case *object.Tuple:
 		switch operator {
@@ -1689,6 +1716,33 @@ var operatorToDunderMethod = map[ast.Op]string{
 	ast.OpMod:      "__mod__",
 	ast.OpBitOr:    "__or__",
 	ast.OpBitAnd:   "__and__",
+}
+
+// reflectedArithmeticDunder maps an arithmetic operator to the dunder its
+// right operand implements to handle it reflected.
+var reflectedArithmeticDunder = map[ast.Op]string{
+	ast.OpAdd:      "__radd__",
+	ast.OpSub:      "__rsub__",
+	ast.OpMul:      "__rmul__",
+	ast.OpDiv:      "__rtruediv__",
+	ast.OpFloorDiv: "__rfloordiv__",
+	ast.OpMod:      "__rmod__",
+	ast.OpBitOr:    "__ror__",
+	ast.OpBitAnd:   "__rand__",
+}
+
+// evalReflectedArithmetic calls right.__r<op>__(left) when the right operand
+// defines it, nil otherwise.
+func evalReflectedArithmetic(ctx context.Context, operator ast.Op, left object.Object, right *object.Instance, env *object.Environment) object.Object {
+	name, ok := reflectedArithmeticDunder[operator]
+	if !ok {
+		return nil
+	}
+	method, has := right.Class.Methods[name]
+	if !has {
+		return nil
+	}
+	return applyFunctionWithContext(ctx, method, []object.Object{right, left}, nil, env)
 }
 
 // mirroredComparisonDunder maps a comparison operator to the dunder that

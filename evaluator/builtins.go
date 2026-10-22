@@ -33,6 +33,10 @@ var (
 	// callDunderMethodFn is set in init() to break the initialization cycle
 	callDunderMethodFn func(ctx context.Context, inst *object.Instance, method string, args []object.Object, env *object.Environment) object.Object
 
+	// assignAttributeFn assigns obj.name = value with the assignment
+	// statement's rules; set in init() to break the init cycle
+	assignAttributeFn func(ctx context.Context, obj, name, value object.Object) error
+
 	// getAttributeFn is getAttribute, set in init() to break the init cycle
 	getAttributeFn func(ctx context.Context, obj object.Object, name string) object.Object
 
@@ -1225,6 +1229,11 @@ The argument must be a string of exactly one character.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
+			if inst, ok := args[0].(*object.Instance); ok {
+				if result := callDunderMethodFn(ctx, inst, "__reversed__", nil, GetEnvFromContext(ctx)); result != nil {
+					return result
+				}
+			}
 			switch args[0].(type) {
 			case *object.List, *object.Tuple, *object.String, *object.Iterator, *object.FloatArray,
 				*object.Dict, *object.DictKeys, *object.DictValues, *object.DictItems:
@@ -1711,8 +1720,11 @@ If default is provided, returns it when the attribute doesn't exist.`,
 			// Set attribute on object
 			switch obj := args[0].(type) {
 			case *object.Instance:
-				obj.SetField(name, args[2])
-				obj.InvalidateBoundMethod(name)
+				// The same rules as obj.name = value: property setters and
+				// read-only properties, frozen dataclasses.
+				if err := assignAttributeFn(ctx, obj, object.NewString(name), args[2]); err != nil {
+					return assignErrorToObject(err)
+				}
 				return NULL
 			case *object.Dict:
 				obj.SetByString(name, args[2])
@@ -2352,7 +2364,11 @@ func compareForSortDepth(ctx context.Context, left, right object.Object, env *ob
 		}
 	case *object.Instance:
 		// __lt__ (with reflected __gt__), then __eq__. A raise from a dunder
-		// aborts the sort and propagates.
+		// aborts the sort and propagates. Inside a container the depth
+		// travels with the call (see deepEqual).
+		if depth > 0 {
+			ctx = object.WithCompareDepth(ctx, depth+1)
+		}
 		return compareObjectsCtx(ctx, left, right, env)
 	case *object.Tuple:
 		if r, ok := right.(*object.Tuple); ok {
@@ -2486,6 +2502,9 @@ func init() {
 	iterFunction = iterFunctionImpl
 	nextFunction = nextFunctionImpl
 	callDunderMethodFn = callDunderMethod
+	assignAttributeFn = func(ctx context.Context, obj, name, value object.Object) error {
+		return assignIndexValue(ctx, true, obj, name, value)
+	}
 	getAttributeFn = getAttribute
 	attachTypeMethods()
 	hashInstanceFn = func(ctx context.Context, inst *object.Instance) object.Object {

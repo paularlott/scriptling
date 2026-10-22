@@ -73,6 +73,9 @@ func shallowCopy(obj object.Object) object.Object {
 	case *object.Tuple:
 		return o // immutable, safe to share
 	case *object.Instance:
+		if isDeque(o) {
+			return copyDeque(o)
+		}
 		clone := object.NewInstance(o.Class)
 		o.RangeFields(func(k string, v object.Object) bool {
 			clone.SetField(k, v)
@@ -221,6 +224,23 @@ func deepCopyDepth(ctx context.Context, obj object.Object, memo map[object.Objec
 				memo[obj] = result
 				return result
 			}
+		}
+		if d := dequeOf(v); d != nil {
+			c := &dequeBuf{maxlen: d.maxlen}
+			if errObj := c.reserve(d.n); errObj != nil {
+				return errObj
+			}
+			result := newDequeOf(v.Class, c)
+			memo[obj] = result
+			for i := 0; i < d.n; i++ {
+				copied := deepCopyDepth(ctx, d.at(i), memo, depth-1)
+				if isCopyFailure(copied) {
+					return copied
+				}
+				c.buf[i] = copied
+				c.n++
+			}
+			return result
 		}
 		result := object.NewInstance(v.Class)
 		memo[obj] = result

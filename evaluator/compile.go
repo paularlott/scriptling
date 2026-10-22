@@ -2385,11 +2385,37 @@ func applyAugmentedOp(ctx context.Context, op ast.Op, currentVal, newVal object.
 	if baseOp == op {
 		return nil, false, errors.NewError("unknown augmented assignment operator: %s", op)
 	}
+	// An instance updating itself in place (__iadd__ and friends) returns
+	// the value to assign, as in Python; without one, x op= y is x = x op y.
+	if inst, ok := currentVal.(*object.Instance); ok {
+		if name, ok := inPlaceDunder[baseOp]; ok {
+			if method, has := inst.Class.Methods[name]; has {
+				result = applyFunctionWithContext(ctx, method, []object.Object{inst, newVal}, nil, env)
+				if propagates(result) {
+					return nil, false, result
+				}
+				return result, false, nil
+			}
+		}
+	}
 	result = evalInfixExpression(ctx, baseOp, currentVal, newVal, env)
 	if object.IsError(result) {
 		return nil, false, result
 	}
 	return result, false, nil
+}
+
+// inPlaceDunder maps an operator to the dunder an instance implements to
+// apply its augmented assignment in place.
+var inPlaceDunder = map[ast.Op]string{
+	ast.OpAdd:      "__iadd__",
+	ast.OpSub:      "__isub__",
+	ast.OpMul:      "__imul__",
+	ast.OpDiv:      "__itruediv__",
+	ast.OpFloorDiv: "__ifloordiv__",
+	ast.OpMod:      "__imod__",
+	ast.OpBitOr:    "__ior__",
+	ast.OpBitAnd:   "__iand__",
 }
 
 // augIndexOperands are the operands of a subscript or attribute target,
