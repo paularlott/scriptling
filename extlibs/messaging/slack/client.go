@@ -21,15 +21,20 @@ type slackClient struct {
 	botToken   string // xoxb-... — used for API calls
 	appToken   string // xapp-... — used for Socket Mode
 	httpClient *http.Client
+	external   *shared.ExternalURLs // script-supplied URLs; nil = platform rules only
 	log        logger.Logger
 	gateway    *socketGateway
 }
+
+// platformDomains are Slack's own hosts: the only ones sent the bot token.
+var platformDomains = []string{"slack.com"}
 
 func newClient(botToken, appToken string, log logger.Logger) *slackClient {
 	c := &slackClient{
 		botToken:   botToken,
 		appToken:   appToken,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
+		external:   shared.NewExternalURLs(platformDomains, 30*time.Second),
 		log:        log,
 	}
 	c.Bot = shared.NewBot(c)
@@ -275,7 +280,7 @@ func (c *slackClient) AckCallback(ctx context.Context, id, token, text string) e
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.external.Client(token, c.httpClient).Do(req)
 	if err != nil {
 		return err
 	}
@@ -288,8 +293,11 @@ func (c *slackClient) Download(ctx context.Context, ref string) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.botToken)
-	resp, err := c.httpClient.Do(req)
+	// The bot token goes only to Slack's own hosts.
+	if c.external.IsPlatform(ref) {
+		req.Header.Set("Authorization", "Bearer "+c.botToken)
+	}
+	resp, err := c.external.Client(ref, c.httpClient).Do(req)
 	if err != nil {
 		return nil, err
 	}

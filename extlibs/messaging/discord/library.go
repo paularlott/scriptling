@@ -3,10 +3,12 @@ package discord
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs/messaging/shared"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -21,9 +23,12 @@ func newClientInstance(c *discordClient, builtins map[string]*object.Builtin) *o
 	return inst
 }
 
-// NewLibrary creates the scriptling.messaging.discord library.
-func NewLibrary(log logger.Logger) *object.Library {
+// NewLibrary creates the scriptling.messaging.discord library. An optional
+// network policy governs URLs scripts pass to download() that are not
+// Discord's own hosts.
+func NewLibrary(log logger.Logger, cfg ...*netsecurity.Config) *object.Library {
 	builtins := shared.SharedBuiltins()
+	external := shared.NewExternalURLs(platformDomains, 30*time.Second, cfg...)
 
 	// Discord-specific: client constructor
 	builtins["client"] = &object.Builtin{
@@ -39,6 +44,7 @@ func NewLibrary(log logger.Logger) *object.Library {
 				return errors.NewError("discord.client: token must not be empty")
 			}
 			c := newClient(token, log)
+			c.external = external
 			inst := newClientInstance(c, builtins)
 			if rawList, errObj := kwargs.GetList("allowed_users", nil); errObj == nil && rawList != nil && len(rawList) > 0 {
 				allowed := make(map[string]bool, len(rawList))
@@ -67,9 +73,9 @@ func NewLibrary(log logger.Logger) *object.Library {
 }
 
 // Register registers the discord library with a Scriptling instance.
-func Register(registrar interface{ RegisterLibrary(*object.Library) }, log logger.Logger) {
+func Register(registrar interface{ RegisterLibrary(*object.Library) }, log logger.Logger, cfg ...*netsecurity.Config) {
 	if log == nil {
 		log = logger.NewNullLogger()
 	}
-	registrar.RegisterLibrary(NewLibrary(log.WithGroup("discord")))
+	registrar.RegisterLibrary(NewLibrary(log.WithGroup("discord"), cfg...))
 }

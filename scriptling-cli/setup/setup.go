@@ -208,8 +208,8 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	}
 
 	reg(telegram.LibraryName, func() { telegram.Register(p, log) })
-	reg(discord.LibraryName, func() { discord.Register(p, log) })
-	reg(slack.LibraryName, func() { slack.Register(p, log) })
+	reg(discord.LibraryName, func() { discord.Register(p, log, netPolicy...) })
+	reg(slack.LibraryName, func() { slack.Register(p, log, netPolicy...) })
 	reg(messagingconsole.LibraryName, func() { messagingconsole.Register(p) })
 
 	reg(extlibs.MCPLibraryName, func() { scriptlingmcp.Register(p, netPolicy...) })

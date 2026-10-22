@@ -24,14 +24,20 @@ type discordClient struct {
 	token      string
 	httpClient *http.Client
 	botUserID  string
+	external   *shared.ExternalURLs // script-supplied URLs; nil = platform rules only
 	log        logger.Logger
 	gateway    *gateway
 }
+
+// platformDomains are Discord's own hosts (API, CDN and media): the only
+// ones sent the bot token.
+var platformDomains = []string{"discord.com", "discordapp.com", "discordapp.net"}
 
 func newClient(token string, log logger.Logger) *discordClient {
 	c := &discordClient{
 		token:      token,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
+		external:   shared.NewExternalURLs(platformDomains, 30*time.Second),
 		log:        log,
 	}
 	c.Bot = shared.NewBot(c)
@@ -376,8 +382,11 @@ func (c *discordClient) downloadAttachment(ctx context.Context, url string) ([]b
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", c.authHeader())
-	resp, err := c.httpClient.Do(req)
+	// The bot token goes only to Discord's own hosts.
+	if c.external.IsPlatform(url) {
+		req.Header.Set("Authorization", c.authHeader())
+	}
+	resp, err := c.external.Client(url, c.httpClient).Do(req)
 	if err != nil {
 		return nil, err
 	}
