@@ -320,7 +320,7 @@ func (t *tarfileLibraryInstance) fnExtract(ctx context.Context, kwargs object.Kw
 		extractedPath, extractErr = t.extractTarMember(nd, hdr, dest)
 	})
 	if extractErr != nil {
-		return errors.NewError("TarFile.extract: %s", extractErr.Error())
+		return archiveError("TarFile.extract", extractErr)
 	}
 	return object.NewString(extractedPath)
 }
@@ -361,7 +361,7 @@ func (t *tarfileLibraryInstance) fnExtractall(ctx context.Context, kwargs object
 		}
 	})
 	if extractErr != nil {
-		return errors.NewError("TarFile.extractall: %s", extractErr.Error())
+		return archiveError("TarFile.extractall", extractErr)
 	}
 	elements := make([]object.Object, len(paths))
 	object.TrackSlice(elements)
@@ -414,9 +414,13 @@ func (t *tarfileLibraryInstance) extractTarMember(nd *tarFileNativeData, hdr *ta
 		if err != nil {
 			return "", err
 		}
-		defer w.Close()
-		_, err = io.Copy(w, tr)
-		return target, err
+		err = copyMember(w, tr, h.Size)
+		closeErr := w.Close()
+		if err != nil {
+			os.Remove(target) // no partial member is left behind
+			return "", err
+		}
+		return target, closeErr
 	}
 }
 

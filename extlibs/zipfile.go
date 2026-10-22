@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -250,7 +251,7 @@ func (z *zipfileLibraryInstance) fnExtract(ctx context.Context, kwargs object.Kw
 		extractErr = fmt.Errorf("file %q not found in archive", member)
 	})
 	if extractErr != nil {
-		return errors.NewError("ZipFile.extract: %s", extractErr.Error())
+		return archiveError("ZipFile.extract", extractErr)
 	}
 	return object.NewString(extractedPath)
 }
@@ -291,7 +292,7 @@ func (z *zipfileLibraryInstance) fnExtractall(ctx context.Context, kwargs object
 		}
 	})
 	if extractErr != nil {
-		return errors.NewError("ZipFile.extractall: %s", extractErr.Error())
+		return archiveError("ZipFile.extractall", extractErr)
 	}
 	elements := make([]object.Object, len(paths))
 	for i, p := range paths {
@@ -325,9 +326,17 @@ func (z *zipfileLibraryInstance) extractZipFile(f *zip.File, dest string) (strin
 	if err != nil {
 		return "", err
 	}
-	defer w.Close()
-	_, err = io.Copy(w, rc)
-	return target, err
+	declared := int64(-1)
+	if f.UncompressedSize64 <= math.MaxInt64 {
+		declared = int64(f.UncompressedSize64)
+	}
+	err = copyMember(w, rc, declared)
+	closeErr := w.Close()
+	if err != nil {
+		os.Remove(target) // no partial member is left behind
+		return "", err
+	}
+	return target, closeErr
 }
 
 func (z *zipfileLibraryInstance) fnWrite(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
