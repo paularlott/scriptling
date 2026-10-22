@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/object"
 )
@@ -21,11 +22,12 @@ type libraryInstance struct {
 	paths fssecurity.Config
 }
 
-// allowed reports whether path is inside the configured allowed directories.
-// A nil AllowedPaths means no restriction, matching every other fs library.
-func (i *libraryInstance) allowed(path string) error {
-	if !i.paths.IsPathAllowed(path) {
-		return fmt.Errorf("access denied: path '%s' is outside allowed directories", path)
+// denied returns the PermissionError for op when path is outside the
+// configured allowed directories, nil otherwise; a nil AllowedPaths means no
+// restriction. Scripts cannot catch it, as with the os and pathlib libraries.
+func (i *libraryInstance) denied(op, path string) object.Object {
+	if err := i.paths.CheckPath(path); err != nil {
+		return errors.NewPermissionError("%s: %s", op, err.Error())
 	}
 	return nil
 }
@@ -98,8 +100,8 @@ func buildLibrary(inst *libraryInstance) *object.Library {
 
 				path = expandPath(path)
 
-				if err := inst.allowed(path); err != nil {
-					return &object.Error{Message: "ensure: " + err.Error()}
+				if denied := inst.denied("ensure", path); denied != nil {
+					return denied
 				}
 
 				_, err := os.Stat(path)
@@ -176,8 +178,8 @@ Example:
 
 				path = expandPath(path)
 
-				if err := inst.allowed(path); err != nil {
-					return &object.Error{Message: "absent: " + err.Error()}
+				if denied := inst.denied("absent", path); denied != nil {
+					return denied
 				}
 
 				if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -222,8 +224,8 @@ Example:
 
 				path = expandPath(path)
 
-				if err := inst.allowed(path); err != nil {
-					return &object.Error{Message: "ensure_directory: " + err.Error()}
+				if denied := inst.denied("ensure_directory", path); denied != nil {
+					return denied
 				}
 
 				info, err := os.Stat(path)
@@ -271,8 +273,8 @@ Example:
 
 				path = expandPath(path)
 
-				if err := inst.allowed(path); err != nil {
-					return &object.Error{Message: "absent_directory: " + err.Error()}
+				if denied := inst.denied("absent_directory", path); denied != nil {
+					return denied
 				}
 
 				info, err := os.Stat(path)
@@ -354,8 +356,8 @@ Example:
 
 				path = expandPath(path)
 
-				if err := inst.allowed(path); err != nil {
-					return &object.Error{Message: "ensure_block: " + err.Error()}
+				if denied := inst.denied("ensure_block", path); denied != nil {
+					return denied
 				}
 
 				lines, trailingNL, existed, err := readFileLines(path)
@@ -466,8 +468,8 @@ Example:
 
 				path = expandPath(path)
 
-				if err := inst.allowed(path); err != nil {
-					return &object.Error{Message: "absent_block: " + err.Error()}
+				if denied := inst.denied("absent_block", path); denied != nil {
+					return denied
 				}
 
 				lines, trailingNL, existed, err := readFileLines(path)

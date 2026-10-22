@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling/conversion"
+	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
@@ -40,12 +42,20 @@ type libraryInstance struct {
 	client *http.Client
 }
 
-// allowed reports whether dest is inside the configured allowed directories.
-func (i *libraryInstance) allowed(dest string) error {
-	if !i.paths.IsPathAllowed(dest) {
-		return fmt.Errorf("access denied: path '%s' is outside allowed directories", dest)
+// allowed returns a *fssecurity.DeniedError when path is outside the
+// configured allowed directories, nil otherwise.
+func (i *libraryInstance) allowed(path string) error {
+	return i.paths.CheckPath(path)
+}
+
+// fileError is the script error for a failed file() call: a path outside the
+// allowed directories is a PermissionError, which scripts cannot catch, as in
+// the os and pathlib libraries; anything else is an ordinary error.
+func fileError(err error) object.Object {
+	if stderrors.Is(err, fssecurity.ErrPathNotAllowed) {
+		return errors.NewPermissionError("file: %s", err.Error())
 	}
-	return nil
+	return &object.Error{Message: "file: " + err.Error()}
 }
 
 func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
@@ -125,11 +135,25 @@ func buildLibrary(inst *libraryInstance) *object.Library {
 					return &object.Error{Message: "file: dir_mode must be non-negative"}
 				}
 
+				// Every path is checked against the allowed directories before
+				// anything is looked at or fetched.
+				dest = expandPath(dest)
+				if err := inst.allowed(dest); err != nil {
+					return fileError(err)
+				}
+				for i, p := range provides {
+					provides[i] = expandPath(p)
+					if err := inst.allowed(provides[i]); err != nil {
+						return fileError(err)
+					}
+				}
+
 				if len(provides) > 0 {
+					// Only a path that can be stat'ed exists; an unreadable
+					// one (say, permission denied) does not count.
 					allExist := true
 					for _, p := range provides {
-						expanded := expandPath(p)
-						if _, err := os.Stat(expanded); os.IsNotExist(err) {
+						if _, err := os.Stat(p); err != nil {
 							allExist = false
 							break
 						}
@@ -151,10 +175,6 @@ func buildLibrary(inst *libraryInstance) *object.Library {
 					return &object.Error{Message: "file: " + err.Error()}
 				}
 
-				dest = expandPath(dest)
-				if err := inst.allowed(dest); err != nil {
-					return &object.Error{Message: "file: " + err.Error()}
-				}
 				var result fetchResult
 				if unpackZip {
 					result, err = unpackZipBytes(data, dest, os.FileMode(mode), os.FileMode(dirMode), inst.allowed)
@@ -162,7 +182,7 @@ func buildLibrary(inst *libraryInstance) *object.Library {
 					result, err = writeFetchedFile(data, dest, os.FileMode(mode), os.FileMode(dirMode))
 				}
 				if err != nil {
-					return &object.Error{Message: "file: " + err.Error()}
+					return fileError(err)
 				}
 				result.URL = src
 				result.Path = dest
