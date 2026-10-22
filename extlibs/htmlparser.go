@@ -2,11 +2,6 @@ package extlibs
 
 import (
 	"context"
-	"html"
-	"regexp"
-	"strconv"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/evaliface"
@@ -16,9 +11,6 @@ import (
 func RegisterHTMLParserLibrary(registrar interface{ RegisterLibrary(*object.Library) }) {
 	registrar.RegisterLibrary(HTMLParserLibrary)
 }
-
-// attrRegex is compiled once at package init for parsing HTML tag attributes
-var attrRegex = regexp.MustCompile(`(\w+)(?:=(?:"([^"]*)"|'([^']*)'|([^\s>]*)))?`)
 
 // HTMLParserLibrary provides Python-compatible html.parser functionality
 var HTMLParserLibrary = object.NewLibrary(HTMLParserLibraryName, nil, map[string]object.Object{
@@ -44,7 +36,7 @@ var htmlParserMethods = map[string]object.Object{
 			instance.SetField("_pos", object.NewInteger(0))
 			instance.SetField("_line", object.NewInteger(1))
 			instance.SetField("_offset", object.NewInteger(0))
-			instance.SetField("_lasttag", object.NewString(""))
+			instance.SetField("_lasttag", &object.Null{})
 			instance.SetField("_rawdata", object.NewString(""))
 
 			// Check for convert_charrefs kwarg (default True)
@@ -106,7 +98,7 @@ Parses the HTML data and calls handler methods for each element.`,
 			instance.SetField("_pos", object.NewInteger(0))
 			instance.SetField("_line", object.NewInteger(1))
 			instance.SetField("_offset", object.NewInteger(0))
-			instance.SetField("_lasttag", object.NewString(""))
+			instance.SetField("_lasttag", &object.Null{})
 			instance.SetField("_rawdata", object.NewString(""))
 
 			return &object.Null{}
@@ -177,24 +169,15 @@ tag is the tag name (lowercase).`,
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// Default: call handle_starttag and handle_endtag
 			if len(args) >= 3 {
-				instance := args[0].(*object.Instance)
-				tag := args[1]
-				attrs := args[2]
-				// Call handle_starttag
-				if method, ok := instance.Class.Methods["handle_starttag"]; ok {
-					if builtin, ok := method.(*object.Builtin); ok {
-						builtin.Fn(ctx, object.NewKwargs(nil), instance, tag, attrs)
-					} else if fn, ok := method.(*object.Function); ok {
-						callMethod(ctx, fn, instance, []object.Object{tag, attrs}, nil)
-					}
+				instance, ok := args[0].(*object.Instance)
+				if !ok {
+					return errors.NewError("handle_startendtag() requires instance as first argument")
 				}
-				// Call handle_endtag
-				if method, ok := instance.Class.Methods["handle_endtag"]; ok {
-					if builtin, ok := method.(*object.Builtin); ok {
-						builtin.Fn(ctx, object.NewKwargs(nil), instance, tag)
-					} else if fn, ok := method.(*object.Function); ok {
-						callMethod(ctx, fn, instance, []object.Object{tag}, nil)
-					}
+				if r := callHandler(ctx, instance, "handle_starttag", args[1], args[2]); object.IsPropagating(r) {
+					return r
+				}
+				if r := callHandler(ctx, instance, "handle_endtag", args[1]); object.IsPropagating(r) {
+					return r
 				}
 			}
 			return &object.Null{}
@@ -255,230 +238,14 @@ Override to handle <?xml ...?> and similar.`,
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			return &object.Null{}
 		},
-		HelpText: `unknown_decl(data) - Called for unrecognized declarations`,
+		HelpText: `unknown_decl(data) - Called for CDATA sections: <![CDATA[x]]> gives "CDATA[x"`,
 	},
 }
 
-// callMethod is a helper to call a user-defined method on an instance
-func callMethod(ctx context.Context, fn *object.Function, instance *object.Instance, args []object.Object, kwargs map[string]object.Object) object.Object {
-	// This is a simplified version - the actual implementation would use the evaluator
-	// For now, we rely on the fact that derived class methods will be called via the evaluator
-	return &object.Null{}
-}
-
-// parseHTML parses HTML data and calls the appropriate handler methods
-func parseHTML(ctx context.Context, instance *object.Instance, data string) object.Object {
-	// Get convert_charrefs setting
-	convertCharrefs := true
-	if val, ok := instance.GetField("convert_charrefs"); ok {
-		if boolVal, ok := val.(*object.Boolean); ok {
-			convertCharrefs = boolVal.BoolValue()
-		}
-	}
-
-	// Simple HTML parser implementation
-	i := 0
-	for i < len(data) {
-		if data[i] == '<' {
-			// Check what type of tag this is
-			if i+1 < len(data) {
-				if data[i+1] == '!' {
-					// Comment, DOCTYPE, or CDATA
-					if i+4 < len(data) && data[i+2] == '-' && data[i+3] == '-' {
-						// Comment
-						end := strings.Index(data[i:], "-->")
-						if end != -1 {
-							comment := data[i+4 : i+end]
-							callHandler(ctx, instance, "handle_comment", object.NewString(comment))
-							i = i + end + 3
-							continue
-						}
-					} else if i+9 < len(data) && strings.ToUpper(data[i+2:i+9]) == "DOCTYPE" {
-						// DOCTYPE
-						end := strings.Index(data[i:], ">")
-						if end != -1 {
-							decl := data[i+2 : i+end]
-							callHandler(ctx, instance, "handle_decl", object.NewString(decl))
-							i = i + end + 1
-							continue
-						}
-					} else if i+9 < len(data) && data[i+2:i+9] == "[CDATA[" {
-						// CDATA section
-						end := strings.Index(data[i:], "]]>")
-						if end != -1 {
-							cdata := data[i+9 : i+end]
-							callHandler(ctx, instance, "handle_data", object.NewString(cdata))
-							i = i + end + 3
-							continue
-						}
-					}
-				} else if data[i+1] == '?' {
-					// Processing instruction
-					end := strings.Index(data[i:], "?>")
-					if end != -1 {
-						pi := data[i+2 : i+end]
-						callHandler(ctx, instance, "handle_pi", object.NewString(pi))
-						i = i + end + 2
-						continue
-					}
-				} else if data[i+1] == '/' {
-					// End tag
-					end := strings.Index(data[i:], ">")
-					if end != -1 {
-						tag := strings.TrimSpace(strings.ToLower(data[i+2 : i+end]))
-						callHandler(ctx, instance, "handle_endtag", object.NewString(tag))
-						i = i + end + 1
-						continue
-					}
-				} else {
-					// Start tag or self-closing tag
-					end := findTagEnd(data[i:])
-					if end != -1 {
-						tagContent := data[i+1 : i+end]
-						selfClosing := strings.HasSuffix(strings.TrimSpace(tagContent), "/")
-						if selfClosing {
-							tagContent = strings.TrimSuffix(strings.TrimSpace(tagContent), "/")
-						}
-
-						tag, attrs := parseTag(tagContent)
-						tag = strings.ToLower(tag)
-
-						// Store the last start tag text
-						instance.SetField("_lasttag", object.NewString(data[i:i+end+1]))
-
-						// Convert attrs to list of tuples
-						attrsList := &object.List{Elements: make([]object.Object, len(attrs))}
-						object.TrackSlice(attrsList.Elements)
-						for j, attr := range attrs {
-							attrsList.Elements[j] = &object.Tuple{Elements: []object.Object{
-								object.NewString(attr[0]),
-								object.NewString(attr[1]),
-							}}
-						}
-
-						if selfClosing {
-							callHandler(ctx, instance, "handle_startendtag", object.NewString(tag), attrsList)
-						} else {
-							callHandler(ctx, instance, "handle_starttag", object.NewString(tag), attrsList)
-						}
-						i = i + end + 1
-						continue
-					}
-				}
-			}
-			i++
-		} else {
-			// Text data
-			end := strings.Index(data[i:], "<")
-			var textData string
-			if end == -1 {
-				textData = data[i:]
-				i = len(data)
-			} else {
-				textData = data[i : i+end]
-				i = i + end
-			}
-
-			if len(textData) > 0 {
-				// Handle character references
-				if convertCharrefs {
-					textData = html.UnescapeString(textData)
-				} else {
-					// Call handle_entityref and handle_charref for each reference
-					textData = processCharRefs(ctx, instance, textData)
-				}
-				if len(strings.TrimSpace(textData)) > 0 || len(textData) > 0 {
-					callHandler(ctx, instance, "handle_data", object.NewString(textData))
-				}
-			}
-		}
-	}
-
-	return &object.Null{}
-}
-
-// findTagEnd finds the end of a tag, handling quoted attributes
-func findTagEnd(data string) int {
-	inQuote := false
-	quoteChar := byte(0)
-	for i := 0; i < len(data); i++ {
-		if !inQuote {
-			if data[i] == '"' || data[i] == '\'' {
-				inQuote = true
-				quoteChar = data[i]
-			} else if data[i] == '>' {
-				return i
-			}
-		} else {
-			if data[i] == quoteChar {
-				inQuote = false
-			}
-		}
-	}
-	return -1
-}
-
-// parseTag parses a tag and returns the tag name and attributes
-func parseTag(content string) (string, [][2]string) {
-	content = strings.TrimSpace(content)
-	parts := strings.Fields(content)
-	if len(parts) == 0 {
-		return "", nil
-	}
-
-	tagName := parts[0]
-	attrs := [][2]string{}
-
-	// Parse attributes using pre-compiled regex
-	attrPart := content[len(tagName):]
-	matches := attrRegex.FindAllStringSubmatch(attrPart, -1)
-
-	for _, match := range matches {
-		name := strings.ToLower(match[1])
-		value := ""
-		if match[2] != "" {
-			value = html.UnescapeString(match[2])
-		} else if match[3] != "" {
-			value = html.UnescapeString(match[3])
-		} else if match[4] != "" {
-			value = html.UnescapeString(match[4])
-		}
-		attrs = append(attrs, [2]string{name, value})
-	}
-
-	return tagName, attrs
-}
-
-// processCharRefs processes character references when convert_charrefs is False
-func processCharRefs(ctx context.Context, instance *object.Instance, data string) string {
-	result := strings.Builder{}
-	i := 0
-	for i < len(data) {
-		if data[i] == '&' && i+1 < len(data) {
-			// Find the end of the reference
-			end := strings.Index(data[i:], ";")
-			if end != -1 && end < 10 {
-				ref := data[i+1 : i+end]
-				if ref[0] == '#' {
-					// Numeric character reference
-					callHandler(ctx, instance, "handle_charref", object.NewString(ref[1:]))
-					i = i + end + 1
-					continue
-				} else {
-					// Named character reference
-					callHandler(ctx, instance, "handle_entityref", object.NewString(ref))
-					i = i + end + 1
-					continue
-				}
-			}
-		}
-		result.WriteByte(data[i])
-		i++
-	}
-	return result.String()
-}
-
-// callHandler calls a handler method on the instance
+// callHandler calls a handler method on the instance: the script's override
+// if it has one, otherwise the library default. A raised exception, error,
+// SystemExit or interpreter stop comes back as the result for the caller to
+// propagate.
 func callHandler(ctx context.Context, instance *object.Instance, methodName string, args ...object.Object) object.Object {
 	// Look for method in the instance's class methods (which includes inherited and overridden methods)
 	if method, ok := instance.Class.Methods[methodName]; ok {
@@ -487,8 +254,6 @@ func callHandler(ctx context.Context, instance *object.Instance, methodName stri
 			allArgs := append([]object.Object{instance}, args...)
 			return m.Fn(ctx, object.NewKwargs(nil), allArgs...)
 		case *object.Function:
-			// For user-defined functions, we need to call through the evaluator
-			// This is handled by the ApplyMethod function if we set it up
 			return callUserMethod(ctx, instance, m, args)
 		}
 	}
@@ -502,63 +267,4 @@ func callUserMethod(ctx context.Context, instance *object.Instance, fn *object.F
 		return eval.CallMethod(ctx, instance, fn, args)
 	}
 	return &object.Null{}
-}
-
-// Entity name to codepoint mapping (subset of common entities)
-var name2codepoint = map[string]int{
-	"lt":     60,
-	"gt":     62,
-	"amp":    38,
-	"quot":   34,
-	"apos":   39,
-	"nbsp":   160,
-	"copy":   169,
-	"reg":    174,
-	"trade":  8482,
-	"mdash":  8212,
-	"ndash":  8211,
-	"lsquo":  8216,
-	"rsquo":  8217,
-	"ldquo":  8220,
-	"rdquo":  8221,
-	"bull":   8226,
-	"hellip": 8230,
-	"euro":   8364,
-	"pound":  163,
-	"yen":    165,
-	"cent":   162,
-	"deg":    176,
-	"plusmn": 177,
-	"times":  215,
-	"divide": 247,
-	"frac12": 189,
-	"frac14": 188,
-	"frac34": 190,
-}
-
-// charRefToString converts a character reference to a string
-func charRefToString(ref string) string {
-	if strings.HasPrefix(ref, "x") || strings.HasPrefix(ref, "X") {
-		// Hexadecimal
-		if codepoint, err := strconv.ParseInt(ref[1:], 16, 32); err == nil {
-			return string(rune(codepoint))
-		}
-	} else {
-		// Decimal
-		if codepoint, err := strconv.ParseInt(ref, 10, 32); err == nil {
-			return string(rune(codepoint))
-		}
-	}
-	return ""
-}
-
-// entityRefToString converts an entity reference to a string
-func entityRefToString(name string) string {
-	if codepoint, ok := name2codepoint[name]; ok {
-		r := rune(codepoint)
-		buf := make([]byte, utf8.RuneLen(r))
-		utf8.EncodeRune(buf, r)
-		return string(buf)
-	}
-	return ""
 }
