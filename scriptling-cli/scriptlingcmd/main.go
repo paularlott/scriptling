@@ -1530,12 +1530,6 @@ func evalAndCheckExit(p *scriptling.Scriptling, code string) error {
 	if ex, ok := object.AsException(result); ok && ex.IsSystemExit() {
 		return exitCodeError{code: ex.GetExitCode()}
 	}
-	// A panic's message is the panic value only; its stack trace is for
-	// debugging (--log-level debug).
-	var panicErr *scriptling.PanicError
-	if errors.As(err, &panicErr) && globalLogger != nil {
-		globalLogger.Debug("Script panic stack trace", "stack", string(panicErr.Stack))
-	}
 	return err
 }
 

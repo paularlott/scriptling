@@ -111,6 +111,7 @@ type Scriptling struct {
 	libraryLoader       LibraryLoader
 	sourceFile          string
 	guard               *object.ResourceGuard
+	panicHandler        func(*PanicError)
 }
 
 // New creates an interpreter. Its resource limits follow the process defaults
@@ -460,18 +461,46 @@ type PanicError struct {
 
 func (e *PanicError) Error() string { return fmt.Sprintf("%s: %v", errors.ErrPanic, e.Value) }
 
+// recoverPanic is deferred by every entry point that runs script code
+// (EvalWithContext, CallFunctionWithContext, CallMethodWithContext,
+// CreateInstanceWithContext, ImportWithContext and
+// LoadLibraryIntoEnvWithContext) so they share one contract: a Go panic during
+// the call comes back as a *PanicError (and an error object, for those that
+// return one), the interpreter stays usable, and the call's resource-guard
+// run is ended. run and result are nil for the calls without them, and *run
+// is still nil when the panic comes before the run starts.
+func (p *Scriptling) recoverPanic(run **object.Run, result *object.Object, err *error) {
+	if r := recover(); r != nil {
+		if run != nil {
+			(*run).End()
+		}
+		if result != nil {
+			*result = errors.NewPanicError(r)
+		}
+		panicErr := &PanicError{Value: r, Stack: debug.Stack()}
+		*err = panicErr
+		if p.panicHandler != nil {
+			p.panicHandler(panicErr)
+		}
+	}
+}
+
+// SetPanicHandler sets a function called with each PanicError this
+// interpreter's entry points recover, before they return it: the place for a
+// host to log the stack trace wherever the error ends up. Clones keep it. nil
+// (the default) calls nothing.
+func (p *Scriptling) SetPanicHandler(fn func(*PanicError)) {
+	p.panicHandler = fn
+}
+
 // EvalWithContext executes script with context for timeout/cancellation.
 // This method is safe against deep recursion (via call depth tracking) and
 // recovers from panics during script execution.
 func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (result object.Object, err error) {
 	// Recover from panics across the complete parse-and-execute boundary. Parsing,
 	// folding, evaluator code, and builtins all share the same public contract.
-	defer func() {
-		if r := recover(); r != nil {
-			result = errors.NewPanicError(r)
-			err = &PanicError{Value: r, Stack: debug.Stack()}
-		}
-	}()
+	var run *object.Run
+	defer p.recoverPanic(&run, &result, &err)
 
 	// Call-depth tracking (stack-overflow guard) is added by
 	// evaluator.EvalWithContext when absent, placed outermost so the per-call
@@ -492,7 +521,7 @@ func (p *Scriptling) EvalWithContext(ctx context.Context, input string) (result 
 	// Register the run with the interpreter's resource guard so it can be
 	// cancelled for going over the memory limit. With no limit in force ctx
 	// is returned unchanged.
-	ctx, run := p.guard.StartRun(ctx)
+	ctx, run = p.guard.StartRun(ctx)
 	result = p.endRun(run, evaluator.EvalWithContext(ctx, program, p.env))
 	return p.handleResult(result, "")
 }
@@ -741,6 +770,7 @@ func (p *Scriptling) Reset() {
 func (p *Scriptling) Clone() *Scriptling {
 	child := New()
 	child.guard.CopyLimits(p.guard)
+	child.panicHandler = p.panicHandler
 
 	// Share library registrations (definitions only, not imported state)
 	for name, lib := range p.registeredLibraries {
@@ -815,7 +845,10 @@ func (p *Scriptling) CallFunction(name string, args ...interface{}) (object.Obje
 //
 //	// With keyword arguments (use Kwargs wrapper)
 //	result, err := p.CallFunctionWithContext(ctx, "format", "value", Kwargs{"prefix": ">>"})
-func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, args ...interface{}) (object.Object, error) {
+func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, args ...interface{}) (result object.Object, err error) {
+	var run *object.Run
+	defer p.recoverPanic(&run, &result, &err)
+
 	// 1. Look up function in environment, supporting dotted paths like "mylib.testHandler"
 	var fn object.Object
 	var ok bool
@@ -846,9 +879,9 @@ func (p *Scriptling) CallFunctionWithContext(ctx context.Context, name string, a
 	objArgs, objKwargs := convertArgsAndKwargs(args, nil)
 
 	// 3. Call the function using evaluator
-	ctx, run := p.guard.StartRun(ctx)
+	ctx, run = p.guard.StartRun(ctx)
 	ctx = evaluator.EnsureCallDepth(evaluator.WithEvaluator(ctx))
-	result := p.endRun(run, evaluator.ApplyFunctionGIL(ctx, fn, objArgs, objKwargs, p.env))
+	result = p.endRun(run, evaluator.ApplyFunctionGIL(ctx, fn, objArgs, objKwargs, p.env))
 	return p.handleResult(result, fmt.Sprintf("function '%s'", name))
 }
 
@@ -876,7 +909,10 @@ func (p *Scriptling) CreateInstance(className string, args ...interface{}) (obje
 //	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 //	defer cancel()
 //	instance, err := p.CreateInstanceWithContext(ctx, "Counter", 10)
-func (p *Scriptling) CreateInstanceWithContext(ctx context.Context, className string, args ...interface{}) (object.Object, error) {
+func (p *Scriptling) CreateInstanceWithContext(ctx context.Context, className string, args ...interface{}) (result object.Object, err error) {
+	var run *object.Run
+	defer p.recoverPanic(&run, &result, &err)
+
 	// Look up the class in environment
 	classObj, ok := p.env.Get(className)
 	if !ok {
@@ -893,7 +929,7 @@ func (p *Scriptling) CreateInstanceWithContext(ctx context.Context, className st
 	objArgs, objKwargs := convertArgsAndKwargs(args, nil)
 
 	// Create the instance using evaluator
-	ctx, run := p.guard.StartRun(ctx)
+	ctx, run = p.guard.StartRun(ctx)
 	ctx = evaluator.EnsureCallDepth(evaluator.WithEvaluator(ctx))
 	instance := p.endRun(run, evaluator.ApplyFunctionGIL(ctx, class, objArgs, objKwargs, p.env))
 	return p.handleResult(instance, fmt.Sprintf("class '%s'", className))
@@ -922,7 +958,10 @@ func (p *Scriptling) CallMethod(obj object.Object, methodName string, args ...in
 //	defer cancel()
 //	instance, _ := p.CreateInstance("Counter", 10)
 //	result, err := p.CallMethodWithContext(ctx, instance, "increment")
-func (p *Scriptling) CallMethodWithContext(ctx context.Context, obj object.Object, methodName string, args ...interface{}) (object.Object, error) {
+func (p *Scriptling) CallMethodWithContext(ctx context.Context, obj object.Object, methodName string, args ...interface{}) (result object.Object, err error) {
+	var run *object.Run
+	defer p.recoverPanic(&run, &result, &err)
+
 	// Verify obj is an Instance
 	instance, ok := obj.(*object.Instance)
 	if !ok {
@@ -939,9 +978,9 @@ func (p *Scriptling) CallMethodWithContext(ctx context.Context, obj object.Objec
 	objArgs, objKwargs := convertArgsAndKwargs(args, instance)
 
 	// Call the method using evaluator
-	ctx, run := p.guard.StartRun(ctx)
+	ctx, run = p.guard.StartRun(ctx)
 	ctx = evaluator.EnsureCallDepth(evaluator.WithEvaluator(ctx))
-	result := p.endRun(run, evaluator.ApplyFunctionGIL(ctx, method, objArgs, objKwargs, p.env))
+	result = p.endRun(run, evaluator.ApplyFunctionGIL(ctx, method, objArgs, objKwargs, p.env))
 	return p.handleResult(result, fmt.Sprintf("method '%s' on class '%s'", methodName, instance.Class.Name))
 }
 
@@ -976,7 +1015,8 @@ func (p *Scriptling) Import(names interface{}) error {
 
 // ImportWithContext imports one or more libraries while preserving caller
 // cancellation, deadlines, and values through dynamic loading and evaluation.
-func (p *Scriptling) ImportWithContext(ctx context.Context, names interface{}) error {
+func (p *Scriptling) ImportWithContext(ctx context.Context, names interface{}) (err error) {
+	defer p.recoverPanic(nil, nil, &err)
 	switch v := names.(type) {
 	case string:
 		// Single library name
@@ -1073,7 +1113,8 @@ func (p *Scriptling) LoadLibraryIntoEnv(name string, env *object.Environment) er
 
 // LoadLibraryIntoEnvWithContext loads a library into an environment while
 // preserving caller context through nested evaluation and dynamic loading.
-func (p *Scriptling) LoadLibraryIntoEnvWithContext(ctx context.Context, name string, env *object.Environment) error {
+func (p *Scriptling) LoadLibraryIntoEnvWithContext(ctx context.Context, name string, env *object.Environment) (err error) {
+	defer p.recoverPanic(nil, nil, &err)
 	loaded, err := p.loadLibraryIntoEnv(ctx, name, env, nil)
 	if err != nil {
 		return err

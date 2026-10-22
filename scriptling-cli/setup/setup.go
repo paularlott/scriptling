@@ -1,6 +1,8 @@
 package setup
 
 import (
+	"fmt"
+
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
@@ -105,6 +107,14 @@ func AllLibraryNames() []string {
 // disabledLibs: Library names to skip registration (nil = all enabled)
 // log: Logger instance for the logging library
 func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract bool, allowedPaths []string, disabledLibs []string, secretRegistry *secretprovider.Registry, log logger.Logger, dockerSock, podmanSock string, netPolicy ...*netsecurity.Config) {
+	// A recovered panic reaches the caller as a one-line error (which may be
+	// sent to a client); its stack trace is for the operator, at debug level.
+	if log != nil {
+		p.SetPanicHandler(func(e *scriptling.PanicError) {
+			log.Debug("Script panic stack trace", "panic", fmt.Sprint(e.Value), "stack", string(e.Stack))
+		})
+	}
+
 	disabled := make(map[string]bool, len(disabledLibs))
 	for _, name := range disabledLibs {
 		disabled[name] = true
