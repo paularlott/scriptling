@@ -21,3 +21,6 @@ __pycache__/
 
 # formula generator binary (go build of scripts/homebrew-formula)
 /homebrew-formula
+
+# built plugin binary (go build in builds/onepassword)
+/builds/onepassword/onepassword
