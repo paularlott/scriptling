@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/object"
@@ -159,6 +160,20 @@ are not supported in batch_call.`,
 				if errObj != nil {
 					return errObj
 				}
+				// Plugins share one manager across every interpreter, so their
+				// names are global, and a plugin may not take a library name
+				// already registered here (a dotted name is used verbatim):
+				// that would replace a host library for every module imported
+				// after it. The same rule guards plugins the host loads at
+				// startup. Loading the same plugin again is still a no-op (the
+				// manager returns the existing client); a different plugin
+				// under a loaded name is refused by the manager.
+				normalised := NormalizeLibraryName(name)
+				if _, loaded := manager.Get(normalised); !loaded {
+					if checker, ok := registrar.(LibraryChecker); ok && checker.HasLibrary(normalised) {
+						return pluginErr(fmt.Sprintf("load(): library %s is already registered", normalised))
+					}
+				}
 				path, errObj := args[1].AsString()
 				if errObj != nil {
 					return errObj
@@ -203,7 +218,11 @@ are not supported in batch_call.`,
 				if err != nil {
 					return pluginErr(err.Error())
 				}
-				if client.HandshakeDone() {
+				// Register the proxy only where the name is free: a repeat load
+				// of the same plugin finds its own library already there, and
+				// nothing else registered under the name is replaced.
+				checker, canCheck := registrar.(LibraryChecker)
+				if client.HandshakeDone() && !(canCheck && checker.HasLibrary(client.Metadata().Name)) {
 					registerClientLibrary(registrar, scriptRegistrar, client)
 				}
 				return object.NewString(client.Metadata().Name)
@@ -222,9 +241,10 @@ scriptling=True peers also register an importable plugin.* proxy library, which
 unload() removes.
 
 Parameters:
-  name (str): Library name to register the executable under. Normalised into
-    the plugin.* namespace (e.g. "widgets" becomes "plugin.widgets"). Must
-    not collide with an existing plugin library name.
+  name (str): Library name to register the plugin under. A bare name goes in
+    the plugin.* namespace ("widgets" becomes "plugin.widgets"); a dotted
+    name is used verbatim. Names are global, and a name already registered
+    (a built-in, stdlib or host library, or another plugin) is refused.
   path (str): Filesystem path to the executable, or http(s) JSON-RPC endpoint.
   scriptling (bool, optional): If True, perform the plugin protocol handshake
     so describe()/list() report version and schema from the executable. If
