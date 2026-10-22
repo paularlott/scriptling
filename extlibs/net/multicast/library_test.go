@@ -12,6 +12,7 @@ import (
 	"golang.org/x/net/ipv4"
 
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -314,5 +315,42 @@ msg["data"].decode() if msg else ""
 	}
 	if str.StringValue() != "script test" {
 		t.Errorf("expected 'script test', got %q", str.StringValue())
+	}
+}
+
+// With a network policy, join() refuses multicast groups unless allow_cidrs
+// grants them, and deny_cidrs still wins.
+func TestMulticastNetworkPolicy(t *testing.T) {
+	join := func(cfg *netsecurity.Config, group string) error {
+		p := scriptling.New()
+		Register(p, cfg)
+		_, err := p.Eval(`import scriptling.net.multicast as mc
+g = mc.join("` + group + `", 19996)
+g.close()`)
+		return err
+	}
+
+	for _, tc := range []struct {
+		name  string
+		cfg   *netsecurity.Config
+		group string
+	}{
+		{"default policy", &netsecurity.Config{}, "239.255.1.5"},
+		{"literals allowed", &netsecurity.Config{AllowIPLiterals: true}, "239.255.1.5"},
+		{"outside allowed cidr", &netsecurity.Config{AllowedCIDRs: []string{"239.255.1.0/24"}}, "239.255.2.5"},
+		{"deny wins", &netsecurity.Config{AllowedCIDRs: []string{"239.255.1.0/24"}, DeniedCIDRs: []string{"239.255.1.5/32"}}, "239.255.1.5"},
+	} {
+		if err := join(tc.cfg, tc.group); err == nil || !strings.Contains(err.Error(), "network policy") {
+			t.Errorf("%s: expected network policy error, got: %v", tc.name, err)
+		}
+	}
+
+	if testing.Short() {
+		return
+	}
+	err := join(&netsecurity.Config{AllowedCIDRs: []string{"239.255.1.0/24"}}, "239.255.1.5")
+	skipIfNoMulticastRoute(t, err)
+	if err != nil {
+		t.Errorf("group granted by allow_cidrs should join, got: %v", err)
 	}
 }

@@ -2,6 +2,7 @@ package multicast
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"net"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/extlibs/net/internal"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -185,7 +187,23 @@ Returns:
 	}
 }
 
-func buildLibrary() *object.Library {
+// resolveGroup resolves a group address. With a guard the group must pass the
+// network policy, which denies multicast unless allow_cidrs grants it, and
+// the validated address is joined.
+func resolveGroup(ctx context.Context, guard *netsecurity.Guard, groupAddr string, port int64) (*net.UDPAddr, error) {
+	if guard == nil {
+		return net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", groupAddr, port))
+	}
+	var ips []net.IP
+	var err error
+	object.RunBlocking(ctx, func() { ips, err = guard.ResolveIPs(ctx, groupAddr) })
+	if err != nil {
+		return nil, err
+	}
+	return &net.UDPAddr{IP: ips[0], Port: int(port)}, nil
+}
+
+func buildLibrary(guard *netsecurity.Guard) *object.Library {
 	return object.NewLibrary(LibraryName, map[string]*object.Builtin{
 		"join": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -227,8 +245,11 @@ func buildLibrary() *object.Library {
 					}
 				}
 
-				addr, addrErr := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", groupAddr, port))
+				addr, addrErr := resolveGroup(ctx, guard, groupAddr, port)
 				if addrErr != nil {
+					if stderrors.Is(addrErr, netsecurity.ErrPolicy) {
+						return errors.NewError("%s", addrErr.Error())
+					}
 					return errors.NewError("invalid multicast address: %s", addrErr.Error())
 				}
 
@@ -299,9 +320,11 @@ Example:
 	}, nil, LibraryDesc)
 }
 
-func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
+// Register registers the library. An optional network policy restricts which
+// groups join() accepts: multicast is denied unless allow_cidrs grants it.
+func Register(registrar interface{ RegisterLibrary(*object.Library) }, cfg ...*netsecurity.Config) {
 	libraryOnce.Do(func() {
-		library = buildLibrary()
+		library = buildLibrary(nil)
 		extlibs.RegisterCleanup(func() {
 			groups.Lock()
 			for _, g := range groups.m {
@@ -311,5 +334,13 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
 			groups.Unlock()
 		})
 	})
+	if len(cfg) > 0 && cfg[0] != nil {
+		guard, gerr := netsecurity.NewGuard(cfg[0])
+		if gerr != nil {
+			guard = netsecurity.FailClosed(gerr)
+		}
+		registrar.RegisterLibrary(buildLibrary(guard))
+		return
+	}
 	registrar.RegisterLibrary(library)
 }
