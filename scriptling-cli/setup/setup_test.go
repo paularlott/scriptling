@@ -83,3 +83,32 @@ func TestScriptlingLibraryLoaderHonoursAllowedPaths(t *testing.T) {
 		t.Error("under deny-all a link out of the library directory should be refused")
 	}
 }
+
+// The CLI passes the script's own directory as a relative path ("." for
+// "scriptling main.py"); imports from it must keep working under
+// --allowed-paths, including a relative allowed path.
+func TestScriptlingLibraryLoaderRelativeDirs(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(base, "libs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "sibling.py"), []byte("A = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "libs", "mylib.py"), []byte("B = 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(base)
+	for _, allowed := range [][]string{{"./data"}, {}} {
+		p := scriptling.New()
+		Scriptling(p, []string{".", "libs"}, false, allowed, nil, nil, logslog.New(logslog.Config{Level: "error"}), "", "")
+		for _, name := range []string{"sibling", "mylib"} {
+			if _, found, err := p.GetLibraryLoader().Load(name); err != nil || !found {
+				t.Errorf("allowed=%v: %q not loadable from a relative library directory (found=%v err=%v)", allowed, name, found, err)
+			}
+		}
+	}
+}

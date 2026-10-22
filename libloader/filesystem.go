@@ -69,7 +69,9 @@ func containment(libDirs, allowedPaths []string) *fssecurity.Config {
 	union := make([]string, 0, len(libDirs)+len(allowedPaths))
 	union = append(union, libDirs...)
 	union = append(union, allowedPaths...)
-	return &fssecurity.Config{AllowedPaths: union}
+	// Library directories are often relative (the script's own directory is
+	// "." when it is run as "scriptling main.py"), so make the set absolute.
+	return &fssecurity.Config{AllowedPaths: fssecurity.NormalizeAllowedPaths(union)}
 }
 
 // permits reports whether the loader may read path. Unrestricted loaders

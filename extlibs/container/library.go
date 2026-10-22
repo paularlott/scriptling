@@ -47,6 +47,7 @@ func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) },
 	if podmanSock != "" {
 		overrridePodmanSocket = podmanSock
 	}
+	paths.AllowedPaths = fssecurity.NormalizeAllowedPaths(paths.AllowedPaths)
 	if paths.AllowedPaths != nil || policy != nil {
 		var guard *netsecurity.Guard
 		if policy != nil {

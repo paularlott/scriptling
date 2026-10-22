@@ -75,6 +75,27 @@ func (c *Config) IsPathAllowed(path string) bool {
 	return false
 }
 
+// NormalizeAllowedPaths makes every entry absolute and clean, relative to the
+// working directory now, as each library does when it is registered.
+// IsPathAllowed compares absolute resolved paths, so a relative entry (".",
+// "./data", a script's own directory) would otherwise never match. Nil (no
+// restriction) stays nil and an empty slice (deny all) stays empty; an entry
+// that cannot be made absolute is dropped.
+func NormalizeAllowedPaths(paths []string) []string {
+	if paths == nil {
+		return nil
+	}
+	normalized := make([]string, 0, len(paths))
+	for _, p := range paths {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			continue
+		}
+		normalized = append(normalized, abs)
+	}
+	return normalized
+}
+
 // ResolveExistingPrefix resolves absPath through symlinks as ResolvePath
 // does, returning absPath unchanged when it cannot be resolved (a symlink
 // loop).
@@ -108,6 +129,16 @@ func absNoClean(path string) (string, error) {
 // exist are appended as written, since a file created there lands there. It
 // reports false for a symlink loop.
 func ResolvePath(absPath string) (string, bool) {
+	// A relative path is taken from the working directory, never from the
+	// filesystem root.
+	if !filepath.IsAbs(absPath) {
+		abs, err := absNoClean(absPath)
+		if err != nil {
+			return "", false
+		}
+		absPath = abs
+	}
+
 	// Fast path: the whole path exists. EvalSymlinks applies ".." to the
 	// resolved prefix, as the kernel does.
 	if real, err := filepath.EvalSymlinks(absPath); err == nil {

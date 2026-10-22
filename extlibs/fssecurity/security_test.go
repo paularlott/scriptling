@@ -471,3 +471,53 @@ func TestConfig_IsPathAllowed_MultibyteNotSplit(t *testing.T) {
 		t.Errorf("a legitimate in-jail file with a multibyte name was denied")
 	}
 }
+
+// Relative allowed paths are made absolute against the working directory, as
+// every library does at registration; nil and empty keep their meanings.
+func TestNormalizeAllowedPaths(t *testing.T) {
+	if NormalizeAllowedPaths(nil) != nil {
+		t.Error("nil (no restriction) must stay nil")
+	}
+	if got := NormalizeAllowedPaths([]string{}); got == nil || len(got) != 0 {
+		t.Errorf("empty (deny all) must stay empty, got %#v", got)
+	}
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(base, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(base)
+	got := NormalizeAllowedPaths([]string{".", "./data", "data/../data", base})
+	want := []string{base, filepath.Join(base, "data"), filepath.Join(base, "data"), base}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("entry %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+	cfg := Config{AllowedPaths: got}
+	if !cfg.IsPathAllowed("data/f.txt") || !cfg.IsPathAllowed("./new.txt") {
+		t.Error("relative paths inside the normalized set should be allowed")
+	}
+}
+
+// ResolvePath takes a relative path from the working directory: "./data" must
+// not resolve to "/data" when it does not exist yet.
+func TestResolvePathRelative(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(base)
+	for in, want := range map[string]string{
+		"./data/new.txt": filepath.Join(base, "data", "new.txt"),
+		"x":              filepath.Join(base, "x"),
+		".":              base,
+	} {
+		got, ok := ResolvePath(in)
+		if !ok || got != want {
+			t.Errorf("ResolvePath(%q) = %q, %v; want %q", in, got, ok, want)
+		}
+	}
+}

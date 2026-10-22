@@ -228,3 +228,33 @@ func TestFilesystemLoaderWithAllowedPaths(t *testing.T) {
 }
 
 func timeAgo() time.Time { return time.Now().Add(-time.Hour) }
+
+// Library directories are often relative: the CLI passes the script's own
+// directory as "." when it is run as "scriptling main.py". A restricted loader
+// must still load from them, and still refuse an escaping link in them.
+func TestRestrictedLoaderRelativeLibraryDirs(t *testing.T) {
+	f := newContainFixture(t)
+	writeFile(t, filepath.Join(f.libs, "local.py"), "LOCAL = 1")
+	writeFile(t, filepath.Join(f.libs, "sub", "nested.py"), "NESTED = 1")
+	writeFile(t, filepath.Join(f.secret, "s.txt"), "SECRET")
+	link(t, filepath.Join(f.secret, "s.txt"), filepath.Join(f.libs, "leak.py"))
+
+	t.Chdir(f.libs)
+	for _, dirs := range [][]string{{"."}, {"./"}, {"sub", "."}} {
+		for _, allowed := range [][]string{{}, {"../shared"}} {
+			m := NewMultiFilesystem(dirs...)
+			m.RestrictTo(allowed)
+			if src, found := load(t, m, "local"); !found || src != "LOCAL = 1" {
+				t.Errorf("dirs=%v allowed=%v: local library = (%v, %q)", dirs, allowed, found, src)
+			}
+			if _, found := load(t, m, "leak"); found {
+				t.Errorf("dirs=%v allowed=%v: escaping link was followed", dirs, allowed)
+			}
+		}
+	}
+	m := NewMultiFilesystem("sub")
+	m.RestrictTo([]string{})
+	if src, found := load(t, m, "nested"); !found || src != "NESTED = 1" {
+		t.Errorf("relative subdirectory library = (%v, %q)", found, src)
+	}
+}
