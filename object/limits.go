@@ -62,9 +62,21 @@ const SampleInterval int64 = 64 << 10
 // when its interpreter goes over its memory limit.
 var ErrMemoryLimitExceeded = stderrors.New("memory limit exceeded")
 
+// TaskBytes is the memory a live background task is charged against its
+// interpreter's memory limit. No allocation point reports a task's cloned
+// environment, evaluator state or goroutine stack, which together measure
+// about 45 KB, so without the charge a script could start tasks until the
+// process ran out of memory while the guard saw almost nothing.
+const TaskBytes int64 = 48 << 10
+
+// ErrTaskLimitExceeded is the error StartTask returns when the interpreter
+// already runs as many background tasks as its limit allows.
+var ErrTaskLimitExceeded = stderrors.New("background task limit reached")
+
 var (
 	defaultMemoryLimit atomic.Int64
 	defaultMaxValue    atomic.Int64
+	defaultMaxTasks    atomic.Int64
 
 	// accountingOn turns memory accounting on for the whole process. It is
 	// sticky: once any memory limit has been configured the allocation points
@@ -167,6 +179,17 @@ func SetDefaultMaxValueBytes(n int64) {
 // there is none.
 func DefaultMaxValueBytes() int64 { return defaultMaxValue.Load() }
 
+// SetDefaultMaxBackgroundTasks sets the process-wide default for how many
+// background tasks one interpreter may have queued or running at once. 0 (or a
+// negative value) means no limit.
+func SetDefaultMaxBackgroundTasks(n int64) {
+	defaultMaxTasks.Store(max(n, 0))
+}
+
+// DefaultMaxBackgroundTasks returns the process-wide default background task
+// limit, 0 when there is none.
+func DefaultMaxBackgroundTasks() int64 { return defaultMaxTasks.Load() }
+
 // MemoryAccountingEnabled reports whether memory accounting is on.
 func MemoryAccountingEnabled() bool { return accountingOn.Load() }
 
@@ -199,12 +222,17 @@ type ResourceUsage struct {
 	// MemoryLimitCancellations counts runs stopped for exceeding the memory
 	// limit.
 	MemoryLimitCancellations uint64
+	// BackgroundTasks is the number of background tasks queued or running.
+	BackgroundTasks int64
 }
 
 // ResourceGuard holds one interpreter's limits and memory accounting.
 type ResourceGuard struct {
 	memLimit atomic.Int64
 	maxValue atomic.Int64
+	maxTasks atomic.Int64
+
+	tasks atomic.Int64 // background tasks queued or running
 
 	used          atomic.Int64
 	peak          atomic.Int64
@@ -239,6 +267,7 @@ func NewResourceGuard() *ResourceGuard {
 	g := &ResourceGuard{}
 	g.memLimit.Store(InheritLimit)
 	g.maxValue.Store(InheritLimit)
+	g.maxTasks.Store(InheritLimit)
 	return g
 }
 
@@ -269,6 +298,61 @@ func (g *ResourceGuard) SetMaxValueBytes(n int64) {
 	lowerValueFloor(n)
 }
 
+// SetMaxBackgroundTasks sets how many background tasks this interpreter may
+// have queued or running at once. 0 means no limit and InheritLimit (or any
+// negative value) follows the process default.
+func (g *ResourceGuard) SetMaxBackgroundTasks(n int64) {
+	if n < 0 {
+		n = InheritLimit
+	}
+	g.maxTasks.Store(n)
+}
+
+// MaxBackgroundTasks returns the background task limit in force, 0 when there
+// is none.
+func (g *ResourceGuard) MaxBackgroundTasks() int64 {
+	if g == nil {
+		return defaultMaxTasks.Load()
+	}
+	if v := g.maxTasks.Load(); v >= 0 {
+		return v
+	}
+	return defaultMaxTasks.Load()
+}
+
+// StartTask accounts for a background task the interpreter is about to queue
+// or start, and returns the function that ends it, to be called exactly once
+// when the task is no longer queued or running. The task counts against the
+// background task limit, and TaskBytes is held against the memory limit for
+// its lifetime. It refuses with ErrTaskLimitExceeded when the task limit is
+// reached and with ErrMemoryLimitExceeded when the charge takes the
+// interpreter over its memory limit (its runs are then cancelled, as for any
+// allocation over the limit).
+func (g *ResourceGuard) StartTask() (end func(), err error) {
+	if g == nil {
+		return func() {}, nil
+	}
+	n := g.tasks.Add(1)
+	if lim := g.MaxBackgroundTasks(); lim > 0 && n > lim {
+		g.tasks.Add(-1)
+		return nil, fmt.Errorf("%w: %d tasks are queued or running, the limit is %d", ErrTaskLimitExceeded, n-1, lim)
+	}
+	var charged int64
+	if lim := g.MemoryLimit(); lim > 0 {
+		g.charge(TaskBytes)
+		charged = TaskBytes
+		if g.used.Load() > lim {
+			g.used.Add(-charged)
+			g.tasks.Add(-1)
+			return nil, ErrMemoryLimitExceeded
+		}
+	}
+	return func() {
+		g.used.Add(-charged)
+		g.tasks.Add(-1)
+	}, nil
+}
+
 // needsBinding reports whether goroutines running this interpreter must be
 // bound to it: once memory accounting or any value limit exists in the
 // process. Binding an interpreter with no limits of its own matters too,
@@ -288,6 +372,7 @@ func (g *ResourceGuard) CopyLimits(from *ResourceGuard) {
 	}
 	g.SetMemoryLimit(from.memLimit.Load())
 	g.SetMaxValueBytes(from.maxValue.Load())
+	g.SetMaxBackgroundTasks(from.maxTasks.Load())
 }
 
 // MemoryLimit returns the memory limit in force, 0 when there is none.
@@ -319,6 +404,7 @@ func (g *ResourceGuard) Usage() ResourceUsage {
 		PeakMemoryBytes:          g.peak.Load(),
 		AllocatedBytes:           g.allocated.Load(),
 		MemoryLimitCancellations: g.cancellations.Load(),
+		BackgroundTasks:          g.tasks.Load(),
 	}
 }
 

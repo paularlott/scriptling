@@ -167,6 +167,14 @@ func buildRootCommand() *cli.Command {
 				EnvVars:      []string{"SCRIPTLING_MAX_VALUE_BYTES"},
 				ConfigPath:   []string{"limits.max_value_bytes"},
 			},
+			&cli.Int64Flag{
+				Name:         "max-background-tasks",
+				Usage:        "Most scriptling.runtime.background tasks each interpreter may have queued or running at once (0 = no limit)",
+				DefaultValue: 0,
+				Global:       true,
+				EnvVars:      []string{"SCRIPTLING_MAX_BACKGROUND_TASKS"},
+				ConfigPath:   []string{"limits.max_background_tasks"},
+			},
 			&cli.StringFlag{
 				Name:    "code",
 				Usage:   "Execute inline code string",
@@ -454,6 +462,7 @@ func buildRootCommand() *cli.Command {
 			scriptling.SetProgramCacheMaxBytes(programCacheBudget(cmd.GetInt64("program-cache-max-bytes")))
 			scriptling.SetMemoryLimit(max(cmd.GetInt64("memory-limit"), 0))
 			scriptling.SetMaxValueBytes(max(cmd.GetInt64("max-value-bytes"), 0))
+			scriptling.SetMaxBackgroundTasks(max(cmd.GetInt64("max-background-tasks"), 0))
 
 			// JSON-RPC stdio mode uses stdout as the protocol stream, so logs
 			// must go to stderr to avoid corrupting responses.

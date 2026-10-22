@@ -2,6 +2,7 @@ package extlibs
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"os"
@@ -159,6 +160,19 @@ func ResetRuntime() {
 	RuntimeState.Lock()
 	defer RuntimeState.Unlock()
 
+	// Queued tasks are dropped and will never run: end their accounting so
+	// their interpreter's task count and memory charge do not stay held.
+	// Running tasks end theirs when they finish.
+	for _, promise := range RuntimeState.BackgroundPromises {
+		promise.mu.Lock()
+		end := promise.endTask
+		promise.endTask = nil
+		promise.mu.Unlock()
+		if end != nil {
+			end()
+		}
+	}
+
 	RuntimeState.Routes = make(map[string]*RouteInfo)
 	RuntimeState.Middleware = ""
 	RuntimeState.NotFoundHandler = ""
@@ -220,6 +234,10 @@ type Promise struct {
 	result object.Object
 	err    error
 	name   string // background task name, for failure reporting
+
+	// endTask ends the task's accounting on its interpreter's guard (see
+	// ResourceGuard.StartTask); releaseTaskName calls it once.
+	endTask func()
 }
 
 // newPromise creates a promise for the named background task. The name is used
@@ -246,7 +264,17 @@ func claimTaskName(name string) (*Promise, bool) {
 // running, so the name can be reused. The promise identity check keeps a
 // finishing task from evicting a later task registered under the same name.
 func releaseTaskName(promise *Promise) {
-	if promise == nil || promise.name == "" {
+	if promise == nil {
+		return
+	}
+	promise.mu.Lock()
+	end := promise.endTask
+	promise.endTask = nil
+	promise.mu.Unlock()
+	if end != nil {
+		end()
+	}
+	if promise.name == "" {
 		return
 	}
 	RuntimeState.Lock()
@@ -471,6 +499,18 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 					releaseTaskName(promise)
 				}
 			}()
+
+			// Count the task against the interpreter's background task limit
+			// and charge what it holds against the memory limit, from now
+			// until releaseTaskName: queued tasks count too.
+			end, taskErr := env.ResourceGuard().StartTask()
+			if taskErr != nil {
+				if goerrors.Is(taskErr, object.ErrMemoryLimitExceeded) {
+					return errors.NewMemoryLimitStopError()
+				}
+				return &object.Error{Message: taskErr.Error(), ExceptionType: object.ExceptionTypeRuntimeError}
+			}
+			promise.endTask = end
 
 			if shared {
 				handedOff = true

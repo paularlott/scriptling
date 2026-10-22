@@ -7,9 +7,10 @@ import (
 
 // Resource limits.
 //
-// Each interpreter has two limits. Each follows a process-wide default
+// Each interpreter has three limits. Each follows a process-wide default
 // unless the interpreter sets its own, either when it is created (WithMemoryLimit,
-// WithMaxValueBytes) or later (the methods of the same names).
+// WithMaxValueBytes, WithMaxBackgroundTasks) or later (the methods of the same
+// names).
 // Nothing is limited until a limit is set: every default is off.
 //
 //   - Memory limit: the estimated memory held by the strings, bytes values and
@@ -19,6 +20,11 @@ import (
 //   - Value limit: the largest single string, bytes value or container one
 //     operation may create, including read bodies and captured output. Going
 //     over raises MemoryError in the script. Off by default.
+//   - Background task limit: how many scriptling.runtime.background tasks the
+//     interpreter may have queued or running at once. Starting one more raises
+//     RuntimeError in the script. Off by default. Under a memory limit each
+//     live task is also charged object.TaskBytes, the memory its environment
+//     and goroutine hold that no allocation point reports.
 //
 // Bound running time with the context passed to EvalWithContext and the
 // other *WithContext calls.
@@ -64,6 +70,18 @@ func MaxValueBytes() int64 {
 	return object.DefaultMaxValueBytes()
 }
 
+// SetMaxBackgroundTasks sets the default background task limit for every
+// interpreter that does not set its own. 0 means no limit.
+func SetMaxBackgroundTasks(n int64) {
+	object.SetDefaultMaxBackgroundTasks(n)
+}
+
+// MaxBackgroundTasks returns the default background task limit, 0 when there
+// is none.
+func MaxBackgroundTasks() int64 {
+	return object.DefaultMaxBackgroundTasks()
+}
+
 // Option configures an interpreter when it is created by New.
 type Option func(*Scriptling)
 
@@ -77,6 +95,25 @@ func WithMemoryLimit(limitBytes int64) Option {
 // no limit whatever the default.
 func WithMaxValueBytes(limitBytes int64) Option {
 	return func(p *Scriptling) { p.SetMaxValueBytes(limitBytes) }
+}
+
+// WithMaxBackgroundTasks gives the interpreter its own background task limit;
+// 0 means no limit whatever the default.
+func WithMaxBackgroundTasks(n int64) Option {
+	return func(p *Scriptling) { p.SetMaxBackgroundTasks(n) }
+}
+
+// SetMaxBackgroundTasks sets how many background tasks this interpreter may
+// have queued or running at once. 0 means no limit; InheritLimit returns it to
+// the process default.
+func (p *Scriptling) SetMaxBackgroundTasks(n int64) {
+	p.guard.SetMaxBackgroundTasks(n)
+}
+
+// MaxBackgroundTasks returns the background task limit in force for this
+// interpreter, 0 when there is none.
+func (p *Scriptling) MaxBackgroundTasks() int64 {
+	return p.guard.MaxBackgroundTasks()
 }
 
 // SetMemoryLimit sets this interpreter's memory limit in bytes. 0 means no
