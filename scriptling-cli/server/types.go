@@ -106,6 +106,13 @@ type ServerConfig struct {
 	// Set to non-empty only for browser-based use (e.g. testing against
 	// examples/mcp-app-host-harness from a different origin).
 	MCPCorsOrigins []string
+
+	// AllowedHosts lists the Host names the server answers besides its
+	// defaults (see hostPolicy): exact names, or ".example.com" for a domain
+	// and its subdomains. A server bound to loopback answers only loopback
+	// names unless they are listed here, which defeats DNS rebinding; one
+	// bound elsewhere answers every Host unless this is set.
+	AllowedHosts []string
 }
 
 // serveSet returns the set of protocols the app bundle declares in its
@@ -157,6 +164,7 @@ type Server struct {
 	middleware            string
 	notFoundHandler       string
 	staticRoutes          map[string]staticRoute
+	hosts                 hostPolicy
 	webRootZip            *zip.ReadCloser // non-nil when WebRoot is a .zip file
 	webRootZipFS          zipWebRoot      // index of webRootZip's servable files
 	mu                    sync.RWMutex

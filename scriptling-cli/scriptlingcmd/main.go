@@ -311,6 +311,12 @@ func buildRootCommand() *cli.Command {
 				EnvVars:    []string{"SCRIPTLING_MCP_CORS_ORIGIN"},
 				ConfigPath: []string{"server.mcp_cors_origins"},
 			},
+			&cli.StringSliceFlag{
+				Name:       "allowed-hosts",
+				Usage:      "Host name the HTTP server answers (repeatable, \".example.com\" for a domain and subdomains); a loopback-bound server answers only loopback names otherwise, blocking DNS rebinding",
+				EnvVars:    []string{"SCRIPTLING_ALLOWED_HOSTS"},
+				ConfigPath: []string{"server.allowed_hosts"},
+			},
 			&cli.StringFlag{
 				Name:         "allowed-paths",
 				Usage:        "Comma-separated list of allowed filesystem paths (restricts os, pathlib, glob, sandbox)",
@@ -1027,6 +1033,7 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		MaxRequestBodyBytes: cmd.GetInt64("max-request-body"),
 		WebSocketOrigins:    cmd.GetStringSlice("websocket-origin"),
 		MCPCorsOrigins:      cmd.GetStringSlice("mcp-cors-origin"),
+		AllowedHosts:        cmd.GetStringSlice("allowed-hosts"),
 		AllowedPaths:        bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
 		NetworkPolicy:       mustLoadPolicy(cmd),
 		DisabledLibs:        effectiveDisabledLibs(cmd),

@@ -1,0 +1,170 @@
+package server
+
+import (
+	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestHostPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		listen  string
+		allowed []string
+		host    string
+		want    bool
+	}{
+		// Bound to loopback: loopback names only.
+		{"127.0.0.1:8000", nil, "127.0.0.1:8000", true},
+		{"127.0.0.1:8000", nil, "localhost:8000", true},
+		{"127.0.0.1:8000", nil, "LOCALHOST.:8000", true},
+		{"127.0.0.1:8000", nil, "app.localhost:8000", true},
+		{"127.0.0.1:8000", nil, "[::1]:8000", true},
+		{"[::1]:8000", nil, "localhost", true},
+		{"localhost:8000", nil, "127.0.0.2:8000", true},
+		{"127.0.0.1:8000", nil, "rebind.evil:8000", false},
+		{"127.0.0.1:8000", nil, "localhost.evil:8000", false},
+		{"127.0.0.1:8000", nil, "192.168.1.5:8000", false},
+		{"127.0.0.1:8000", nil, "", false},
+		{"127.0.0.1:8000", []string{"app.example.com"}, "app.example.com:8000", true},
+		{"127.0.0.1:8000", []string{".example.com"}, "x.example.com", true},
+		{"127.0.0.1:8000", []string{".example.com"}, "example.com", true},
+		{"127.0.0.1:8000", []string{".example.com"}, "evilexample.com", false},
+		// Bound elsewhere: everything, unless AllowedHosts is set.
+		{":8000", nil, "rebind.evil:8000", true},
+		{"0.0.0.0:8000", nil, "anything", true},
+		{":8000", []string{"app.example.com"}, "app.example.com", true},
+		{":8000", []string{"app.example.com"}, "192.168.1.5:8000", true},
+		{":8000", []string{"app.example.com"}, "localhost:8000", true},
+		{":8000", []string{"app.example.com"}, "rebind.evil:8000", false},
+	} {
+		if got := newHostPolicy(tc.listen, tc.allowed).allows(tc.host); got != tc.want {
+			t.Errorf("listen %q allowed %v: Host %q = %v, want %v", tc.listen, tc.allowed, tc.host, got, tc.want)
+		}
+	}
+}
+
+func rebindRequest(t *testing.T, tsURL, method, path, host, body string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, tsURL+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = host
+	req.Header.Set("Origin", "http://"+host)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// DNS rebinding made a page on an attacker's name same-origin with a local
+// server: the browser sends the attacker's name as both Origin and Host, and
+// the same-origin default accepted Origin == Host, so any website could call
+// /mcp (execute_script included) and read the result (CWE-346, strix 4250
+// vuln-0010). A loopback-bound server now answers only loopback Host names,
+// on every endpoint, before any route runs.
+func TestDNSRebindingRefusedOnLoopbackBind(t *testing.T) {
+	s := buildMinimalMCPServer(t, nil)
+	s.config.Address = "127.0.0.1:8000"
+	s.config.JSONRPC = true
+	s.hosts = newHostPolicy(s.config.Address, nil)
+	s.handlers = map[string]string{"GET /hello": "lib.hello"}
+	s.wsHandlers = map[string]string{"/ws": "lib.ws"}
+	ts := httptest.NewServer(s.buildMux())
+	defer ts.Close()
+
+	list := `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
+	for _, rq := range []struct{ method, path, body string }{
+		{"POST", "/mcp", list},
+		{"POST", "/json-rpc", `{"jsonrpc":"2.0","id":1,"method":"x"}`},
+		{"GET", "/health", ""},
+		{"GET", "/hello", ""},
+		{"GET", "/ws", ""},
+	} {
+		resp := rebindRequest(t, ts.URL, rq.method, rq.path, "rebind.evil:8000", rq.body)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusMisdirectedRequest {
+			t.Errorf("%s %s with a rebound Host = %d %q, want 421", rq.method, rq.path, resp.StatusCode, body)
+		}
+	}
+
+	// The legitimate local client still works, by IP and by localhost.
+	for _, host := range []string{"127.0.0.1:8000", "localhost:8000"} {
+		resp := rebindRequest(t, ts.URL, "POST", "/mcp", host, list)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || !bytes.Contains(body, []byte("greet")) {
+			t.Errorf("same-origin %s: %d %q", host, resp.StatusCode, body)
+		}
+	}
+}
+
+// A server bound to every interface answers every Host by default (it cannot
+// know its public names); --allowed-hosts opts it into checking.
+func TestHostCheckOnWildcardBind(t *testing.T) {
+	list := `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
+	s := buildMinimalMCPServer(t, nil)
+	s.config.Address = ":8000"
+	s.hosts = newHostPolicy(s.config.Address, nil)
+	ts := httptest.NewServer(s.buildMux())
+	resp := rebindRequest(t, ts.URL, "POST", "/mcp", "myserver.lan:8000", list)
+	resp.Body.Close()
+	ts.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("wildcard bind without allowed hosts: %d", resp.StatusCode)
+	}
+
+	s.hosts = newHostPolicy(":8000", []string{"myserver.lan"})
+	ts = httptest.NewServer(s.buildMux())
+	defer ts.Close()
+	for host, want := range map[string]int{
+		"myserver.lan:8000": http.StatusOK,
+		"192.168.1.5:8000":  http.StatusOK,
+		"rebind.evil:8000":  http.StatusMisdirectedRequest,
+		"localhost:8000":    http.StatusOK,
+	} {
+		resp := rebindRequest(t, ts.URL, "POST", "/mcp", host, list)
+		resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Errorf("Host %s = %d, want %d", host, resp.StatusCode, want)
+		}
+	}
+}
+
+// The same-origin rule no longer accepts Origin == Host by itself.
+func TestSameOriginRequiresAnsweredHost(t *testing.T) {
+	r := httptest.NewRequest("POST", "/mcp", nil)
+	r.Host = "rebind.evil:8000"
+	r.Header.Set("Origin", "http://rebind.evil:8000")
+	if browserOriginAllowed(r, nil, newHostPolicy("127.0.0.1:8000", nil)) {
+		t.Fatal("a rebound Origin == Host was accepted as same-origin on a loopback bind")
+	}
+	r.Host = "localhost:8000"
+	r.Header.Set("Origin", "http://localhost:8000")
+	if !browserOriginAllowed(r, nil, newHostPolicy("127.0.0.1:8000", nil)) {
+		t.Fatal("a genuine same-origin request was refused")
+	}
+}
+
+// The script execution tool over HTTP requires a bearer token; over stdio it
+// does not.
+func TestExecToolOverHTTPRequiresBearerToken(t *testing.T) {
+	_, err := NewServer(ServerConfig{Address: "127.0.0.1:0", MCPExecTool: true})
+	if err == nil || !strings.Contains(err.Error(), "requires --bearer-token") {
+		t.Fatalf("expected a bearer-token error, got %v", err)
+	}
+	for name, cfg := range map[string]ServerConfig{
+		"with token": {Address: "127.0.0.1:0", MCPExecTool: true, BearerToken: "t"},
+		"stdio":      {MCPExecTool: true},
+	} {
+		if _, err := NewServer(cfg); err != nil && strings.Contains(err.Error(), "bearer-token") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}

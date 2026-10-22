@@ -29,7 +29,7 @@ var websocketUpgrader = websocket.Upgrader{
 // default; a configured list is an exact-match allowlist, and "*" opts out
 // for deployments behind a trusted proxy.
 func (s *Server) websocketOriginAllowed(r *http.Request) bool {
-	return browserOriginAllowed(r, s.config.WebSocketOrigins)
+	return browserOriginAllowed(r, s.config.WebSocketOrigins, s.hosts)
 }
 
 // browserOriginAllowed applies an origin allowlist policy shared by every
@@ -40,7 +40,7 @@ func (s *Server) websocketOriginAllowed(r *http.Request) bool {
 // allowlist (trailing slash and case ignored); "*" opts out entirely for
 // deployments that want it (e.g. behind a trusted proxy, or a deliberately
 // open browser-testing tool).
-func browserOriginAllowed(r *http.Request, allowedOrigins []string) bool {
+func browserOriginAllowed(r *http.Request, allowedOrigins []string, hosts hostPolicy) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		return true
@@ -66,7 +66,11 @@ func browserOriginAllowed(r *http.Request, allowedOrigins []string) bool {
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	return strings.EqualFold(parsed.Scheme, scheme) && strings.EqualFold(parsed.Host, r.Host)
+	// Origin == Host alone is no proof: under DNS rebinding the browser sends
+	// the attacker's name as both. The Host must also be one the server
+	// answers (hostCheckMiddleware refuses the rest before this runs; this
+	// keeps the same-origin rule sound on its own).
+	return strings.EqualFold(parsed.Scheme, scheme) && strings.EqualFold(parsed.Host, r.Host) && hosts.allows(r.Host)
 }
 
 // websocketUpgraderFor returns the upgrader bound to this server's origin

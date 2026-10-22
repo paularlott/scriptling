@@ -117,7 +117,7 @@ func registerRoute(mux *http.ServeMux, pattern string, handler http.HandlerFunc)
 // requests (no Origin header — including a server-to-server caller like a
 // gateway federating this server, which is never subject to CORS in the
 // first place) pass through untouched.
-func mcpCorsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
+func mcpCorsMiddleware(allowedOrigins []string, hosts hostPolicy, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		if origin == "" {
@@ -125,7 +125,7 @@ func mcpCorsMiddleware(allowedOrigins []string, next http.Handler) http.Handler 
 			return
 		}
 
-		if !browserOriginAllowed(r, allowedOrigins) {
+		if !browserOriginAllowed(r, allowedOrigins, hosts) {
 			http.Error(w, "Origin not allowed", http.StatusForbidden)
 			return
 		}
@@ -194,7 +194,7 @@ func (s *Server) buildMux() http.Handler {
 	mux := http.NewServeMux()
 
 	if s.mcpHandler != nil {
-		mcp := mcpCorsMiddleware(s.config.MCPCorsOrigins, s.scriptProtocolMiddleware(sseWriteDeadline(s.mcpHandler)))
+		mcp := mcpCorsMiddleware(s.config.MCPCorsOrigins, s.hosts, s.scriptProtocolMiddleware(sseWriteDeadline(s.mcpHandler)))
 		mux.Handle("POST /mcp", mcp)
 		mux.Handle("GET /mcp", mcp)
 		mux.Handle("DELETE /mcp", mcp)
@@ -261,6 +261,9 @@ func (s *Server) buildMux() http.Handler {
 	// Body caps apply outermost so no route, protocol endpoint or fallback
 	// can buffer past the limit.
 	handler = s.bodyLimitMiddleware(handler)
+	// A Host the server does not answer (DNS rebinding) is refused before
+	// anything else runs.
+	handler = s.hostCheckMiddleware(handler)
 	return handler
 }
 

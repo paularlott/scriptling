@@ -40,19 +40,19 @@ Point any MCP client at `http://localhost:8000/mcp` with an
 
 ```bash
 # alice sees greet + alpha_tool
-curl -s -H 'Authorization: Bearer alice-key' \
+curl -s -H 'Content-Type: application/json' -H 'Authorization: Bearer alice-key' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' localhost:8000/mcp
 
 # bob sees greet + beta_tool + gamma_tool
-curl -s -H 'Authorization: Bearer bob-key' \
+curl -s -H 'Content-Type: application/json' -H 'Authorization: Bearer bob-key' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' localhost:8000/mcp
 
 # and can call one of his own tools
-curl -s -H 'Authorization: Bearer bob-key' \
+curl -s -H 'Content-Type: application/json' -H 'Authorization: Bearer bob-key' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"beta_tool","arguments":{"x":"hi"}}}' localhost:8000/mcp
 
 # but alice cannot — the middleware for her request never registered it
-curl -s -H 'Authorization: Bearer alice-key' \
+curl -s -H 'Content-Type: application/json' -H 'Authorization: Bearer alice-key' \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"beta_tool","arguments":{"x":"hi"}}}' localhost:8000/mcp
 ```
 

@@ -18,6 +18,12 @@ import (
 
 // NewServer creates a new HTTP server
 func NewServer(config ServerConfig) (*Server, error) {
+	// The script execution tool runs arbitrary code; over HTTP it must not be
+	// reachable without a credential (a page in the user's browser can reach
+	// a local server).
+	if config.Address != "" && config.MCPExecTool && config.BearerToken == "" {
+		return nil, fmt.Errorf("--mcp-exec-script with --server requires --bearer-token: the script execution tool runs arbitrary code")
+	}
 	s := &Server{
 		config:               config,
 		handlers:             make(map[string]string),
@@ -28,6 +34,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 		bearerExpected:       "Bearer " + config.BearerToken,
 		scriptDone:           make(chan struct{}),
 		serverRunningCh:      make(chan struct{}),
+		hosts:                newHostPolicy(config.Address, config.AllowedHosts),
 	}
 
 	// Pre-opened bundles take precedence over legacy package sources. The app
