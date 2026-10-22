@@ -103,34 +103,55 @@ func declareUIAppsSupport(client *mcplib.Client) {
 // invalid policy fails closed rather than falling back to unrestricted
 // access). Stdio clients launch a local subprocess and are unaffected — the
 // policy only governs network access. Omitting cfg preserves the previous,
-// unrestricted behaviour.
+// unrestricted behaviour. Register allows stdio servers; hosts that disable
+// subprocesses use RegisterConfigured to refuse them.
 //
 // First call with no cfg builds and caches the unrestricted library;
 // subsequent calls just register it. A call with cfg always builds a fresh,
 // guard-bound library.
 func Register(registrar interface{ RegisterLibrary(*object.Library) }, cfg ...*netsecurity.Config) {
-	lib := defaultLibrary()
-	if len(cfg) > 0 && cfg[0] != nil {
-		guard, gerr := netsecurity.NewGuard(cfg[0])
-		if gerr != nil {
-			guard = netsecurity.FailClosed(gerr)
-		}
-		lib = buildLibrary(guard)
+	var policy *netsecurity.Config
+	if len(cfg) > 0 {
+		policy = cfg[0]
 	}
-	registrar.RegisterLibrary(lib)
+	RegisterConfigured(registrar, policy, true)
+}
+
+// RegisterConfigured is Register with control over stdio servers. A stdio
+// server is a subprocess the script names and starts, so it is only allowed
+// where the host allows subprocesses: with allowProcesses false, mcp.Client()
+// refuses any target that is not an http(s) URL. Hosts that disable the
+// subprocess library pass false so mcp.Client() cannot be used to run
+// programs instead. policy is the optional outbound network policy for HTTP
+// clients, as for Register.
+func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, policy *netsecurity.Config, allowProcesses bool) {
+	if policy == nil && allowProcesses {
+		registrar.RegisterLibrary(defaultLibrary())
+		return
+	}
+	var guard *netsecurity.Guard
+	if policy != nil {
+		g, gerr := netsecurity.NewGuard(policy)
+		if gerr != nil {
+			g = netsecurity.FailClosed(gerr)
+		}
+		guard = g
+	}
+	registrar.RegisterLibrary(buildLibrary(guard, allowProcesses))
 }
 
 // defaultLibrary returns the cached, unrestricted library (thread-safe singleton).
 func defaultLibrary() *object.Library {
 	libraryOnce.Do(func() {
-		library = buildLibrary(nil)
+		library = buildLibrary(nil, true)
 	})
 	return library
 }
 
 // buildLibrary builds the MCP library. A nil guard leaves HTTP clients
-// created by mcp.Client() unrestricted (the previous behaviour).
-func buildLibrary(guard *netsecurity.Guard) *object.Library {
+// created by mcp.Client() unrestricted (the previous behaviour);
+// allowProcesses false refuses stdio servers.
+func buildLibrary(guard *netsecurity.Guard, allowProcesses bool) *object.Library {
 	return object.NewLibraryBuilder(MCPLibraryName, MCPLibraryDesc).
 
 		// decode_response(response) - Decode a raw MCP tool response
@@ -214,7 +235,10 @@ Example:
 				return createClientInstance(client), nil
 			}
 
-			// stdio server: target is the command to launch.
+			// stdio server: target is the command to launch, a subprocess.
+			if !allowProcesses {
+				return nil, fmt.Errorf("mcp.Client: stdio servers start a subprocess, which is disabled here; connect to an http(s) URL instead of %q", target)
+			}
 			if kwargs.Has("bearer_token") {
 				return nil, fmt.Errorf("mcp.Client: 'bearer_token' is only valid for HTTP servers, not command %q", target)
 			}
@@ -263,6 +287,8 @@ Example:
 Creates a client for a remote MCP server. The transport is chosen from target:
 an "http://" or "https://" URL connects over HTTP; any other value is treated
 as a local executable that is launched as a stdio MCP server subprocess.
+Stdio servers are refused where the host disables subprocesses (for example
+--no-subprocess or --disable-lib subprocess in the CLI).
 
 Parameters:
   target (str): HTTP(S) URL of the server, or path/command of a stdio server

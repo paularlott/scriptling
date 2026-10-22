@@ -328,7 +328,7 @@ func buildRootCommand() *cli.Command {
 			},
 			&cli.BoolFlag{
 				Name:       "no-subprocess",
-				Usage:      "Do not register the subprocess library",
+				Usage:      "Do not register the subprocess library (also refuses stdio MCP servers in scriptling.mcp)",
 				EnvVars:    []string{"SCRIPTLING_NO_SUBPROCESS"},
 				ConfigPath: []string{"security.no_subprocess"},
 			},

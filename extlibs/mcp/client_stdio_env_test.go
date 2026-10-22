@@ -17,6 +17,9 @@ import (
 // child process.
 const childModeEnv = "SCRIPTLING_MCP_TEST_CHILD"
 
+// childMarkerEnv names a file the child writes as soon as it starts.
+const childMarkerEnv = "SCRIPTLING_MCP_TEST_MARKER"
+
 func TestMain(m *testing.M) {
 	if os.Getenv(childModeEnv) == "1" {
 		runChildMCPServer()
@@ -26,6 +29,10 @@ func TestMain(m *testing.M) {
 }
 
 func runChildMCPServer() {
+	// Leave a marker so tests can prove whether a child was ever started.
+	if marker := os.Getenv(childMarkerEnv); marker != "" {
+		_ = os.WriteFile(marker, []byte("started"), 0o644)
+	}
 	s := mcplib.NewServer("scriptling-mcp-test", "0.0.0")
 	s.RegisterTool(
 		mcplib.NewTool("env", "Read an environment variable",

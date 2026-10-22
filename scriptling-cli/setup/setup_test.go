@@ -3,6 +3,7 @@ package setup
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	logslog "github.com/paularlott/logger/slog"
@@ -110,5 +111,50 @@ func TestScriptlingLibraryLoaderRelativeDirs(t *testing.T) {
 				t.Errorf("allowed=%v: %q not loadable from a relative library directory (found=%v err=%v)", allowed, name, found, err)
 			}
 		}
+	}
+}
+
+// Disabling the subprocess library (--no-subprocess, --disable-lib subprocess)
+// also refuses stdio MCP servers, which are subprocesses; HTTP MCP clients and
+// the default (subprocesses allowed) are unaffected (vuln-0013).
+func TestScriptlingMCPStdioFollowsSubprocessPermission(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	// The stdio client starts its process on first use, so call it: /bin/sh
+	// is not an MCP server and the call fails, but only after it has run.
+	script := `import scriptling.mcp as mcp
+c = mcp.Client("/bin/sh", args=["-c", "touch ` + marker + `"])
+try:
+    c.tools()
+except Exception:
+    pass`
+
+	run := func(disabled []string) error {
+		p := scriptling.New()
+		Scriptling(p, nil, false, nil, disabled, nil, logslog.New(logslog.Config{Level: "error"}), "", "")
+		_, err := p.Eval(script)
+		return err
+	}
+
+	err := run([]string{"subprocess"})
+	if err == nil || !strings.Contains(err.Error(), "subprocess") {
+		t.Fatalf("with subprocess disabled, a stdio MCP client must be refused, got: %v", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatal("the command ran despite subprocess being disabled")
+	}
+
+	p := scriptling.New()
+	Scriptling(p, nil, false, nil, []string{"subprocess"}, nil, logslog.New(logslog.Config{Level: "error"}), "", "")
+	if _, err := p.Eval(`import scriptling.mcp as mcp
+mcp.Client("https://example.com/mcp")`); err != nil {
+		t.Fatalf("HTTP MCP clients should still work with subprocess disabled: %v", err)
+	}
+
+	// Default: subprocesses allowed, so the stdio server is started.
+	if err := run(nil); err != nil {
+		t.Fatalf("with subprocess allowed the stdio client must not be refused: %v", err)
+	}
+	if _, statErr := os.Stat(marker); statErr != nil {
+		t.Fatal("with subprocess allowed the stdio server should have been started")
 	}
 }

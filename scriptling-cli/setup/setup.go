@@ -212,7 +212,11 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(slack.LibraryName, func() { slack.Register(p, log, netPolicy...) })
 	reg(messagingconsole.LibraryName, func() { messagingconsole.Register(p) })
 
-	reg(extlibs.MCPLibraryName, func() { scriptlingmcp.Register(p, netPolicy...) })
+	reg(extlibs.MCPLibraryName, func() {
+		// A stdio MCP server is a subprocess: allow it only where the
+		// subprocess library is allowed.
+		scriptlingmcp.RegisterConfigured(p, firstPolicy(netPolicy), !disabled[extlibs.SubprocessLibraryName])
+	})
 	reg(extlibs.ToonLibraryName, func() { scriptlingmcp.RegisterToon(p) })
 	if !disabled[extlibs.MCPLibraryName] {
 		scriptlingmcp.RegisterToolHelpers(p)
