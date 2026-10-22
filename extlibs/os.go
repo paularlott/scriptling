@@ -421,20 +421,22 @@ Creates a directory and all parent directories as needed.`,
 				if errObj := checkPathSecurity(o.config, dst); errObj != nil {
 					return errObj
 				}
-				// Defense in depth: a link whose (existing) target resolves
-				// outside the allowed set is denied at creation too, even
-				// though reads through it would already be caught by
-				// symlink resolution. Dangling targets cannot be resolved
-				// and are allowed.
+				absDst, _ := filepath.Abs(dst)
+				// A link whose target lands outside the allowed set is denied
+				// at creation, so an escaping link cannot be planted even
+				// though a later write through it would also be caught. The
+				// target of a RELATIVE src is resolved against the link's own
+				// directory, exactly as the kernel resolves it when the link
+				// is followed — not against the process working directory.
 				if o.config.AllowedPaths != nil {
-					absSrc, err := filepath.Abs(src)
-					if err == nil {
-						if resolved := fssecurity.ResolveExistingPrefix(filepath.Clean(absSrc)); resolved != "" && !o.config.IsPathAllowed(resolved) {
-							return errors.NewPermissionError("access denied: symlink target '%s' is outside allowed directories", src)
-						}
+					target := src
+					if !filepath.IsAbs(target) {
+						target = filepath.Join(filepath.Dir(absDst), target)
+					}
+					if resolved := fssecurity.ResolveExistingPrefix(target); !o.config.IsPathAllowed(resolved) {
+						return errors.NewPermissionError("access denied: symlink target '%s' is outside allowed directories", src)
 					}
 				}
-				absDst, _ := filepath.Abs(dst)
 				if err := os.Symlink(src, absDst); err != nil {
 					return errors.NewError("symlink: %s", err.Error())
 				}

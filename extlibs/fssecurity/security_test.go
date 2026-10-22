@@ -330,3 +330,144 @@ func TestConfig_IsPathAllowed_MultipleAllowedPaths(t *testing.T) {
 		t.Errorf("Path outside allowed directories should be denied")
 	}
 }
+
+// A DANGLING symlink inside the allowed directory (its target does not exist
+// yet) must be followed to where it points, not treated as a plain file.
+// EvalSymlinks fails on a dangling link, so the previous resolver fell back
+// to the link's own path and wrongly allowed a write that the kernel would
+// land outside the jail. Covers relative, absolute, chained and
+// link-then-more-path forms, for a write (CWE-22, vuln-0011).
+func TestConfig_IsPathAllowed_DanglingSymlinkEscape(t *testing.T) {
+	base, err := os.MkdirTemp("", "fssecurity_dangle")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	jail := filepath.Join(base, "jail")
+	outside := filepath.Join(base, "outside")
+	for _, d := range []string{jail, filepath.Join(jail, "sub"), outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mklink := func(name, target string) string {
+		p := filepath.Join(jail, name)
+		if err := os.Symlink(target, p); err != nil {
+			t.Skipf("symlinks unsupported: %v", err)
+		}
+		return p
+	}
+	config := Config{AllowedPaths: []string{jail}}
+
+	// Dangling links (targets do not exist) pointing outside the jail.
+	relLink := mklink("rel", filepath.Join("..", "outside", "planted.txt"))
+	absLink := mklink("abs", filepath.Join(outside, "planted2.txt"))
+	dirLink := mklink("dir", outside) // existing dir, path continues through it
+	chain := mklink("chain", "rel")   // link -> link -> outside
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{"relative dangling link", relLink},
+		{"absolute dangling link", absLink},
+		{"write through link to existing outside dir", filepath.Join(dirLink, "new.txt")},
+		{"chained links", chain},
+		{"link then non-existent components", filepath.Join(dirLink, "a", "b.txt")},
+	} {
+		if config.IsPathAllowed(tc.path) {
+			t.Errorf("%s: %s should be denied (escapes the jail)", tc.name, tc.path)
+		}
+	}
+
+	// A dangling link pointing to a NEW file inside the jail is still allowed.
+	insideLink := mklink("inside", filepath.Join("sub", "willcreate.txt"))
+	if !config.IsPathAllowed(insideLink) {
+		t.Errorf("dangling link to a new path inside the jail should be allowed: %s", insideLink)
+	}
+}
+
+// "link/.." means the parent of the link's TARGET to the kernel, so a path
+// that is lexically inside the jail can resolve outside it. filepath.Clean
+// would collapse "link/.." to the jail before any symlink is followed, which
+// wrongly allowed it; ResolvePath must apply ".." only after resolving the
+// link (vuln-0011, lexical-clean variant).
+func TestConfig_IsPathAllowed_SymlinkParentEscape(t *testing.T) {
+	base, err := os.MkdirTemp("", "fssecurity_parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	jail := filepath.Join(base, "jail")
+	outsideSub := filepath.Join(base, "outside", "a")
+	if err := os.MkdirAll(outsideSub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(jail, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// jail/l -> <base>/outside/a ; so jail/l/../secret resolves to
+	// <base>/outside/secret, outside the jail.
+	if err := os.Symlink(outsideSub, filepath.Join(jail, "l")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	config := Config{AllowedPaths: []string{jail}}
+	// Build the path literally: filepath.Join would clean "l/.." away
+	// before any symlink is considered, which is the bug under test.
+	escaping := jail + string(os.PathSeparator) + "l" + string(os.PathSeparator) + ".." + string(os.PathSeparator) + "secret.txt"
+	if config.IsPathAllowed(escaping) {
+		t.Errorf("%s resolves outside the jail and must be denied", escaping)
+	}
+}
+
+// A symlink loop must fail closed (denied), not hang.
+func TestConfig_IsPathAllowed_SymlinkLoop(t *testing.T) {
+	base, err := os.MkdirTemp("", "fssecurity_loop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	a := filepath.Join(base, "a")
+	b := filepath.Join(base, "b")
+	if err := os.Symlink(b, a); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	if err := os.Symlink(a, b); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	config := Config{AllowedPaths: []string{base}}
+	if config.IsPathAllowed(filepath.Join(a, "x")) {
+		t.Errorf("a symlink loop must be denied, not allowed")
+	}
+}
+
+// A filename whose rune has low byte 0x2F (e.g. U+012F 'į') must not be split
+// as if it contained '/': the resolver compares runes, not truncated bytes,
+// so a legitimate name resolves to itself rather than through a spurious
+// intermediate component.
+func TestConfig_IsPathAllowed_MultibyteNotSplit(t *testing.T) {
+	base, err := os.MkdirTemp("", "fssecurity_rune")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	jail := filepath.Join(base, "jail")
+	if err := os.MkdirAll(jail, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := Config{AllowedPaths: []string{jail}}
+
+	name := "fįle.txt" // 'į' truncates to 0x2F under a byte cast
+	parts := splitPath(name)
+	if len(parts) != 1 || parts[0] != name {
+		t.Fatalf("splitPath(%q) = %#v, want one component", name, parts)
+	}
+	// The resolved path must keep the real filename, not a split version.
+	resolved, ok := ResolvePath(filepath.Join(jail, name))
+	if !ok || filepath.Base(resolved) != name {
+		t.Fatalf("ResolvePath mangled %q -> %q (ok=%v)", name, resolved, ok)
+	}
+	if !config.IsPathAllowed(filepath.Join(jail, name)) {
+		t.Errorf("a legitimate in-jail file with a multibyte name was denied")
+	}
+}

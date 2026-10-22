@@ -34,20 +34,21 @@ func (c *Config) IsPathAllowed(path string) bool {
 		return false
 	}
 
-	// Get absolute path to prevent relative path attacks
-	absPath, err := filepath.Abs(path)
+	// Make the path absolute WITHOUT cleaning it: "link/.." means the parent
+	// of the link's target to the kernel, so ".." must only be applied after
+	// the components before it are resolved (see ResolvePath).
+	absPath, err := absNoClean(path)
 	if err != nil {
 		return false
 	}
 
-	// Clean the path to resolve any .. or . components
-	absPath = filepath.Clean(absPath)
-
-	// SECURITY: Evaluate symlinks to get the real path
-	// This prevents symlink attacks where a symlink inside allowed dirs
-	// points to a location outside allowed dirs.
-	// Note: EvalSymlinks also cleans the path and makes it absolute
-	realPath := ResolveExistingPrefix(absPath)
+	// SECURITY: resolve the path the way the kernel will when it is opened,
+	// following every symlink (dangling ones included), so a link inside the
+	// allowed directories cannot lead outside them.
+	realPath, ok := ResolvePath(absPath)
+	if !ok {
+		return false
+	}
 
 	// Check if the real path starts with any of the allowed paths
 	for _, allowedPath := range c.AllowedPaths {
@@ -74,44 +75,96 @@ func (c *Config) IsPathAllowed(path string) bool {
 	return false
 }
 
-// resolveExistingPrefix resolves symlinks in path for a write-style check
-// where path itself (and possibly several trailing components) may not
-// exist yet. It walks up from path until it finds the nearest ancestor that
-// does exist, resolves that ancestor's symlinks, and rejoins the
-// not-yet-existing suffix onto the resolved ancestor.
-//
-// A single level of "check the immediate parent" is not enough: creating a
-// new file several directories deep in one call (a fresh extraction
-// directory, a multi-level config path) means neither the file nor its
-// immediate parent exist yet, so stopping at one level silently falls back
-// to the unresolved, uncleaned path — which can either wrongly deny a
-// legitimate nested path (e.g. on a host where an allowed directory itself
-// sits under a symlink, such as macOS's /tmp -> /private/tmp) or, more
-// importantly, wrongly ALLOW a path where an intermediate, not-yet-visible
-// component is actually a symlink that escapes the allowed directories.
-// Walking to the nearest existing ancestor closes both gaps at every depth,
-// not just one level.
-// ResolveExistingPrefix resolves the longest existing prefix of absPath
-// through symlinks; it is exported for os.symlink target validation.
+// ResolveExistingPrefix resolves absPath through symlinks as ResolvePath
+// does, returning absPath unchanged when it cannot be resolved (a symlink
+// loop).
 func ResolveExistingPrefix(absPath string) string {
-	if real, err := filepath.EvalSymlinks(absPath); err == nil {
+	if real, ok := ResolvePath(absPath); ok {
 		return real
 	}
+	return absPath
+}
 
-	suffix := ""
-	dir := absPath
-	for {
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			// Reached the filesystem root without finding an existing
-			// ancestor; nothing left to resolve against.
-			return absPath
-		}
-		suffix = filepath.Join(filepath.Base(dir), suffix)
-		dir = parent
+// maxSymlinks bounds symlink expansion, as the kernel does, so a loop fails.
+const maxSymlinks = 40
 
-		if realDir, err := filepath.EvalSymlinks(dir); err == nil {
-			return filepath.Join(realDir, suffix)
-		}
+// absNoClean makes path absolute without cleaning it.
+func absNoClean(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return path, nil
 	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return wd + string(os.PathSeparator) + path, nil
+}
+
+// ResolvePath resolves an absolute path the way the kernel does when it is
+// opened: component by component, following each symlink (a relative target
+// from the link's own directory) before applying any later "..". Unlike
+// filepath.EvalSymlinks it also resolves paths that do not fully exist: a
+// dangling symlink is followed to where it points, and components that do not
+// exist are appended as written, since a file created there lands there. It
+// reports false for a symlink loop.
+func ResolvePath(absPath string) (string, bool) {
+	// Fast path: the whole path exists. EvalSymlinks applies ".." to the
+	// resolved prefix, as the kernel does.
+	if real, err := filepath.EvalSymlinks(absPath); err == nil {
+		return real, true
+	}
+
+	vol := filepath.VolumeName(absPath)
+	root := vol + string(os.PathSeparator)
+	resolved := root
+	remaining := splitPath(absPath[len(vol):])
+	links := 0
+	for len(remaining) > 0 {
+		comp := remaining[0]
+		remaining = remaining[1:]
+		switch comp {
+		case "", ".":
+			continue
+		case "..":
+			resolved = filepath.Dir(resolved)
+			continue
+		}
+		next := filepath.Join(resolved, comp)
+		fi, err := os.Lstat(next)
+		if err != nil {
+			// Nothing exists from here on, so nothing further can be a
+			// symlink: the rest applies as written.
+			return filepath.Join(append([]string{next}, remaining...)...), true
+		}
+		if fi.Mode()&os.ModeSymlink == 0 {
+			resolved = next
+			continue
+		}
+		if links++; links > maxSymlinks {
+			return "", false
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			return "", false
+		}
+		if filepath.IsAbs(target) {
+			tvol := filepath.VolumeName(target)
+			resolved = tvol + string(os.PathSeparator)
+			target = target[len(tvol):]
+		}
+		// A relative target continues from the link's directory, which is
+		// resolved as it stands.
+		remaining = append(splitPath(target), remaining...)
+	}
+	return resolved, true
+}
+
+// splitPath splits a path into its components on any separator the platform
+// accepts. The rune is compared directly, not truncated to a byte: a byte
+// cast would make a multi-byte rune whose low byte is 0x2F (e.g. U+012F)
+// split like '/', mis-resolving a legitimate filename.
+func splitPath(p string) []string {
+	return strings.FieldsFunc(p, func(r rune) bool {
+		return r == '/' || r == filepath.Separator
+	})
 }

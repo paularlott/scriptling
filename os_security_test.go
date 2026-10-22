@@ -220,3 +220,77 @@ content
 		}
 	})
 }
+
+// A dangling symlink planted inside the jail (target does not exist yet) must
+// not become a write primitive outside it: the jail check follows the link,
+// even though it cannot be resolved by EvalSymlinks (CWE-22, vuln-0011).
+func TestOSSymlinkDanglingWriteBlocked(t *testing.T) {
+	base, err := os.MkdirTemp("", "scriptling-dangle")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	jail := filepath.Join(base, "jail")
+	outside := filepath.Join(base, "outside")
+	for _, d := range []string{jail, outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A dangling link inside the jail pointing outside, planted directly.
+	link := filepath.Join(jail, "planted")
+	if err := os.Symlink(filepath.Join(outside, "evil.txt"), link); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+
+	p := New()
+	extlibs.RegisterOSLibrary(p, []string{jail})
+	_, err = p.Eval(`import os
+os.write_file("` + link + `", "pwned")`)
+	if err == nil {
+		t.Fatal("write through a dangling link out of the jail was allowed")
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, "evil.txt")); statErr == nil {
+		t.Fatal("a file was created outside the jail through the link")
+	}
+}
+
+// os.symlink must refuse to create a link whose relative target escapes the
+// jail, resolving the target against the link's directory (not the process
+// working directory), which is where the kernel resolves it (vuln-0011 part 2).
+func TestOSSymlinkRelativeTargetValidatedAgainstLinkDir(t *testing.T) {
+	base, err := os.MkdirTemp("", "scriptling-symrel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	jail := filepath.Join(base, "jail")
+	if err := os.MkdirAll(filepath.Join(jail, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(jail, "data.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := New()
+	extlibs.RegisterOSLibrary(p, []string{jail})
+
+	// jail/escape -> ../outside/x  (relative target leaves the jail).
+	_, err = p.Eval(`import os
+os.symlink("../outside/evil", "` + filepath.Join(jail, "escape") + `")`)
+	if err == nil {
+		t.Error("os.symlink created an escaping relative link")
+	}
+	if _, statErr := os.Lstat(filepath.Join(jail, "escape")); statErr == nil {
+		t.Error("the escaping link was created on disk")
+	}
+
+	// A relative link that stays inside the jail is still allowed.
+	if _, err := p.Eval(`import os
+os.symlink("../data.txt", "` + filepath.Join(jail, "sub", "good") + `")`); err != nil {
+		t.Errorf("a legitimate in-jail relative link was rejected: %v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(jail, "sub", "good")); statErr != nil {
+		t.Errorf("the legitimate link was not created: %v", statErr)
+	}
+}
