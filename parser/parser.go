@@ -80,8 +80,41 @@ type Parser struct {
 	skippedSemi    bool // true if the skipped separator was a ';' with no NEWLINE (a;b on one line)
 	parenDepth     int  // track parenthesis depth for multiline support
 
+	// Nesting limits (see maxParenDepth). exprDepth and stmtDepth count the
+	// expression and statement levels being parsed; tooDeep is the error
+	// recorded once a limit is hit, after which parsing stops.
+	exprDepth int
+	stmtDepth int
+	tooDeep   string
+
 	nestedFuncStack []bool // stack: one bool per active function parse, true if body contains nested func/lambda/class
 	symbols         *ast.SymbolTable
+}
+
+// Nesting limits. Every pass that runs after parsing (constant folding, the
+// cache size estimate, the compiler, the evaluator) walks the syntax tree
+// recursively in Go, so the depth of the tree decides how deep they recurse.
+// A Go stack overflow is a fatal error that ends the whole process and cannot
+// be recovered, so an over-deep program must be a parse error instead. The
+// limits match CPython 3.14: 200 nested brackets ("too many nested
+// parentheses"), 100 levels of nested blocks ("too many levels of
+// indentation"), and chains such as a+a+a or a.b.b.b to 10,000 terms; the
+// tree-depth backstop leaves room for that, far below where the walkers
+// would overflow (around 800,000 levels).
+const (
+	maxParenDepth = 200
+	maxStmtDepth  = 100
+	maxExprDepth  = 20000
+)
+
+// stopTooDeep records a nesting-limit error and stops the parse: the token
+// stream ends, so the parser unwinds without descending further, and the
+// program's only error is this one (see ParseProgram).
+func (p *Parser) stopTooDeep(msg string) {
+	if p.tooDeep == "" {
+		p.tooDeep = fmt.Sprintf("line %d: %s", p.curToken.Line, msg)
+	}
+	p.peekToken = token.Token{Type: token.EOF, Line: p.curToken.Line}
 }
 
 type (
@@ -160,6 +193,9 @@ func (p *Parser) Reset(l *lexer.Lexer) {
 	p.peekToken = token.Token{}
 	p.skippedNewline = false
 	p.parenDepth = 0
+	p.exprDepth = 0
+	p.stmtDepth = 0
+	p.tooDeep = ""
 	p.symbols = ast.NewSymbolTable()
 	p.nextToken()
 	p.nextToken()
@@ -170,6 +206,9 @@ func (p *Parser) Errors() []string {
 }
 
 func (p *Parser) peekError(t token.TokenType) {
+	if p.tooDeep != "" {
+		return // parsing stopped at a nesting limit; that is the error
+	}
 	msg := fmt.Sprintf("line %d: expected next token to be %s, got %s instead",
 		p.peekToken.Line, t, p.peekToken.Type)
 	p.errors = append(p.errors, msg)
@@ -177,6 +216,11 @@ func (p *Parser) peekError(t token.TokenType) {
 
 func (p *Parser) nextToken() {
 	p.curToken = p.peekToken
+	if p.tooDeep != "" {
+		// A nesting limit was hit: the rest of the source is not read.
+		p.peekToken = token.Token{Type: token.EOF, Line: p.curToken.Line}
+		return
+	}
 	p.peekToken = p.l.NextToken()
 	p.skippedNewline = false
 	p.skippedSemi = false
@@ -184,6 +228,10 @@ func (p *Parser) nextToken() {
 	// Track parenthesis depth based on the token we just consumed (curToken)
 	if p.curToken.Type == token.LPAREN || p.curToken.Type == token.LBRACKET || p.curToken.Type == token.LBRACE {
 		p.parenDepth++
+		if p.parenDepth > maxParenDepth {
+			p.stopTooDeep("too many nested parentheses")
+			return
+		}
 	} else if p.curToken.Type == token.RPAREN || p.curToken.Type == token.RBRACKET || p.curToken.Type == token.RBRACE {
 		if p.parenDepth > 0 {
 			p.parenDepth--
@@ -265,6 +313,13 @@ func (p *Parser) ParseProgram() *ast.Program {
 		p.nextToken()
 	}
 
+	if p.tooDeep != "" {
+		// Unwinding from the limit leaves half-built constructs behind;
+		// their errors would only obscure the real one.
+		p.errors = append(p.errors[:0], p.tooDeep)
+		program.Statements = nil
+	}
+
 	if program.Symbols != nil {
 		program.Symbols.Freeze()
 	}
@@ -277,7 +332,14 @@ func (p *Parser) ParseProgram() *ast.Program {
 }
 
 func (p *Parser) parseStatement() ast.Statement {
+	// Nested blocks recurse through here: bound them (see maxStmtDepth).
+	if p.stmtDepth >= maxStmtDepth {
+		p.stopTooDeep("too many levels of indentation")
+		return nil
+	}
+	p.stmtDepth++
 	stmt := p.parseStatementInner()
+	p.stmtDepth--
 	if stmt == nil {
 		return nil
 	}
@@ -899,15 +961,27 @@ func (p *Parser) parseExpression(precedence int) ast.Expression {
 		p.noPrefixParseFnError(p.curToken.Type)
 		return nil
 	}
+	// Each level of recursion, and each infix step below (which wraps the
+	// expression parsed so far, as in a.b.b.b or a+a+a), makes the tree one
+	// level deeper: bound both (see maxExprDepth). Every return restores the
+	// depth, so siblings start again from this expression's depth.
+	if p.exprDepth >= maxExprDepth {
+		p.stopTooDeep("expression too complex")
+		return nil
+	}
+	startDepth := p.exprDepth
+	p.exprDepth++
 	leftExp := prefix(p)
 
 	for {
 		peekType := p.peekToken.Type
 		switch peekType {
 		case token.NEWLINE, token.SEMICOLON, token.EOF, token.COLON:
+			p.exprDepth = startDepth
 			return leftExp
 		}
 		if precedence >= precedenceFor(peekType) {
+			p.exprDepth = startDepth
 			return leftExp
 		}
 
@@ -917,19 +991,28 @@ func (p *Parser) parseExpression(precedence int) ast.Expression {
 		// whitespace, and "x if cond\nelse y" written across lines is a
 		// perfectly valid conditional expression.
 		if peekType == token.IF && p.skippedNewline && p.parenDepth == 0 {
+			p.exprDepth = startDepth
 			return leftExp
 		}
 
 		// Don't continue parsing infix expressions across newlines at top level
 		// This prevents "a = 1\n*b, c = [2, 3]" from being parsed as "a = 1 * b"
 		if p.parenDepth == 0 && p.skippedNewline {
+			p.exprDepth = startDepth
 			return leftExp
 		}
 
 		infix := infixParseFnFor(peekType)
 		if infix == nil {
+			p.exprDepth = startDepth
 			return leftExp
 		}
+		if p.exprDepth >= maxExprDepth {
+			p.stopTooDeep("expression too complex")
+			p.exprDepth = startDepth
+			return leftExp
+		}
+		p.exprDepth++
 		p.nextToken()
 		leftExp = infix(p, leftExp)
 	}
@@ -1018,6 +1101,9 @@ func (p *Parser) parseAssignValue(tok ast.LineInfo, first ast.Expression) (ast.E
 }
 
 func (p *Parser) noPrefixParseFnError(t token.TokenType) {
+	if p.tooDeep != "" {
+		return // parsing stopped at a nesting limit; that is the error
+	}
 	if t == token.ILLEGAL && p.curToken.Literal == lexer.UnterminatedString {
 		p.errors = append(p.errors, fmt.Sprintf("line %d: %s", p.curToken.Line, lexer.UnterminatedString))
 		return
