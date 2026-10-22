@@ -460,7 +460,7 @@ def greet(name):
 			select {
 			case <-ctx.Done():
 				return &object.Error{Message: "cancelled"}
-			case <-time.After(10 * time.Millisecond):
+			case <-time.After(5 * time.Second):
 				return object.NewString("completed")
 			}
 		})

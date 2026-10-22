@@ -12,6 +12,7 @@ import (
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/extlibs/net/internal"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -294,7 +295,7 @@ func (l *udpListener) sendTo(addr *net.UDPAddr, data []byte) error {
 	return err
 }
 
-func buildUDPListenerObject(l *udpListener) *object.Builtin {
+func buildUDPListenerObject(l *udpListener, guard *netsecurity.Guard) *object.Builtin {
 	return &object.Builtin{
 		Attributes: map[string]object.Object{
 			"receive": &object.Builtin{
@@ -340,7 +341,9 @@ Returns:
 					if dataErr != nil {
 						return dataErr
 					}
-					raddr, resolveErr := net.ResolveUDPAddr("udp", addrStr)
+					var raddr *net.UDPAddr
+					var resolveErr error
+					object.RunBlocking(ctx, func() { raddr, resolveErr = resolveSendAddr(ctx, guard, addrStr) })
 					if resolveErr != nil {
 						return errors.NewError("invalid address: %s", resolveErr.Error())
 					}
@@ -456,7 +459,39 @@ Returns:
 	}
 }
 
-func buildLibrary() *object.Library {
+// resolveSendAddr resolves a send_to target. With a guard, the host must pass
+// the network policy and the datagram goes to a validated address.
+func resolveSendAddr(ctx context.Context, guard *netsecurity.Guard, addrStr string) (*net.UDPAddr, error) {
+	if guard == nil {
+		return net.ResolveUDPAddr("udp", addrStr)
+	}
+	host, portStr, err := net.SplitHostPort(addrStr)
+	if err != nil {
+		return nil, err
+	}
+	port, err := net.LookupPort("udp", portStr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := guard.ResolveIPs(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	return &net.UDPAddr{IP: ips[0], Port: port}, nil
+}
+
+// dial connects to addr, through the network policy when guard is set.
+func dial(ctx context.Context, guard *netsecurity.Guard, network, addr string, timeout time.Duration) (net.Conn, error) {
+	if guard == nil {
+		dialer := &net.Dialer{Timeout: timeout}
+		return dialer.DialContext(ctx, network, addr)
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return guard.Dial(ctx, network, addr)
+}
+
+func buildLibrary(guard *netsecurity.Guard) *object.Library {
 	return object.NewLibrary(LibraryName, map[string]*object.Builtin{
 		"connect": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -488,14 +523,14 @@ func buildLibrary() *object.Library {
 					}
 				}
 
-				addr := fmt.Sprintf("%s:%d", host, port)
+				addr := net.JoinHostPort(host, fmt.Sprint(port))
+				dialTimeout := time.Duration(timeout * float64(time.Second))
 
 				switch protocol {
 				case "udp":
-					dialer := &net.Dialer{Timeout: time.Duration(timeout * float64(time.Second))}
 					var conn net.Conn
 					var dialErr error
-					object.RunBlocking(ctx, func() { conn, dialErr = dialer.DialContext(ctx, "udp", addr) })
+					object.RunBlocking(ctx, func() { conn, dialErr = dial(ctx, guard, "udp", addr, dialTimeout) })
 					if dialErr != nil {
 						return errors.NewError("connect failed: %s", dialErr.Error())
 					}
@@ -507,10 +542,9 @@ func buildLibrary() *object.Library {
 					return buildConnObject(c, "UDP connection object")
 
 				case "tcp":
-					dialer := &net.Dialer{Timeout: time.Duration(timeout * float64(time.Second))}
 					var conn net.Conn
 					var dialErr error
-					object.RunBlocking(ctx, func() { conn, dialErr = dialer.DialContext(ctx, "tcp", addr) })
+					object.RunBlocking(ctx, func() { conn, dialErr = dial(ctx, guard, "tcp", addr, dialTimeout) })
 					if dialErr != nil {
 						return errors.NewError("connect failed: %s", dialErr.Error())
 					}
@@ -587,7 +621,7 @@ Example:
 						localAddr: conn.LocalAddr().String(),
 					}
 					l.listenerID = trackListener(conn)
-					return buildUDPListenerObject(l)
+					return buildUDPListenerObject(l, guard)
 
 				case "tcp":
 					listener, listenErr := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
@@ -628,9 +662,11 @@ Example:
 	}, nil, LibraryDesc)
 }
 
-func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
+// Register registers the library. An optional network policy restricts
+// connect() and send_to() destinations; listening is unaffected.
+func Register(registrar interface{ RegisterLibrary(*object.Library) }, cfg ...*netsecurity.Config) {
 	libraryOnce.Do(func() {
-		library = buildLibrary()
+		library = buildLibrary(nil)
 		extlibs.RegisterCleanup(func() {
 			listeners.Lock()
 			for _, c := range listeners.m {
@@ -640,5 +676,13 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
 			listeners.Unlock()
 		})
 	})
+	if len(cfg) > 0 && cfg[0] != nil {
+		guard, gerr := netsecurity.NewGuard(cfg[0])
+		if gerr != nil {
+			guard = netsecurity.FailClosed(gerr)
+		}
+		registrar.RegisterLibrary(buildLibrary(guard))
+		return
+	}
 	registrar.RegisterLibrary(library)
 }

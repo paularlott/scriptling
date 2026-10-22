@@ -233,6 +233,35 @@ func TestDialContextBlocksLiteralDial(t *testing.T) {
 	}
 }
 
+// Raw-socket callers have no URL, so Dial and ResolveIPs must apply the host
+// rules CheckURL would: the IP-literal rule and the host lists.
+func TestDialAppliesHostRules(t *testing.T) {
+	g := mustGuard(t, &Config{AllowLoopback: true, DenyHosts: []string{"blocked.example"}})
+	if _, err := g.Dial(context.Background(), "tcp", "127.0.0.1:1"); err == nil || !strings.Contains(err.Error(), "IP literals") {
+		t.Errorf("Dial must apply the IP-literal rule, got: %v", err)
+	}
+	if _, err := g.ResolveIPs(context.Background(), "127.0.0.1"); err == nil || !strings.Contains(err.Error(), "IP literals") {
+		t.Errorf("ResolveIPs must apply the IP-literal rule, got: %v", err)
+	}
+	if _, err := g.Dial(context.Background(), "udp", "blocked.example:53"); err == nil || !strings.Contains(err.Error(), "denied") {
+		t.Errorf("Dial must apply deny_hosts, got: %v", err)
+	}
+
+	gAllow := mustGuard(t, &Config{AllowHosts: []string{"api.example.com"}})
+	if _, err := gAllow.ResolveIPs(context.Background(), "other.example.com"); err == nil || !strings.Contains(err.Error(), "allowed host list") {
+		t.Errorf("ResolveIPs must apply allow_hosts, got: %v", err)
+	}
+
+	gLit := mustGuard(t, &Config{AllowIPLiterals: true})
+	if _, err := gLit.ResolveIPs(context.Background(), "127.0.0.1"); err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Errorf("an allowed literal is still subject to address categories, got: %v", err)
+	}
+	ips, err := gLit.ResolveIPs(context.Background(), "8.8.8.8")
+	if err != nil || len(ips) != 1 || !ips[0].Equal(net.ParseIP("8.8.8.8")) {
+		t.Errorf("ResolveIPs(8.8.8.8) = %v, %v", ips, err)
+	}
+}
+
 func TestNormalizeDNSAddr(t *testing.T) {
 	cases := map[string]string{
 		"1.1.1.1":      "1.1.1.1:53",

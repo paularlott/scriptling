@@ -177,7 +177,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.MarkdownLibraryName, func() { extlibs.RegisterMarkdownLibrary(p) })
 
 	reg(extlibs.MulticastLibraryName, func() { scriptlingmulticast.Register(p) })
-	reg(extlibs.UnicastLibraryName, func() { scriptlingunicast.Register(p) })
+	reg(extlibs.UnicastLibraryName, func() { scriptlingunicast.Register(p, netPolicy...) })
 	reg(extlibs.GossipLibraryName, func() { scriptlinggossip.Register(p, log) })
 	reg(extlibs.ResolveLibraryName, func() { scriptlingresolve.Register(p, scriptResolver(netPolicy)) })
 	reg(extlibs.FileProvisionLibraryName, func() {

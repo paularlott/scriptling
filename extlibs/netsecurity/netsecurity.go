@@ -1,5 +1,6 @@
 // Package netsecurity restricts outbound network access for script-facing
-// libraries (requests, wait_for, websocket, scriptling.ai, scriptling.mcp).
+// libraries (requests, wait_for, websocket, scriptling.ai, scriptling.mcp,
+// scriptling.net.unicast).
 //
 // # SECURITY MODEL
 //
@@ -318,13 +319,24 @@ func (g *Guard) CheckURL(u *url.URL) error {
 		return fmt.Errorf("network policy: unsupported scheme %q", u.Scheme)
 	}
 
+	return g.CheckHost(u.Hostname())
+}
+
+// CheckHost applies the host rules CheckURL enforces — deny/allow host lists
+// and the IP-literal rule — to a bare host name or address. Libraries that
+// open raw sockets rather than URLs call it (via Dial or ResolveIPs) so a
+// script cannot dodge the literal and host-list rules by skipping URLs.
+func (g *Guard) CheckHost(host string) error {
+	if g.failErr != nil {
+		return g.failErr
+	}
 	if g.allowAll {
 		return nil
 	}
 
-	host := strings.ToLower(u.Hostname())
+	host = strings.ToLower(host)
 	if host == "" {
-		return fmt.Errorf("network policy: URL has no host")
+		return fmt.Errorf("network policy: no host")
 	}
 
 	if matchHost(g.denyHosts, host) {
@@ -361,6 +373,53 @@ func (g *Guard) DialContext(ctx context.Context, network, addr string) (net.Conn
 	if err != nil {
 		return nil, fmt.Errorf("network policy: invalid address %q", addr)
 	}
+	ips, err := g.resolve(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+
+	// Dial validated IPs directly, never the hostname: Go must not
+	// re-resolve. Try each answer in order so dual-stack hosts (localhost
+	// resolving to ::1 and 127.0.0.1) connect on whichever stack answers.
+	var lastErr error
+	for _, ip := range ips {
+		conn, derr := g.dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if derr == nil {
+			return conn, nil
+		}
+		lastErr = derr
+	}
+	return nil, lastErr
+}
+
+// Dial is DialContext for raw sockets: it first applies CheckHost, which a
+// URL-based caller gets from CheckURL, then resolves, validates and dials.
+func (g *Guard) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("network policy: invalid address %q", addr)
+	}
+	if err := g.CheckHost(host); err != nil {
+		return nil, err
+	}
+	return g.DialContext(ctx, network, addr)
+}
+
+// ResolveIPs applies CheckHost, then resolves host and validates every
+// answer, returning the addresses a raw-socket caller may send to.
+func (g *Guard) ResolveIPs(ctx context.Context, host string) ([]net.IP, error) {
+	if err := g.CheckHost(host); err != nil {
+		return nil, err
+	}
+	return g.resolve(ctx, host)
+}
+
+// resolve turns host into policy-checked IPs: a literal is checked as is, a
+// name is resolved and every answer validated (unless the host is trusted).
+func (g *Guard) resolve(ctx context.Context, host string) ([]net.IP, error) {
+	if g.failErr != nil {
+		return nil, g.failErr
+	}
 	host = strings.ToLower(host)
 
 	if matchHost(g.denyHosts, host) {
@@ -371,40 +430,31 @@ func (g *Guard) DialContext(ctx context.Context, network, addr string) (net.Conn
 		if err := g.checkIP(ip); err != nil {
 			return nil, err
 		}
-		return g.dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		return []net.IP{ip}, nil
 	}
 
-	ips, err := g.lookupFn(ctx, host)
+	addrs, err := g.lookupFn(ctx, host)
 	if err != nil {
 		return nil, fmt.Errorf("DNS lookup failed for %q: %w", host, err)
 	}
-	if len(ips) == 0 {
+	if len(addrs) == 0 {
 		return nil, fmt.Errorf("no addresses resolved for %q", host)
 	}
 
 	// Trusted (allowlisted) hosts may resolve anywhere — that is their grant.
 	// Every other host must have every answer pass the address policy, so a
 	// mixed public/private answer set cannot slip a blocked address through.
-	if !matchHost(g.allowHosts, host) {
-		for _, ia := range ips {
+	trusted := matchHost(g.allowHosts, host)
+	ips := make([]net.IP, len(addrs))
+	for i, ia := range addrs {
+		if !trusted {
 			if cerr := g.checkIP(ia.IP); cerr != nil {
 				return nil, cerr
 			}
 		}
+		ips[i] = ia.IP
 	}
-
-	// Dial validated IPs directly, never the hostname: Go must not
-	// re-resolve. Try each answer in order so dual-stack hosts (localhost
-	// resolving to ::1 and 127.0.0.1) connect on whichever stack answers.
-	var lastErr error
-	for _, ia := range ips {
-		conn, derr := g.dialer.DialContext(ctx, network, net.JoinHostPort(ia.IP.String(), port))
-		if derr == nil {
-			return conn, nil
-		}
-		lastErr = derr
-	}
-	return nil, lastErr
+	return ips, nil
 }
 
 // HTTPClient returns a guarded client for script HTTP requests. The transport

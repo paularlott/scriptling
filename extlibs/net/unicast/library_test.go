@@ -3,9 +3,11 @@ package unicast
 import (
 	"bytes"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -374,4 +376,56 @@ s.addr
 	}
 	listeners.m = make(map[uint64]io.Closer)
 	listeners.Unlock()
+}
+
+// With a network policy, connect() and send_to() must not reach destinations
+// the policy denies (here loopback, as an IP literal and by name).
+func TestUnicastNetworkPolicyBlocksDenied(t *testing.T) {
+	p := scriptling.New()
+	Register(p, &netsecurity.Config{})
+
+	for _, script := range []string{
+		`import scriptling.net.unicast as uc
+uc.connect("127.0.0.1", 9, protocol="tcp", timeout=2)`,
+		`import scriptling.net.unicast as uc
+uc.connect("127.0.0.1", 9, protocol="udp", timeout=2)`,
+		`import scriptling.net.unicast as uc
+uc.connect("localhost", 9, protocol="tcp", timeout=2)`,
+		`import scriptling.net.unicast as uc
+s = uc.listen("127.0.0.1", 0, protocol="udp")
+try:
+    s.send_to("127.0.0.1:9", "x")
+finally:
+    s.close()`,
+	} {
+		_, err := p.Eval(script)
+		if err == nil || !strings.Contains(err.Error(), "network policy") {
+			t.Errorf("expected network policy error for:\n%s\ngot: %v", script, err)
+		}
+	}
+}
+
+// A policy that permits loopback still lets connect() reach it.
+func TestUnicastNetworkPolicyAllowsPermitted(t *testing.T) {
+	p := scriptling.New()
+	Register(p, &netsecurity.Config{AllowLoopback: true, AllowIPLiterals: true})
+
+	result, err := p.Eval(`
+import scriptling.net.unicast as uc
+server = uc.listen("127.0.0.1", 0, protocol="tcp")
+conn = uc.connect("127.0.0.1", int(server.addr.split(":")[1]), protocol="tcp", timeout=5)
+sc = server.accept(timeout=5)
+conn.send("hi")
+msg = sc.receive(timeout=5)
+conn.close()
+sc.close()
+server.close()
+msg["data"].decode()
+`)
+	if err != nil {
+		t.Fatalf("script error: %v", err)
+	}
+	if s, ok := result.(*object.String); !ok || s.StringValue() != "hi" {
+		t.Errorf("expected 'hi', got %v", result)
+	}
 }
