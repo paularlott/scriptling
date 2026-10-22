@@ -81,8 +81,8 @@ github.com/paularlott/jsonrpc v0.2.0 h1:iR584f/oi5L7LbfH8oskAMalNoikNxzlW/ABEZUJ
 github.com/paularlott/jsonrpc v0.2.0/go.mod h1:mXoOPTPQf87HF3wR064n23dmsAQs3/EICA3Cbha3Sk4=
 github.com/paularlott/logger v0.4.0 h1:nETpi8oXNRBl0U9f2BgO5VMyprF1k2lvOom9EuTX5wE=
 github.com/paularlott/logger v0.4.0/go.mod h1:vjAOY1vUvYigmJxxQ0eMclryIjDS6VWNK6FprtTMce0=
-github.com/paularlott/mcp v0.32.4 h1:0yb+IDeoQSAoeNdEFTtzX23Ob8y/5FYK+U3a/LbdNeQ=
-github.com/paularlott/mcp v0.32.4/go.mod h1:R5UYcRkS817rbFmQj1kA+di7+BGZpHMgjwnLx0RlMak=
+github.com/paularlott/mcp v0.33.0 h1:nUYOtulLZDyo72pjtUbIzA3BfndhBEjPxrNQf/JtZI4=
+github.com/paularlott/mcp v0.33.0/go.mod h1:R5UYcRkS817rbFmQj1kA+di7+BGZpHMgjwnLx0RlMak=
 github.com/paularlott/scriptling-onepassword v0.1.1 h1:mJnT7gxW8swO66XCOc5zWtN/19MUC2AtKzmQUdQAJaI=
 github.com/paularlott/scriptling-onepassword v0.1.1/go.mod h1:7hZUt01SKw02m8JJOGIniJwP9vlhOlhfukUgfUDYdCo=
 github.com/paularlott/snapshotkv v0.6.0 h1:bGUVANfPg7+2fsVnnnCWQvkuDrBWPg3mchGoEgel28Q=
