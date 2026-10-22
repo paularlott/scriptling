@@ -874,7 +874,7 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 	var chatErr error
 	object.RunBlocking(ctx, func() { chatResp, chatErr = ci.client.ChatCompletion(ctx, req) })
 	if chatErr != nil {
-		return &object.Error{Message: "chat completion failed: " + chatErr.Error()}
+		return providerError("chat completion failed", chatErr)
 	}
 
 	return conversion.FromGo(chatCompletionResponseToGoMap(chatResp))
@@ -895,7 +895,7 @@ func modelsMethod(self *object.Instance, ctx context.Context) object.Object {
 	var err error
 	object.RunBlocking(ctx, func() { models, err = ci.client.GetModels(ctx) })
 	if err != nil {
-		return &object.Error{Message: "failed to get models: " + err.Error()}
+		return providerError("failed to get models", err)
 	}
 
 	return conversion.FromGo(models)
@@ -964,7 +964,7 @@ func responseCreateMethod(self *object.Instance, ctx context.Context, kwargs obj
 	var err error
 	object.RunBlocking(ctx, func() { resp, err = ci.client.CreateResponse(ctx, req) })
 	if err != nil {
-		return &object.Error{Message: "failed to create response: " + err.Error()}
+		return providerError("failed to create response", err)
 	}
 
 	return conversion.FromGo(resp)
@@ -985,7 +985,7 @@ func responseGetMethod(self *object.Instance, ctx context.Context, id string) ob
 	var err error
 	object.RunBlocking(ctx, func() { resp, err = ci.client.GetResponse(ctx, id) })
 	if err != nil {
-		return &object.Error{Message: "failed to get response: " + err.Error()}
+		return providerError("failed to get response", err)
 	}
 
 	return conversion.FromGo(resp)
@@ -1006,7 +1006,7 @@ func responseCancelMethod(self *object.Instance, ctx context.Context, id string)
 	var err error
 	object.RunBlocking(ctx, func() { resp, err = ci.client.CancelResponse(ctx, id) })
 	if err != nil {
-		return &object.Error{Message: "failed to cancel response: " + err.Error()}
+		return providerError("failed to cancel response", err)
 	}
 
 	return conversion.FromGo(resp)
@@ -1026,7 +1026,7 @@ func responseDeleteMethod(self *object.Instance, ctx context.Context, id string)
 	var err error
 	object.RunBlocking(ctx, func() { err = ci.client.DeleteResponse(ctx, id) })
 	if err != nil {
-		return &object.Error{Message: "failed to delete response: " + err.Error()}
+		return providerError("failed to delete response", err)
 	}
 
 	return nil
@@ -1066,7 +1066,7 @@ func responseCompactMethod(self *object.Instance, ctx context.Context, kwargs ob
 	var err error
 	object.RunBlocking(ctx, func() { resp, err = ci.client.CompactResponse(ctx, req) })
 	if err != nil {
-		return &object.Error{Message: "failed to compact response: " + err.Error()}
+		return providerError("failed to compact response", err)
 	}
 
 	return conversion.FromGo(resp)
@@ -1104,7 +1104,7 @@ func embeddingMethod(self *object.Instance, ctx context.Context, model string, i
 	var err error
 	object.RunBlocking(ctx, func() { resp, err = ci.client.CreateEmbedding(ctx, req) })
 	if err != nil {
-		return &object.Error{Message: "failed to create embedding: " + err.Error()}
+		return providerError("failed to create embedding", err)
 	}
 
 	return conversion.FromGo(resp)
@@ -1142,7 +1142,7 @@ func completionParallelMethod(self *object.Instance, ctx context.Context, kwargs
 
 	items, err := toSlice(messagesList)
 	if err != nil {
-		return &object.Error{Message: "completion_parallel: " + err.Error()}
+		return providerError("completion_parallel", err)
 	}
 	if len(items) == 0 {
 		return &object.List{Elements: []object.Object{}}
@@ -1160,7 +1160,7 @@ func askParallelMethod(self *object.Instance, ctx context.Context, kwargs object
 
 	items, err := toSlice(messagesList)
 	if err != nil {
-		return &object.Error{Message: "ask_parallel: " + err.Error()}
+		return providerError("ask_parallel", err)
 	}
 	if len(items) == 0 {
 		return &object.List{Elements: []object.Object{}}
@@ -1369,7 +1369,7 @@ func nextResponseStreamMethod(self *object.Instance, ctx context.Context) object
 	object.RunBlocking(ctx, func() { nextOK = si.stream.Next() })
 	if !nextOK {
 		if err := si.stream.Err(); err != nil {
-			return &object.Error{Message: "stream error: " + err.Error()}
+			return providerError("stream error", err)
 		}
 		return &object.Null{}
 	}

@@ -78,7 +78,7 @@ func decideMethod(self *object.Instance, ctx context.Context, kwargs object.Kwar
 	var err error
 	object.RunBlocking(ctx, func() { resp, err = dc.Decide(ctx, req) })
 	if err != nil {
-		return &object.Error{Message: "decide: " + err.Error()}
+		return providerError("decide", err)
 	}
 	return systemOneResponseToObject(resp)
 }

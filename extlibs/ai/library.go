@@ -47,13 +47,20 @@ type guardedPool struct {
 
 func (p *guardedPool) GetHTTPClient() *http.Client { return p.client }
 
-// httpPoolFor returns an HTTPPool that routes through guard's checked
-// transport, or nil (the default, unrestricted pool) when guard is nil.
-func httpPoolFor(guard *netsecurity.Guard) pool.HTTPPool {
-	if guard == nil {
+// httpPoolFor returns the HTTPPool a client uses: through guard's checked
+// transport when there is a network policy, with response bodies held to the
+// limits of the interpreter that created the client when it has any; nil (the
+// providers' default pool, unchanged) when neither applies.
+func httpPoolFor(guard *netsecurity.Guard, limits *object.ResourceGuard) pool.HTTPPool {
+	var client *http.Client
+	if guard != nil {
+		client = guard.HTTPClient()
+	}
+	client = limitedClient(client, limits)
+	if client == nil {
 		return nil
 	}
-	return &guardedPool{client: guard.HTTPClient()}
+	return &guardedPool{client: client}
 }
 
 // Register registers the ai library with the given registrar.
@@ -106,6 +113,9 @@ func buildLibrary(guard *netsecurity.Guard) *object.Library {
 	builder.
 		// Client(base_url, **kwargs) - Create a new AI client
 		FunctionWithHelp("Client", func(ctx context.Context, kwargs object.Kwargs, baseURL string) (object.Object, error) {
+			// The interpreter creating the client: its value and memory
+			// limits bound every response the client reads.
+			limits := object.CurrentGuard()
 			// Get optional provider from kwargs, default to "openai"
 			provider := kwargs.MustGetString("provider", "openai")
 			// Get optional api_key from kwargs
@@ -203,7 +213,7 @@ func buildLibrary(guard *netsecurity.Guard) *object.Library {
 					config := openai.RemoteServerConfig{
 						BaseURL:   baseURLStr,
 						Namespace: namespace,
-						HTTPPool:  httpPoolFor(guard),
+						HTTPPool:  httpPoolFor(guard, limits),
 					}
 
 					if tokenVal, ok := serverMap["bearer_token"]; ok && tokenVal != nil {
@@ -247,7 +257,7 @@ func buildLibrary(guard *netsecurity.Guard) *object.Library {
 				APIKey:              apiKey,
 				BaseURL:             baseURL,
 				RemoteServerConfigs: remoteServerConfigs,
-				HTTPPool:            httpPoolFor(guard),
+				HTTPPool:            httpPoolFor(guard, limits),
 				MaxTokens:           maxTokens,
 				Temperature:         temperature,
 				TopP:                topP,
@@ -1118,6 +1128,21 @@ func collectStream(ctx context.Context, stream *object.Instance, chunkTimeoutSec
 	finishReason := ""
 	timedOut := false
 	firstChunk := true
+	// collected counts the text gathered so far (content, reasoning and tool
+	// call arguments): it is about to become one result, so it is held to the
+	// interpreter's value and memory limits as it grows, however slowly the
+	// stream drips it in.
+	var collected int64
+	grow := func(n int) *object.Error {
+		collected += int64(n)
+		if errObj := object.CheckAllocFor("streamed AI response", collected); errObj != nil {
+			if e, ok := errObj.(*object.Error); ok {
+				return e
+			}
+			return &object.Error{Message: errObj.Inspect()}
+		}
+		return nil
+	}
 
 	for {
 		var chunkObj object.Object
@@ -1182,6 +1207,9 @@ func collectStream(ctx context.Context, stream *object.Instance, chunkTimeoutSec
 				reasoningDelta = stringValue(delta["reasoning"])
 			}
 			if reasoningDelta != "" {
+				if errObj := grow(len(reasoningDelta)); errObj != nil {
+					return nil, errObj
+				}
 				reasoning.WriteString(reasoningDelta)
 				emitCollectorEvent(ctx, callback, map[string]any{
 					"type":    "reasoning",
@@ -1191,6 +1219,9 @@ func collectStream(ctx context.Context, stream *object.Instance, chunkTimeoutSec
 
 			contentDelta := stringValue(delta["content"])
 			if contentDelta != "" {
+				if errObj := grow(len(contentDelta)); errObj != nil {
+					return nil, errObj
+				}
 				contentDeltaOut, reasoningDeltaOut := processStreamingThinkingDelta(contentDelta, thinkingState, false)
 				if reasoningDeltaOut != "" {
 					reasoning.WriteString(reasoningDeltaOut)
@@ -1224,6 +1255,11 @@ func collectStream(ctx context.Context, stream *object.Instance, chunkTimeoutSec
 					toolCallsByIndex[index] = existing
 					toolCallOrder = append(toolCallOrder, index)
 				}
+				if fn, ok := toolCall["function"].(map[string]any); ok {
+					if errObj := grow(len(stringValue(fn["arguments"]))); errObj != nil {
+						return nil, errObj
+					}
+				}
 				mergeToolCall(existing, toolCall)
 				emitCollectorEvent(ctx, callback, map[string]any{
 					"type":      "tool_call",
@@ -1239,6 +1275,9 @@ func collectStream(ctx context.Context, stream *object.Instance, chunkTimeoutSec
 				return nil, errObj
 			}
 			if errString, ok := errValue.(*object.String); ok {
+				if strings.Contains(errString.StringValue(), tooLargeMarker) {
+					return nil, object.NewMemoryError("%s", errString.StringValue())
+				}
 				return nil, &object.Error{Message: errString.StringValue()}
 			}
 		}
