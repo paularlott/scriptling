@@ -122,9 +122,10 @@ func atLineStart(s string, i int) bool {
 }
 
 // skipString advances past the string beginning at s[i] (a `"` or `'`),
-// including the multi-line `"""` / `”'` forms, and returns the index of its
-// closing quote. An unterminated string runs to end of input; the decoder
-// reports that itself. Strings add no depth.
+// including the multi-line (triple-quoted) forms, and returns the index of
+// its closing quote. An unterminated multi-line string runs to end of input,
+// and an unterminated single-line one stops before its newline; the decoder
+// reports either itself. Strings add no depth.
 func skipString(s string, i int) int {
 	q := s[i]
 	multiline := i+2 < len(s) && s[i+1] == q && s[i+2] == q
@@ -132,7 +133,17 @@ func skipString(s string, i int) int {
 		j := i + 3
 		for j+2 < len(s) {
 			if s[j] == q && s[j+1] == q && s[j+2] == q {
-				return j + 2
+				// TOML lets one or two quotes of the same kind sit against
+				// the closing delimiter as content (`"""x""""` is `x"`), so
+				// the delimiter is the last three of a run of up to five.
+				// Stopping at the first three would leave a stray quote that
+				// opens a fake single-line string and hides the rest of the
+				// line from the depth scan.
+				end := j + 2
+				for k := 0; k < 2 && end+1 < len(s) && s[end+1] == q; k++ {
+					end++
+				}
+				return end
 			}
 			if q == '"' && s[j] == '\\' {
 				j++ // skip the escaped char
@@ -142,12 +153,19 @@ func skipString(s string, i int) int {
 		return len(s) - 1
 	}
 	for j := i + 1; j < len(s); j++ {
-		if q == '"' && s[j] == '\\' {
+		// A backslash escapes the next character, but never a newline: a
+		// single-line string cannot continue onto the next line.
+		if q == '"' && s[j] == '\\' && j+1 < len(s) && s[j+1] != '\n' {
 			j++
 			continue
 		}
-		if s[j] == q || s[j] == '\n' {
+		if s[j] == q {
 			return j
+		}
+		if s[j] == '\n' {
+			// Unterminated: stop before the newline so the caller still sees
+			// it and starts a fresh key scan on the next line.
+			return j - 1
 		}
 	}
 	return len(s) - 1

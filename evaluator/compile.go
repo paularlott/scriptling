@@ -3298,12 +3298,16 @@ func compileWith(n *ast.WithStatement) object.EvalFn {
 		exitArgs := []object.Object{excType, excVal, NULL}
 
 		exitResult := callDunderMethod(ctx, inst, "__exit__", exitArgs, env)
-		// A raise (or internal error) from __exit__ itself always propagates and
-		// wins over the body's in-flight exception, matching Python (where the
+		// A raise (or internal error) from __exit__ itself propagates and wins
+		// over the body's in-flight exception, matching Python (where the
 		// __exit__ exception replaces/chains the original). This must be checked
 		// before the truthy-suppression test below, since a raised exception is
-		// itself truthy and would otherwise be mistaken for "suppress".
-		if exitResult != nil && (propagates(exitResult)) {
+		// itself truthy and would otherwise be mistaken for "suppress". The one
+		// exception is a protected result (see isProtected): letting __exit__
+		// replace it would launder a security refusal, an exit or a stopped
+		// run into an exception a handler can catch, so it keeps propagating
+		// whatever __exit__ does.
+		if exitResult != nil && propagates(exitResult) && !isProtected(result) {
 			return exitResult
 		}
 

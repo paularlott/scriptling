@@ -294,3 +294,106 @@ os.symlink("../data.txt", "` + filepath.Join(jail, "sub", "good") + `")`); err !
 		t.Errorf("the legitimate link was not created: %v", statErr)
 	}
 }
+
+// os.makedirs on a path with a missing component, then "..", then a link to
+// the jail's parent must be denied: os.MkdirAll creates the missing directory
+// first and the kernel then follows the link out of the jail. Likewise a path
+// that leaves the jail, creates a directory, and comes back.
+func TestOSMakedirsMissingComponentThroughLink(t *testing.T) {
+	base, err := os.MkdirTemp("", "scriptling-mkdirs-jail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	jail := filepath.Join(base, "jail")
+	outside := filepath.Join(base, "outside")
+	for _, d := range []string{jail, outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("..", filepath.Join(jail, "l")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+
+	p := New()
+	extlibs.RegisterOSLibrary(p, []string{jail})
+	sep := string(os.PathSeparator)
+	for _, tc := range []struct {
+		path    string
+		created string
+	}{
+		{jail + sep + "n" + sep + ".." + sep + "l" + sep + sep + "pwned", filepath.Join(base, "pwned")},
+		{outside + sep + "new" + sep + ".." + sep + ".." + sep + "jail" + sep + "x", filepath.Join(outside, "new")},
+	} {
+		if _, err := p.Eval(`import os
+os.makedirs("` + tc.path + `", exist_ok=True)`); err == nil {
+			t.Errorf("os.makedirs(%q) was allowed", tc.path)
+		}
+		if _, statErr := os.Stat(tc.created); statErr == nil {
+			t.Errorf("os.makedirs(%q) created %s outside the jail", tc.path, tc.created)
+		}
+	}
+
+	// Legitimate nested and unclean paths inside the jail still work.
+	for _, path := range []string{
+		filepath.Join(jail, "a", "b", "c"),
+		jail + sep + "d" + sep + ".." + sep + "e" + sep + sep + "f",
+	} {
+		if _, err := p.Eval(`import os
+os.makedirs("` + path + `", exist_ok=True)`); err != nil {
+			t.Errorf("os.makedirs(%q) inside the jail was rejected: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(jail, "e", "f")); err != nil {
+		t.Errorf("legitimate unclean makedirs did not create jail/e/f: %v", err)
+	}
+}
+
+// A relative symlink target is resolved from the link's directory as the
+// kernel walks it, never cleaned first: with x/s -> .. (the jail), "x/s/.."
+// is the jail's parent, though filepath.Join cleans it to "x".
+func TestOSSymlinkTargetResolvedUncleaned(t *testing.T) {
+	base, err := os.MkdirTemp("", "scriptling-symclean")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	jail := filepath.Join(base, "jail")
+	if err := os.MkdirAll(filepath.Join(jail, "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(jail, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("..", filepath.Join(jail, "x", "s")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+
+	p := New()
+	extlibs.RegisterOSLibrary(p, []string{jail})
+	for _, src := range []string{"x/s/..", "x/s/../secret", "missing/../x/s/.."} {
+		dst := filepath.Join(jail, "l")
+		if _, err := p.Eval(`import os
+os.symlink("` + src + `", "` + dst + `")`); err == nil {
+			t.Errorf("os.symlink(%q) escaping through x/s was allowed", src)
+		}
+		if _, statErr := os.Lstat(dst); statErr == nil {
+			t.Fatalf("os.symlink(%q) created the escaping link", src)
+		}
+	}
+
+	// Through the same link, a target that stays inside is allowed, and so
+	// is an absolute in-jail target, checked as is.
+	for i, src := range []string{"x/s/sub", filepath.Join(jail, "sub")} {
+		dst := filepath.Join(jail, "ok"+string(rune('0'+i)))
+		if _, err := p.Eval(`import os
+os.symlink("` + src + `", "` + dst + `")`); err != nil {
+			t.Errorf("os.symlink(%q) inside the jail was rejected: %v", src, err)
+		}
+	}
+	if _, err := p.Eval(`import os
+os.symlink("` + filepath.Join(base, "elsewhere") + `", "` + filepath.Join(jail, "absout") + `")`); err == nil {
+		t.Error("an absolute target outside the jail was allowed")
+	}
+}

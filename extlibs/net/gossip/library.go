@@ -1172,7 +1172,7 @@ Parameters:
 	}
 }
 
-func buildLibrary(guard *netsecurity.Guard) *object.Library {
+func buildLibrary(policy *peerPolicy) *object.Library {
 	return object.NewLibrary(LibraryName, map[string]*object.Builtin{
 		"create": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -1408,14 +1408,15 @@ func buildLibrary(guard *netsecurity.Guard) *object.Library {
 					}
 				}
 
-				if guard != nil {
+				if policy != nil {
 					// Every outbound connection, to joined peers and to peers
 					// learned from the cluster, goes through the network
-					// policy. Gossip addresses are IPs, so the address rules
-					// apply rather than the URL IP-literal rule. UDP
-					// datagrams bypass the dialer, so all traffic goes over
-					// TCP.
-					config.DialFunc = guard.DialContext
+					// policy, and so does every peer name gossip resolves.
+					// UDP datagrams bypass the dialer, so all traffic goes
+					// over TCP.
+					pd := newPeerDialer(policy)
+					config.Resolver = pd
+					config.DialFunc = pd.Dial
 					config.ForceReliableTransport = true
 				}
 
@@ -1518,7 +1519,8 @@ func httpAdvertiseURL(advertise string, addr net.Addr) (string, error) {
 
 // Register registers the library. An optional network policy restricts every
 // outbound connection a cluster makes: denied addresses are refused, private
-// clusters need allow_cidrs, and all traffic is carried over TCP.
+// clusters need allow_cidrs, allow_hosts limits peers to the listed names,
+// and all traffic is carried over TCP.
 func Register(registrar interface{ RegisterLibrary(*object.Library) }, loggerInstance logger.Logger, cfg ...*netsecurity.Config) {
 	if loggerInstance == nil {
 		loggerInstance = logger.NewNullLogger()
@@ -1546,8 +1548,176 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }, loggerIns
 		if gerr != nil {
 			guard = netsecurity.FailClosed(gerr)
 		}
-		registrar.RegisterLibrary(buildLibrary(guard))
+		registrar.RegisterLibrary(buildLibrary(&peerPolicy{
+			guard:     guard,
+			allowlist: hasHostAllowlist(cfg[0].AllowHosts),
+		}))
 		return
 	}
 	registrar.RegisterLibrary(library)
+}
+
+// peerPolicy is the network policy a registration applies to its clusters.
+type peerPolicy struct {
+	guard *netsecurity.Guard
+	// allowlist is set when the policy has AllowHosts entries: then only
+	// those hosts may be reached, and a peer named by IP must pass the
+	// IP-literal rule (AllowIPLiterals or AllowedCIDRs) like a URL host.
+	// Without one, peer IPs need only pass the address rules, since gossip
+	// peers routinely advertise themselves by IP.
+	allowlist bool
+}
+
+// hasHostAllowlist reports whether hosts holds any entry the guard compiles
+// into an allowlist rule.
+func hasHostAllowlist(hosts []string) bool {
+	for _, h := range hosts {
+		if strings.TrimRight(strings.TrimSpace(h), ".") != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// maxVettedIPs bounds the IPs a cluster remembers from allowlisted names. A
+// full set is dropped; a peer whose IP was forgotten is re-resolved on its
+// next failed dial.
+const maxVettedIPs = 4096
+
+// peerResolveTimeout bounds a peer name lookup; gossip's Resolver interface
+// carries no context.
+const peerResolveTimeout = 10 * time.Second
+
+// peerDialer applies a policy to one cluster's peer resolution and dials.
+// The socket transport resolves peer names itself (through Resolver) and
+// dials only IPs, so the host rules (AllowHosts, DenyHosts) are applied when
+// a name is resolved, and the IPs an allowlisted name resolved to are
+// remembered so that dialling them is permitted. The HTTP transport dials
+// names, which Dial checks directly.
+type peerDialer struct {
+	policy *peerPolicy
+	dialer net.Dialer
+
+	mu     sync.Mutex
+	vetted map[string]struct{} // IPs resolved from allowed names (allowlist only)
+}
+
+func newPeerDialer(policy *peerPolicy) *peerDialer {
+	return &peerDialer{
+		policy: policy,
+		dialer: net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second},
+		vetted: make(map[string]struct{}),
+	}
+}
+
+// resolve applies the host rules to name, resolves it through the policy's
+// resolver and validates every answer, remembering them under an allowlist.
+func (d *peerDialer) resolve(ctx context.Context, name string) ([]net.IP, error) {
+	ips, err := d.policy.guard.ResolveIPs(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if d.policy.allowlist {
+		d.mu.Lock()
+		if len(d.vetted)+len(ips) > maxVettedIPs {
+			d.vetted = make(map[string]struct{})
+		}
+		for _, ip := range ips {
+			d.vetted[ip.String()] = struct{}{}
+		}
+		d.mu.Unlock()
+	}
+	return ips, nil
+}
+
+// LookupIP implements gossip.Resolver.
+func (d *peerDialer) LookupIP(host string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), peerResolveTimeout)
+	defer cancel()
+	ips, err := d.resolve(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(ips))
+	for i, ip := range ips {
+		out[i] = ip.String()
+	}
+	return out, nil
+}
+
+// LookupSRV implements gossip.Resolver. Each target is resolved under the
+// policy, so an SRV record cannot point the cluster at a host it may not
+// reach.
+func (d *peerDialer) LookupSRV(service string) ([]*net.TCPAddr, error) {
+	if service == "" {
+		return nil, fmt.Errorf("empty service")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), peerResolveTimeout)
+	defer cancel()
+	_, srvs, err := d.policy.guard.Resolver().LookupSRV(ctx, "", "", service)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup SRV record: %w", err)
+	}
+	var out []*net.TCPAddr
+	var firstErr error
+	for _, srv := range srvs {
+		if srv.Port == 0 || srv.Target == "." {
+			continue
+		}
+		ips, rerr := d.resolve(ctx, srv.Target)
+		if rerr != nil {
+			if firstErr == nil {
+				firstErr = rerr
+			}
+			continue
+		}
+		for _, ip := range ips {
+			out = append(out, &net.TCPAddr{IP: ip, Port: int(srv.Port)})
+		}
+	}
+	if len(out) == 0 {
+		if firstErr != nil {
+			return nil, firstErr
+		}
+		return nil, fmt.Errorf("no SRV records with resolvable IPs")
+	}
+	return out, nil
+}
+
+// Dial is the cluster's DialFunc. A name gets the host and address rules
+// (as Guard.Dial applies them) and its validated answers are dialled. An IP
+// the cluster resolved from an allowlisted name was validated then and is
+// dialled as is; any other IP also gets the IP-literal rule under an
+// allowlist, and the address rules alone without one.
+func (d *peerDialer) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid address %q", netsecurity.ErrPolicy, addr)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		ips, rerr := d.resolve(ctx, host)
+		if rerr != nil {
+			return nil, rerr
+		}
+		var lastErr error
+		for _, ip := range ips {
+			conn, derr := d.dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+			if derr == nil {
+				return conn, nil
+			}
+			lastErr = derr
+		}
+		return nil, lastErr
+	}
+	if !d.policy.allowlist {
+		return d.policy.guard.DialContext(ctx, network, addr)
+	}
+	d.mu.Lock()
+	_, ok := d.vetted[ip.String()]
+	d.mu.Unlock()
+	if ok {
+		return d.dialer.DialContext(ctx, network, addr)
+	}
+	return d.policy.guard.Dial(ctx, network, addr)
 }

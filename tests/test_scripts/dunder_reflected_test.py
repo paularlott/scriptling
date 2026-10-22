@@ -86,3 +86,19 @@ n = Never()
 assert n != n
 assert [n] == [n] and (n,) == (n,) and {"k": n} == {"k": n}
 assert n in [n] and [n, n].count(n) == 2
+
+# str % x formats x whatever it is: str.__mod__ never returns
+# NotImplemented, so a right operand's __rmod__ is not consulted.
+class RM:
+    def __rmod__(self, o):
+        return "rmod"
+    def __str__(self):
+        return "RM!"
+assert "%s" % RM() == "RM!"
+assert "%s|%s" % (RM(), 1) == "RM!|1"
+assert 7 % RM() == "rmod"
+try:
+    "x" % RM()
+    assert False, "'x' % RM() must raise"
+except TypeError:
+    pass

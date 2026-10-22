@@ -332,7 +332,9 @@ func writeFetchedFile(data []byte, dest string, mode, dirMode os.FileMode) (fetc
 	if dest == "" {
 		return fetchResult{}, fmt.Errorf("dest must not be empty")
 	}
-	dir := filepath.Dir(dest)
+	// RawDir, not filepath.Dir: the cleaned parent of an unclean dest can
+	// resolve somewhere the checked dest does not walk through.
+	dir := fssecurity.RawDir(dest)
 	if dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, dirMode); err != nil {
 			return fetchResult{}, fmt.Errorf("failed to create directory %s: %w", dir, err)

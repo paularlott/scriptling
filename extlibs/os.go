@@ -421,23 +421,25 @@ Creates a directory and all parent directories as needed.`,
 				if errObj := checkPathSecurity(o.config, dst); errObj != nil {
 					return errObj
 				}
-				absDst, _ := filepath.Abs(dst)
 				// A link whose target lands outside the allowed set is denied
 				// at creation, so an escaping link cannot be planted even
 				// though a later write through it would also be caught. The
-				// target of a RELATIVE src is resolved against the link's own
+				// target of a RELATIVE src is resolved from the link's own
 				// directory, exactly as the kernel resolves it when the link
-				// is followed — not against the process working directory.
+				// is followed: the uncleaned "dir/src" is walked component by
+				// component, so "x/s/.." with x/s -> .. is the parent of the
+				// jail, not a lexical "x". dst is passed to the OS exactly as
+				// it was checked.
 				if o.config.AllowedPaths != nil {
 					target := src
 					if !filepath.IsAbs(target) {
-						target = filepath.Join(filepath.Dir(absDst), target)
+						target = fssecurity.RawDir(dst) + string(os.PathSeparator) + src
 					}
-					if resolved := fssecurity.ResolveExistingPrefix(target); !o.config.IsPathAllowed(resolved) {
+					if !o.config.IsPathAllowed(target) {
 						return errors.NewPermissionError("access denied: symlink target '%s' is outside allowed directories", src)
 					}
 				}
-				if err := os.Symlink(src, absDst); err != nil {
+				if err := os.Symlink(src, dst); err != nil {
 					return errors.NewError("symlink: %s", err.Error())
 				}
 				return &object.Null{}

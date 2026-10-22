@@ -114,3 +114,104 @@ func TestCheckIsCheap(t *testing.T) {
 		}
 	}
 }
+
+// deepInline is an inline-table payload far past the cap, for placing after a
+// string whose end the scanner might misjudge.
+var deepInline = strings.Repeat("{a=", 2000) + "1" + strings.Repeat("}", 2000)
+
+// A multi-line string may end with one or two extra quotes of its own kind
+// (`"""x""""` is `x"`). The scanner must treat the whole run as the close; if it
+// stops at the first three, the stray quote opens a fake single-line string
+// that hides the rest of the line, and a deep payload after it slips through.
+func TestCheckMultilineCloseWithExtraQuotes(t *testing.T) {
+	for name, str := range map[string]string{
+		`basic + 1 quote`:   `"""x""""`,
+		`basic + 2 quotes`:  `"""x"""""`,
+		`literal + 1 quote`: `'''x''''`,
+		`literal + 2 quote`: `'''x'''''`,
+	} {
+		src := "a = [" + str + ", " + deepInline + "]"
+		var tooDeep *ErrTooDeep
+		if err := Check(src); !errors.As(err, &tooDeep) {
+			t.Errorf("%s: Check = %v, want ErrTooDeep", name, err)
+		}
+	}
+}
+
+// The same strings in a legitimate document still pass and decode to the
+// content the TOML spec gives them.
+func TestCheckMultilineCloseWithExtraQuotesValid(t *testing.T) {
+	for str, want := range map[string]string{
+		`"""x""""`:  `x"`,
+		`"""x"""""`: `x""`,
+		`'''x''''`:  `x'`,
+		`'''x'''''`: `x''`,
+	} {
+		src := "a = " + str + "\nb = {c = [1, 2]}\n"
+		if err := Check(src); err != nil {
+			t.Errorf("%s: Check rejected a valid document: %v", str, err)
+			continue
+		}
+		var v struct {
+			A string
+			B struct{ C []int }
+		}
+		if _, err := toml.Decode(src, &v); err != nil {
+			t.Errorf("%s: decode: %v", str, err)
+			continue
+		}
+		if v.A != want || len(v.B.C) != 2 {
+			t.Errorf("%s: decoded a=%q b=%v, want a=%q and b.c of 2", str, v.A, v.B, want)
+		}
+	}
+}
+
+// Other places a string scanner can lose track of where a string ends. Each
+// is followed by a deep payload that must still be seen.
+func TestCheckStringEdgesStillSeePayload(t *testing.T) {
+	for name, src := range map[string]string{
+		// Line-ending backslash inside a multi-line basic string is a
+		// continuation, not an escape of the closing quotes.
+		"line-ending backslash": "a = [\"\"\"x \\\n  y\"\"\", " + deepInline + "]",
+		// A backslash right before the close escapes only the first quote.
+		"escaped quote before close": `a = ["""x\""""", ` + deepInline + "]",
+		// `#` inside a multi-line string is content, not a comment.
+		"hash in multiline basic":   "a = [\"\"\"x # y\"\"\", " + deepInline + "]",
+		"hash in multiline literal": "a = ['''x # y''', " + deepInline + "]",
+		// The other quote kind inside a single-line string does not end it.
+		"single quote in basic":   `a = ["it's", ` + deepInline + "]",
+		"double quote in literal": `a = ['say "hi"', ` + deepInline + "]",
+		"triple other quote":      `a = ["'''", '"""', ` + deepInline + "]",
+		// An empty string is not the start of a multi-line one.
+		"empty basic":   `a = ["", ` + deepInline + "]",
+		"empty literal": `a = ['', ` + deepInline + "]",
+		// An unterminated single-line string ends at the newline (a trailing
+		// backslash does not continue it), and the next line is scanned fresh.
+		"unterminated then deep key":  "a = \"x\n" + strings.Repeat("k.", 3000) + "k = 1",
+		"backslash-newline then deep": "a = \"x\\\n" + "b = " + deepInline,
+	} {
+		var tooDeep *ErrTooDeep
+		if err := Check(src); !errors.As(err, &tooDeep) {
+			t.Errorf("%s: Check = %v, want ErrTooDeep", name, err)
+		}
+	}
+}
+
+// The same string forms in shallow documents pass and decode.
+func TestCheckStringEdgesValid(t *testing.T) {
+	for _, src := range []string{
+		"a = \"\"\"x \\\n  y\"\"\"\nb = {c = 1}\n",
+		`a = """x\""""` + "\nb = {c = 1}\n",
+		"a = \"\"\"x # y\"\"\"\nb = {c = 1}\n",
+		"a = '''x # y'''\nb = {c = 1}\n",
+		`a = ["it's", 'say "hi"', "'''", '"""', "", '']` + "\nb = {c = 1}\n",
+	} {
+		if err := Check(src); err != nil {
+			t.Errorf("Check rejected a valid document: %v\n%s", err, src)
+		}
+		var v any
+		if _, err := toml.Decode(src, &v); err != nil {
+			t.Errorf("decoder rejected a document Check allowed: %v\n%s", err, src)
+		}
+	}
+}

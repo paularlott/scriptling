@@ -1,6 +1,7 @@
 package container
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/paularlott/scriptling/errors"
@@ -26,7 +27,11 @@ func (p *endpointPolicy) checkRun(opts RunOptions) object.Object {
 	}
 	if p.paths.AllowedPaths != nil {
 		for _, spec := range opts.Volumes {
-			if src, ok := bindSource(spec); ok && !p.paths.IsPathAllowed(src) {
+			// The source is resolved by the runtime, not here, and runtimes
+			// may clean it lexically first (Docker does) or walk it as the
+			// kernel does, which differ when ".." follows a symlink, so both
+			// spellings must be inside the jail.
+			if src, ok := bindSource(spec); ok && (!p.paths.IsPathAllowed(src) || !p.paths.IsPathAllowed(filepath.Clean(src))) {
 				return errors.NewPermissionError("run: volume %q mounts host path %q, which is outside allowed directories", spec, src)
 			}
 		}

@@ -115,7 +115,10 @@ func buildLibrary(inst *libraryInstance) *object.Library {
 
 				fileExisted := err == nil
 
-				dir := filepath.Dir(path)
+				// RawDir, not filepath.Dir: the cleaned parent of an
+				// unclean path can resolve somewhere the checked path does
+				// not walk through.
+				dir := fssecurity.RawDir(path)
 				if dir != "" && dir != "." {
 					if err := os.MkdirAll(dir, defaultDirMode); err != nil {
 						return &object.Error{Message: fmt.Sprintf("ensure: failed to create directory %s: %s", dir, err.Error())}
@@ -689,7 +692,9 @@ func readFileLines(path string) (lines []string, trailingNL, existed bool, err e
 // writeFileLines joins lines and writes them, creating parent directories and
 // applying mode. An empty lines slice writes an empty file.
 func writeFileLines(path string, lines []string, trailingNL bool, mode int) error {
-	dir := filepath.Dir(path)
+	// RawDir, not filepath.Dir: only directories that checking path walked
+	// may be created.
+	dir := fssecurity.RawDir(path)
 	if dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, defaultDirMode); err != nil {
 			return err

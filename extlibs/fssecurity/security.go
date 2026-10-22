@@ -69,37 +69,61 @@ func (c *Config) IsPathAllowed(path string) bool {
 		return false
 	}
 
-	// SECURITY: resolve the path the way the kernel will when it is opened,
-	// following every symlink (dangling ones included), so a link inside the
-	// allowed directories cannot lead outside them.
-	realPath, ok := ResolvePath(absPath)
-	if !ok {
+	// Resolve each allowed directory the same way as the query path
+	// (including a possibly-non-existent allowed directory, e.g. before it has
+	// been created): otherwise the two sides can disagree about how far a
+	// shared prefix like /tmp -> /private/tmp on macOS has been resolved, and
+	// an entirely legitimate path is denied. Resolved lazily, once per call.
+	realAllowed := make([]string, len(c.AllowedPaths))
+	allowedAt := func(i int) string {
+		if realAllowed[i] == "" {
+			realAllowed[i] = ResolveExistingPrefix(filepath.Clean(c.AllowedPaths[i]))
+		}
+		return realAllowed[i]
+	}
+	inside := func(p string) bool {
+		for i := range c.AllowedPaths {
+			if isWithin(p, allowedAt(i)) {
+				return true
+			}
+		}
 		return false
 	}
 
-	// Check if the real path starts with any of the allowed paths
-	for _, allowedPath := range c.AllowedPaths {
-		// Resolve the allowed directory the same way as the query path
-		// (including a possibly-non-existent allowed directory, e.g. before
-		// it has been created): otherwise the two sides can disagree about
-		// how far a shared prefix like /tmp -> /private/tmp on macOS has
-		// been resolved, and an entirely legitimate path is denied.
-		realAllowed := ResolveExistingPrefix(filepath.Clean(allowedPath))
-
-		// Ensure allowed path ends with separator for proper prefix matching
-		// This prevents /allowed matching /allowed-other
-		allowedPrefix := realAllowed
-		if !strings.HasSuffix(allowedPrefix, string(os.PathSeparator)) {
-			allowedPrefix += string(os.PathSeparator)
-		}
-
-		// Check if path is exactly the allowed path or is under it
-		if realPath == realAllowed || strings.HasPrefix(realPath+string(os.PathSeparator), allowedPrefix) {
+	// SECURITY: resolve the path the way the kernel will when it is opened,
+	// following every symlink (dangling ones included), so a link inside the
+	// allowed directories cannot lead outside them. A component that does
+	// not exist is walked as the directory os.MkdirAll would create there, so
+	// each one must itself be inside the allowed directories (or be an
+	// ancestor of one, which creating a not-yet-existing allowed directory
+	// needs): "/etc/new/../../jail/x" ends inside the jail, but MkdirAll on it
+	// would create /etc/new.
+	realPath, ok := resolvePath(absPath, func(dir string) bool {
+		if inside(dir) {
 			return true
 		}
-	}
+		for i := range c.AllowedPaths {
+			if isWithin(allowedAt(i), dir) {
+				return true
+			}
+		}
+		return false
+	})
+	return ok && inside(realPath)
+}
 
-	return false
+// isWithin reports whether the clean absolute path p is dir or under it. The
+// separator is appended before comparing so /allowed does not match
+// /allowed-other.
+func isWithin(p, dir string) bool {
+	if p == dir {
+		return true
+	}
+	prefix := dir
+	if !strings.HasSuffix(prefix, string(os.PathSeparator)) {
+		prefix += string(os.PathSeparator)
+	}
+	return strings.HasPrefix(p, prefix)
 }
 
 // NormalizeAllowedPaths makes every entry absolute and clean, relative to the
@@ -152,10 +176,18 @@ func absNoClean(path string) (string, error) {
 // opened: component by component, following each symlink (a relative target
 // from the link's own directory) before applying any later "..". Unlike
 // filepath.EvalSymlinks it also resolves paths that do not fully exist: a
-// dangling symlink is followed to where it points, and components that do not
-// exist are appended as written, since a file created there lands there. It
-// reports false for a symlink loop.
+// dangling symlink is followed to where it points, and a component that does
+// not exist is taken as the plain directory os.MkdirAll would create there,
+// so a later ".." pops it and later symlinks are still followed. It reports
+// false for a symlink loop.
 func ResolvePath(absPath string) (string, bool) {
+	return resolvePath(absPath, nil)
+}
+
+// resolvePath is ResolvePath, calling missing (when not nil) with the
+// resolved path of each component that does not exist; a false return fails
+// the resolution.
+func resolvePath(absPath string, missing func(string) bool) (string, bool) {
 	// A relative path is taken from the working directory, never from the
 	// filesystem root.
 	if !filepath.IsAbs(absPath) {
@@ -177,6 +209,10 @@ func ResolvePath(absPath string) (string, bool) {
 	resolved := root
 	remaining := splitPath(absPath[len(vol):])
 	links := 0
+	// absent counts the trailing components of resolved that do not exist.
+	// Nothing below a missing directory exists either, so those components
+	// need no Lstat, and a ".." that pops one returns to real directories.
+	absent := 0
 	for len(remaining) > 0 {
 		comp := remaining[0]
 		remaining = remaining[1:]
@@ -184,15 +220,34 @@ func ResolvePath(absPath string) (string, bool) {
 		case "", ".":
 			continue
 		case "..":
+			// Dir of the root is the root, as ".." at "/" is.
 			resolved = filepath.Dir(resolved)
+			if absent > 0 {
+				absent--
+			}
 			continue
 		}
 		next := filepath.Join(resolved, comp)
+		if absent > 0 {
+			if missing != nil && !missing(next) {
+				return "", false
+			}
+			resolved = next
+			absent++
+			continue
+		}
 		fi, err := os.Lstat(next)
 		if err != nil {
-			// Nothing exists from here on, so nothing further can be a
-			// symlink: the rest applies as written.
-			return filepath.Join(append([]string{next}, remaining...)...), true
+			// Not there (or not reachable): walk on as the directory a
+			// create would make, never a lexical join of the rest, so a
+			// later ".." and symlink resolve as the kernel will once it
+			// exists.
+			if missing != nil && !missing(next) {
+				return "", false
+			}
+			resolved = next
+			absent = 1
+			continue
 		}
 		if fi.Mode()&os.ModeSymlink == 0 {
 			resolved = next
@@ -215,6 +270,28 @@ func ResolvePath(absPath string) (string, bool) {
 		remaining = append(splitPath(target), remaining...)
 	}
 	return resolved, true
+}
+
+// RawDir returns path without its final element, like filepath.Dir but
+// without cleaning: filepath.Dir("a/l/../b/f") is "a/b", which the kernel
+// resolves differently from the "a/l/../b" that opening the path walks
+// through when l is a symlink. Creating RawDir(path) with os.MkdirAll
+// therefore makes only directories that checking path with IsPathAllowed
+// has already walked. It returns "." for a path with no separator.
+func RawDir(path string) string {
+	vol := filepath.VolumeName(path)
+	i := len(path) - 1
+	for i >= len(vol) && !os.IsPathSeparator(path[i]) {
+		i--
+	}
+	dir := path[len(vol) : i+1]
+	for len(dir) > 1 && os.IsPathSeparator(dir[len(dir)-1]) {
+		dir = dir[:len(dir)-1]
+	}
+	if dir == "" {
+		return vol + "."
+	}
+	return vol + dir
 }
 
 // splitPath splits a path into its components on any separator the platform

@@ -1,7 +1,10 @@
 package gossip
 
 import (
+	"context"
+	"errors"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -261,6 +264,136 @@ except Exception:
 			}
 			if r, _ := c.Eval("got"); r.Inspect() != tc.cGets {
 				t.Errorf("peer C got %s, want %s", r.Inspect(), tc.cGets)
+			}
+		})
+	}
+}
+
+func newTestPeerDialer(t *testing.T, cfg *netsecurity.Config) *peerDialer {
+	t.Helper()
+	g, err := netsecurity.NewGuard(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return newPeerDialer(&peerPolicy{guard: g, allowlist: hasHostAllowlist(cfg.AllowHosts)})
+}
+
+// allow_hosts is an allowlist for gossip peers as for URLs: a name that is not
+// listed is refused when gossip resolves it (the socket transport) and when
+// it is dialled (the HTTP transport), and so is an IP literal, even where the
+// address rules alone would allow the target.
+func TestGossipPolicyAllowHostsRefusesOtherHosts(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	_, port, _ := net.SplitHostPort(l.Addr().String())
+
+	ctx := context.Background()
+	// Loopback is allowed by the address rules, so only the allowlist can
+	// refuse these targets.
+	denied := newTestPeerDialer(t, &netsecurity.Config{
+		AllowHosts:    []string{"api.example.com"},
+		AllowLoopback: true,
+	})
+	if _, err := denied.LookupIP("localhost"); !errors.Is(err, netsecurity.ErrPolicy) || !strings.Contains(err.Error(), "allowed host list") {
+		t.Errorf("LookupIP(localhost) = %v, want the allowlist policy error", err)
+	}
+	for _, addr := range []string{"localhost:" + port, "127.0.0.1:" + port} {
+		if c, err := denied.Dial(ctx, "tcp", addr); !errors.Is(err, netsecurity.ErrPolicy) {
+			if c != nil {
+				c.Close()
+			}
+			t.Errorf("Dial(%s) = %v, want a policy error", addr, err)
+		}
+	}
+
+	// The same targets are reachable without the allowlist, and with the
+	// name on it.
+	for name, cfg := range map[string]*netsecurity.Config{
+		"no allowlist": {AllowLoopback: true},
+		"listed":       {AllowHosts: []string{"api.example.com", "localhost"}},
+	} {
+		d := newTestPeerDialer(t, cfg)
+		if _, err := d.LookupIP("localhost"); err != nil {
+			t.Errorf("%s: LookupIP(localhost): %v", name, err)
+		}
+		c, err := d.Dial(ctx, "tcp", "localhost:"+port)
+		if err != nil {
+			t.Errorf("%s: Dial(localhost): %v", name, err)
+			continue
+		}
+		c.Close()
+	}
+}
+
+// End to end on both transports: with allow_hosts set, joining an unlisted
+// name (or an IP literal) forms no cluster, while a listed name joins and its
+// node, learned by the IP it advertises, receives messages.
+func TestGossipPolicyAllowHostsJoin(t *testing.T) {
+	for _, tc := range []struct{ name, opts string }{
+		{"socket", ""},
+		{"http", `, transport="http"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			addr := freeAddr(t)
+			server, aID := startNode(t, addr, tc.opts)
+			aAddr, _ := server.GetVarAsString("node_addr")
+			byName := strings.Replace(aAddr, "127.0.0.1", "localhost", 1)
+
+			for _, j := range []struct {
+				name   string
+				cfg    *netsecurity.Config
+				peer   string
+				joined bool
+			}{
+				{"unlisted name", &netsecurity.Config{AllowHosts: []string{"api.example.com"}, AllowLoopback: true}, byName, false},
+				{"ip literal", &netsecurity.Config{AllowHosts: []string{"api.example.com"}, AllowLoopback: true}, aAddr, false},
+				{"listed name", &netsecurity.Config{AllowHosts: []string{"api.example.com", "localhost"}}, byName, true},
+			} {
+				client := newPolicyScriptling(j.cfg)
+				if _, err := client.Eval(`
+import time
+import scriptling.net.gossip as gossip
+b = gossip.create(bind_addr="127.0.0.1:0"` + tc.opts + `)
+b.start()
+try:
+    b.join(["` + j.peer + `"])
+except Exception:
+    pass
+for _ in range(100):
+    if b.get_node("` + aID + `") is not None:
+        break
+    time.sleep(0.02)
+joined = b.get_node("` + aID + `") is not None
+if joined:
+    b.send_to("` + aID + `", 150, "` + j.name + `", reliable=True)
+`); err != nil {
+					t.Fatalf("%s: client: %v", j.name, err)
+				}
+				r, _ := client.Eval("joined")
+				client.Eval("b.stop()")
+				if got := r.Inspect() == "True"; got != j.joined {
+					t.Errorf("POLICY-BYPASS [gossip %s, %s]: joined = %v, want %v", tc.name, j.name, got, j.joined)
+				}
+			}
+
+			deadline := time.Now().Add(3 * time.Second)
+			for time.Now().Before(deadline) && evalInt(t, server, "len(got)") == 0 {
+				time.Sleep(20 * time.Millisecond)
+			}
+			if r, _ := server.Eval("got"); r.Inspect() != "['listed name']" {
+				t.Errorf("server got %s, want ['listed name']", r.Inspect())
 			}
 		})
 	}

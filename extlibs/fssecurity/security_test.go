@@ -521,3 +521,126 @@ func TestResolvePathRelative(t *testing.T) {
 		}
 	}
 }
+
+// A component that does not exist must be walked as the directory
+// os.MkdirAll would create, not end the walk with a lexical join of the rest:
+// jail/nonexist/../l applies ".." to the (future) directory and then follows
+// l, which a lexical join collapsed to jail/l without following it. With
+// l -> .., MkdirAll("jail/n/../l//pwned") creates jail/n and then <base>/pwned.
+func TestConfig_IsPathAllowed_MissingComponentThenLink(t *testing.T) {
+	base, err := os.MkdirTemp("", "fssecurity_missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	jail := filepath.Join(base, "jail")
+	outside := filepath.Join(base, "outside")
+	for _, d := range []string{filepath.Join(jail, "sub"), outside} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := func(name, target string) {
+		if err := os.Symlink(target, filepath.Join(jail, name)); err != nil {
+			t.Skipf("symlinks unsupported: %v", err)
+		}
+	}
+	link("l", "..")                         // jail/l -> base
+	link("in", "sub")                       // jail/in -> jail/sub
+	link("t", "gone/../l/x")                // target with a missing component, escapes
+	link("t2", "gone/../sub/x")             // target with a missing component, stays in
+	link("abs", filepath.Join(outside, "")) // jail/abs -> outside (absolute)
+
+	config := Config{AllowedPaths: []string{jail}}
+	sep := string(os.PathSeparator)
+	raw := func(parts ...string) string { return strings.Join(parts, sep) }
+
+	for _, tc := range []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"missing then .. through link", raw(jail, "nonexist", "..", "l", "secret.txt"), false},
+		{"empty components", raw(jail, "", "nonexist", "", "..", "", "l", "", "pwned"), false},
+		{"link then missing then ..", raw(jail, "in", "missing", "..", "..", "l", "x"), false},
+		{"missing chain then .. through link", raw(jail, "a", "b", "..", "..", "l", "x"), false},
+		{"link target with missing component escapes", raw(jail, "t"), false},
+		{"missing dir created outside then back in", raw(outside, "new", "..", "..", "jail", "x"), false},
+		{"missing dir created through outside link then back in", raw(jail, "abs", "new", "..", "..", "jail", "x"), false},
+		{"missing dir under link to parent then back in", raw(jail, "l", "newdir", "..", "jail", "x"), false},
+
+		{"link target with missing component stays in", raw(jail, "t2"), true},
+		{"link then missing then .. stays in", raw(jail, "in", "missing", "..", "ok.txt"), true},
+		{"missing then .. stays in", raw(jail, "a", "b", "..", "c.txt"), true},
+		{"missing then .. back to jail", raw(jail, "a", "..", "..", "jail", "x"), true},
+		{".. at root", sep + raw("..", "..") + jail + sep + "x", true},
+		{"doubled separators", raw(jail, "", "new", "", "file.txt"), true},
+	} {
+		if got := config.IsPathAllowed(tc.path); got != tc.want {
+			t.Errorf("%s: IsPathAllowed(%q) = %v, want %v", tc.name, tc.path, got, tc.want)
+		}
+	}
+
+	// ResolvePath itself lands where the kernel will once the missing
+	// directory exists.
+	realBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := ResolvePath(raw(jail, "nonexist", "..", "l", "secret.txt"))
+	if want := filepath.Join(realBase, "secret.txt"); !ok || got != want {
+		t.Errorf("ResolvePath = %q, %v; want %q", got, ok, want)
+	}
+
+	// The exploit end to end: the check must deny what MkdirAll would do.
+	pwn := raw(jail, "n", "..", "l", "", "pwned")
+	if config.IsPathAllowed(pwn) {
+		t.Fatalf("%s must be denied", pwn)
+	}
+	if err := os.MkdirAll(pwn, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "pwned")); err != nil {
+		t.Fatalf("expected the raw MkdirAll to escape (proving the check matters): %v", err)
+	}
+}
+
+// An allowed directory that does not exist yet, under ancestors that do not
+// exist either, must still admit paths beneath it: creating it creates those
+// ancestors.
+func TestConfig_IsPathAllowed_MissingAllowedAncestors(t *testing.T) {
+	base, err := os.MkdirTemp("", "fssecurity_ancestors")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	jail := filepath.Join(base, "not", "yet", "jail")
+	config := Config{AllowedPaths: []string{jail}}
+	if !config.IsPathAllowed(filepath.Join(jail, "x", "y.txt")) {
+		t.Error("a path under a not-yet-created allowed directory should be allowed")
+	}
+	if config.IsPathAllowed(filepath.Join(base, "not", "other", "y.txt")) {
+		t.Error("a sibling of a not-yet-created allowed directory must be denied")
+	}
+	sep := string(os.PathSeparator)
+	if config.IsPathAllowed(filepath.Join(base, "not") + sep + "other" + sep + ".." + sep + "yet" + sep + "jail" + sep + "x") {
+		t.Error("creating a sibling on the way into the allowed directory must be denied")
+	}
+}
+
+func TestRawDir(t *testing.T) {
+	for in, want := range map[string]string{
+		"a/l/../b/f": "a/l/../b",
+		"a/b/":       "a/b",
+		"a//f":       "a",
+		"/f":         "/",
+		"//f":        "/",
+		"f":          ".",
+		"":           ".",
+		"a/x/..":     "a/x",
+	} {
+		if got := RawDir(filepath.FromSlash(in)); got != filepath.FromSlash(want) {
+			t.Errorf("RawDir(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

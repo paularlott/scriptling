@@ -15,7 +15,12 @@ import (
 // swallowers are the ways a script tries to keep going past an error: an
 // except clause, a with block whose __exit__ suppresses everything, and
 // contextlib.suppress.
-var swallowers = map[string]struct{ setup, open, close string }{
+type swallower struct {
+	setup, open, close string
+	depth              int // block levels the body sits under open; 0 means 1
+}
+
+var swallowers = map[string]swallower{
 	"try/except": {
 		open:  "try:\n",
 		close: "except:\n    pass\n",
@@ -28,11 +33,21 @@ var swallowers = map[string]struct{ setup, open, close string }{
 		setup: "import contextlib\n",
 		open:  "with contextlib.suppress(Exception):\n",
 	},
+	// An __exit__ that raises replaces the in-flight exception in Python, so
+	// a handler around the with block could catch the replacement: the
+	// protected error must keep propagating instead.
+	"__exit__ raises": {
+		setup: "class Launder:\n    def __enter__(self):\n        return self\n    def __exit__(self, t, v, tb):\n        raise ValueError('laundered: ' + str(t))\n",
+		open:  "try:\n    with Launder():\n",
+		close: "except ValueError:\n    pass\n",
+		depth: 2,
+	},
 }
 
 // wrapIn indents body under a swallower and marks whether the script got past it.
-func wrapIn(s struct{ setup, open, close string }, body string) string {
-	indented := "    " + strings.ReplaceAll(strings.TrimSpace(body), "\n", "\n    ") + "\n"
+func wrapIn(s swallower, body string) string {
+	prefix := strings.Repeat("    ", max(s.depth, 1))
+	indented := prefix + strings.ReplaceAll(strings.TrimSpace(body), "\n", "\n"+prefix) + "\n"
 	return s.setup + "survived = False\n" + s.open + indented + s.close + "survived = True\n"
 }
 

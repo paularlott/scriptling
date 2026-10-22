@@ -688,9 +688,13 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 	}
 
 	// Reflected arithmetic: an instance on the right handles an operator a
-	// non-instance on the left cannot (2 * d calls d.__rmul__(2)).
+	// non-instance on the left cannot (2 * d calls d.__rmul__(2)). Python
+	// only reaches the reflected method when the left operand's own returns
+	// NotImplemented, and the builtin left operands here do so for every
+	// instance except one case: str % x and bytes % x format x, whatever it
+	// is, so '%s' % obj renders obj rather than calling obj.__rmod__.
 	if rInst, ok := right.(*object.Instance); ok {
-		if _, leftInst := left.(*object.Instance); !leftInst {
+		if _, leftInst := left.(*object.Instance); !leftInst && !formatsAnyOperand(operator, left) {
 			if result := evalReflectedArithmetic(ctx, operator, left, rInst, env); result != nil {
 				return result
 			}
@@ -1729,6 +1733,20 @@ var reflectedArithmeticDunder = map[ast.Op]string{
 	ast.OpMod:      "__rmod__",
 	ast.OpBitOr:    "__ror__",
 	ast.OpBitAnd:   "__rand__",
+}
+
+// formatsAnyOperand reports whether left handles operator for every right
+// operand itself, so the right operand's reflected method is never consulted:
+// str % x and bytes % x are formatting, not arithmetic.
+func formatsAnyOperand(operator ast.Op, left object.Object) bool {
+	if operator != ast.OpMod {
+		return false
+	}
+	switch left.(type) {
+	case *object.String, *object.Bytes:
+		return true
+	}
+	return false
 }
 
 // evalReflectedArithmetic calls right.__r<op>__(left) when the right operand
