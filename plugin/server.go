@@ -43,6 +43,7 @@ type Server struct {
 
 	jsonrpcServer *jsonrpc.Server // inbound registry for HTTP (no callback runtime)
 	srvOnce       sync.Once
+	httpLimits    []jsonrpc.Option // applied to the HTTP server only, see SetHTTPLimits
 }
 
 type funcEntry struct {
@@ -97,6 +98,22 @@ func NewServer(name, version, description string) *Server {
 // manifest. Call it once at construction, before Run.
 func (s *Server) SetMetadata(metadata map[string]any) *Server {
 	s.metadata = metadata
+	return s
+}
+
+// SetHTTPLimits bounds the plugin protocol served over HTTP: batches larger
+// than maxBatch are refused, and at most maxConcurrency handlers run at once.
+// Zero or negative leaves that dimension unbounded. The stdio transport is
+// not limited: it serves only the host, and a handler blocked on a slot while
+// making a host callback could deadlock. Call it before serving.
+func (s *Server) SetHTTPLimits(maxBatch, maxConcurrency int) *Server {
+	s.httpLimits = nil
+	if maxBatch > 0 {
+		s.httpLimits = append(s.httpLimits, jsonrpc.WithMaxBatch(maxBatch))
+	}
+	if maxConcurrency > 0 {
+		s.httpLimits = append(s.httpLimits, jsonrpc.WithMaxConcurrency(maxConcurrency))
+	}
 	return s
 }
 
@@ -221,7 +238,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // httpServer returns the jsonrpc.Server used for HTTP, built once and reused.
 // It carries no callback runtime since HTTP is unidirectional.
 func (s *Server) httpServer() *jsonrpc.Server {
-	s.srvOnce.Do(func() { s.jsonrpcServer = s.buildServer(nil) })
+	s.srvOnce.Do(func() { s.jsonrpcServer = s.buildServer(nil, s.httpLimits...) })
 	return s.jsonrpcServer
 }
 
@@ -230,8 +247,8 @@ func (s *Server) httpServer() *jsonrpc.Server {
 // to each handler's context so plugin code can make host callbacks
 // (callback.call) and emit log records (host.log) over the bidirectional stdio
 // transport; nil runtime (HTTP) disables those (callbacks/logger error out).
-func (s *Server) buildServer(runtime *serverRuntime) *jsonrpc.Server {
-	srv := jsonrpc.NewServer()
+func (s *Server) buildServer(runtime *serverRuntime, opts ...jsonrpc.Option) *jsonrpc.Server {
+	srv := jsonrpc.NewServer(opts...)
 	for _, method := range pluginMethods {
 		m := method
 		srv.Handle(m, func(ctx context.Context, params json.RawMessage) (any, error) {

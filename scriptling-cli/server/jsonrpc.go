@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/paularlott/jsonrpc"
@@ -28,6 +29,30 @@ const (
 	jsonrpcInternalError  = jsonrpc.CodeInternalError
 	jsonrpcServerError    = jsonrpc.CodeServerError
 )
+
+// DefaultJSONRPCMaxBatch is the batch size limit applied when
+// ServerConfig.JSONRPCMaxBatch is unset.
+const DefaultJSONRPCMaxBatch = 1000
+
+// DefaultJSONRPCMaxConcurrency is the concurrent handler limit applied when
+// ServerConfig.JSONRPCMaxConcurrency is unset.
+func DefaultJSONRPCMaxConcurrency() int { return 4 * runtime.NumCPU() }
+
+// jsonrpcLimits resolves the effective batch and concurrency limits; zero in
+// the result means unlimited.
+func (s *Server) jsonrpcLimits() (maxBatch, maxConcurrency int) {
+	resolve := func(v, def int) int {
+		switch {
+		case v == 0:
+			return def
+		case v < 0:
+			return 0
+		}
+		return v
+	}
+	return resolve(s.config.JSONRPCMaxBatch, DefaultJSONRPCMaxBatch),
+		resolve(s.config.JSONRPCMaxConcurrency, DefaultJSONRPCMaxConcurrency())
+}
 
 // collectJSONRPCMethods copies registered methods/notifications out of
 // RuntimeState into the Server so dispatch is lock-free during serving.
@@ -71,9 +96,17 @@ func (s *Server) jsonrpcServerInstance() *jsonrpc.Server {
 //   - a notification (no id) for a name that is only a method   -> ignored, handler not run
 //   - a name registered as both dispatches to the matching handler for each shape
 func (s *Server) buildJSONRPCServer() *jsonrpc.Server {
-	srv := jsonrpc.NewServer(jsonrpc.WithErrorHandler(func(method string, err error) {
+	opts := []jsonrpc.Option{jsonrpc.WithErrorHandler(func(method string, err error) {
 		Log.Debug("JSON-RPC handler error", "method", method, "error", err)
-	}))
+	})}
+	maxBatch, maxConcurrency := s.jsonrpcLimits()
+	if maxBatch > 0 {
+		opts = append(opts, jsonrpc.WithMaxBatch(maxBatch))
+	}
+	if maxConcurrency > 0 {
+		opts = append(opts, jsonrpc.WithMaxConcurrency(maxConcurrency))
+	}
+	srv := jsonrpc.NewServer(opts...)
 
 	names := make(map[string]struct{}, len(s.jsonrpcMethods)+len(s.jsonrpcNotifications))
 	for name := range s.jsonrpcMethods {

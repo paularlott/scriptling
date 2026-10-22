@@ -79,6 +79,16 @@ type ServerConfig struct {
 	// (applies to every route). Zero means the default, DefaultMaxRequestBody.
 	MaxRequestBodyBytes int64
 
+	// JSONRPCMaxBatch caps the elements in one JSON-RPC batch; a larger
+	// batch gets a single Invalid Request error. Zero means the default,
+	// DefaultJSONRPCMaxBatch; negative means unlimited.
+	JSONRPCMaxBatch int
+
+	// JSONRPCMaxConcurrency caps the JSON-RPC handlers running at once
+	// across every batch, request and stream. Zero means the default,
+	// DefaultJSONRPCMaxConcurrency; negative means unlimited.
+	JSONRPCMaxConcurrency int
+
 	// WebSocketOrigins restricts which browser origins may upgrade: an
 	// origin allowlist, "*" to allow every origin, or empty for the
 	// same-origin default. Non-browser clients send no Origin header and

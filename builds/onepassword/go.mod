@@ -40,7 +40,7 @@ require (
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/paularlott/cli v0.10.2 // indirect
 	github.com/paularlott/gossip v0.28.0 // indirect
-	github.com/paularlott/jsonrpc v0.2.0 // indirect
+	github.com/paularlott/jsonrpc v0.3.0 // indirect
 	github.com/paularlott/logger v0.4.0 // indirect
 	github.com/paularlott/mcp v0.33.1 // indirect
 	github.com/paularlott/snapshotkv v0.6.0 // indirect

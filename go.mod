@@ -15,7 +15,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/paularlott/cli v0.10.2
 	github.com/paularlott/gossip v0.28.0
-	github.com/paularlott/jsonrpc v0.2.0
+	github.com/paularlott/jsonrpc v0.3.0
 	github.com/paularlott/logger v0.4.0
 	github.com/paularlott/mcp v0.33.1
 	github.com/paularlott/snapshotkv v0.6.0

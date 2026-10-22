@@ -81,6 +81,7 @@ func (s *Server) buildPluginServer() {
 
 	Log.Info("Plugin server ready", "name", name, "version", version,
 		"functions", len(handlers), "constants", len(constants), "classes", len(classes))
+	ps.SetHTTPLimits(s.jsonrpcLimits())
 	s.pluginServer = ps
 }
 
