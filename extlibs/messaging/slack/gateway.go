@@ -50,7 +50,7 @@ func (g *socketGateway) dial(ctx context.Context) error {
 		return fmt.Errorf("slack: openSocketConnection: %w", err)
 	}
 
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, url, nil)
+	conn, err := g.c.network.DialWebsocket(ctx, url)
 	if err != nil {
 		return fmt.Errorf("slack: gateway dial: %w", err)
 	}

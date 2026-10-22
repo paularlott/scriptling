@@ -25,8 +25,8 @@ type discordClient struct {
 	token      string
 	httpClient *http.Client
 	botUserID  string
-	external   *shared.ExternalURLs // script-supplied URLs; nil = platform rules only
-	files      *fssecurity.Config   // local files scripts may send; nil = unrestricted
+	network    *shared.Network    // credential and network-policy rules
+	files      *fssecurity.Config // local files scripts may send; nil = unrestricted
 	log        logger.Logger
 	gateway    *gateway
 }
@@ -39,7 +39,7 @@ func newClient(token string, log logger.Logger) *discordClient {
 	c := &discordClient{
 		token:      token,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
-		external:   shared.NewExternalURLs(platformDomains, 30*time.Second),
+		network:    shared.NewNetwork(platformDomains, 30*time.Second),
 		log:        log,
 	}
 	c.Bot = shared.NewBot(c)
@@ -264,7 +264,7 @@ func (c *discordClient) request(ctx context.Context, method, path string, body i
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.network.Client(c.httpClient).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +296,7 @@ func (c *discordClient) respondToInteraction(ctx context.Context, id, token, con
 	}
 	req.Header.Set("Authorization", c.authHeader())
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.network.Client(c.httpClient).Do(req)
 	if err != nil {
 		return err
 	}
@@ -314,7 +314,7 @@ func (c *discordClient) ackInteraction(ctx context.Context, id, token string) er
 	}
 	req.Header.Set("Authorization", c.authHeader())
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.network.Client(c.httpClient).Do(req)
 	if err != nil {
 		return err
 	}
@@ -372,7 +372,7 @@ func (c *discordClient) sendFile(ctx context.Context, channelID, source, fileNam
 	}
 	req.Header.Set("Authorization", c.authHeader())
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.network.Client(c.httpClient).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -388,10 +388,10 @@ func (c *discordClient) downloadAttachment(ctx context.Context, url string) ([]b
 		return nil, err
 	}
 	// The bot token goes only to Discord's own hosts.
-	if c.external.IsPlatform(url) {
+	if c.network.IsPlatform(url) {
 		req.Header.Set("Authorization", c.authHeader())
 	}
-	resp, err := c.external.Client(url, c.httpClient).Do(req)
+	resp, err := c.network.Client(c.httpClient).Do(req)
 	if err != nil {
 		return nil, err
 	}

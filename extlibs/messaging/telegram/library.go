@@ -3,10 +3,12 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs/messaging/shared"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -21,17 +23,19 @@ func newClientInstance(c *telegramClient, builtins map[string]*object.Builtin) *
 	return inst
 }
 
-// NewLibrary creates the scriptling.messaging.telegram library.
-func NewLibrary(log logger.Logger) *object.Library {
-	return NewLibraryConfigured(log, nil)
+// NewLibrary creates the scriptling.messaging.telegram library. cfg is the
+// optional network policy, which every request goes through.
+func NewLibrary(log logger.Logger, cfg ...*netsecurity.Config) *object.Library {
+	return NewLibraryConfigured(log, nil, cfg...)
 }
 
 // NewLibraryConfigured is NewLibrary with the local files scripts may send
 // confined to allowedPaths (nil = unrestricted, empty = deny all), as the os
 // library is.
-func NewLibraryConfigured(log logger.Logger, allowedPaths []string) *object.Library {
+func NewLibraryConfigured(log logger.Logger, allowedPaths []string, cfg ...*netsecurity.Config) *object.Library {
 	builtins := shared.SharedBuiltins()
 	files := shared.FilePolicy(allowedPaths)
+	network := shared.NewNetwork(platformDomains, 60*time.Second, cfg...)
 
 	// Telegram-specific: client constructor
 	builtins["client"] = &object.Builtin{
@@ -47,6 +51,7 @@ func NewLibraryConfigured(log logger.Logger, allowedPaths []string) *object.Libr
 				return errors.NewError("telegram.client: token must not be empty")
 			}
 			c := newClient(token, log)
+			c.network = network
 			c.files = files
 			inst := newClientInstance(c, builtins)
 			// allowed_users kwarg installs a default auth handler
@@ -77,16 +82,16 @@ func NewLibraryConfigured(log logger.Logger, allowedPaths []string) *object.Libr
 }
 
 // Register registers the telegram library with a Scriptling instance.
-func Register(registrar interface{ RegisterLibrary(*object.Library) }, log logger.Logger) {
-	RegisterConfigured(registrar, log, nil)
+func Register(registrar interface{ RegisterLibrary(*object.Library) }, log logger.Logger, cfg ...*netsecurity.Config) {
+	RegisterConfigured(registrar, log, nil, cfg...)
 }
 
 // RegisterConfigured registers the telegram library with the local files
 // scripts may send confined to allowedPaths (nil = unrestricted, empty = deny
 // all).
-func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, log logger.Logger, allowedPaths []string) {
+func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, log logger.Logger, allowedPaths []string, cfg ...*netsecurity.Config) {
 	if log == nil {
 		log = logger.NewNullLogger()
 	}
-	registrar.RegisterLibrary(NewLibraryConfigured(log.WithGroup("telegram"), allowedPaths))
+	registrar.RegisterLibrary(NewLibraryConfigured(log.WithGroup("telegram"), allowedPaths, cfg...))
 }

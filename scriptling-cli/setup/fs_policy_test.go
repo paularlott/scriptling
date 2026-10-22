@@ -8,6 +8,7 @@ import (
 
 	logslog "github.com/paularlott/logger/slog"
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 )
 
 // The CLI wires --allowed-paths into every library that reads local files:
@@ -46,6 +47,26 @@ func TestAllowedPathsReachFileReadingLibraries(t *testing.T) {
 		}
 		if strings.Contains(p.GetOutput(), "continued") {
 			t.Errorf("%s: the script caught the denial and carried on", name)
+		}
+	}
+}
+
+// The CLI applies --network-policy to every messaging library, the platforms'
+// own API hosts included: a script supplies the bot token, so those hosts are
+// egress channels like any other (strix 4250 vuln-0006). The refusal comes
+// before any connection.
+func TestNetworkPolicyReachesMessagingPlatformHosts(t *testing.T) {
+	policy := &netsecurity.Config{AllowHosts: []string{"only.example"}}
+	for name, call := range map[string]string{
+		"telegram": `import scriptling.messaging.telegram as m; m.send_message(m.client("1:tok"), "42", "x")`,
+		"discord":  `import scriptling.messaging.discord as m; m.send_message(m.client("tok"), "123", "x")`,
+		"slack":    `import scriptling.messaging.slack as m; m.send_message(m.client("xoxb-1", "xapp-1"), "C1", "x")`,
+	} {
+		p := scriptling.New()
+		Scriptling(p, nil, false, nil, nil, nil, logslog.New(logslog.Config{Level: "error"}), "", "", policy)
+		_, err := p.Eval(strings.ReplaceAll(call, "; ", "\n"))
+		if err == nil || !strings.Contains(err.Error(), "network policy") {
+			t.Errorf("%s: expected a network policy refusal, got %v", name, err)
 		}
 	}
 }

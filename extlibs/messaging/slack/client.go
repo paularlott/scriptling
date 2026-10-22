@@ -22,8 +22,8 @@ type slackClient struct {
 	botToken   string // xoxb-... — used for API calls
 	appToken   string // xapp-... — used for Socket Mode
 	httpClient *http.Client
-	external   *shared.ExternalURLs // script-supplied URLs; nil = platform rules only
-	files      *fssecurity.Config   // local files scripts may upload; nil = unrestricted
+	network    *shared.Network    // credential and network-policy rules
+	files      *fssecurity.Config // local files scripts may upload; nil = unrestricted
 	log        logger.Logger
 	gateway    *socketGateway
 }
@@ -36,7 +36,7 @@ func newClient(botToken, appToken string, log logger.Logger) *slackClient {
 		botToken:   botToken,
 		appToken:   appToken,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
-		external:   shared.NewExternalURLs(platformDomains, 30*time.Second),
+		network:    shared.NewNetwork(platformDomains, 30*time.Second),
 		log:        log,
 	}
 	c.Bot = shared.NewBot(c)
@@ -282,7 +282,7 @@ func (c *slackClient) AckCallback(ctx context.Context, id, token, text string) e
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.external.Client(token, c.httpClient).Do(req)
+	resp, err := c.network.Client(c.httpClient).Do(req)
 	if err != nil {
 		return err
 	}
@@ -296,10 +296,10 @@ func (c *slackClient) Download(ctx context.Context, ref string) ([]byte, error) 
 		return nil, err
 	}
 	// The bot token goes only to Slack's own hosts.
-	if c.external.IsPlatform(ref) {
+	if c.network.IsPlatform(ref) {
 		req.Header.Set("Authorization", "Bearer "+c.botToken)
 	}
-	resp, err := c.external.Client(ref, c.httpClient).Do(req)
+	resp, err := c.network.Client(c.httpClient).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +320,7 @@ func (c *slackClient) api(ctx context.Context, method string, body interface{}) 
 	}
 	req.Header.Set("Authorization", "Bearer "+c.botToken)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.network.Client(c.httpClient).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +347,7 @@ func (c *slackClient) openSocketConnection(ctx context.Context) (string, error) 
 	}
 	req.Header.Set("Authorization", "Bearer "+c.appToken)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.network.Client(c.httpClient).Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -374,7 +374,7 @@ func (c *slackClient) resolveUserName(userID string) string {
 		return userID
 	}
 	req.Header.Set("Authorization", "Bearer "+c.botToken)
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.network.Client(c.httpClient).Do(req)
 	if err != nil {
 		return userID
 	}
@@ -455,7 +455,7 @@ func (c *slackClient) uploadFile(ctx context.Context, channelID, source, fileNam
 	}
 	uploadReq.Header.Set("Authorization", "Bearer "+c.botToken)
 	uploadReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	uploadResp, err := c.httpClient.Do(uploadReq)
+	uploadResp, err := c.network.Client(c.httpClient).Do(uploadReq)
 	if err != nil {
 		return err
 	}
@@ -483,7 +483,7 @@ func (c *slackClient) uploadFile(ctx context.Context, channelID, source, fileNam
 		return err
 	}
 	putReq.Header.Set("Content-Type", w.FormDataContentType())
-	putResp, err := c.httpClient.Do(putReq)
+	putResp, err := c.network.Client(c.httpClient).Do(putReq)
 	if err != nil {
 		return err
 	}

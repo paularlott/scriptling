@@ -44,12 +44,17 @@ discord.download(c, "` + url + `")`)
 	if err := eval(&netsecurity.Config{}, srv.URL+"/f"); err == nil || !strings.Contains(err.Error(), "network policy") {
 		t.Errorf("expected network policy error, got: %v", err)
 	}
-	// Without a policy it is fetched, but without the token; platform hosts
-	// get the token and are trusted under a policy.
+	// Platform hosts are not exempt from the policy: this one is loopback,
+	// which the default policy denies (strix 4250 vuln-0006).
+	if err := eval(&netsecurity.Config{}, byName+"/f"); err == nil || !strings.Contains(err.Error(), "network policy") {
+		t.Errorf("platform host under a denying policy: expected network policy error, got: %v", err)
+	}
+	// Without a policy a foreign host is fetched, but without the token; a
+	// platform host the policy allows gets the token.
 	for _, tc := range []struct {
 		cfg *netsecurity.Config
 		url string
-	}{{nil, srv.URL + "/f"}, {&netsecurity.Config{}, byName + "/f"}} {
+	}{{nil, srv.URL + "/f"}, {&netsecurity.Config{AllowLoopback: true}, byName + "/f"}} {
 		if err := eval(tc.cfg, tc.url); err != nil {
 			t.Errorf("download %s: %v", tc.url, err)
 		}

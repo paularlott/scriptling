@@ -93,8 +93,19 @@ func TestSlackNetworkPolicy(t *testing.T) {
 		t.Fatalf("POLICY-BYPASS [slack]: denied requests reached the server %d times", n)
 	}
 
-	// Platform hosts are trusted even though the policy denies loopback.
-	if _, err := evalSlack(t, &netsecurity.Config{}, `slack.download(c, "`+byName+`/f")`); err != nil {
-		t.Errorf("platform download under policy: %v", err)
+	// Platform hosts are not exempt from the policy: this one is loopback,
+	// which the default policy denies (strix 4250 vuln-0006).
+	if _, err := evalSlack(t, &netsecurity.Config{}, `slack.download(c, "`+byName+`/f")`); err == nil || !strings.Contains(err.Error(), "network policy") {
+		t.Errorf("platform download under a denying policy: expected network policy error, got: %v", err)
+	}
+	if n := len(rec.seen()); n != 0 {
+		t.Fatalf("denied platform request reached the server %d times", n)
+	}
+	// A policy that allows the platform host lets it through, with the token.
+	if _, err := evalSlack(t, &netsecurity.Config{AllowLoopback: true}, `slack.download(c, "`+byName+`/f")`); err != nil {
+		t.Errorf("platform download under an allowing policy: %v", err)
+	}
+	if got := rec.seen(); len(got) != 1 || got[0] != "Bearer xoxb-secret" {
+		t.Errorf("Authorization headers = %q, want [\"Bearer xoxb-secret\"]", got)
 	}
 }

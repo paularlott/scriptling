@@ -56,7 +56,7 @@ func (g *gateway) dial(ctx context.Context) error {
 		}
 	}
 
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, url, nil)
+	conn, err := g.c.network.DialWebsocket(ctx, url)
 	if err != nil {
 		return fmt.Errorf("gateway dial: %w", err)
 	}

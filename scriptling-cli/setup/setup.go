@@ -217,7 +217,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 		agent.RegisterInteract(p)
 	}
 
-	reg(telegram.LibraryName, func() { telegram.RegisterConfigured(p, log, allowedPaths) })
+	reg(telegram.LibraryName, func() { telegram.RegisterConfigured(p, log, allowedPaths, netPolicy...) })
 	reg(discord.LibraryName, func() { discord.RegisterConfigured(p, log, allowedPaths, netPolicy...) })
 	reg(slack.LibraryName, func() { slack.RegisterConfigured(p, log, allowedPaths, netPolicy...) })
 	reg(messagingconsole.LibraryName, func() { messagingconsole.Register(p) })

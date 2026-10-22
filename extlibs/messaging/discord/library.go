@@ -34,7 +34,7 @@ func NewLibrary(log logger.Logger, cfg ...*netsecurity.Config) *object.Library {
 // (nil = unrestricted, empty = deny all), as the os library is.
 func NewLibraryConfigured(log logger.Logger, allowedPaths []string, cfg ...*netsecurity.Config) *object.Library {
 	builtins := shared.SharedBuiltins()
-	external := shared.NewExternalURLs(platformDomains, 30*time.Second, cfg...)
+	network := shared.NewNetwork(platformDomains, 30*time.Second, cfg...)
 	files := shared.FilePolicy(allowedPaths)
 
 	// Discord-specific: client constructor
@@ -51,7 +51,7 @@ func NewLibraryConfigured(log logger.Logger, allowedPaths []string, cfg ...*nets
 				return errors.NewError("discord.client: token must not be empty")
 			}
 			c := newClient(token, log)
-			c.external = external
+			c.network = network
 			c.files = files
 			inst := newClientInstance(c, builtins)
 			if rawList, errObj := kwargs.GetList("allowed_users", nil); errObj == nil && rawList != nil && len(rawList) > 0 {

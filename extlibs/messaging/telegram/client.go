@@ -26,14 +26,19 @@ type telegramClient struct {
 	*shared.Bot
 	token      string
 	httpClient *http.Client
+	network    *shared.Network    // network-policy rules
 	files      *fssecurity.Config // local files scripts may send; nil = unrestricted
 	log        logger.Logger
 }
+
+// platformDomains are Telegram's own hosts.
+var platformDomains = []string{"telegram.org"}
 
 func newClient(token string, log logger.Logger) *telegramClient {
 	c := &telegramClient{
 		token:      token,
 		httpClient: &http.Client{Timeout: 60 * time.Second},
+		network:    shared.NewNetwork(platformDomains, 60*time.Second),
 		log:        log,
 	}
 	c.Bot = shared.NewBot(c)
@@ -300,7 +305,7 @@ func (c *telegramClient) post(ctx context.Context, method string, params map[str
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.network.Client(c.httpClient).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -338,7 +343,7 @@ func (c *telegramClient) postMultipart(ctx context.Context, method string, field
 		return nil, err
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.network.Client(c.httpClient).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -453,7 +458,7 @@ func (c *telegramClient) downloadFile(ctx context.Context, fileID string) ([]byt
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.network.Client(c.httpClient).Do(req)
 	if err != nil {
 		return nil, err
 	}
