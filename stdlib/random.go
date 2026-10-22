@@ -269,6 +269,7 @@ Returns a random floating-point number N such that a <= N <= b.`,
 				swapped[j] = vi
 				result[i] = at(vj)
 			}
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		},
 		HelpText: `sample(population, k) - Return k unique random elements from population
@@ -507,6 +508,7 @@ lambd is 1.0 divided by the desired mean.`,
 				}
 				result[i] = population[idx]
 			}
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		},
 		HelpText: `choices(population, weights=None, *, cum_weights=None, k=1) - Weighted random sampling with replacement

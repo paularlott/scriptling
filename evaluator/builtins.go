@@ -1260,6 +1260,7 @@ Use list(reversed(...)) to get a list.`,
 			// Make a copy to avoid modifying the original
 			result := make([]object.Object, len(elements))
 			copy(result, elements)
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		},
 		HelpText: `list([iterable]) - Create a list from an iterable
@@ -1439,6 +1440,7 @@ Keyword arguments are added last and override keys from the mapping.`,
 			// Make a copy for the tuple
 			result := make([]object.Object, len(elements))
 			copy(result, elements)
+			object.TrackSlice(result)
 			return &object.Tuple{Elements: result}
 		},
 		HelpText: `tuple([iterable]) - Create a tuple from an iterable
@@ -1922,6 +1924,7 @@ Checks the full inheritance chain. issubclass(C, C) is True.`,
 			case *object.List:
 				newElems := make([]object.Object, len(o.Elements))
 				copy(newElems, o.Elements)
+				object.TrackSlice(newElems)
 				return &object.List{Elements: newElems}
 			case *object.Dict:
 				copied := object.NewDictSized(len(o.Pairs))
@@ -3504,6 +3507,7 @@ func dirFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 	for i, n := range names {
 		elems[i] = object.NewString(n)
 	}
+	object.TrackSlice(elems)
 	return &object.List{Elements: elems}
 }
 

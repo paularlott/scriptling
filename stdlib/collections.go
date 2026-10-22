@@ -330,6 +330,7 @@ Example:
 					for i, name := range fieldNames {
 						fieldNameObjs[i] = object.NewString(name)
 					}
+					object.TrackSlice(fieldNameObjs)
 					fieldsTuple := &object.Tuple{Elements: fieldNameObjs}
 					nt.SetField("__fields__", fieldsTuple)
 					nt.SetField("_fields", fieldsTuple)

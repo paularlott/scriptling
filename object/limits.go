@@ -37,8 +37,10 @@ import (
 // The allocation points that let a script hold memory (string and bytes
 // creation, list backing arrays, dict, set and attribute storage, and the
 // objects that can reference each other outside any container: instances,
-// functions, lambdas, classes, iterators, exceptions, partials and method
-// wrappers) report their size; one allocation in roughly every SampleInterval bytes is sampled, in
+// functions, lambdas, classes, iterators, exceptions, partials, method
+// wrappers and memoising caches, plus the lists and tuples that Go builtins and
+// library functions build out of the objects they are handed) report their
+// size; one allocation in roughly every SampleInterval bytes is sampled, in
 // the same way Go's own heap profiler samples, and the sample is charged to
 // the interpreter running on the current goroutine. A runtime cleanup attached
 // to the sampled object credits the charge back once the object is collected.

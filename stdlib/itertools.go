@@ -164,6 +164,7 @@ var ItertoolsLibrary = object.NewLibrary(ItertoolsLibraryName, map[string]*objec
 						result = append(result, v)
 					}
 				}
+				object.TrackSlice(result)
 				return &object.List{Elements: result}
 			}
 			cur := 0
@@ -324,6 +325,7 @@ Example:
 				for i := int64(0); i < n.IntValue(); i++ {
 					result = append(result, elements...)
 				}
+				object.TrackSlice(result)
 				return &object.List{Elements: result}
 			}
 			if len(elements) == 0 {
@@ -471,6 +473,7 @@ next(), zip(), enumerate() or itertools.islice.`,
 			for i := start; i < stop; i += step {
 				result = append(result, elements[i])
 			}
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		},
 		HelpText: `islice(iterable, stop) or islice(iterable, start, stop[, step]) - Slice an iterable
@@ -528,6 +531,7 @@ Example:
 				}
 				result = append(result, elem)
 			}
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		},
 		HelpText: `takewhile(predicate, iterable) - Take elements while predicate is true
@@ -635,6 +639,7 @@ Example:
 			}); errObj != nil {
 				return errObj
 			}
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		},
 		HelpText: `dropwhile(predicate, iterable) - Drop elements while predicate is true
@@ -721,8 +726,9 @@ Example:
 					if !any {
 						break
 					}
-					result = append(result, &object.Tuple{Elements: tuple})
+					result = append(result, newTrackedTuple(tuple))
 				}
+				object.TrackSlice(result)
 				return &object.List{Elements: result}
 			}
 			mkIter := object.NewIterator
@@ -750,6 +756,7 @@ Example:
 				if !any {
 					return nil, false
 				}
+				object.TrackSlice(tuple)
 				return &object.Tuple{Elements: tuple}, true
 			})
 		},
@@ -824,7 +831,7 @@ Example:
 				for i, idx := range indices {
 					tuple[i] = iterables[i][idx]
 				}
-				result = append(result, &object.Tuple{Elements: tuple})
+				result = append(result, newTrackedTuple(tuple))
 
 				// Increment indices
 				carry := true
@@ -840,6 +847,7 @@ Example:
 					break
 				}
 			}
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		},
 		HelpText: `product(*iterables) - Cartesian product of iterables
@@ -897,6 +905,7 @@ Example:
 			// Generate permutations
 			result := []object.Object{}
 			generatePermutations(elements, r, []object.Object{}, make([]bool, len(elements)), &result)
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		},
 		HelpText: `permutations(iterable[, r]) - Generate permutations
@@ -949,6 +958,7 @@ Example:
 			// Generate combinations
 			result := []object.Object{}
 			generateCombinations(elements, r, 0, []object.Object{}, &result)
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		},
 		HelpText: `combinations(iterable, r) - Generate combinations
@@ -1003,6 +1013,7 @@ Example:
 			// Generate combinations with replacement
 			result := []object.Object{}
 			generateCombinationsWithReplacement(elements, r, 0, []object.Object{}, &result)
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		},
 		HelpText: `combinations_with_replacement(iterable, r) - Generate combinations with replacement
@@ -1087,6 +1098,7 @@ Example:
 				}})
 			}
 
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		},
 		HelpText: `groupby(iterable, key=None) - Group consecutive elements
@@ -1182,6 +1194,7 @@ Example:
 				}
 				result = append(result, accumulator)
 			}
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		},
 		HelpText: `accumulate(iterable[, func, *, initial=None]) - Running totals/accumulation
@@ -1226,6 +1239,7 @@ Example:
 					result = append(result, elem)
 				}
 			}
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		},
 		HelpText: `filterfalse(predicate, iterable) - Filter elements where predicate is false
@@ -1275,6 +1289,7 @@ Example:
 				}
 				result = append(result, res)
 			}
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		},
 		HelpText: `starmap(func, iterable) - Apply function to argument tuples
@@ -1343,6 +1358,7 @@ Example:
 					result = append(result, d)
 				}
 			}
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		},
 		HelpText: `compress(data, selectors) - Filter data based on selectors
@@ -1385,6 +1401,7 @@ Example:
 			for i := 0; i < len(elements)-1; i++ {
 				result[i] = &object.Tuple{Elements: []object.Object{elements[i], elements[i+1]}}
 			}
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		},
 		HelpText: `pairwise(iterable) - Return successive overlapping pairs
@@ -1440,8 +1457,9 @@ Example:
 				}
 				batch := make([]object.Object, end-i)
 				copy(batch, elements[i:end])
-				result = append(result, &object.Tuple{Elements: batch})
+				result = append(result, newTrackedTuple(batch))
 			}
+			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		},
 		HelpText: `batched(iterable, n) - Batch elements into tuples of size n
@@ -1460,7 +1478,7 @@ func generatePermutations(elements []object.Object, r int, current []object.Obje
 	if len(current) == r {
 		tuple := make([]object.Object, r)
 		copy(tuple, current)
-		*result = append(*result, &object.Tuple{Elements: tuple})
+		*result = append(*result, newTrackedTuple(tuple))
 		return
 	}
 	for i := 0; i < len(elements); i++ {
@@ -1478,7 +1496,7 @@ func generateCombinations(elements []object.Object, r int, start int, current []
 	if len(current) == r {
 		tuple := make([]object.Object, r)
 		copy(tuple, current)
-		*result = append(*result, &object.Tuple{Elements: tuple})
+		*result = append(*result, newTrackedTuple(tuple))
 		return
 	}
 	for i := start; i < len(elements); i++ {
@@ -1492,7 +1510,7 @@ func generateCombinationsWithReplacement(elements []object.Object, r int, start 
 	if len(current) == r {
 		tuple := make([]object.Object, r)
 		copy(tuple, current)
-		*result = append(*result, &object.Tuple{Elements: tuple})
+		*result = append(*result, newTrackedTuple(tuple))
 		return
 	}
 	for i := start; i < len(elements); i++ {
@@ -1557,6 +1575,7 @@ func addObjects(a, b object.Object) object.Object {
 			newElements := make([]object.Object, len(av.Elements)+len(bv.Elements))
 			copy(newElements, av.Elements)
 			copy(newElements[len(av.Elements):], bv.Elements)
+			object.TrackSlice(newElements)
 			return &object.List{Elements: newElements}
 		}
 	}
@@ -1681,4 +1700,12 @@ func init() {
 			return r
 		}
 	}
+}
+
+// newTrackedTuple returns a tuple owning elems, a freshly built slice, and
+// reports it to memory accounting: a tuple a function hands back can be the
+// only thing holding the objects in it.
+func newTrackedTuple(elems []object.Object) *object.Tuple {
+	object.TrackSlice(elems)
+	return &object.Tuple{Elements: elems}
 }

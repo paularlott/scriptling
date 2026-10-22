@@ -221,6 +221,7 @@ func counterMostCommon(inst *object.Instance, n int, all bool) object.Object {
 	for i := 0; i < n; i++ {
 		out[i] = &object.Tuple{Elements: []object.Object{entries[i].key, entries[i].count}}
 	}
+	object.TrackSlice(out)
 	return &object.List{Elements: out}
 }
 
@@ -543,6 +544,7 @@ var CounterClass = &object.Class{
 					out = append(out, e.key)
 				}
 			}
+			object.TrackSlice(out)
 			return &object.List{Elements: out}
 		}),
 		"copy": counterMethod("copy() - a shallow copy", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

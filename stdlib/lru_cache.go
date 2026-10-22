@@ -19,6 +19,25 @@ type lruCache struct {
 	misses  int64
 }
 
+// lruEntrySize approximates what one cached call costs beyond its key text: the
+// map slot, the entry in the eviction order and the key's string header.
+const lruEntrySize = 96
+
+// lruWrapperSize approximates the memory of a wrapper: its callable, the cache
+// state, the entry map and the two method builtins it exposes.
+const lruWrapperSize = 640
+
+// account reports the memory a newly cached call holds. The cache is a Go map
+// with no object of its own to carry a credit, so growth is reported each time
+// the entry count doubles, for half the new count: the sum is the map's size,
+// and the credit rides on the map header until the cache is collected.
+func (c *lruCache) account(key string) {
+	n := len(c.entries) + 1
+	if n >= 64 && n&(n-1) == 0 {
+		object.TrackMap(c.entries, int64(n/2)*(lruEntrySize+int64(len(key))))
+	}
+}
+
 // newLRUCacheWrapper wraps fn in a memoizing callable. maxsize <= 0 with
 // maxsize==0 meaning no caching at all (always call through), and -1
 // unbounded, mirroring functools.lru_cache.
@@ -65,6 +84,9 @@ func newLRUCacheWrapper(fn object.Object, maxsize int64) object.Object {
 		},
 		HelpText: "lru_cache wrapper - memoized calls to the wrapped function",
 	}
+	// A wrapper holds the function it wraps, so wrappers can be chained out of
+	// reach of any counted container: account for each one.
+	object.TrackAlloc(wrapper, lruWrapperSize)
 	wrapper.Attributes = map[string]object.Object{
 		"cache_clear": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -151,6 +173,7 @@ func (c *lruCache) touch(key string) {
 func (c *lruCache) store(key string, value object.Object) {
 	if _, exists := c.entries[key]; !exists {
 		c.order = append(c.order, key)
+		c.account(key)
 	}
 	c.entries[key] = value
 	if c.maxsize > 0 && int64(len(c.order)) > c.maxsize {

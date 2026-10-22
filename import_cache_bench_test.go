@@ -105,3 +105,16 @@ func BenchmarkFreshImport_Multi_200(b *testing.B) {
 		p.SetLibraryLoader(libloader.NewMultiFilesystem(empty1, empty2, libDir))
 	})
 }
+
+// BenchmarkFreshImport_MultiRestricted_200 is Multi_200 with the loader
+// confined to its library directories (--allowed-paths in the CLI), the cost of
+// resolving each file's symlinks. Unrestricted loaders do not pay it.
+func BenchmarkFreshImport_MultiRestricted_200(b *testing.B) {
+	libDir := benchLibDir(b, 200)
+	empty1, empty2 := b.TempDir(), b.TempDir()
+	benchFresh(b, func(p *Scriptling) {
+		m := libloader.NewMultiFilesystem(empty1, empty2, libDir)
+		m.RestrictTo([]string{})
+		p.SetLibraryLoader(m)
+	})
+}

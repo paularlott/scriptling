@@ -224,7 +224,7 @@ func NewRangeIterator(start, stop, step int64) *Iterator {
 		length = (start - stop - step - 1) / -step
 	}
 
-	return trackIterator(&Iterator{
+	return &Iterator{
 		typeName:   rangeTypeName,
 		length:     length,
 		rangeState: func() (int64, int64, int64) { return current, stop, step },
@@ -243,7 +243,7 @@ func NewRangeIterator(start, stop, step int64) *Iterator {
 			current += step
 			return val, true
 		},
-	})
+	}
 }
 
 // IsPropagating reports whether a value yielded by an iterator is an internal
@@ -290,13 +290,13 @@ func isInfinite(obj Object) bool {
 
 // emptyIterator returns an already-exhausted iterator.
 func emptyIterator() *Iterator {
-	return trackIterator(&Iterator{
+	return &Iterator{
 		next: func() (Object, bool) {
 			return nil, false
 		},
 		consumed: true,
 		length:   -1,
-	})
+	}
 }
 
 // ZipIterator creates an iterator that zips multiple iterables together.
@@ -414,7 +414,7 @@ func NewReversedIterator(iterable Object) *Iterator {
 		if fa.Is2D() {
 			index := fa.Rows() - 1
 			cols := fa.Cols()
-			return trackIterator(&Iterator{
+			return &Iterator{
 				next: func() (Object, bool) {
 					if index < 0 {
 						return nil, false
@@ -425,10 +425,10 @@ func NewReversedIterator(iterable Object) *Iterator {
 					index--
 					return NewFloatArray1D(rowData), true
 				},
-			})
+			}
 		}
 		index := len(fa.Data) - 1
-		return trackIterator(&Iterator{
+		return &Iterator{
 			next: func() (Object, bool) {
 				if index < 0 {
 					return nil, false
@@ -437,24 +437,25 @@ func NewReversedIterator(iterable Object) *Iterator {
 				index--
 				return val, true
 			},
-		})
+		}
 	}
 
 	// Convert iterable to slice - need to copy to avoid modifying original
 	srcElements, ok := IterableToSlice(iterable)
 	if !ok {
 		// Return empty iterator for invalid types
-		return trackIterator(&Iterator{
+		return &Iterator{
 			next: func() (Object, bool) {
 				return nil, false
 			},
 			consumed: true,
-		})
+		}
 	}
 
 	// Make a copy so we don't affect the original
 	elements := make([]Object, len(srcElements))
 	copy(elements, srcElements)
+	TrackSlice(elements)
 
 	index := len(elements) - 1
 

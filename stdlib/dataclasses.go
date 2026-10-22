@@ -107,6 +107,7 @@ callable producing one (for mutable defaults like lists).`,
 					elems = append(elems, &object.Null{})
 				}
 			}
+			object.TrackSlice(elems)
 			return &object.Tuple{Elements: elems}
 		},
 		HelpText: "astuple(obj) - Convert a dataclass instance to a tuple of field values",
@@ -409,12 +410,14 @@ func dataclassesAsDict(obj object.Object) object.Object {
 		for i, e := range v.Elements {
 			elems[i] = dataclassesAsDict(e)
 		}
+		object.TrackSlice(elems)
 		return &object.List{Elements: elems}
 	case *object.Tuple:
 		elems := make([]object.Object, len(v.Elements))
 		for i, e := range v.Elements {
 			elems[i] = dataclassesAsDict(e)
 		}
+		object.TrackSlice(elems)
 		return &object.Tuple{Elements: elems}
 	case *object.Dict:
 		d := object.NewDict()

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
 )
 
 // FilesystemLoader loads libraries from the filesystem.
@@ -21,6 +23,12 @@ type FilesystemLoader struct {
 	extension   string
 	followLinks bool
 	description string
+
+	// contain, when set, confines the files this loader reads: a library whose
+	// resolved path (symlinks followed, as the kernel would) falls outside it
+	// is treated as not found. Nil, the default, reads whatever the library
+	// directory holds and costs one nil comparison per file found.
+	contain *fssecurity.Config
 }
 
 // FilesystemOption configures a FilesystemLoader.
@@ -41,6 +49,33 @@ func WithFollowLinks(follow bool) FilesystemOption {
 	return func(l *FilesystemLoader) {
 		l.followLinks = follow
 	}
+}
+
+// WithAllowedPaths confines the loader's reads to its own directory plus the
+// given paths. A symlink inside the library directory that leads anywhere else
+// is not followed: that library is treated as not found. A nil allowedPaths
+// leaves the loader unrestricted; an empty one confines it to its directory.
+func WithAllowedPaths(allowedPaths []string) FilesystemOption {
+	return func(l *FilesystemLoader) {
+		if allowedPaths != nil {
+			l.contain = containment([]string{l.baseDir}, allowedPaths)
+		}
+	}
+}
+
+// containment builds the set a restricted loader may read from: its library
+// directories (trusted, as the operator named them) and the allowed paths.
+func containment(libDirs, allowedPaths []string) *fssecurity.Config {
+	union := make([]string, 0, len(libDirs)+len(allowedPaths))
+	union = append(union, libDirs...)
+	union = append(union, allowedPaths...)
+	return &fssecurity.Config{AllowedPaths: union}
+}
+
+// permits reports whether the loader may read path. Unrestricted loaders
+// permit everything.
+func (l *FilesystemLoader) permits(path string) bool {
+	return l.contain == nil || l.contain.IsPathAllowed(path)
 }
 
 // WithDescription sets a custom description for the loader.
@@ -104,6 +139,12 @@ func (l *FilesystemLoader) LoadWithContext(ctx context.Context, name string) (st
 		info, statErr := os.Stat(path)
 		if statErr == nil {
 			if info.IsDir() {
+				continue
+			}
+			// Checked before the source cache, which is shared by every
+			// loader in the process and keyed by the candidate path: a file
+			// another loader read must not be served past this one's limits.
+			if !l.permits(path) {
 				continue
 			}
 			if content, ok := cachedSource(path, info); ok {
@@ -264,6 +305,9 @@ func (l *FilesystemLoader) resolvePaths(name string) []string {
 
 // readFile reads a file and returns its content.
 func (l *FilesystemLoader) readFile(path string) (string, bool, error) {
+	if !l.permits(path) {
+		return "", false, nil
+	}
 	// Resolve symbolic links if enabled
 	if l.followLinks {
 		resolved, err := filepath.EvalSymlinks(path)
@@ -324,6 +368,11 @@ func (l *FilesystemLoader) Extension() string {
 type MultiFilesystemLoader struct {
 	loaders []*FilesystemLoader
 	desc    string
+
+	// restricted is the containment shared by every loader once RestrictTo
+	// has been called; nil while unrestricted.
+	restricted *fssecurity.Config
+	allowed    []string
 }
 
 // NewMultiFilesystem creates a loader that searches multiple directories.
@@ -369,7 +418,43 @@ func (m *MultiFilesystemLoader) Description() string {
 	return m.desc
 }
 
-// AddDir adds another directory to search (appended to the end).
+// RestrictTo confines everything the loader reads to its library directories
+// plus allowedPaths, resolving symlinks the way the kernel does. A library
+// reached through a symlink that leads anywhere else is treated as not found,
+// so a link planted in a library directory cannot pull in a file from outside
+// the allowed paths. Pass the interpreter's allowed paths: nil leaves the
+// loader unrestricted (the default), an empty slice confines it to its library
+// directories.
+func (m *MultiFilesystemLoader) RestrictTo(allowedPaths []string) {
+	if allowedPaths == nil {
+		m.restricted, m.allowed = nil, nil
+		for _, l := range m.loaders {
+			l.contain = nil
+		}
+		return
+	}
+	m.allowed = append([]string{}, allowedPaths...)
+	m.applyRestriction()
+}
+
+// applyRestriction rebuilds the shared containment from the current library
+// directories and hands it to every loader.
+func (m *MultiFilesystemLoader) applyRestriction() {
+	dirs := make([]string, len(m.loaders))
+	for i, l := range m.loaders {
+		dirs[i] = l.baseDir
+	}
+	m.restricted = containment(dirs, m.allowed)
+	for _, l := range m.loaders {
+		l.contain = m.restricted
+	}
+}
+
+// AddDir adds another directory to search (appended to the end). Under
+// RestrictTo it is a library directory like the others.
 func (m *MultiFilesystemLoader) AddDir(dir string) {
 	m.loaders = append(m.loaders, NewFilesystem(dir))
+	if m.restricted != nil {
+		m.applyRestriction()
+	}
 }

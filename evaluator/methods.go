@@ -2281,6 +2281,7 @@ func callFloatArrayMethod(fa *object.FloatArray, method string, args []object.Ob
 		for i, v := range fa.Shape {
 			elems[i] = object.NewInteger(int64(v))
 		}
+		object.TrackSlice(elems)
 		return &object.List{Elements: elems}
 	default:
 		return attributeError(fa, method)

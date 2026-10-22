@@ -24,3 +24,21 @@ while n is not None:
 func BenchmarkInstance_Create(b *testing.B) {
 	benchScript(b, instanceBenchScript)
 }
+
+// Building lists and tuples from other values in Go code, the paths that
+// report their backing arrays to memory accounting.
+const containerBenchScript = `
+import itertools
+src = [i for i in range(64)]
+total = 0
+for n in range(400):
+    a = list(src)
+    b = tuple(a)
+    c = list(itertools.chain(a, a))
+    d = list(zip(a, b))
+    total = total + len(a) + len(b) + len(c) + len(d)
+`
+
+func BenchmarkContainer_Builtins(b *testing.B) {
+	benchScript(b, containerBenchScript)
+}

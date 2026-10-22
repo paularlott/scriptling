@@ -219,7 +219,12 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	}
 
 	if len(libdirs) > 0 {
-		p.SetLibraryLoader(libloader.NewMultiFilesystem(libdirs...))
+		loader := libloader.NewMultiFilesystem(libdirs...)
+		// With allowed paths set, a library reached through a symlink must
+		// land in a library directory or an allowed path. Without them
+		// (nil) the loader is unrestricted and pays nothing for the check.
+		loader.RestrictTo(allowedPaths)
+		p.SetLibraryLoader(loader)
 	}
 }
 

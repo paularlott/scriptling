@@ -76,3 +76,7 @@ for i in range(20000):
 func BenchmarkLimits_Instances(b *testing.B) {
 	benchLimitedScript(b, instanceBenchScript)
 }
+
+func BenchmarkLimits_ContainerBuiltins(b *testing.B) {
+	benchLimitedScript(b, containerBenchScript)
+}

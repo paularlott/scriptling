@@ -2,6 +2,7 @@ package scriptling
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,8 @@ import (
 // chainSetup defines what the chain steps below use.
 const chainSetup = `
 import functools
+import itertools
+import random
 
 class N:
     def __init__(self, p):
@@ -42,12 +45,29 @@ var chainSteps = map[string]string{
 	"property":     "x = property(x)",
 	"staticmethod": "x = staticmethod(x)",
 	"classmethod":  "x = classmethod(x)",
+
+	// Containers Go code builds out of the objects it is handed.
+	"list()":                 "x = list([x])",
+	"tuple()":                "x = tuple([x])",
+	"list(zip)":              "x = list(zip([x]))",
+	"copy builtin":           "x = copy([x])",
+	"itertools.chain":        "x = itertools.chain([x])",
+	"itertools.islice":       "x = itertools.islice([x], 1)",
+	"itertools.accumulate":   "x = itertools.accumulate([x])",
+	"itertools.product":      "x = next(iter(itertools.product([x])))",
+	"itertools.permutations": "x = next(iter(itertools.permutations([x])))",
+	"itertools.combinations": "x = next(iter(itertools.combinations([x], 1)))",
+	"itertools.batched":      "x = next(iter(itertools.batched([x], 1)))",
+	"random.sample":          "x = random.sample([x], 1)",
+	"random.choices":         "x = random.choices([x], k=1)",
+	"lru_cache":              "x = functools.lru_cache(x if x is not None else (lambda: 0))",
+	"cache":                  "x = functools.cache(x if x is not None else (lambda: 0))",
 }
 
 const chainLength = 2000000
 
 func chainScript(step string) string {
-	return chainSetup + "\nx = None\ni = 0\nwhile i < " + "2000000" + ":\n    " + step + "\n    i += 1\n"
+	return chainSetup + "\nx = None\ni = 0\nwhile i < " + strconv.Itoa(chainLength) + ":\n    " + step + "\n    i += 1\n"
 }
 
 // A memory limit must stop a script building any of these chains while it
@@ -152,18 +172,61 @@ for attempt in range(50):
 	}
 }
 
-// After a memory cancellation the interpreter is usable once the chain is gone.
+// An unbounded memoising cache grows with every distinct call even though no
+// chain is involved: it must be charged, so the limit stops a script filling it.
+// A bounded cache holds its size however many calls go through it.
+func TestMemoryLimitCountsLRUCacheGrowth(t *testing.T) {
+	p := New(WithMemoryLimit(1<<20), WithMaxValueBytes(0))
+	stdlib.RegisterAll(p)
+	_, err := p.Eval(`
+import functools
+f = functools.cache(lambda n: n)
+i = 0
+while i < 3000000:
+    f(i)
+    i += 1
+`)
+	if err == nil || !strings.Contains(err.Error(), ErrMemoryLimitExceeded.Error()) {
+		t.Fatalf("expected a memory limit error, got: %v", err)
+	}
+	if i, _ := p.GetVar("i"); i.(int64) >= 1500000 {
+		t.Fatalf("the unbounded cache filled for %v calls before the limit stopped it", i)
+	}
+
+	q := New(WithMemoryLimit(1<<20), WithMaxValueBytes(0))
+	stdlib.RegisterAll(q)
+	if _, err := q.Eval(`
+import functools
+f = functools.lru_cache(maxsize=128)(lambda n: n)
+i = 0
+while i < 500000:
+    f(i)
+    i += 1
+`); err != nil {
+		t.Fatalf("a bounded cache should run under the limit: %v", err)
+	}
+}
+
+// After a memory cancellation the interpreter runs scripts again once the
+// chain is gone, and the limit still applies to the next one.
 func TestInterpreterUsableAfterChainCancellation(t *testing.T) {
 	p := New(WithMemoryLimit(1<<20), WithMaxValueBytes(0))
 	stdlib.RegisterAll(p)
 	if _, err := p.Eval(chainScript(chainSteps["instance"])); err == nil {
 		t.Fatal("expected a memory limit error")
 	}
-	if _, err := p.Eval("x = None"); err != nil && !strings.Contains(err.Error(), ErrMemoryLimitExceeded.Error()) {
-		t.Fatal(err)
-	}
-	time.Sleep(200 * time.Millisecond) // past the forced-collection interval
-	if _, err := p.Eval(`y = N(None).get()`); err != nil {
+	// Drop the chain, then wait past the forced-collection interval so the
+	// guard can see the memory released.
+	p.SetVar("x", nil)
+	time.Sleep(300 * time.Millisecond)
+	result, err := p.Eval(chainSetup + "N(5).get()")
+	if err != nil {
 		t.Fatalf("interpreter unusable after a memory cancellation: %v", err)
+	}
+	if got := result.Inspect(); got != "5" {
+		t.Fatalf("N(5).get() = %s, want 5", got)
+	}
+	if _, err := p.Eval(chainScript(chainSteps["tuple"])); err == nil {
+		t.Fatal("the limit stopped applying after the first cancellation")
 	}
 }
