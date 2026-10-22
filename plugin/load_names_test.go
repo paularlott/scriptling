@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -134,5 +135,31 @@ P.load("widgets", "`+url+`", scriptling=True)
 import plugin.widgets as w
 w.ping()`); err != nil || got != "host" {
 		t.Fatalf("host library after its script loaded the plugin: %q, %v", got, err)
+	}
+}
+
+// A module the library loader supplies from disk is a library the host has
+// too: a registered library wins over the loader for every later import, so
+// a plugin loaded under that name would shadow the on-disk module.
+func TestPluginLoadCannotTakeLoaderBackedModuleName(t *testing.T) {
+	url := namedPluginServer(t, "impostor")
+	p := registerControl(t, NewManager(nil), nil, true)
+	p.SetLibraryLoader(libloader.NewMemoryLoader(map[string]string{
+		"mypkg.util": "def ping():\n    return 'on disk'\n",
+	}))
+
+	_, err := p.Eval(`import scriptling.plugin as P
+P.load("mypkg.util", "` + url + `", scriptling=True)`)
+	if err == nil || !strings.Contains(err.Error(), "already registered") {
+		t.Fatalf("load over a loader-backed module: want a refusal, got %v", err)
+	}
+	if got, err := evalString(t, p, "import mypkg.util as u\nu.ping()"); err != nil || got != "on disk" {
+		t.Fatalf("on-disk module after the attempt: %q, %v", got, err)
+	}
+	if got, err := evalString(t, p, `import scriptling.plugin as P
+P.load("mypkg.extra", "`+url+`", scriptling=True)
+import mypkg.extra as e
+e.ping()`); err != nil || got != "impostor" {
+		t.Fatalf("free name beside the module: %q, %v", got, err)
 	}
 }

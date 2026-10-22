@@ -990,15 +990,25 @@ func (p *Scriptling) RegisterLibrary(lib *object.Library) {
 	p.registeredLibraries[lib.Name()] = lib
 }
 
-// HasLibrary reports whether a library (native or script) is registered
-// under the given name. The plugin loader uses it to refuse a plugin whose
-// declared name collides with a library the host already has.
+// HasLibrary reports whether the given name already resolves to a library:
+// one registered here (native or script), or one the library loader can
+// supply from disk. The plugin loader uses it to refuse a plugin whose
+// declared name collides with a library the host already has, since a
+// registered library wins over the loader for every import after it.
+// Asking the loader may read the module's source.
 func (p *Scriptling) HasLibrary(name string) bool {
 	if _, ok := p.registeredLibraries[name]; ok {
 		return true
 	}
-	_, ok := p.scriptLibraries[name]
-	return ok
+	if _, ok := p.scriptLibraries[name]; ok {
+		return true
+	}
+	if p.libraryLoader != nil {
+		if _, found, err := loadLibrarySource(context.Background(), p.libraryLoader, name); err == nil && found {
+			return true
+		}
+	}
+	return false
 }
 
 // UnregisterLibrary removes a registered Go library and any imported binding

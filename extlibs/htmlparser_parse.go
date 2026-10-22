@@ -601,6 +601,39 @@ func numericCharref(digits string, base int) string {
 // pyUnescape is Python's html.unescape: numeric and named character
 // references by the HTML5 rules, including named references without their
 // semicolon and the longest-prefix match for unknown names.
+// html5Entity returns the replacement for an HTML5 named character reference
+// (with or without its semicolon, as Python's html.entities.html5 keys them)
+// by binary search over the generated, bytewise-sorted name table in
+// htmlparser_entities.go.
+func html5Entity(name string) (string, bool) {
+	lo, hi := 0, len(html5EntityNameEnds)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if html5EntityName(mid) < name {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	if lo == len(html5EntityNameEnds) || html5EntityName(lo) != name {
+		return "", false
+	}
+	start := 0
+	if lo > 0 {
+		start = int(html5EntityValueEnds[lo-1])
+	}
+	return html5EntityValues[start:html5EntityValueEnds[lo]], true
+}
+
+// html5EntityName is entry i's name.
+func html5EntityName(i int) string {
+	start := 0
+	if i > 0 {
+		start = int(html5EntityNameEnds[i-1])
+	}
+	return html5EntityNames[start:html5EntityNameEnds[i]]
+}
+
 func pyUnescape(s string) string {
 	amp := strings.IndexByte(s, '&')
 	if amp < 0 {
@@ -677,7 +710,7 @@ func unescapeAt(s string, a int) (string, int, bool) {
 		e++
 	}
 	name := s[j:e]
-	if v, ok := html5Entities[name]; ok {
+	if v, ok := html5Entity(name); ok {
 		return v, e, true
 	}
 	// The longest known prefix of at least two characters.
@@ -687,7 +720,7 @@ func unescapeAt(s string, a int) (string, int, bool) {
 		if utf8.RuneCountInString(name[:x]) < 2 {
 			break
 		}
-		if v, ok := html5Entities[name[:x]]; ok {
+		if v, ok := html5Entity(name[:x]); ok {
 			return v + name[x:], e, true
 		}
 	}
@@ -742,7 +775,7 @@ func unescapeAttrValue(s string) string {
 		case numeric:
 			b.WriteString(pyUnescape(ref))
 		case ref[len(ref)-1] != '=':
-			if _, known := html5Entities[ref[1:]]; known {
+			if _, known := html5Entity(ref[1:]); known {
 				b.WriteString(pyUnescape(ref))
 				break
 			}
