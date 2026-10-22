@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -93,6 +94,15 @@ type xmlChildEntry struct {
 	val  object.Object
 }
 
+// maxXMLDepth caps element nesting in xml.loads and value nesting in
+// xml.dumps. Both recurse in Go, and a stack overflow is a fatal runtime error
+// that ends the whole process, so a deeply nested document or value must
+// become an ordinary error first. Real XML is nowhere near this deep.
+const maxXMLDepth = 1000
+
+// errXMLTooDeep is returned past maxXMLDepth.
+var errXMLTooDeep = fmt.Errorf("document nests more than %d levels deep", maxXMLDepth)
+
 func xmlLoads(content string) (object.Object, error) {
 	dec := xml.NewDecoder(strings.NewReader(content))
 	for {
@@ -101,7 +111,7 @@ func xmlLoads(content string) (object.Object, error) {
 			return nil, err
 		}
 		if start, ok := tok.(xml.StartElement); ok {
-			val, err := parseXMLElement(dec, start)
+			val, err := parseXMLElement(dec, start, 1)
 			if err != nil {
 				return nil, err
 			}
@@ -113,7 +123,10 @@ func xmlLoads(content string) (object.Object, error) {
 	}
 }
 
-func parseXMLElement(dec *xml.Decoder, start xml.StartElement) (object.Object, error) {
+func parseXMLElement(dec *xml.Decoder, start xml.StartElement, depth int) (object.Object, error) {
+	if depth > maxXMLDepth {
+		return nil, errXMLTooDeep
+	}
 	var textBuf strings.Builder
 	var children []xmlChildEntry
 
@@ -124,7 +137,7 @@ func parseXMLElement(dec *xml.Decoder, start xml.StartElement) (object.Object, e
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			child, err := parseXMLElement(dec, t)
+			child, err := parseXMLElement(dec, t, depth+1)
 			if err != nil {
 				return nil, err
 			}
@@ -196,7 +209,7 @@ func xmlDumps(data *object.Dict, indent string) (string, error) {
 	var buf bytes.Buffer
 	for _, pair := range data.Pairs {
 		name, _ := pair.Key.AsString()
-		if err := emitXML(&buf, name, pair.Value, indent, 0); err != nil {
+		if err := emitXML(&buf, name, pair.Value, indent, 0, 1); err != nil {
 			return "", err
 		}
 		break // single root element
@@ -204,7 +217,13 @@ func xmlDumps(data *object.Dict, indent string) (string, error) {
 	return buf.String(), nil
 }
 
-func emitXML(buf *bytes.Buffer, name string, val object.Object, indent string, depth int) error {
+// emitXML writes val as element name. depth is the indentation level; level
+// counts every recursive call (lists recurse without indenting), so nested
+// lists and a value that contains itself are capped too.
+func emitXML(buf *bytes.Buffer, name string, val object.Object, indent string, depth, level int) error {
+	if level > maxXMLDepth {
+		return errXMLTooDeep
+	}
 	switch v := val.(type) {
 	case *object.Dict:
 		var attrs []xmlAttrOut
@@ -253,12 +272,12 @@ func emitXML(buf *bytes.Buffer, name string, val object.Object, indent string, d
 					if indent != "" {
 						buf.WriteByte('\n')
 					}
-					if err := emitXML(buf, c.name, item, indent, depth+1); err != nil {
+					if err := emitXML(buf, c.name, item, indent, depth+1, level+1); err != nil {
 						return err
 					}
 				}
 			} else {
-				if err := emitXML(buf, c.name, c.val, indent, depth+1); err != nil {
+				if err := emitXML(buf, c.name, c.val, indent, depth+1, level+1); err != nil {
 					return err
 				}
 			}
@@ -274,7 +293,7 @@ func emitXML(buf *bytes.Buffer, name string, val object.Object, indent string, d
 
 	case *object.List:
 		for _, item := range v.Elements {
-			if err := emitXML(buf, name, item, indent, depth); err != nil {
+			if err := emitXML(buf, name, item, indent, depth, level+1); err != nil {
 				return err
 			}
 		}
