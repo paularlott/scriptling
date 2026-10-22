@@ -42,6 +42,34 @@ func RegisterLibraries(registrar Registrar, manager *Manager, policy ...*Policy)
 	if len(policy) > 0 {
 		pol = policy[0]
 	}
+	RegisterLibrariesConfigured(registrar, manager, pol, true)
+}
+
+// RegisterLibrariesConfigured is RegisterLibraries with control over process
+// execution. A stdio/executable plugin is a subprocess the script names and
+// starts, so script-driven plugin.load() of an executable is allowed only
+// where the host allows subprocesses: with allowProcesses false, the control
+// library loads through an HTTP-only scope, so load()/load_path() of an
+// executable is refused while HTTP(S) plugins (not subprocesses) still work.
+// pol is the optional host security policy, as for RegisterLibraries.
+// SubprocessLibraryName is the library name whose absence from the enabled set
+// means the host has disabled process execution ("--no-subprocess",
+// "--disable-lib subprocess"). Kept here so callers can derive allowProcesses
+// without importing extlibs.
+const SubprocessLibraryName = "subprocess"
+
+// ProcessesAllowed reports whether disabledLibs leaves process execution on,
+// so a caller can pass it straight to RegisterLibrariesConfigured.
+func ProcessesAllowed(disabledLibs []string) bool {
+	for _, n := range disabledLibs {
+		if n == SubprocessLibraryName {
+			return false
+		}
+	}
+	return true
+}
+
+func RegisterLibrariesConfigured(registrar Registrar, manager *Manager, pol *Policy, allowProcesses bool) {
 	// Compiled-in plugins register first: scripts import them as plugin.<name>
 	// exactly like discovered plugins, and the compiled-in library wins when
 	// both are present. They register even with a nil manager so embedders
@@ -70,9 +98,19 @@ func RegisterLibraries(registrar Registrar, manager *Manager, policy ...*Policy)
 	// unrestricted — the host's boot-time --plugin/--plugin-dir preloads are
 	// trusted — and those already-loaded plugins remain visible through the
 	// scope's parent chain.
-	controlManager := manager
+	var scopeOpts []ScopeOption
 	if pol != nil {
-		controlManager = manager.NewScope(WithExecPaths(pol.ExecPaths()))
+		scopeOpts = append(scopeOpts, WithExecPaths(pol.ExecPaths()))
+	}
+	if !allowProcesses {
+		// Executable plugins are subprocesses; HTTP(S) plugins are not, so
+		// restrict the control scope to HTTP transport rather than blocking
+		// plugin loading entirely.
+		scopeOpts = append(scopeOpts, WithTransport(TransportHTTP))
+	}
+	controlManager := manager
+	if len(scopeOpts) > 0 {
+		controlManager = manager.NewScope(scopeOpts...)
 	}
 	registrar.RegisterLibrary(NewControlLibrary(controlManager, registrar, scriptRegistrar, unregistrar))
 	for _, metadata := range manager.List() {

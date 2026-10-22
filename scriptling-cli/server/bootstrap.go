@@ -363,7 +363,7 @@ func (s *Server) setupScriptling(p *scriptling.Scriptling) {
 	setup.RegisterSys(p, s.config.Argv)
 	// Compiled-in plugins register even with no external plugin manager;
 	// RegisterLibraries handles a nil manager.
-	scriptlingplugin.RegisterLibraries(p, s.config.PluginManager, scriptlingplugin.PolicyFromSecurity(s.config.NetworkPolicy, s.config.AllowedPaths))
+	scriptlingplugin.RegisterLibrariesConfigured(p, s.config.PluginManager, scriptlingplugin.PolicyFromSecurity(s.config.NetworkPolicy, s.config.AllowedPaths), scriptlingplugin.ProcessesAllowed(s.config.DisabledLibs))
 	s.applyPackLoader(p)
 	if s.packLoader != nil {
 		pack.RegisterPackageLibrary(p, s.packLoader)

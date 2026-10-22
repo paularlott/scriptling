@@ -249,7 +249,7 @@ func Factories(libdirs []string, allowedPaths []string, disabledLibs []string, s
 		// Compiled-in plugins (default scriptling builds) must exist in every
 		// spun-up environment, not just the main one; a nil manager means
 		// no external plugins, which RegisterLibraries handles.
-		scriptlingplugin.RegisterLibraries(p, nil, scriptlingplugin.PolicyFromSecurity(firstPolicy(netPolicy), allowedPaths))
+		scriptlingplugin.RegisterLibrariesConfigured(p, nil, scriptlingplugin.PolicyFromSecurity(firstPolicy(netPolicy), allowedPaths), scriptlingplugin.ProcessesAllowed(disabledLibs))
 		return p
 	}
 	extlibs.SetSandboxFactory(factory)

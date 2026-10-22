@@ -8,6 +8,7 @@ import (
 
 	logslog "github.com/paularlott/logger/slog"
 	"github.com/paularlott/scriptling"
+	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 )
 
 func TestScriptlingRegistersLoaderAndMCPLibrary(t *testing.T) {
@@ -156,5 +157,30 @@ mcp.Client("https://example.com/mcp")`); err != nil {
 	}
 	if _, statErr := os.Stat(marker); statErr != nil {
 		t.Fatal("with subprocess allowed the stdio server should have been started")
+	}
+}
+
+// Disabling the subprocess library also refuses script-driven plugin.load() of
+// an executable (a subprocess); HTTP plugins are unaffected (vuln-0015).
+func TestScriptlingPluginLoadFollowsSubprocessPermission(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	launcher := filepath.Join(t.TempDir(), "launch.sh")
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := `import scriptling.plugin as P
+P.load("s", "` + launcher + `", scriptling=False)`
+
+	// The CLI registers the plugin control library with a real (if empty)
+	// manager and ProcessesAllowed derived from the disabled-libs list.
+	disabled := []string{"subprocess"}
+	p := scriptling.New()
+	Scriptling(p, nil, false, nil, disabled, nil, logslog.New(logslog.Config{Level: "error"}), "", "")
+	scriptlingplugin.RegisterLibrariesConfigured(p, scriptlingplugin.NewManager(nil), nil, scriptlingplugin.ProcessesAllowed(disabled))
+	if _, err := p.Eval(script); err == nil || !strings.Contains(err.Error(), "not permitted") {
+		t.Fatalf("with subprocess disabled, plugin.load of an executable must be refused, got: %v", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatal("the launcher ran despite subprocess being disabled")
 	}
 }

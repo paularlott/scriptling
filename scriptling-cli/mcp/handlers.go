@@ -146,7 +146,7 @@ func prepareScriptling(cfg HandlerConfig, extraLibDirs []string) *scriptling.Scr
 	setup.RegisterSys(p, cfg.Argv)
 	// Compiled-in plugins register even with no external plugin manager;
 	// RegisterLibraries handles a nil manager.
-	scriptlingplugin.RegisterLibraries(p, cfg.PluginManager, scriptlingplugin.PolicyFromSecurity(cfg.NetworkPolicy, cfg.AllowedPaths))
+	scriptlingplugin.RegisterLibrariesConfigured(p, cfg.PluginManager, scriptlingplugin.PolicyFromSecurity(cfg.NetworkPolicy, cfg.AllowedPaths), scriptlingplugin.ProcessesAllowed(cfg.DisabledLibs))
 	bootstrap.ApplyPackLoader(p, cfg.PackLoader)
 	if cfg.PackLoader != nil {
 		pack.RegisterPackageLibrary(p, cfg.PackLoader)

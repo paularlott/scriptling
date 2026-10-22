@@ -861,7 +861,9 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	// fetcher schemes could register); reuse that manager here. PostRun
 	// releases them however this command exits. The manager always exists, so
 	// scriptling.plugin.load works even with no plugins configured.
-	scriptlingplugin.RegisterLibraries(p, pluginManager, scriptlingplugin.PolicyFromSecurity(netPolicy, allowedPaths))
+	// Script-driven plugin.load() of an executable is a subprocess, so allow
+	// it only where the subprocess library is allowed.
+	scriptlingplugin.RegisterLibrariesConfigured(p, pluginManager, scriptlingplugin.PolicyFromSecurity(netPolicy, allowedPaths), scriptlingplugin.ProcessesAllowed(disabledLibs))
 
 	// Build the library loader from three tiers, added in priority order
 	// (the loader searches last-added first, so the app bundle's modules
