@@ -262,6 +262,72 @@ func TestDialAppliesHostRules(t *testing.T) {
 	}
 }
 
+// A trailing dot (absolute DNS name) or case must not let a host dodge the
+// host lists, in either the rule or the request.
+func TestHostListsIgnoreTrailingDotAndCase(t *testing.T) {
+	g := mustGuard(t, &Config{AllowLoopback: true, DenyHosts: []string{"localhost", ".svc.internal", "vault.corp."}})
+	for _, raw := range []string{
+		"http://localhost./", "http://LOCALHOST./", "http://localhost../",
+		"http://db.svc.internal./", "http://vault.corp/", "http://vault.corp./",
+	} {
+		if err := g.CheckURL(mustURL(t, raw)); err == nil || !strings.Contains(err.Error(), "is denied") {
+			t.Errorf("CheckURL(%s) should be denied, got: %v", raw, err)
+		}
+	}
+	if _, err := g.DialContext(context.Background(), "tcp", "localhost.:1"); err == nil || !strings.Contains(err.Error(), "is denied") {
+		t.Errorf("DialContext(localhost.) should be denied, got: %v", err)
+	}
+
+	gAllow := mustGuard(t, &Config{AllowHosts: []string{"api.example.com", ".corp.example.com."}})
+	for _, raw := range []string{"https://api.example.com./", "https://API.Example.COM/", "https://x.corp.example.com./"} {
+		if err := gAllow.CheckURL(mustURL(t, raw)); err != nil {
+			t.Errorf("CheckURL(%s) should be allowed, got: %v", raw, err)
+		}
+	}
+	// A trusted host stays trusted in its absolute form.
+	gAllow.lookupFn = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+	}
+	if _, err := gAllow.DialContext(context.Background(), "tcp", "api.example.com.:1"); err != nil && strings.Contains(err.Error(), "network policy") {
+		t.Errorf("trusted host with trailing dot should not be policy-blocked, got: %v", err)
+	}
+}
+
+// Numeric hosts net.ParseIP rejects (but system resolvers accept) and zoned
+// IPv6 are IP literals for the literal rule.
+func TestNonCanonicalIPLiterals(t *testing.T) {
+	hosts := []string{"2130706433", "0x7f.1", "127.1", "017700000001", "0x7f000001", "10.0.0.0x5", "localhost.0x"}
+	g := mustGuard(t, &Config{AllowLoopback: true, AllowPrivateIPs: true})
+	for _, h := range hosts {
+		if err := g.CheckURL(mustURL(t, "http://"+h+"/")); err == nil || !strings.Contains(err.Error(), "IP literals") {
+			t.Errorf("CheckURL(%s) should be an IP literal, got: %v", h, err)
+		}
+		if _, err := g.Dial(context.Background(), "tcp", net.JoinHostPort(h, "1")); err == nil || !strings.Contains(err.Error(), "IP literals") {
+			t.Errorf("Dial(%s) should be an IP literal, got: %v", h, err)
+		}
+	}
+	if err := g.CheckHost("::1%lo0"); err == nil || !strings.Contains(err.Error(), "IP literals") {
+		t.Errorf("zoned IPv6 should be an IP literal, got: %v", err)
+	}
+
+	// Allowed literals still resolve and face the address categories.
+	gLit := mustGuard(t, &Config{AllowIPLiterals: true})
+	gLit.lookupFn = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+	}
+	if _, err := gLit.Dial(context.Background(), "tcp", "2130706433:1"); err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Errorf("allowed numeric literal must still face address categories, got: %v", err)
+	}
+
+	// Ordinary names, including numeric non-final labels and hex-looking
+	// TLDs, are not literals.
+	for _, h := range []string{"example.com", "1.example.com", "123abc", "cafe", "0x7f.example.com", "deadbeef.io"} {
+		if looksLikeIPLiteral(h) {
+			t.Errorf("looksLikeIPLiteral(%q) = true, want false", h)
+		}
+	}
+}
+
 func TestNormalizeDNSAddr(t *testing.T) {
 	cases := map[string]string{
 		"1.1.1.1":      "1.1.1.1:53",

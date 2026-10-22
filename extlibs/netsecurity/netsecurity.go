@@ -341,7 +341,7 @@ func (g *Guard) CheckHost(host string) error {
 		return nil
 	}
 
-	host = strings.ToLower(host)
+	host = normalizeHost(host)
 	if host == "" {
 		return fmt.Errorf("%w: no host", ErrPolicy)
 	}
@@ -360,6 +360,14 @@ func (g *Guard) CheckHost(host string) error {
 			return err
 		}
 		return nil
+	}
+
+	// Non-canonical literals (2130706433, 0x7f.1, 127.1, a zoned IPv6) are
+	// not parsed by net.ParseIP, but system resolvers turn them into
+	// addresses. They are literals all the same; resolution and the address
+	// categories still apply when literals are allowed.
+	if !g.allowIPLiterals && looksLikeIPLiteral(host) {
+		return fmt.Errorf("%w: IP literals are not allowed", ErrPolicy)
 	}
 
 	if len(g.allowHosts) > 0 && !matchHost(g.allowHosts, host) {
@@ -427,7 +435,8 @@ func (g *Guard) resolve(ctx context.Context, host string) ([]net.IP, error) {
 	if g.failErr != nil {
 		return nil, g.failErr
 	}
-	host = strings.ToLower(host)
+	name := strings.ToLower(host) // resolved as written
+	host = normalizeHost(host)    // matched without the trailing dot
 
 	if matchHost(g.denyHosts, host) {
 		return nil, fmt.Errorf("%w: host %q is denied", ErrPolicy, host)
@@ -440,7 +449,7 @@ func (g *Guard) resolve(ctx context.Context, host string) ([]net.IP, error) {
 		return []net.IP{ip}, nil
 	}
 
-	addrs, err := g.lookupFn(ctx, host)
+	addrs, err := g.lookupFn(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("DNS lookup failed for %q: %w", host, err)
 	}
@@ -589,7 +598,7 @@ func compileHostRules(hosts []string) []hostRule {
 	}
 	rules := make([]hostRule, 0, len(hosts))
 	for _, h := range hosts {
-		h = strings.ToLower(strings.TrimSpace(h))
+		h = normalizeHost(strings.TrimSpace(h))
 		if h == "" {
 			continue
 		}
@@ -600,6 +609,30 @@ func compileHostRules(hosts []string) []hostRule {
 		}
 	}
 	return rules
+}
+
+// normalizeHost lowercases host and drops the trailing dot of an absolute
+// DNS name (and any repeats), so "LocalHost." matches a rule for "localhost".
+func normalizeHost(host string) string {
+	return strings.TrimRight(strings.ToLower(host), ".")
+}
+
+// looksLikeIPLiteral reports whether a host that net.ParseIP rejected is
+// still an address: one containing a colon (IPv6, e.g. with a zone), or one
+// whose last label is a number, the URL standard's "ends in a number" rule
+// (decimal digits, or 0x and hex digits). No DNS name ends in a numeric label.
+func looksLikeIPLiteral(host string) bool {
+	if strings.Contains(host, ":") {
+		return true
+	}
+	last := host[strings.LastIndexByte(host, '.')+1:]
+	if last == "" {
+		return false
+	}
+	if hex, ok := strings.CutPrefix(last, "0x"); ok {
+		return strings.Trim(hex, "0123456789abcdef") == ""
+	}
+	return strings.Trim(last, "0123456789") == ""
 }
 
 func matchHost(rules []hostRule, host string) bool {
