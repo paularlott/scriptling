@@ -321,7 +321,7 @@ func buildRootCommand() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:       "network-policy",
-				Usage:      "Path to a TOML network policy file restricting script outbound network access (requests, wait_for, websocket, scriptling.ai, scriptling.mcp, scriptling.net.unicast, scriptling.nomad)",
+				Usage:      "Path to a TOML network policy file restricting script outbound network access (requests, wait_for, websocket, scriptling.ai, scriptling.mcp, scriptling.net.unicast, scriptling.nomad, script-supplied scriptling.container endpoints)",
 				Global:     true,
 				EnvVars:    []string{"SCRIPTLING_NETWORK_POLICY"},
 				ConfigPath: []string{"security.network_policy"},

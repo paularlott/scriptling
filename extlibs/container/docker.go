@@ -10,9 +10,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 )
 
 // dockerClient talks to the Docker/Podman REST API over a Unix socket or TCP.
@@ -36,7 +40,10 @@ type dockerAuthConfig struct {
 //   - tcp://host:2375               — plain TCP
 //   - host:2375                     — plain TCP (shorthand)
 //   - https://host:2376             — TLS TCP
-func newDockerClient(endpoint string) *dockerClient {
+//
+// restrict is nil for the operator's endpoints; for an endpoint a script
+// supplied it applies the path jail and network policy.
+func newDockerClient(endpoint string, restrict *endpointPolicy) (*dockerClient, error) {
 	// Normalise: strip unix:// prefix → raw socket path
 	if after, ok := strings.CutPrefix(endpoint, "unix://"); ok {
 		endpoint = after
@@ -46,6 +53,18 @@ func newDockerClient(endpoint string) *dockerClient {
 
 	// Unix socket: starts with / or is a relative path without ://
 	if strings.HasPrefix(endpoint, "/") || (!strings.Contains(endpoint, "://") && !strings.Contains(endpoint, ":")) {
+		if restrict != nil && restrict.paths.AllowedPaths != nil {
+			// Dial the resolved path that was checked, so a symlink swapped
+			// after the check cannot redirect the connection.
+			resolved, err := filepath.EvalSymlinks(endpoint)
+			if err == nil {
+				resolved, err = filepath.Abs(resolved)
+			}
+			if err != nil || !restrict.paths.IsPathAllowed(resolved) {
+				return nil, fmt.Errorf("access denied: socket path '%s' is outside allowed directories", endpoint)
+			}
+			endpoint = resolved
+		}
 		transport := &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				return (&net.Dialer{}).DialContext(ctx, "unix", endpoint)
@@ -56,7 +75,13 @@ func newDockerClient(endpoint string) *dockerClient {
 			httpClient: &http.Client{Transport: transport, Timeout: 0},
 			baseURL:    "http://localhost",
 			creds:      map[string]dockerAuthConfig{},
-		}
+		}, nil
+	}
+
+	// API paths are appended to the endpoint, so a query or fragment would
+	// let it override them.
+	if strings.ContainsAny(endpoint, "?#") {
+		return nil, fmt.Errorf("container endpoint must not contain a query or fragment: %q", endpoint)
 	}
 
 	// TCP: strip tcp:// prefix and build base URL
@@ -69,12 +94,34 @@ func newDockerClient(endpoint string) *dockerClient {
 		baseURL = "http://" + baseURL
 	}
 
+	// Let the caller's context control long-running pulls and starts.
+	httpClient := &http.Client{Timeout: 0}
+	if restrict != nil && restrict.guard != nil {
+		httpClient = restrict.guardedClient()
+	}
+
 	return &dockerClient{
-		// Let the caller's context control long-running pulls and starts.
-		httpClient: &http.Client{Timeout: 0},
+		httpClient: httpClient,
 		baseURL:    baseURL,
 		creds:      map[string]dockerAuthConfig{},
+	}, nil
+}
+
+// endpointPolicy restricts endpoints a script supplies via Client(socket=...):
+// Unix socket paths must lie within paths, and TCP/HTTP(S) endpoints must
+// pass guard. Nil AllowedPaths or a nil guard leaves that kind unrestricted.
+type endpointPolicy struct {
+	paths         fssecurity.Config
+	guard         *netsecurity.Guard
+	guardedClient func() *http.Client // built once per registration
+}
+
+func newEndpointPolicy(paths fssecurity.Config, guard *netsecurity.Guard) *endpointPolicy {
+	p := &endpointPolicy{paths: paths, guard: guard}
+	if guard != nil {
+		p.guardedClient = sync.OnceValue(guard.HTTPClient)
 	}
+	return p
 }
 
 func (c *dockerClient) url(path string) string {

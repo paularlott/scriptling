@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling/evaliface"
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
+	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -30,19 +32,40 @@ var (
 // Register registers the scriptling.container library with the given registrar.
 // dockerSock and podmanSock override the default socket paths (empty = use default).
 func Register(registrar interface{ RegisterLibrary(*object.Library) }, dockerSock, podmanSock string) {
+	RegisterConfigured(registrar, dockerSock, podmanSock, fssecurity.Config{}, nil)
+}
+
+// RegisterConfigured is Register with restrictions on endpoints a script
+// supplies through Client(socket=...): a Unix socket path must lie within
+// paths, and a TCP/HTTP(S) endpoint must pass the network policy. The
+// operator's endpoints (dockerSock, podmanSock or the defaults) are trusted
+// and never checked.
+func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, dockerSock, podmanSock string, paths fssecurity.Config, policy *netsecurity.Config) {
 	if dockerSock != "" {
 		overrideDockerSocket = dockerSock
 	}
 	if podmanSock != "" {
 		overrridePodmanSocket = podmanSock
 	}
+	if paths.AllowedPaths != nil || policy != nil {
+		var guard *netsecurity.Guard
+		if policy != nil {
+			g, gerr := netsecurity.NewGuard(policy)
+			if gerr != nil {
+				g = netsecurity.FailClosed(gerr)
+			}
+			guard = g
+		}
+		registrar.RegisterLibrary(buildLibrary(newEndpointPolicy(paths, guard)))
+		return
+	}
 	libraryOnce.Do(func() {
-		library = buildLibrary()
+		library = buildLibrary(nil)
 	})
 	registrar.RegisterLibrary(library)
 }
 
-func buildLibrary() *object.Library {
+func buildLibrary(restrict *endpointPolicy) *object.Library {
 	b := object.NewLibraryBuilder(LibraryName, LibraryDesc)
 
 	b.FunctionWithHelp("runtimes", func() []any {
@@ -67,7 +90,7 @@ Example:
 
 	b.FunctionWithHelp("Client", func(ctx context.Context, kwargs object.Kwargs, driver string) (object.Object, error) {
 		socket := kwargs.MustGetString("socket", "")
-		d, err := newDriverWithSocket(driver, socket)
+		d, err := newDriverWithSocket(driver, socket, restrict)
 		if err != nil {
 			return nil, err
 		}
@@ -152,18 +175,21 @@ func podmanSocket() string {
 //   - tcp://host:2375               — plain TCP
 //   - host:2375                     — plain TCP shorthand
 //   - https://host:2376             — TLS TCP
-func newDriverWithSocket(driver, endpoint string) (ContainerDriver, error) {
+//
+// restrict applies to a script-supplied endpoint; the operator's endpoint for
+// the driver (empty, or naming it explicitly) is trusted.
+func newDriverWithSocket(driver, endpoint string, restrict *endpointPolicy) (ContainerDriver, error) {
 	switch driver {
 	case DriverDocker:
-		if endpoint == "" {
-			endpoint = dockerSocket()
+		if endpoint == "" || endpoint == dockerSocket() {
+			return newDockerClient(dockerSocket(), nil)
 		}
-		return newDockerClient(endpoint), nil
+		return newDockerClient(endpoint, restrict)
 	case DriverPodman:
-		if endpoint == "" {
-			endpoint = podmanSocket()
+		if endpoint == "" || endpoint == podmanSocket() {
+			return newDockerClient(podmanSocket(), nil)
 		}
-		return newDockerClient(endpoint), nil
+		return newDockerClient(endpoint, restrict)
 	case DriverApple:
 		return newAppleDriver()
 	}
