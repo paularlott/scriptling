@@ -36,6 +36,20 @@ func normalizeContainerReference(ref string) string {
 	return ""
 }
 
+// optionValues refuses a script-supplied option value the container CLI
+// would read as a flag: it reports a missing value rather than taking it.
+// Positional arguments (images, names, IDs, commands) are passed after "--"
+// instead, so one that starts with "-" cannot add an option such as a bind
+// mount that run() never checked.
+func optionValues(values ...string) error {
+	for _, v := range values {
+		if strings.HasPrefix(v, "-") {
+			return fmt.Errorf("container: option value %q must not start with \"-\"", v)
+		}
+	}
+	return nil
+}
+
 func (c *appleClient) run(ctx context.Context, args ...string) (string, error) {
 	out, err := exec.CommandContext(ctx, "container", args...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
@@ -46,7 +60,10 @@ func (c *appleClient) Login(ctx context.Context, server, username, password stri
 	if server == "" {
 		server = "registry-1.docker.io"
 	}
-	cmd := exec.CommandContext(ctx, "container", "registry", "login", "--username", username, "--password-stdin", server)
+	if err := optionValues(username); err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, "container", "registry", "login", "--username", username, "--password-stdin", "--", server)
 	cmd.Stdin = strings.NewReader(password)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("login: %s", strings.TrimSpace(string(out)))
@@ -56,7 +73,7 @@ func (c *appleClient) Login(ctx context.Context, server, username, password stri
 
 // Pull implements ContainerDriver.
 func (c *appleClient) Pull(ctx context.Context, image string) error {
-	_, err := c.run(ctx, "image", "pull", image)
+	_, err := c.run(ctx, "image", "pull", "--", image)
 	return err
 }
 
@@ -83,6 +100,9 @@ func (c *appleClient) Exec(ctx context.Context, nameOrID string, command []strin
 
 // ExecStream implements ContainerDriver.
 func (c *appleClient) ExecStream(ctx context.Context, nameOrID string, command []string, opts ExecOptions, fn func(stream, line string)) (*ExecResult, error) {
+	if err := optionValues(append([]string{opts.WorkDir, opts.User}, opts.Env...)...); err != nil {
+		return nil, err
+	}
 	args := []string{"exec"}
 	for _, e := range opts.Env {
 		args = append(args, "-e", e)
@@ -93,7 +113,7 @@ func (c *appleClient) ExecStream(ctx context.Context, nameOrID string, command [
 	if opts.User != "" {
 		args = append(args, "--user", opts.User)
 	}
-	args = append(args, nameOrID)
+	args = append(args, "--", nameOrID)
 	args = append(args, command...)
 
 	cmd := exec.CommandContext(ctx, "container", args...)
@@ -187,14 +207,14 @@ func parseAppleImageList(out string) ([]ImageInfo, error) {
 
 // ImageRemove implements ContainerDriver.
 func (c *appleClient) ImageRemove(ctx context.Context, image string) error {
-	out, err := c.run(ctx, "image", "rm", image)
+	out, err := c.run(ctx, "image", "rm", "--", image)
 	if err == nil || strings.Contains(out, "not found") {
 		return nil
 	}
 	// Newer CLIs report a missing image with a generic "failed to delete";
 	// removing an absent image is not an error (as with Docker), so only
 	// fail when the image is still there.
-	if inspectOut, inspectErr := c.run(ctx, "image", "inspect", image); inspectErr != nil && strings.Contains(inspectOut, "not found") {
+	if inspectOut, inspectErr := c.run(ctx, "image", "inspect", "--", image); inspectErr != nil && strings.Contains(inspectOut, "not found") {
 		return nil
 	}
 	return fmt.Errorf("image remove: %s", out)
@@ -202,6 +222,13 @@ func (c *appleClient) ImageRemove(ctx context.Context, image string) error {
 
 // Run implements ContainerDriver.
 func (c *appleClient) Run(ctx context.Context, image string, opts RunOptions) (string, error) {
+	values := []string{opts.Name, opts.Network}
+	values = append(values, opts.Env...)
+	values = append(values, opts.Ports...)
+	values = append(values, opts.Volumes...)
+	if err := optionValues(values...); err != nil {
+		return "", err
+	}
 	args := []string{"run", "-d"}
 	if opts.Name != "" {
 		args = append(args, "--name", opts.Name)
@@ -218,7 +245,7 @@ func (c *appleClient) Run(ctx context.Context, image string, opts RunOptions) (s
 	if opts.Network != "" {
 		args = append(args, "--network", opts.Network)
 	}
-	args = append(args, image)
+	args = append(args, "--", image)
 	args = append(args, opts.Command...)
 
 	out, err := c.run(ctx, args...)
@@ -234,7 +261,7 @@ func (c *appleClient) Run(ctx context.Context, image string, opts RunOptions) (s
 
 // Stop implements ContainerDriver.
 func (c *appleClient) Stop(ctx context.Context, nameOrID string) error {
-	out, err := c.run(ctx, "stop", nameOrID)
+	out, err := c.run(ctx, "stop", "--", nameOrID)
 	if err != nil && !strings.Contains(out, "not found") {
 		return fmt.Errorf("container stop: %s", out)
 	}
@@ -277,7 +304,7 @@ func (c *appleClient) WaitStopped(ctx context.Context, nameOrID string, timeout 
 
 // Remove implements ContainerDriver.
 func (c *appleClient) Remove(ctx context.Context, nameOrID string) error {
-	out, err := c.run(ctx, "rm", nameOrID)
+	out, err := c.run(ctx, "rm", "--", nameOrID)
 	if err != nil && !strings.Contains(out, "not found") {
 		return fmt.Errorf("container remove: %s", out)
 	}
@@ -329,7 +356,7 @@ func parseAppleInspectOutput(out string) (*appleInspect, error) {
 
 // Inspect implements ContainerDriver.
 func (c *appleClient) Inspect(ctx context.Context, nameOrID string) (*ContainerInfo, error) {
-	out, err := c.run(ctx, "inspect", nameOrID)
+	out, err := c.run(ctx, "inspect", "--", nameOrID)
 	if err != nil {
 		return nil, fmt.Errorf("container inspect: %s", out)
 	}
@@ -371,11 +398,14 @@ func (c *appleClient) List(ctx context.Context) ([]ContainerInfo, error) {
 
 // VolumeCreate implements ContainerDriver.
 func (c *appleClient) VolumeCreate(ctx context.Context, name, size string) error {
+	if err := optionValues(size); err != nil {
+		return err
+	}
 	args := []string{"volume", "create"}
 	if size != "" {
 		args = append(args, "-s", size)
 	}
-	args = append(args, name)
+	args = append(args, "--", name)
 	out, err := c.run(ctx, args...)
 	if err != nil {
 		return fmt.Errorf("volume create: %s", out)
@@ -385,7 +415,7 @@ func (c *appleClient) VolumeCreate(ctx context.Context, name, size string) error
 
 // VolumeRemove implements ContainerDriver.
 func (c *appleClient) VolumeRemove(ctx context.Context, name string) error {
-	out, err := c.run(ctx, "volume", "rm", name)
+	out, err := c.run(ctx, "volume", "rm", "--", name)
 	if err != nil && !strings.Contains(out, "not found") {
 		return fmt.Errorf("volume remove: %s", out)
 	}

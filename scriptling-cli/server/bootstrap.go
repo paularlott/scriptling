@@ -85,7 +85,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 		return nil, fmt.Errorf("failed to initialize KV store: %w", err)
 	}
 
-	setup.Factories(config.LibDirs, config.AllowedPaths, config.DisabledLibs, config.SecretRegistry, Log, config.DockerSock, config.PodmanSock, config.NetworkPolicy)
+	setup.Factories(config.LibDirs, config.AllowedPaths, config.DisabledLibs, config.SecretRegistry, Log, config.DockerSock, config.PodmanSock, config.ContainerDenyPrivileged, config.NetworkPolicy)
 
 	// Initialize server lifecycle channels and the collection callback after
 	// ResetRuntime. ServerCollect is called inside start_server() (and the
@@ -371,7 +371,7 @@ func (s *Server) applyPackLoader(p *scriptling.Scriptling) {
 }
 
 func (s *Server) setupScriptling(p *scriptling.Scriptling) {
-	setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, Log, s.config.DockerSock, s.config.PodmanSock, s.config.NetworkPolicy)
+	setup.Scriptling(p, s.config.LibDirs, false, s.config.AllowedPaths, s.config.DisabledLibs, s.config.SecretRegistry, Log, s.config.DockerSock, s.config.PodmanSock, s.config.ContainerDenyPrivileged, s.config.NetworkPolicy)
 	setup.RegisterSys(p, s.config.Argv)
 	// Compiled-in plugins register even with no external plugin manager;
 	// RegisterLibraries handles a nil manager.

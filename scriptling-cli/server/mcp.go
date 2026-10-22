@@ -409,6 +409,7 @@ func (s *Server) handlerConfig() mcpcli.HandlerConfig {
 		mcpcli.WithPlugins(s.config.PluginManager),
 		mcpcli.WithDockerSock(s.config.DockerSock),
 		mcpcli.WithPodmanSock(s.config.PodmanSock),
+		mcpcli.WithContainerDenyPrivileged(s.config.ContainerDenyPrivileged),
 	}
 	if s.config.Argv != nil {
 		opts = append(opts, mcpcli.WithArgv(s.config.Argv))

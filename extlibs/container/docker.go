@@ -111,9 +111,10 @@ func newDockerClient(endpoint string, restrict *endpointPolicy) (*dockerClient, 
 // Unix socket paths must lie within paths, and TCP/HTTP(S) endpoints must
 // pass guard. Nil AllowedPaths or a nil guard leaves that kind unrestricted.
 type endpointPolicy struct {
-	paths         fssecurity.Config
-	guard         *netsecurity.Guard
-	guardedClient func() *http.Client // built once per registration
+	paths          fssecurity.Config
+	guard          *netsecurity.Guard
+	guardedClient  func() *http.Client // built once per registration
+	denyPrivileged bool                // refuse run(privileged=True)
 }
 
 func newEndpointPolicy(paths fssecurity.Config, guard *netsecurity.Guard) *endpointPolicy {

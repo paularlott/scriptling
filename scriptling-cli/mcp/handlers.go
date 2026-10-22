@@ -30,18 +30,19 @@ import (
 // the filesystem access of os/pathlib/glob/fs/grep/sed can be constrained with
 // AllowedPaths (nil means unrestricted, matching scriptling-cli/server's default).
 type HandlerConfig struct {
-	LibDirs        []string
-	AllowedPaths   []string                     // nil = unrestricted
-	NetworkPolicy  *netsecurity.Config          // nil = unrestricted outbound network
-	DisabledLibs   []string                     // nil = all built-ins enabled
-	SecretRegistry *secretprovider.Registry     // nil = empty registry
-	Logger         logger.Logger                // nil = null logger
-	PackLoader     *pack.Loader                 // nil = no pack loader
-	PluginManager  *scriptlingplugin.Manager    // nil = no plugins
-	DockerSock     string                       // empty = default socket
-	PodmanSock     string                       // empty = default socket
-	Argv           []string                     // extra CLI args for sys.argv (nil = skip sys registration)
-	SetupHook      func(*scriptling.Scriptling) // optional extra setup applied after standard libs
+	LibDirs                 []string
+	AllowedPaths            []string                     // nil = unrestricted
+	NetworkPolicy           *netsecurity.Config          // nil = unrestricted outbound network
+	DisabledLibs            []string                     // nil = all built-ins enabled
+	SecretRegistry          *secretprovider.Registry     // nil = empty registry
+	Logger                  logger.Logger                // nil = null logger
+	PackLoader              *pack.Loader                 // nil = no pack loader
+	PluginManager           *scriptlingplugin.Manager    // nil = no plugins
+	DockerSock              string                       // empty = default socket
+	PodmanSock              string                       // empty = default socket
+	ContainerDenyPrivileged bool                         // refuse container run(privileged=True)
+	Argv                    []string                     // extra CLI args for sys.argv (nil = skip sys registration)
+	SetupHook               func(*scriptling.Scriptling) // optional extra setup applied after standard libs
 }
 
 // HandlerOption configures a HandlerConfig.
@@ -100,6 +101,12 @@ func WithPodmanSock(sock string) HandlerOption {
 	return func(c *HandlerConfig) { c.PodmanSock = sock }
 }
 
+// WithContainerDenyPrivileged returns an option that makes the container
+// library refuse run(privileged=True) inside the script interpreter.
+func WithContainerDenyPrivileged(deny bool) HandlerOption {
+	return func(c *HandlerConfig) { c.ContainerDenyPrivileged = deny }
+}
+
 // WithArgv returns an option that sets the extra CLI args exposed via
 // sys.argv in every handler's evaluator.
 func WithArgv(argv []string) HandlerOption {
@@ -142,7 +149,7 @@ func prepareScriptling(cfg HandlerConfig, extraLibDirs []string) *scriptling.Scr
 	libDirs := append(append([]string{}, cfg.LibDirs...), extraLibDirs...)
 
 	p := scriptling.New()
-	setup.Scriptling(p, libDirs, false, cfg.AllowedPaths, cfg.DisabledLibs, registry, log, cfg.DockerSock, cfg.PodmanSock, cfg.NetworkPolicy)
+	setup.Scriptling(p, libDirs, false, cfg.AllowedPaths, cfg.DisabledLibs, registry, log, cfg.DockerSock, cfg.PodmanSock, cfg.ContainerDenyPrivileged, cfg.NetworkPolicy)
 	setup.RegisterSys(p, cfg.Argv)
 	// Compiled-in plugins register even with no external plugin manager;
 	// RegisterLibraries handles a nil manager.

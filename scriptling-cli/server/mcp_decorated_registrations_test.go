@@ -18,7 +18,7 @@ import (
 // in-process MCP client session.
 func TestMCPDecoratedRegistrations(t *testing.T) {
 	libDir := t.TempDir()
-	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "")
+	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
 	extlibs.ResetRuntime()
 
 	toolsDir := t.TempDir()
@@ -202,7 +202,7 @@ def region_guide():
 // name, without failing the whole server (the skills-folder rule).
 func TestMCPDecoratedSkillFrontmatterMismatch(t *testing.T) {
 	libDir := t.TempDir()
-	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "")
+	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
 	extlibs.ResetRuntime()
 
 	toolsDir := t.TempDir()
@@ -252,7 +252,7 @@ def fine():
 // working.
 func TestMCPDecoratedFailuresAtRead(t *testing.T) {
 	libDir := t.TempDir()
-	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "")
+	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
 	extlibs.ResetRuntime()
 
 	toolsDir := t.TempDir()
@@ -306,7 +306,7 @@ def fine():
 // .toml+.py prompts alike.
 func TestMCPPromptRequiredArguments(t *testing.T) {
 	libDir := t.TempDir()
-	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "")
+	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
 	extlibs.ResetRuntime()
 
 	toolsDir := t.TempDir()
@@ -386,7 +386,7 @@ required = true
 // and on every read.
 func TestMCPDecoratedUIResourceMimeForced(t *testing.T) {
 	libDir := t.TempDir()
-	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "")
+	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
 	extlibs.ResetRuntime()
 
 	toolsDir := t.TempDir()

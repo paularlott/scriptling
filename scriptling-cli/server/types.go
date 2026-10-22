@@ -66,6 +66,10 @@ type ServerConfig struct {
 	TLSKey          string
 	TLSGenerate     bool
 
+	// ContainerDenyPrivileged refuses scriptling.container run(privileged=True)
+	// in every evaluator. Privileged containers are allowed when false.
+	ContainerDenyPrivileged bool
+
 	// ExtraLibs, if set, registers additional libraries on every evaluator
 	// after the standard library set — the setup script and every json-rpc,
 	// http, mcp and websocket request handler. Host applications use this to

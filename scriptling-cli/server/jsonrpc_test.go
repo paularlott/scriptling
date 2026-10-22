@@ -31,7 +31,7 @@ func jsonrpcTestServer(t *testing.T, handlerSrc string, methods, notifications m
 	}
 
 	// One-time global factory configuration (idempotent enough for tests).
-	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "")
+	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
 
 	extlibs.ResetRuntime()
 

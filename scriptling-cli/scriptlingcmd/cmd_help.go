@@ -47,7 +47,7 @@ func helpCmd() *cli.Command {
 			if netErr != nil {
 				return netErr
 			}
-			setup.Scriptling(p, libDirs, false, allowedPaths, disabledLibs, secretRegistry, globalLogger, cmd.GetString("docker-host"), cmd.GetString("podman-host"), netPolicy)
+			setup.Scriptling(p, libDirs, false, allowedPaths, disabledLibs, secretRegistry, globalLogger, cmd.GetString("docker-host"), cmd.GetString("podman-host"), cmd.GetBool("container-deny-privileged"), netPolicy)
 
 			packages := cmd.GetStringSlice("package")
 			if len(packages) > 0 {

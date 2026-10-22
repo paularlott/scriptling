@@ -23,7 +23,7 @@ import (
 func buildResourceTestServer(t *testing.T) *Server {
 	t.Helper()
 	libDir := t.TempDir()
-	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "")
+	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
 	extlibs.ResetRuntime()
 
 	toolsDir := t.TempDir()
@@ -102,7 +102,7 @@ func pipeClientServer(t *testing.T, mcpServer *mcplib.Server) (*mcplib.Client, f
 // extracted vars reach the script.
 func TestMCPServerMultiVarTemplate(t *testing.T) {
 	libDir := t.TempDir()
-	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "")
+	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
 	extlibs.ResetRuntime()
 
 	resDir := t.TempDir()

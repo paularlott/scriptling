@@ -15,7 +15,7 @@ func TestScriptlingRegistersLoaderAndMCPLibrary(t *testing.T) {
 	p := scriptling.New()
 	log := logslog.New(logslog.Config{Level: "error"})
 
-	Scriptling(p, []string{"/tmp/scriptling-lib"}, false, nil, nil, nil, log, "", "")
+	Scriptling(p, []string{"/tmp/scriptling-lib"}, false, nil, nil, nil, log, "", "", false)
 
 	if p.GetLibraryLoader() == nil {
 		t.Fatal("expected library loader to be configured")
@@ -59,7 +59,7 @@ func TestScriptlingLibraryLoaderHonoursAllowedPaths(t *testing.T) {
 
 	load := func(allowed []string, name string) bool {
 		p := scriptling.New()
-		Scriptling(p, []string{libs}, false, allowed, nil, nil, logslog.New(logslog.Config{Level: "error"}), "", "")
+		Scriptling(p, []string{libs}, false, allowed, nil, nil, logslog.New(logslog.Config{Level: "error"}), "", "", false)
 		_, found, err := p.GetLibraryLoader().Load(name)
 		if err != nil {
 			t.Fatalf("Load(%q): %v", name, err)
@@ -106,7 +106,7 @@ func TestScriptlingLibraryLoaderRelativeDirs(t *testing.T) {
 	t.Chdir(base)
 	for _, allowed := range [][]string{{"./data"}, {}} {
 		p := scriptling.New()
-		Scriptling(p, []string{".", "libs"}, false, allowed, nil, nil, logslog.New(logslog.Config{Level: "error"}), "", "")
+		Scriptling(p, []string{".", "libs"}, false, allowed, nil, nil, logslog.New(logslog.Config{Level: "error"}), "", "", false)
 		for _, name := range []string{"sibling", "mylib"} {
 			if _, found, err := p.GetLibraryLoader().Load(name); err != nil || !found {
 				t.Errorf("allowed=%v: %q not loadable from a relative library directory (found=%v err=%v)", allowed, name, found, err)
@@ -131,7 +131,7 @@ except Exception:
 
 	run := func(disabled []string) error {
 		p := scriptling.New()
-		Scriptling(p, nil, false, nil, disabled, nil, logslog.New(logslog.Config{Level: "error"}), "", "")
+		Scriptling(p, nil, false, nil, disabled, nil, logslog.New(logslog.Config{Level: "error"}), "", "", false)
 		_, err := p.Eval(script)
 		return err
 	}
@@ -145,7 +145,7 @@ except Exception:
 	}
 
 	p := scriptling.New()
-	Scriptling(p, nil, false, nil, []string{"subprocess"}, nil, logslog.New(logslog.Config{Level: "error"}), "", "")
+	Scriptling(p, nil, false, nil, []string{"subprocess"}, nil, logslog.New(logslog.Config{Level: "error"}), "", "", false)
 	if _, err := p.Eval(`import scriptling.mcp as mcp
 mcp.Client("https://example.com/mcp")`); err != nil {
 		t.Fatalf("HTTP MCP clients should still work with subprocess disabled: %v", err)
@@ -175,7 +175,7 @@ P.load("s", "` + launcher + `", scriptling=False)`
 	// manager and ProcessesAllowed derived from the disabled-libs list.
 	disabled := []string{"subprocess"}
 	p := scriptling.New()
-	Scriptling(p, nil, false, nil, disabled, nil, logslog.New(logslog.Config{Level: "error"}), "", "")
+	Scriptling(p, nil, false, nil, disabled, nil, logslog.New(logslog.Config{Level: "error"}), "", "", false)
 	scriptlingplugin.RegisterLibrariesConfigured(p, scriptlingplugin.NewManager(nil), nil, scriptlingplugin.ProcessesAllowed(disabled))
 	if _, err := p.Eval(script); err == nil || !strings.Contains(err.Error(), "not permitted") {
 		t.Fatalf("with subprocess disabled, plugin.load of an executable must be refused, got: %v", err)

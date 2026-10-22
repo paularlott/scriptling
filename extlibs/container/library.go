@@ -39,25 +39,58 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }, dockerSoc
 // supplies through Client(socket=...): a Unix socket path must lie within
 // paths, and a TCP/HTTP(S) endpoint must pass the network policy. The
 // operator's endpoints (dockerSock, podmanSock or the defaults) are trusted
-// and never checked.
+// and never checked. See RegisterWithOptions for what run() enforces.
 func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, dockerSock, podmanSock string, paths fssecurity.Config, policy *netsecurity.Config) {
-	if dockerSock != "" {
-		overrideDockerSocket = dockerSock
+	RegisterWithOptions(registrar, Options{DockerSock: dockerSock, PodmanSock: podmanSock, Paths: paths, Policy: policy})
+}
+
+// Options configures RegisterWithOptions. The zero value registers the
+// library with no restrictions, as Register does.
+type Options struct {
+	// DockerSock and PodmanSock override the default operator endpoints
+	// (empty = default). They are trusted and never checked.
+	DockerSock, PodmanSock string
+
+	// Paths is the filesystem jail. When it restricts paths, a Unix socket a
+	// script names in Client(socket=...) and every host path a script binds
+	// into a container with run(volumes=...) must lie within it.
+	Paths fssecurity.Config
+
+	// Policy is the network policy. When set, a TCP/HTTP(S) endpoint a
+	// script names in Client(socket=...) must pass it, and run() refuses
+	// network="host", which would give the container the host's loopback
+	// services.
+	Policy *netsecurity.Config
+
+	// DenyPrivileged refuses run(privileged=True). Privileged containers are
+	// allowed by default; a privileged container can reach every host device
+	// and disk, so set this where scripts must not control the host.
+	DenyPrivileged bool
+}
+
+// RegisterWithOptions registers the scriptling.container library configured
+// by opts.
+func RegisterWithOptions(registrar interface{ RegisterLibrary(*object.Library) }, opts Options) {
+	if opts.DockerSock != "" {
+		overrideDockerSocket = opts.DockerSock
 	}
-	if podmanSock != "" {
-		overrridePodmanSocket = podmanSock
+	if opts.PodmanSock != "" {
+		overrridePodmanSocket = opts.PodmanSock
 	}
+	paths := opts.Paths
 	paths.AllowedPaths = fssecurity.NormalizeAllowedPaths(paths.AllowedPaths)
-	if paths.AllowedPaths != nil || policy != nil {
+	if paths.AllowedPaths != nil || opts.Policy != nil || opts.DenyPrivileged {
 		var guard *netsecurity.Guard
-		if policy != nil {
-			g, gerr := netsecurity.NewGuard(policy)
+		if opts.Policy != nil {
+			g, gerr := netsecurity.NewGuard(opts.Policy)
 			if gerr != nil {
 				g = netsecurity.FailClosed(gerr)
 			}
 			guard = g
 		}
-		registrar.RegisterLibrary(buildLibrary(newEndpointPolicy(paths, guard)))
+		restrict := newEndpointPolicy(paths, guard)
+		restrict.denyPrivileged = opts.DenyPrivileged
+		registrar.RegisterLibrary(buildLibrary(restrict))
 		return
 	}
 	libraryOnce.Do(func() {
@@ -95,7 +128,7 @@ Example:
 		if err != nil {
 			return nil, err
 		}
-		return newClientInstance(driver, d), nil
+		return newClientInstance(driver, d, restrict), nil
 	}, `Client(driver, **kwargs) - Create a container client
 
 Creates a new container client for the specified runtime driver.
@@ -202,6 +235,7 @@ func newDriverWithSocket(driver, endpoint string, restrict *endpointPolicy) (Con
 type clientInstance struct {
 	driver     ContainerDriver
 	driverName string
+	restrict   *endpointPolicy // nil = no restrictions; see checkRun
 }
 
 var (
@@ -216,11 +250,11 @@ func getContainerClientClass() *object.Class {
 	return containerClientClass
 }
 
-func newClientInstance(driverName string, d ContainerDriver) *object.Instance {
+func newClientInstance(driverName string, d ContainerDriver, restrict *endpointPolicy) *object.Instance {
 	return object.NewInstanceWithFields(getContainerClientClass(), map[string]object.Object{
 		"_client": &object.ClientWrapper{
 			TypeName: "ContainerClient",
-			Client:   &clientInstance{driver: d, driverName: driverName},
+			Client:   &clientInstance{driver: d, driverName: driverName, restrict: restrict},
 		},
 	})
 }
@@ -536,6 +570,9 @@ Example:
 			if s, e := cmd.AsString(); e == nil {
 				opts.Command = append(opts.Command, s)
 			}
+		}
+		if denied := ci.restrict.checkRun(opts); denied != nil {
+			return denied
 		}
 		id, goErr := runDriverVal(ctx, func() (string, error) { return ci.driver.Run(ctx, image, opts) })
 		if goErr != nil {

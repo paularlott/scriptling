@@ -19,7 +19,7 @@ import (
 func newSkillsFolderServer(t *testing.T, skillsDir string) *Server {
 	t.Helper()
 	libDir := t.TempDir()
-	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "")
+	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
 	extlibs.ResetRuntime()
 	s := &Server{
 		config: ServerConfig{

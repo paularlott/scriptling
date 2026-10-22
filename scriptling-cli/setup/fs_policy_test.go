@@ -39,7 +39,7 @@ func TestAllowedPathsReachFileReadingLibraries(t *testing.T) {
 		"telegram.send_file":    `import scriptling.messaging.telegram as m; m.send_file(m.client("1:token"), "42", "` + secret + `")`,
 	} {
 		p := scriptling.New()
-		Scriptling(p, nil, false, []string{jail}, nil, nil, logslog.New(logslog.Config{Level: "error"}), "", "")
+		Scriptling(p, nil, false, []string{jail}, nil, nil, logslog.New(logslog.Config{Level: "error"}), "", "", false)
 		p.EnableOutputCapture()
 		_, err := p.Eval("try:\n    " + strings.ReplaceAll(call, "; ", "\n    ") + "\nexcept Exception:\n    pass\nprint('continued')")
 		if err == nil || !strings.Contains(err.Error(), "outside allowed directories") {
@@ -63,7 +63,7 @@ func TestNetworkPolicyReachesMessagingPlatformHosts(t *testing.T) {
 		"slack":    `import scriptling.messaging.slack as m; m.send_message(m.client("xoxb-1", "xapp-1"), "C1", "x")`,
 	} {
 		p := scriptling.New()
-		Scriptling(p, nil, false, nil, nil, nil, logslog.New(logslog.Config{Level: "error"}), "", "", policy)
+		Scriptling(p, nil, false, nil, nil, nil, logslog.New(logslog.Config{Level: "error"}), "", "", false, policy)
 		_, err := p.Eval(strings.ReplaceAll(call, "; ", "\n"))
 		if err == nil || !strings.Contains(err.Error(), "network policy") {
 			t.Errorf("%s: expected a network policy refusal, got %v", name, err)

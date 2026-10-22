@@ -106,7 +106,8 @@ func AllLibraryNames() []string {
 // allowedPaths: Filesystem path restrictions for os, pathlib, glob, sandbox (nil = no restrictions)
 // disabledLibs: Library names to skip registration (nil = all enabled)
 // log: Logger instance for the logging library
-func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract bool, allowedPaths []string, disabledLibs []string, secretRegistry *secretprovider.Registry, log logger.Logger, dockerSock, podmanSock string, netPolicy ...*netsecurity.Config) {
+// containerDenyPrivileged: Refuse scriptling.container run(privileged=True) (false = allowed)
+func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract bool, allowedPaths []string, disabledLibs []string, secretRegistry *secretprovider.Registry, log logger.Logger, dockerSock, podmanSock string, containerDenyPrivileged bool, netPolicy ...*netsecurity.Config) {
 	// A recovered panic reaches the caller as a one-line error (which may be
 	// sent to a client); its stack trace is for the operator, at debug level.
 	if log != nil {
@@ -179,7 +180,13 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.FindLibraryName, func() { extlibs.RegisterFindLibrary(p, allowedPaths) })
 	reg(extlibs.SedLibraryName, func() { extlibs.RegisterSedLibrary(p, allowedPaths) })
 	reg(extlibs.ContainerLibraryName, func() {
-		scriptlingcontainer.RegisterConfigured(p, dockerSock, podmanSock, fssecurity.Config{AllowedPaths: allowedPaths}, firstPolicy(netPolicy))
+		scriptlingcontainer.RegisterWithOptions(p, scriptlingcontainer.Options{
+			DockerSock:     dockerSock,
+			PodmanSock:     podmanSock,
+			Paths:          fssecurity.Config{AllowedPaths: allowedPaths},
+			Policy:         firstPolicy(netPolicy),
+			DenyPrivileged: containerDenyPrivileged,
+		})
 	})
 	reg(extlibs.NomadLibraryName, func() { scriptlingnomad.Register(p, netPolicy...) })
 	reg(extlibs.WaitForLibraryName, func() { extlibs.RegisterWaitForLibraryConfigured(p, allowedPaths, netPolicy...) })
@@ -252,10 +259,10 @@ func firstPolicy(netPolicy []*netsecurity.Config) *netsecurity.Config {
 
 // Factories configures the global sandbox and background factories.
 // Call this once at startup, before any scripts execute.
-func Factories(libdirs []string, allowedPaths []string, disabledLibs []string, secretRegistry *secretprovider.Registry, log logger.Logger, dockerSock, podmanSock string, netPolicy ...*netsecurity.Config) {
+func Factories(libdirs []string, allowedPaths []string, disabledLibs []string, secretRegistry *secretprovider.Registry, log logger.Logger, dockerSock, podmanSock string, containerDenyPrivileged bool, netPolicy ...*netsecurity.Config) {
 	factory := func() extlibs.SandboxInstance {
 		p := scriptling.New()
-		Scriptling(p, libdirs, false, allowedPaths, disabledLibs, secretRegistry, log, dockerSock, podmanSock, netPolicy...)
+		Scriptling(p, libdirs, false, allowedPaths, disabledLibs, secretRegistry, log, dockerSock, podmanSock, containerDenyPrivileged, netPolicy...)
 		// Compiled-in plugins (default scriptling builds) must exist in every
 		// spun-up environment, not just the main one; a nil manager means
 		// no external plugins, which RegisterLibraries handles.
