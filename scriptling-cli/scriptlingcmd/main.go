@@ -326,6 +326,12 @@ func buildRootCommand() *cli.Command {
 				ConfigPath: []string{"server.mcp_cors_origins"},
 			},
 			&cli.StringSliceFlag{
+				Name:       "json-rpc-cors-origin",
+				Usage:      "Allowed browser origin for cross-origin /json-rpc requests (repeatable, \"*\" for any; default: same-origin only)",
+				EnvVars:    []string{"SCRIPTLING_JSONRPC_CORS_ORIGIN"},
+				ConfigPath: []string{"server.json_rpc_cors_origins"},
+			},
+			&cli.StringSliceFlag{
 				Name:       "allowed-hosts",
 				Usage:      "Host name the HTTP server answers (repeatable, \".example.com\" for a domain and subdomains); a loopback-bound server answers only loopback names otherwise, blocking DNS rebinding",
 				EnvVars:    []string{"SCRIPTLING_ALLOWED_HOSTS"},
@@ -1049,6 +1055,7 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		JSONRPCMaxConcurrency: cmd.GetInt("json-rpc-concurrency"),
 		WebSocketOrigins:      cmd.GetStringSlice("websocket-origin"),
 		MCPCorsOrigins:        cmd.GetStringSlice("mcp-cors-origin"),
+		JSONRPCCorsOrigins:    cmd.GetStringSlice("json-rpc-cors-origin"),
 		AllowedHosts:          cmd.GetStringSlice("allowed-hosts"),
 		AllowedPaths:          bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),
 		NetworkPolicy:         mustLoadPolicy(cmd),

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -188,6 +189,53 @@ func (w *corsOriginOverrideWriter) Flush() {
 	}
 }
 
+// jsonrpcCorsMiddleware applies JSONRPCCorsOrigins to /json-rpc, as
+// mcpCorsMiddleware does for /mcp. A browser request from an origin that is
+// not allowed is refused with 403 before the body is read or any script runs:
+// a cross-site text/plain POST needs no preflight, so withholding CORS headers
+// alone would not stop the handler running. An allowed origin gets
+// Access-Control-Allow-Origin, and its preflight is answered here, since the
+// JSON-RPC handlers have no OPTIONS support; OPTIONS never reaches next, which
+// is what lets bearerTokenMiddleware exempt the preflight. Requests without an
+// Origin header (curl, server-to-server and plugin clients) pass through.
+func jsonrpcCorsMiddleware(allowedOrigins []string, hosts hostPolicy, next http.Handler) http.Handler {
+	allowAll := slices.Contains(allowedOrigins, "*")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" && !browserOriginAllowed(r, allowedOrigins, hosts) {
+			http.Error(w, "Origin not allowed", http.StatusForbidden)
+			return
+		}
+		if origin == "" {
+			if r.Method == http.MethodOptions {
+				w.Header().Set("Allow", "GET, POST, OPTIONS")
+				http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		h := w.Header()
+		h.Add("Vary", "Origin")
+		if allowAll {
+			h.Set("Access-Control-Allow-Origin", "*")
+		} else {
+			h.Set("Access-Control-Allow-Origin", origin)
+		}
+		if r.Method == http.MethodOptions {
+			h.Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+			if req := r.Header.Get("Access-Control-Request-Headers"); req != "" {
+				h.Set("Access-Control-Allow-Headers", req)
+			}
+			h.Set("Access-Control-Max-Age", "600")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // buildMux assembles the full HTTP handler stack: protocol endpoints, script
 // routes, static routes, web root fallback, and auth middleware.
 func (s *Server) buildMux() http.Handler {
@@ -208,15 +256,14 @@ func (s *Server) buildMux() http.Handler {
 		mux.Handle("OPTIONS /mcp", mcp)
 	}
 	if s.config.JSONRPC {
+		var rpc http.Handler = http.HandlerFunc(s.handleJSONRPCHTTP)
 		if s.pluginServer != nil {
-			jr := s.scriptProtocolMiddleware(s.pluginServer)
-			mux.Handle("POST /json-rpc", jr)
-			mux.Handle("GET /json-rpc", jr)
-		} else {
-			jr := s.scriptProtocolMiddleware(http.HandlerFunc(s.handleJSONRPCHTTP))
-			mux.Handle("POST /json-rpc", jr)
-			mux.Handle("GET /json-rpc", jr)
+			rpc = s.pluginServer
 		}
+		jr := jsonrpcCorsMiddleware(s.config.JSONRPCCorsOrigins, s.hosts, s.scriptProtocolMiddleware(rpc))
+		mux.Handle("POST /json-rpc", jr)
+		mux.Handle("GET /json-rpc", jr)
+		mux.Handle("OPTIONS /json-rpc", jr)
 	}
 
 	// Built-in health check — skip if a user route already claims it.
@@ -728,8 +775,8 @@ func (s *Server) buildRequestProviders(regs *extlibs.RequestRegistrations) (requ
 // custom Authorization header to the preflight itself — only to the real
 // follow-up request, and only once the preflight response says that header
 // is allowed — so requiring one here would 401 every cross-origin browser
-// preflight unconditionally, making MCPCorsOrigins impossible to use
-// together with a bearer token. The real request the preflight clears the
+// preflight unconditionally, making MCPCorsOrigins (or JSONRPCCorsOrigins)
+// impossible to use together with a bearer token. The real request the preflight clears the
 // way for still goes through this same check normally.
 //
 // The exemption is deliberately narrow — both conditions matter:
@@ -740,20 +787,20 @@ func (s *Server) buildRequestProviders(regs *extlibs.RequestRegistrations) (requ
 //     this check exempted every OPTIONS request outright, which let anyone
 //     skip the token entirely by sending OPTIONS instead of GET — serving
 //     protected static files and running the not-found/fallback handler.
-//   - Scoped to exactly "/mcp", the only route whose own handler
-//     (mcp.Server.HandleRequest) is actually built to answer a preflight
-//     safely: headers only, no body, no side effect. Any other route — a
+//   - Scoped to exactly "/mcp" and "/json-rpc", the only routes whose
+//     handlers (mcp.Server.HandleRequest, jsonrpcCorsMiddleware) are built
+//     to answer a preflight safely: headers only, no body, no side effect,
+//     and for /json-rpc never reaching a script. Any other route — a
 //     static file, the app bundle's webroot, the not-found/fallback
 //     script — has no such handling, so an unauthenticated
 //     preflight-shaped request reaching it would still serve/run it same
 //     as above, just requiring one extra header to trigger.
 func (s *Server) bearerTokenMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		isMCPPreflight := s.mcpHandler != nil &&
-			r.Method == http.MethodOptions &&
-			r.URL.Path == "/mcp" &&
-			r.Header.Get("Access-Control-Request-Method") != ""
-		if !isMCPPreflight && r.Header.Get("Authorization") != s.bearerExpected {
+		isPreflight := r.Method == http.MethodOptions &&
+			r.Header.Get("Access-Control-Request-Method") != "" &&
+			((s.mcpHandler != nil && r.URL.Path == "/mcp") || (s.config.JSONRPC && r.URL.Path == "/json-rpc"))
+		if !isPreflight && r.Header.Get("Authorization") != s.bearerExpected {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}

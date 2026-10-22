@@ -117,6 +117,15 @@ type ServerConfig struct {
 	// examples/mcp-app-host-harness from a different origin).
 	MCPCorsOrigins []string
 
+	// JSONRPCCorsOrigins restricts which browser origins may call /json-rpc:
+	// an origin allowlist, "*" to allow every origin, or empty for the
+	// same-origin default. Same shape as MCPCorsOrigins. A disallowed origin
+	// is refused with 403 before any handler runs (a cross-site text/plain
+	// POST needs no preflight, so CORS headers alone would not stop it); an
+	// allowed one gets Access-Control-Allow-Origin and an answered preflight.
+	// Requests without an Origin header are unaffected.
+	JSONRPCCorsOrigins []string
+
 	// AllowedHosts lists the Host names the server answers besides its
 	// defaults (see hostPolicy): exact names, or ".example.com" for a domain
 	// and its subdomains. A server bound to loopback answers only loopback
