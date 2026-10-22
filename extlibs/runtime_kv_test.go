@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/paularlott/scriptling"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -389,7 +391,8 @@ func TestKVNamedPersistentStore(t *testing.T) {
 
 		// Access underlying DB to force save
 		kvRegistry.Lock()
-		entry := kvRegistry.stores[path]
+		key, _ := resolveKVPath(path) // the registry is keyed by resolved path
+		entry := kvRegistry.stores[key]
 		kvRegistry.Unlock()
 		if err := entry.Save(); err != nil {
 			t.Fatalf("Save: %v", err)
@@ -413,7 +416,8 @@ func TestKVNamedPersistentStore(t *testing.T) {
 		assertString(t, kvCall(s2, "get", object.NewString("from_s1")), "yes")
 
 		kvRegistry.Lock()
-		entry := kvRegistry.stores[path2]
+		key, _ := resolveKVPath(path2) // the registry is keyed by resolved path
+		entry := kvRegistry.stores[key]
 		kvRegistry.Unlock()
 		entry.Save()
 
@@ -893,5 +897,109 @@ func TestKVNamedStoreCloseReportsFlushError(t *testing.T) {
 	}
 	if !strings.Contains(e.Message, path) {
 		t.Errorf("Expected error to mention the store path %q, got: %s", path, e.Message)
+	}
+}
+
+// RegisterRuntimeLibraryAll (the CLI's registration) must apply allowedPaths
+// to kv.open, under both the sub-library and parent import forms.
+func TestKVRuntimeLibraryAllEnforcesAllowedPaths(t *testing.T) {
+	if err := InitKVStore("", nil); err != nil {
+		t.Fatalf("InitKVStore: %v", err)
+	}
+	defer CloseKVStore()
+	defer closeKVRegistry()
+
+	tmpDir := t.TempDir()
+	allowed := filepath.Join(tmpDir, "allowed")
+	outside := filepath.Join(tmpDir, "outside")
+	for _, d := range []string{allowed, outside} {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A symlink inside the jail pointing out of it.
+	if err := os.Symlink(outside, filepath.Join(allowed, "escape")); err != nil {
+		t.Fatal(err)
+	}
+
+	eval := func(allowedPaths []string, script string) error {
+		p := scriptling.New()
+		RegisterRuntimeLibraryAll(p, allowedPaths)
+		_, err := p.Eval(script)
+		return err
+	}
+	open := func(path string) string {
+		return "import scriptling.runtime.kv as kv\ns = kv.open(" + strconv.Quote(path) + ")\ns.close()"
+	}
+
+	if err := eval([]string{allowed}, open(filepath.Join(allowed, "store"))); err != nil {
+		t.Errorf("store inside the jail should open: %v", err)
+	}
+	for _, path := range []string{
+		filepath.Join(outside, "store"),
+		filepath.Join(allowed, "..", "outside", "store"),
+		filepath.Join(allowed, "escape", "store"),
+		filepath.Join(allowed, "escape", "new", "deep", "store"),
+	} {
+		if err := eval([]string{allowed}, open(path)); err == nil || !strings.Contains(err.Error(), "outside allowed directories") {
+			t.Errorf("kv.open(%s) should be denied, got: %v", path, err)
+		}
+	}
+	parent := "import scriptling.runtime as rt\ns = rt.kv.open(" + strconv.Quote(filepath.Join(outside, "store")) + ")"
+	if err := eval([]string{allowed}, parent); err == nil || !strings.Contains(err.Error(), "outside allowed directories") {
+		t.Errorf("rt.kv.open outside the jail should be denied, got: %v", err)
+	}
+
+	// Deny-all: every filesystem path is refused, in-memory stores still work.
+	if err := eval([]string{}, open(filepath.Join(allowed, "store"))); err == nil {
+		t.Error("deny-all should refuse filesystem stores")
+	}
+	if err := eval([]string{}, open(":memory:denyall")); err != nil {
+		t.Errorf("deny-all should allow in-memory stores: %v", err)
+	}
+
+	entries, _ := os.ReadDir(outside)
+	if len(entries) != 0 {
+		t.Errorf("JAIL-BYPASS [kv]: denied opens created %d entries outside the jail", len(entries))
+	}
+}
+
+// Aliases of one directory (relative segments, symlinks) share one store.
+func TestKVPathAliasesShareStore(t *testing.T) {
+	if err := InitKVStore("", nil); err != nil {
+		t.Fatalf("InitKVStore: %v", err)
+	}
+	defer CloseKVStore()
+	defer closeKVRegistry()
+
+	tmpDir := t.TempDir()
+	dir := filepath.Join(tmpDir, "data")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dir, filepath.Join(tmpDir, "alias")); err != nil {
+		t.Fatal(err)
+	}
+
+	a := kvOpen(filepath.Join(dir, "store"))
+	defer kvCall(a, "close")
+	kvCall(a, "set", object.NewString("k"), object.NewString("shared"))
+	for _, path := range []string{
+		filepath.Join(dir, ".", "store"),
+		filepath.Join(tmpDir, "alias", "store"),
+	} {
+		b := kvOpen(path)
+		defer kvCall(b, "close")
+		if got := kvCall(b, "get", object.NewString("k")); got.Inspect() != "shared" {
+			t.Errorf("kv.open(%s) should share the store, got %s", path, got.Inspect())
+		}
+	}
+
+	// One registry entry, not one database per spelling of the path.
+	kvRegistry.Lock()
+	n := len(kvRegistry.stores)
+	kvRegistry.Unlock()
+	if n != 1 {
+		t.Errorf("aliases opened %d stores, want 1", n)
 	}
 }

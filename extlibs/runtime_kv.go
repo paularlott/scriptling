@@ -429,8 +429,15 @@ func newKVOpenBuiltin(cfg fssecurity.Config) *object.Builtin {
 				return errors.NewError("kv.open: store name must not be empty; use \":memory:name\" for in-memory stores")
 			}
 			// Only validate filesystem paths — in-memory stores are always allowed.
-			if !strings.HasPrefix(name, kvMemoryPrefix) && !cfg.IsPathAllowed(name) {
-				return errors.NewError("kv.open: access denied: path '%s' is outside allowed directories", name)
+			if !strings.HasPrefix(name, kvMemoryPrefix) {
+				resolved, err := resolveKVPath(name)
+				if err != nil || !cfg.IsPathAllowed(resolved) {
+					return errors.NewError("kv.open: access denied: path '%s' is outside allowed directories", name)
+				}
+				// Open, and share, the store by the path that was checked: a
+				// symlink swapped after the check cannot redirect it, and
+				// aliases of one directory share one store.
+				name = resolved
 			}
 			db, err := openRegisteredStore(name)
 			if err != nil {
@@ -458,6 +465,16 @@ Example:
   db.set("fact", "the sky is blue")
   db.close()`,
 	}
+}
+
+// resolveKVPath makes a store path absolute and resolves symlinks through its
+// longest existing prefix (the store directory may not exist yet).
+func resolveKVPath(name string) (string, error) {
+	abs, err := filepath.Abs(name)
+	if err != nil {
+		return "", err
+	}
+	return fssecurity.ResolveExistingPrefix(abs), nil
 }
 
 // kvOpenBuiltin is the unrestricted default (nil AllowedPaths = allow all).
