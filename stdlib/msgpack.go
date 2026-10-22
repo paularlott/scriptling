@@ -47,7 +47,10 @@ func newMsgpackLibraryBuiltin(c MsgpackCodec) map[string]*object.Builtin {
 	}
 
 	pack := func(obj object.Object) object.Object {
-		goVal := conversion.ToGo(obj)
+		goVal, depthErr := conversion.ToGoChecked(obj)
+		if depthErr != nil {
+			return depthErr
+		}
 		out, err := c.Marshal(goVal)
 		if err != nil {
 			return errors.NewError("msgpack serialize error: %s", err.Error())

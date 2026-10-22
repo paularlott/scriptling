@@ -115,11 +115,27 @@ func IsReprContainer(obj Object) bool {
 // can catch and which aborts the whole host process.
 const cyclicInspectPlaceholder = "<cyclic reference>"
 
+// MaxReprDepth caps how deeply nested a container repr()/str() will render.
+// Rendering recurses in Go, and a stack overflow is a fatal error that ends
+// the whole process, so past this depth rendering raises RecursionError, as
+// Python does. It matches the nesting depth the data decoders accept.
+const MaxReprDepth = 10000
+
 type reprRenderer struct {
 	out          strings.Builder
 	seen         map[Object]struct{} // containers on the path from the root
 	instanceRepr InstanceReprFunc
 	err          Object
+	depth        int // containers on the path from the root
+}
+
+// errReprTooDeep is the RecursionError raised past MaxReprDepth.
+func errReprTooDeep() *Exception {
+	return &Exception{
+		Message:       "maximum recursion depth exceeded while getting the repr of an object",
+		ExceptionType: "RecursionError",
+		Raised:        true,
+	}
 }
 
 // element renders a value nested inside a container: repr semantics.
@@ -162,8 +178,16 @@ func (r *reprRenderer) container(obj Object) {
 		r.out.WriteString(cyclicInspectPlaceholder)
 		return
 	}
+	if r.depth >= MaxReprDepth {
+		r.err = errReprTooDeep()
+		return
+	}
+	r.depth++
 	r.seen[obj] = struct{}{}
-	defer delete(r.seen, obj)
+	defer func() {
+		delete(r.seen, obj)
+		r.depth--
+	}()
 
 	switch o := obj.(type) {
 	case *List:
@@ -216,7 +240,7 @@ func (r *reprRenderer) container(obj Object) {
 		// Sorted for deterministic output.
 		parts := make([]string, 0, len(o.Elements))
 		for _, e := range o.Elements {
-			sub := reprRenderer{seen: r.seen, instanceRepr: r.instanceRepr}
+			sub := reprRenderer{seen: r.seen, instanceRepr: r.instanceRepr, depth: r.depth}
 			sub.element(e)
 			if sub.err != nil {
 				r.err = sub.err

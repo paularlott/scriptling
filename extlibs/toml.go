@@ -73,7 +73,10 @@ func tomlDumpsFunc(ctx context.Context, kwargs object.Kwargs, args ...object.Obj
 		return err
 	}
 
-	goData := conversion.ToGo(args[0])
+	goData, depthErr := conversion.ToGoChecked(args[0])
+	if depthErr != nil {
+		return depthErr
+	}
 
 	var buf []byte
 	var marshalErr error

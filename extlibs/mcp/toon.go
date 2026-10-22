@@ -38,7 +38,11 @@ func buildToonLibrary() *object.Library {
 					return err
 				}
 
-				encoded, err := mcptoon.Encode(conversion.ToGo(args[0]))
+				goVal, depthErr := conversion.ToGoChecked(args[0])
+				if depthErr != nil {
+					return depthErr
+				}
+				encoded, err := mcptoon.Encode(goVal)
 				if err != nil {
 					return &object.Error{Message: err.Error()}
 				}
@@ -107,7 +111,11 @@ Example:
 					return err
 				}
 
-				encoded, encodeErr := mcptoon.EncodeWithOptions(conversion.ToGo(args[0]), &mcptoon.EncodeOptions{
+				goVal, depthErr := conversion.ToGoChecked(args[0])
+				if depthErr != nil {
+					return depthErr
+				}
+				encoded, encodeErr := mcptoon.EncodeWithOptions(goVal, &mcptoon.EncodeOptions{
 					Indent:    int(indent),
 					Delimiter: delimiter,
 				})

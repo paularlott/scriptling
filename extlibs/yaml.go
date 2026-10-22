@@ -90,7 +90,10 @@ func yamlDumpFunc(ctx context.Context, kwargs object.Kwargs, args ...object.Obje
 		return err
 	}
 
-	goData := conversion.ToGo(args[0])
+	goData, depthErr := conversion.ToGoChecked(args[0])
+	if depthErr != nil {
+		return depthErr
+	}
 
 	yamlBytes, marshalErr := yaml.Marshal(goData)
 	if marshalErr != nil {

@@ -92,10 +92,39 @@ func MustParseJSON(jsonStr string) object.Object {
 	return result
 }
 
+// MaxFromGoDepth caps how many containers deep a Go value may be converted.
+// Conversion recurses in Go, and a stack overflow is a fatal error that ends
+// the whole process, so past this depth FromGo returns a RecursionError
+// instead. It matches the nesting depth the data decoders accept.
+const MaxFromGoDepth = 10000
+
 // FromGo converts a Go interface{} value to a scriptling Object.
 // It handles primitive types (nil, bool, int, float, string), nested structures
-// (maps, slices), and falls back to JSON marshaling for unknown types.
+// (maps, slices), and falls back to JSON marshaling for unknown types. A value
+// nested more than MaxFromGoDepth containers deep converts to a RecursionError.
 func FromGo(v interface{}) object.Object {
+	var tooDeep bool
+	result := fromGo(v, 0, &tooDeep)
+	if tooDeep {
+		return errFromGoTooDeep()
+	}
+	return result
+}
+
+// errFromGoTooDeep is the RecursionError FromGo returns past MaxFromGoDepth.
+// It is kept out of FromGo so FromGo stays small enough to inline.
+//
+//go:noinline
+func errFromGoTooDeep() *object.Error {
+	return &object.Error{
+		Message:       fmt.Sprintf("value too deeply nested to convert (more than %d levels)", MaxFromGoDepth),
+		ExceptionType: "RecursionError",
+	}
+}
+
+// fromGo converts v, which sits inside depth containers. Past MaxFromGoDepth
+// it sets *tooDeep and stops descending; FromGo then discards the result.
+func fromGo(v interface{}, depth int, tooDeep *bool) object.Object {
 	switch v := v.(type) {
 	case nil:
 		return &object.Null{}
@@ -140,12 +169,20 @@ func FromGo(v interface{}) object.Object {
 	case []byte:
 		return object.NewBytes(v)
 	case []interface{}:
+		if depth >= MaxFromGoDepth {
+			*tooDeep = true
+			return &object.Null{}
+		}
 		elements := make([]object.Object, len(v))
 		for i, item := range v {
-			elements[i] = FromGo(item)
+			elements[i] = fromGo(item, depth+1, tooDeep)
 		}
 		return &object.List{Elements: elements}
 	case map[string]interface{}:
+		if depth >= MaxFromGoDepth {
+			*tooDeep = true
+			return &object.Null{}
+		}
 		// A Go map has no order; insert in sorted key order so the dict is
 		// deterministic (and ordered for later mutation).
 		keys := make([]string, 0, len(v))
@@ -155,10 +192,14 @@ func FromGo(v interface{}) object.Object {
 		sort.Strings(keys)
 		d := object.NewDictSized(len(v))
 		for _, key := range keys {
-			d.Store(object.DictStringKey(key), object.NewString(key), FromGo(v[key]))
+			d.Store(object.DictStringKey(key), object.NewString(key), fromGo(v[key], depth+1, tooDeep))
 		}
 		return d
 	case map[interface{}]interface{}:
+		if depth >= MaxFromGoDepth {
+			*tooDeep = true
+			return &object.Null{}
+		}
 		type kv struct {
 			key string
 			val interface{}
@@ -177,7 +218,7 @@ func FromGo(v interface{}) object.Object {
 		sort.Slice(items, func(i, j int) bool { return items[i].key < items[j].key })
 		d := object.NewDictSized(len(items))
 		for _, it := range items {
-			d.Store(object.DictStringKey(it.key), object.NewString(it.key), FromGo(it.val))
+			d.Store(object.DictStringKey(it.key), object.NewString(it.key), fromGo(it.val, depth+1, tooDeep))
 		}
 		return d
 	default:
@@ -190,7 +231,7 @@ func FromGo(v interface{}) object.Object {
 		if err := json.Unmarshal(jsonBytes, &result); err != nil {
 			return object.NewString(fmt.Sprintf("%v", v))
 		}
-		return FromGo(result)
+		return fromGo(result, depth, tooDeep)
 	}
 }
 
@@ -236,6 +277,18 @@ func ToGoLimited(obj object.Object) (interface{}, *object.Error) {
 	return v, nil
 }
 
+// ToGoChecked is ToGo for serializers: a value nested more than 10000 levels
+// is a RecursionError rather than silently truncated to a placeholder. It
+// applies no other limit.
+func ToGoChecked(obj object.Object) (interface{}, *object.Error) {
+	b := conversionBudget{depthOnly: true}
+	v := toGo(obj, make(map[object.Object]struct{}), &b, 0)
+	if b.err != nil {
+		return nil, b.err
+	}
+	return v, nil
+}
+
 // Per converted value: the least it encodes to (a digit and a separator),
 // which is what the value limit sees, and about what it holds in Go, which
 // is what the memory left sees.
@@ -264,8 +317,9 @@ func (b *conversionBudget) check(nodes int64) *object.Error {
 // limits, as a container of that many elements; once over, the conversion
 // stops building.
 type conversionBudget struct {
-	nodes int64
-	err   *object.Error
+	nodes     int64
+	err       *object.Error
+	depthOnly bool // only the depth limit applies (ToGoChecked)
 }
 
 const budgetCheckEvery = 1024
@@ -277,7 +331,7 @@ func (b *conversionBudget) reserve(n int) bool {
 	if b.err != nil {
 		return false
 	}
-	if n < budgetCheckEvery {
+	if n < budgetCheckEvery || b.depthOnly {
 		return true
 	}
 	// The container itself is a value of n slots; with what was built
@@ -297,6 +351,9 @@ func (b *conversionBudget) reserve(n int) bool {
 func (b *conversionBudget) ok() bool {
 	if b.err != nil {
 		return false
+	}
+	if b.depthOnly {
+		return true
 	}
 	b.nodes++
 	if b.nodes&(budgetCheckEvery-1) != 0 {
@@ -322,7 +379,14 @@ func toGo(obj object.Object, path map[object.Object]struct{}, b *conversionBudge
 	}
 	if depth > maxToGoDepth {
 		if b != nil {
-			b.err = object.NewMemoryError("value too deeply nested to convert (more than %d levels)", maxToGoDepth)
+			if b.depthOnly {
+				b.err = &object.Error{
+					Message:       fmt.Sprintf("value too deeply nested to serialize (more than %d levels)", maxToGoDepth),
+					ExceptionType: "RecursionError",
+				}
+			} else {
+				b.err = object.NewMemoryError("value too deeply nested to convert (more than %d levels)", maxToGoDepth)
+			}
 			return nil
 		}
 		return tooDeepPlaceholder
