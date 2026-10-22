@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/paularlott/scriptling/tomllimit"
 	"io/fs"
 	"mime"
 	"os"
@@ -81,6 +82,9 @@ func (m *resourceUIMetaTOML) toUIResourceMeta() *mcplib.UIResourceMeta {
 // changed without the other.
 func decodeResourceMetaTOML(data []byte) (resourceMetaTOML, error) {
 	var m resourceMetaTOML
+	if err := tomllimit.Check(string(data)); err != nil {
+		return m, err
+	}
 	_, err := toml.NewDecoder(bytes.NewReader(data)).Decode(&m)
 	return m, err
 }
@@ -106,6 +110,9 @@ type promptMetaTOML struct {
 
 // parsePromptMetadata decodes prompt metadata from TOML bytes.
 func parsePromptMetadata(data []byte) (string, []PromptArgument, error) {
+	if err := tomllimit.Check(string(data)); err != nil {
+		return "", nil, err
+	}
 	var m promptMetaTOML
 	if _, err := toml.NewDecoder(bytes.NewReader(data)).Decode(&m); err != nil {
 		return "", nil, err

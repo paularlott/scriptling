@@ -473,3 +473,22 @@ func TestVerifyAllFailuresReportedTogether(t *testing.T) {
 		t.Errorf("failures = %+v, want three", check.Failures)
 	}
 }
+
+// A deeply nested metadata block is rejected before the decoder runs, so a
+// malicious # /// script block cannot exhaust the host (vuln-0014).
+func TestParseRejectsDeepNesting(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("# /// script\n# x = ")
+	for i := 0; i < 4000; i++ {
+		b.WriteString("{a=")
+	}
+	b.WriteString("1")
+	for i := 0; i < 4000; i++ {
+		b.WriteString("}")
+	}
+	b.WriteString("\n# ///\nprint('hi')\n")
+	_, _, err := Parse([]byte(b.String()))
+	if err == nil || !strings.Contains(err.Error(), "nests more than") {
+		t.Fatalf("expected a depth-limit error, got: %v", err)
+	}
+}

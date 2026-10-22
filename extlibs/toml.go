@@ -2,6 +2,7 @@ package extlibs
 
 import (
 	"context"
+	"github.com/paularlott/scriptling/tomllimit"
 
 	"github.com/BurntSushi/toml"
 	"github.com/paularlott/scriptling/conversion"
@@ -53,6 +54,10 @@ func tomlLoadsFunc(ctx context.Context, kwargs object.Kwargs, args ...object.Obj
 	tomlStr, err := args[0].AsString()
 	if err != nil {
 		return err
+	}
+
+	if depthErr := tomllimit.Check(tomlStr); depthErr != nil {
+		return errors.NewError("toml parse error: %s", depthErr.Error())
 	}
 
 	var data interface{}

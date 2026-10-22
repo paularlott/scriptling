@@ -36,6 +36,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/paularlott/scriptling/tomllimit"
 	"net"
 	"net/http"
 	"net/url"
@@ -276,6 +277,9 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	var f policyFile
+	if err := tomllimit.Check(string(data)); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
 	if _, err := toml.Decode(string(data), &f); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}

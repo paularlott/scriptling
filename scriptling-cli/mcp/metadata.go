@@ -3,6 +3,7 @@ package mcp
 import (
 	"bytes"
 	"fmt"
+	"github.com/paularlott/scriptling/tomllimit"
 	"io/fs"
 	"os"
 	"strings"
@@ -53,6 +54,9 @@ type toolMetaTOML struct {
 // parseToolMetadata decodes tool metadata from TOML bytes. Unknown keys are
 // ignored so metadata files stay forward compatible.
 func parseToolMetadata(data []byte) (*toolmetadata.ToolMetadata, error) {
+	if err := tomllimit.Check(string(data)); err != nil {
+		return nil, err
+	}
 	var m toolMetaTOML
 	if _, err := toml.NewDecoder(bytes.NewReader(data)).Decode(&m); err != nil {
 		return nil, err

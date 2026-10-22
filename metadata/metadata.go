@@ -40,6 +40,7 @@ package metadata
 
 import (
 	"fmt"
+	"github.com/paularlott/scriptling/tomllimit"
 	"regexp"
 	"strconv"
 	"strings"
@@ -118,6 +119,9 @@ func Parse(source []byte) (m Metadata, ok bool, err error) {
 	// mixes strings and tables, and decoding those into untyped fields would
 	// leave their inner keys untracked, so Undecoded() cannot police the
 	// schema for us.
+	if err := tomllimit.Check(tomlSource); err != nil {
+		return Metadata{}, false, fmt.Errorf("invalid TOML in script metadata: %w", err)
+	}
 	var raw map[string]any
 	if _, err := toml.Decode(tomlSource, &raw); err != nil {
 		return Metadata{}, false, fmt.Errorf("invalid TOML in script metadata: %w", err)

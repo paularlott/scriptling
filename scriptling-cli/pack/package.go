@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/paularlott/scriptling/tomllimit"
 	"io"
 	"os"
 	"path/filepath"
@@ -50,6 +51,9 @@ func (m Manifest) LibDirs() []string {
 
 // parseManifest decodes a manifest.toml from bytes.
 func parseManifest(data []byte) (Manifest, error) {
+	if err := tomllimit.Check(string(data)); err != nil {
+		return Manifest{}, ErrInvalidManifest
+	}
 	var m Manifest
 	if _, err := toml.NewDecoder(bytes.NewReader(data)).Decode(&m); err != nil {
 		return Manifest{}, ErrInvalidManifest

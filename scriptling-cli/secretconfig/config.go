@@ -2,6 +2,7 @@ package secretconfig
 
 import (
 	"fmt"
+	"github.com/paularlott/scriptling/tomllimit"
 	"os"
 
 	"github.com/BurntSushi/toml"
@@ -22,6 +23,9 @@ func LoadRegistryFile(path string) (*secretprovider.Registry, error) {
 	}
 
 	var cfg fileConfig
+	if err := tomllimit.Check(string(data)); err != nil {
+		return nil, fmt.Errorf("failed to parse secret config %s: %w", path, err)
+	}
 	if err := toml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse secret config %s: %w", path, err)
 	}
