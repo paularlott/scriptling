@@ -63,3 +63,18 @@ func RegisterAll(p interface{ RegisterLibrary(*object.Library) }) {
 	p.RegisterLibrary(MsgpackLibrary)
 	p.RegisterLibrary(CopyLibrary)
 }
+
+// LibraryNames returns the names of every library RegisterAll registers, in
+// registration order. It is derived from RegisterAll itself, so a library
+// added there is listed here without a second list to maintain.
+func LibraryNames() []string {
+	var c libraryNameCollector
+	RegisterAll(&c)
+	return c.names
+}
+
+type libraryNameCollector struct{ names []string }
+
+func (c *libraryNameCollector) RegisterLibrary(lib *object.Library) {
+	c.names = append(c.names, lib.Name())
+}

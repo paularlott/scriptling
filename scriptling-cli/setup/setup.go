@@ -28,36 +28,16 @@ import (
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	scriptlingsimilarity "github.com/paularlott/scriptling/extlibs/similarity"
 	"github.com/paularlott/scriptling/libloader"
+	"github.com/paularlott/scriptling/object"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
-// AllLibraryNames returns the names of all built-in CLI libraries.
+// AllLibraryNames returns the names of all built-in CLI libraries: every
+// standard library (from stdlib.LibraryNames, so none is missed) and the
+// extended libraries setup registers.
 func AllLibraryNames() []string {
-	return []string{
-		stdlib.JSONLibraryName,
-		stdlib.ReLibraryName,
-		stdlib.TimeLibraryName,
-		stdlib.DatetimeLibraryName,
-		stdlib.MathLibraryName,
-		stdlib.Base64LibraryName,
-		stdlib.HashlibLibraryName,
-		stdlib.HmacLibraryName,
-		stdlib.RandomLibraryName,
-		stdlib.URLLibLibraryName,
-		stdlib.URLParseLibraryName,
-		stdlib.StringLibraryName,
-		stdlib.UUIDLibraryName,
-		stdlib.HTMLLibraryName,
-		stdlib.StatisticsLibraryName,
-		stdlib.FunctoolsLibraryName,
-		stdlib.TextwrapLibraryName,
-		stdlib.PlatformLibraryName,
-		stdlib.ItertoolsLibraryName,
-		stdlib.CollectionsLibraryName,
-		stdlib.ContextlibLibraryName,
-		stdlib.DifflibLibraryName,
-		stdlib.IOLibraryName,
+	return append(stdlib.LibraryNames(),
 		extlibs.YAMLLibraryName,
 		extlibs.TOMLLibraryName,
 		extlibs.HTMLParserLibraryName,
@@ -97,7 +77,7 @@ func AllLibraryNames() []string {
 		messagingconsole.LibraryName,
 		extlibs.MCPLibraryName,
 		extlibs.ToonLibraryName,
-	}
+	)
 }
 
 // Scriptling configures a Scriptling instance with the built-in CLI libraries.
@@ -126,34 +106,11 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 		}
 	}
 
-	// Register all standard libraries.
-	if len(disabled) == 0 {
-		stdlib.RegisterAll(p)
-	} else {
-		reg(stdlib.JSONLibraryName, func() { p.RegisterLibrary(stdlib.JSONLibrary) })
-		reg(stdlib.ReLibraryName, func() { p.RegisterLibrary(stdlib.ReLibrary) })
-		reg(stdlib.TimeLibraryName, func() { p.RegisterLibrary(stdlib.TimeLibrary) })
-		reg(stdlib.DatetimeLibraryName, func() { p.RegisterLibrary(stdlib.DatetimeLibrary) })
-		reg(stdlib.MathLibraryName, func() { p.RegisterLibrary(stdlib.MathLibrary) })
-		reg(stdlib.Base64LibraryName, func() { p.RegisterLibrary(stdlib.Base64Library) })
-		reg(stdlib.HashlibLibraryName, func() { p.RegisterLibrary(stdlib.HashlibLibrary) })
-		reg(stdlib.HmacLibraryName, func() { p.RegisterLibrary(stdlib.HmacLibrary) })
-		reg(stdlib.RandomLibraryName, func() { p.RegisterLibrary(stdlib.RandomLibrary) })
-		reg(stdlib.URLLibLibraryName, func() { p.RegisterLibrary(stdlib.URLLibLibrary) })
-		reg(stdlib.URLParseLibraryName, func() { p.RegisterLibrary(stdlib.URLParseLibrary) })
-		reg(stdlib.StringLibraryName, func() { p.RegisterLibrary(stdlib.StringLibrary) })
-		reg(stdlib.UUIDLibraryName, func() { p.RegisterLibrary(stdlib.UUIDLibrary) })
-		reg(stdlib.HTMLLibraryName, func() { p.RegisterLibrary(stdlib.HTMLLibrary) })
-		reg(stdlib.StatisticsLibraryName, func() { p.RegisterLibrary(stdlib.StatisticsLibrary) })
-		reg(stdlib.FunctoolsLibraryName, func() { p.RegisterLibrary(stdlib.FunctoolsLibrary) })
-		reg(stdlib.TextwrapLibraryName, func() { p.RegisterLibrary(stdlib.TextwrapLibrary) })
-		reg(stdlib.PlatformLibraryName, func() { p.RegisterLibrary(stdlib.PlatformLibrary) })
-		reg(stdlib.ItertoolsLibraryName, func() { p.RegisterLibrary(stdlib.ItertoolsLibrary) })
-		reg(stdlib.CollectionsLibraryName, func() { p.RegisterLibrary(stdlib.CollectionsLibrary) })
-		reg(stdlib.ContextlibLibraryName, func() { p.RegisterLibrary(stdlib.ContextlibLibrary) })
-		reg(stdlib.DifflibLibraryName, func() { p.RegisterLibrary(stdlib.DifflibLibrary) })
-		reg(stdlib.IOLibraryName, func() { p.RegisterLibrary(stdlib.IOLibrary) })
-	}
+	// Register the standard libraries, skipping any that are disabled. They
+	// come from stdlib.RegisterAll through a filtering registrar rather than
+	// a second list here, which fell behind it (msgpack, copy, enum,
+	// dataclasses and typing were missing whenever any library was disabled).
+	stdlib.RegisterAll(disabledFilter{p, disabled})
 
 	reg(extlibs.YAMLLibraryName, func() { p.RegisterLibrary(extlibs.YAMLLibrary) })
 	reg(extlibs.TOMLLibraryName, func() { p.RegisterLibrary(extlibs.TOMLLibrary) })
@@ -246,6 +203,19 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 		// (nil) the loader is unrestricted and pays nothing for the check.
 		loader.RestrictTo(allowedPaths)
 		p.SetLibraryLoader(loader)
+	}
+}
+
+// disabledFilter registers libraries on an interpreter except the disabled
+// ones.
+type disabledFilter struct {
+	p        *scriptling.Scriptling
+	disabled map[string]bool
+}
+
+func (f disabledFilter) RegisterLibrary(lib *object.Library) {
+	if !f.disabled[lib.Name()] {
+		f.p.RegisterLibrary(lib)
 	}
 }
 

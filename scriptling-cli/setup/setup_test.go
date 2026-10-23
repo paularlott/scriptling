@@ -8,7 +8,9 @@ import (
 
 	logslog "github.com/paularlott/logger/slog"
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/extlibs"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
+	"github.com/paularlott/scriptling/stdlib"
 )
 
 func TestScriptlingRegistersLoaderAndMCPLibrary(t *testing.T) {
@@ -182,5 +184,37 @@ P.load("s", "` + launcher + `", scriptling=False)`
 	}
 	if _, statErr := os.Stat(marker); statErr == nil {
 		t.Fatal("the launcher ran despite subprocess being disabled")
+	}
+}
+
+// Disabling one library must not drop any other: the standard libraries
+// used to come from a hand-kept list whenever anything was disabled, and
+// msgpack, copy, enum, dataclasses and typing had been left off it.
+func TestDisabledLibsKeepEveryOtherStandardLibrary(t *testing.T) {
+	p := scriptling.New()
+	Scriptling(p, nil, false, nil, []string{extlibs.OSLibraryName}, nil, logslog.New(logslog.Config{Level: "error"}), "", "", false)
+	for _, name := range stdlib.LibraryNames() {
+		if !p.HasLibrary(name) {
+			t.Errorf("standard library %q missing with os disabled", name)
+		}
+	}
+	if p.HasLibrary(extlibs.OSLibraryName) {
+		t.Error("os was registered although disabled")
+	}
+	if _, err := p.Eval("import msgpack, copy, enum, dataclasses, typing\nx = msgpack.unpackb(msgpack.packb({'a': 1}))['a']"); err != nil {
+		t.Fatalf("importing the once-missing libraries: %v", err)
+	}
+	names := AllLibraryNames()
+	for _, name := range stdlib.LibraryNames() {
+		found := false
+		for _, n := range names {
+			if n == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("AllLibraryNames omits standard library %q", name)
+		}
 	}
 }
