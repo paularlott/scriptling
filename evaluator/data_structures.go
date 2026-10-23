@@ -83,7 +83,7 @@ func iterableToSet(ctx context.Context, obj object.Object, env *object.Environme
 
 func evalSetAdd(ctx context.Context, s *object.Set, obj object.Object) object.Object {
 	if !hashableAsKey(obj) {
-		return &object.Exception{Message: "unhashable type: '" + obj.Type().String() + "'", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
+		return &object.Exception{Message: fmt.Sprintf("unhashable type: '%s'", getTypeName(obj)), ExceptionType: object.ExceptionTypeTypeError, Raised: true}
 	}
 	hk, raised := evalHashKeyChecked(ctx, obj)
 	if raised != nil {

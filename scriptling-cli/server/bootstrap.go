@@ -36,6 +36,9 @@ func NewServer(config ServerConfig) (*Server, error) {
 		serverRunningCh:      make(chan struct{}),
 		hosts:                newHostPolicy(config.Address, config.AllowedHosts),
 	}
+	if s.hosts.open() {
+		Log.Info("Answering every Host name; set --allowed-hosts to the names this server is reached by to block DNS rebinding", "address", config.Address)
+	}
 
 	// Pre-opened bundles take precedence over legacy package sources. The app
 	// bundle is added last so its modules win over library bundles.

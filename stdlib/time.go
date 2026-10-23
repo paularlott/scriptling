@@ -13,7 +13,6 @@ import (
 // processStart anchors time.monotonic(): Go monotonic reading since start.
 var processStart = time.Now()
 
-
 var startTime = time.Now()
 
 var TimeLibrary = object.NewLibrary(TimeLibraryName, map[string]*object.Builtin{

@@ -134,10 +134,11 @@ type ServerConfig struct {
 	// defaults (see hostPolicy): exact names, or ".example.com" (also
 	// written "*.example.com") for a domain and its subdomains; a port on an
 	// entry is ignored. A server bound to loopback answers only loopback
-	// names; one bound elsewhere also answers IP literals and the machine's
-	// own host name. Every other Host is refused with 421, which defeats DNS
-	// rebinding, so a DNS name the server is reached by, or the public name
-	// a reverse proxy forwards, must be listed here.
+	// names plus these, which defeats DNS rebinding where it bites. A server
+	// bound elsewhere answers every Host until this is set, as with every
+	// restriction that is off until configured; once set it also answers IP
+	// literals and the machine's own host name, and refuses the rest with
+	// 421.
 	AllowedHosts []string
 }
 

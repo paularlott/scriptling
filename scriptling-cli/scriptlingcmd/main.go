@@ -341,13 +341,13 @@ func buildRootCommand() *cli.Command {
 			},
 			&cli.StringSliceFlag{
 				Name:       "allowed-hosts",
-				Usage:      "Host name the HTTP server answers (repeatable, \".example.com\" or \"*.example.com\" for a domain and subdomains). Besides these the server answers loopback names, and when not bound to loopback also IP literals and its own host name; any other Host gets 421, which blocks DNS rebinding. List the DNS name or the public name a reverse proxy forwards here",
+				Usage:      "Host name the HTTP server answers (repeatable, \".example.com\" or \"*.example.com\" for a domain and subdomains; a port is ignored). A loopback-bound server answers only loopback names plus these. Any other bind answers every Host until this is set; then it answers loopback names, IP literals, its own host name and these, refusing the rest with 421 to block DNS rebinding",
 				EnvVars:    []string{"SCRIPTLING_ALLOWED_HOSTS"},
 				ConfigPath: []string{"server.allowed_hosts"},
 			},
 			&cli.StringFlag{
 				Name:         "allowed-paths",
-				Usage:        "Comma-separated list of allowed filesystem paths (restricts os, pathlib, glob, sandbox)",
+				Usage:        "Comma-separated list of allowed filesystem paths; file access by scripts (os, pathlib, glob, shutil, zipfile/tarfile, sandbox, wait_for, runtime.http.static, runtime.kv, provision, messaging uploads, container bind mounts, the library loader) is confined to them, symlinks resolved as the kernel does; relative entries resolve from the working directory",
 				DefaultValue: "",
 				Global:       true,
 				EnvVars:      []string{"SCRIPTLING_ALLOWED_PATHS"},

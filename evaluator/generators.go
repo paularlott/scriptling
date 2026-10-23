@@ -223,53 +223,53 @@ var generatorClass *object.Class
 
 func init() {
 	generatorClass = &object.Class{
-	Name: "generator",
-	Methods: map[string]object.Object{
-		"__iter__": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				return args[0]
+		Name: "generator",
+		Methods: map[string]object.Object{
+			"__iter__": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					return args[0]
+				},
+				HelpText: "__iter__() - Generators are their own iterator",
 			},
-			HelpText: "__iter__() - Generators are their own iterator",
-		},
-		"__next__": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) < 1 {
-					return errors.NewError("__next__() requires the generator")
-				}
-				g, ok := args[0].(*object.Instance)
-				if !ok {
-					return errors.NewError("__next__() must be called on a generator")
-				}
-				return generatorNext(ctx, g, GetEnvFromContext(ctx))
+			"__next__": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if len(args) < 1 {
+						return errors.NewError("__next__() requires the generator")
+					}
+					g, ok := args[0].(*object.Instance)
+					if !ok {
+						return errors.NewError("__next__() must be called on a generator")
+					}
+					return generatorNext(ctx, g, GetEnvFromContext(ctx))
+				},
+				HelpText: "__next__() - Resume the generator to the next yield",
 			},
-			HelpText: "__next__() - Resume the generator to the next yield",
-		},
-		"send": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				return &object.Exception{
-					Message:       "generator.send() is not supported yet (scriptling generators yield values only)",
-					ExceptionType: "NotImplementedError",
-					Raised:        true,
-				}
+			"send": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					return &object.Exception{
+						Message:       "generator.send() is not supported yet (scriptling generators yield values only)",
+						ExceptionType: "NotImplementedError",
+						Raised:        true,
+					}
+				},
+				HelpText: "send(value) - Not supported yet",
 			},
-			HelpText: "send(value) - Not supported yet",
-		},
-		"close": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) < 1 {
-					return errors.NewError("close() requires the generator")
-				}
-				g, ok := args[0].(*object.Instance)
-				if !ok {
-					return errors.NewError("close() must be called on a generator")
-				}
-				g.SetField("_done", TRUE)
-				return NULL
+			"close": &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if len(args) < 1 {
+						return errors.NewError("close() requires the generator")
+					}
+					g, ok := args[0].(*object.Instance)
+					if !ok {
+						return errors.NewError("close() must be called on a generator")
+					}
+					g.SetField("_done", TRUE)
+					return NULL
+				},
+				HelpText: "close() - Mark the generator finished",
 			},
-			HelpText: "close() - Mark the generator finished",
 		},
-	},
-}
+	}
 }
 
 // genState is the driver state carried on the generator instance's

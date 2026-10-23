@@ -5855,71 +5855,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 }
 
 func getTypeName(obj object.Object) string {
-	switch obj.Type() {
-	case object.INTEGER_OBJ:
-		return "int"
-	case object.FLOAT_OBJ:
-		return "float"
-	case object.STRING_OBJ:
-		return "str"
-	case object.BOOLEAN_OBJ:
-		return "bool"
-	case object.LIST_OBJ:
-		return "list"
-	case object.DICT_OBJ:
-		if obj.(*object.Dict).Module != "" {
-			return "module"
-		}
-		return "dict"
-	case object.TUPLE_OBJ:
-		return "tuple"
-	case object.SET_OBJ:
-		if obj.(*object.Set).Frozen {
-			return "frozenset"
-		}
-		return "set"
-	case object.NULL_OBJ:
-		return "NoneType"
-	case object.BYTES_OBJ:
-		return "bytes"
-	case object.DICT_KEYS_OBJ:
-		return "dict_keys"
-	case object.DICT_VALUES_OBJ:
-		return "dict_values"
-	case object.DICT_ITEMS_OBJ:
-		return "dict_items"
-	case object.FUNCTION_OBJ, object.LAMBDA_OBJ:
-		return "function"
-	case object.BUILTIN_OBJ:
-		return "builtin_function_or_method"
-	case object.CLASS_OBJ:
-		return "type"
-	case object.INSTANCE_OBJ:
-		return obj.(*object.Instance).Class.Name
-	case object.EXCEPTION_OBJ:
-		if exc, ok := obj.(*object.Exception); ok && exc.ExceptionType != "" {
-			return exc.ExceptionType
-		}
-		return "Exception"
-	case object.SUPER_OBJ:
-		return "super"
-	case object.ITERATOR_OBJ:
-		return "iterator"
-	case object.SLICE_OBJ:
-		return "slice"
-	case object.PROPERTY_OBJ:
-		return "property"
-	case object.STATICMETHOD_OBJ:
-		return "staticmethod"
-	case object.CLASSMETHOD_OBJ:
-		return "classmethod"
-	case object.FLOAT_ARRAY_OBJ:
-		return "FloatArray"
-	case object.SENTINEL_OBJ:
-		return "sentinel"
-	default:
-		return obj.Type().String()
-	}
+	return object.PythonTypeName(obj)
 }
 
 // percentFloatArg converts a %f/%e/%g operand to float64; bool counts as an

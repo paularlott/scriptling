@@ -27,7 +27,7 @@ const (
 	PlatformLibraryName    = "platform"
 	ItertoolsLibraryName   = "itertools"
 	CollectionsLibraryName = "collections"
-	EnumLibraryName       = "enum"
+	EnumLibraryName        = "enum"
 	DataclassesLibraryName = "dataclasses"
 	TypingLibraryName      = "typing"
 )

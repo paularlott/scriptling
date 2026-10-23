@@ -80,7 +80,7 @@ func addCounts(a, b object.Object, sign int64) (object.Object, object.Object) {
 
 func counterAdd(d *object.Dict, key, n object.Object, sign int64) object.Object {
 	if !object.IsHashable(key) {
-		return &object.Exception{Message: "unhashable type: '" + strings.ToLower(key.Type().String()) + "'", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
+		return &object.Exception{Message: "unhashable type: '" + object.PythonTypeName(key) + "'", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
 	}
 	sum, err := addCounts(counterCount(d, key), n, sign)
 	if err != nil {
@@ -348,7 +348,7 @@ var CounterClass = &object.Class{
 				return err
 			}
 			if !object.IsHashable(args[1]) {
-				return &object.Exception{Message: "unhashable type: '" + strings.ToLower(args[1].Type().String()) + "'", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
+				return &object.Exception{Message: "unhashable type: '" + object.PythonTypeName(args[1]) + "'", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
 			}
 			_, d := counterSelf(args)
 			d.Store(object.DictKey(args[1]), args[1], args[2])

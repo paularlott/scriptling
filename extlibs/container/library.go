@@ -153,9 +153,11 @@ Creates a new container client for the specified runtime driver.
 
 Parameters:
   driver (str): Runtime to use — "docker", "podman", or "apple"
-  socket (str, optional): Override the Unix socket path (docker/podman only).
-                          Defaults to DOCKER_SOCK / PODMAN_SOCK env vars,
-                          then /var/run/docker.sock or /run/user/1000/podman/podman.sock
+  socket (str, optional): Override the endpoint (docker/podman only).
+                          Defaults to the host's --docker-host / --podman-host
+                          (env DOCKER_HOST / CONTAINER_HOST), then /var/run/docker.sock
+                          or /run/user/1000/podman/podman.sock. A script-supplied
+                          endpoint is subject to the network policy and --allowed-paths.
 
 Returns:
   ContainerClient: A client instance

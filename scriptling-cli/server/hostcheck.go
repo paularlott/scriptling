@@ -17,16 +17,24 @@ import (
 //
 //   - Bound to loopback (127.0.0.0/8, ::1, localhost): only loopback names
 //     (localhost, *.localhost, loopback IPs) and AllowedHosts are answered.
-//   - Bound anywhere else: loopback names, IP literals (a browser cannot
-//     rebind an IP literal), the machine's own host name as the OS reports
-//     it and its first label, and AllowedHosts are answered. Any other name
-//     the server is reached by (a DNS name, or the public name a reverse
-//     proxy forwards in Host) must be listed in AllowedHosts; the refusal
-//     says so.
+//     The check costs nothing there, since a loopback server is reached by
+//     those names anyway, and it is where rebinding bites: a page on any
+//     website could otherwise call a developer's local server.
+//   - Bound anywhere else: without AllowedHosts, every Host is answered, as
+//     with every other restriction that is off until configured; the server
+//     cannot know its public names. With AllowedHosts set, loopback names,
+//     IP literals (a browser cannot rebind an IP literal), the machine's own
+//     host name as the OS reports it and its first label, and the listed
+//     names are answered, and the refusal names the flag.
 type hostPolicy struct {
+	enforce bool
 	allowIP bool     // IP literals are answered (non-loopback binds)
 	allowed []string // AllowedHosts: exact names, or ".suffix" for a domain and its subdomains
 }
+
+// open reports whether the policy answers every Host: a non-loopback bind
+// with no AllowedHosts.
+func (p hostPolicy) open() bool { return !p.enforce }
 
 // localHostname reports the machine's host name; a variable so tests can
 // set it.
@@ -40,7 +48,10 @@ func newHostPolicy(listenAddr string, allowedHosts []string) hostPolicy {
 		}
 	}
 	if isLoopbackListen(listenAddr) {
-		return hostPolicy{allowed: allowed}
+		return hostPolicy{enforce: true, allowed: allowed}
+	}
+	if len(allowed) == 0 {
+		return hostPolicy{}
 	}
 	if name, err := localHostname(); err == nil {
 		if name = normalizeHostName(name); name != "" {
@@ -50,7 +61,7 @@ func newHostPolicy(listenAddr string, allowedHosts []string) hostPolicy {
 			}
 		}
 	}
-	return hostPolicy{allowIP: true, allowed: allowed}
+	return hostPolicy{enforce: true, allowIP: true, allowed: allowed}
 }
 
 // normalizeAllowedHost prepares an AllowedHosts entry: lowercased, without
@@ -91,6 +102,9 @@ func normalizeHostName(h string) string {
 
 // allows reports whether the server answers a request with this Host header.
 func (p hostPolicy) allows(hostHeader string) bool {
+	if !p.enforce {
+		return true
+	}
 	host, _, err := net.SplitHostPort(hostHeader)
 	if err != nil {
 		host = hostHeader
@@ -120,6 +134,9 @@ func (p hostPolicy) allows(hostHeader string) bool {
 // sees what to list in --allowed-hosts; repeats stay at debug level so a
 // rebinding attempt cannot flood the log.
 func (s *Server) hostCheckMiddleware(next http.Handler) http.Handler {
+	if s.hosts.open() {
+		return next
+	}
 	var refused sync.Map // host name -> struct{}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.hosts.allows(r.Host) {

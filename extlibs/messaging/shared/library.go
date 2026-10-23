@@ -632,6 +632,13 @@ func SharedBuiltins() map[string]*object.Builtin {
 					token, _ = args[2].AsString()
 					text, _ = args[3].AsString()
 				}
+				// text="" as a keyword, as the help text offers it; it was
+				// silently ignored.
+				kw, kerr := kwargs.GetString("text", text)
+				if kerr != nil {
+					return kerr
+				}
+				text = kw
 				if err := runBlockingErr(ctx, func() error { return s.AckCallback(ctx, id, token, text) }); err != nil {
 					return scriptError("answer_callback", err)
 				}

@@ -35,23 +35,23 @@ func TestHostPolicy(t *testing.T) {
 		{"127.0.0.1:8000", []string{".example.com"}, "x.example.com", true},
 		{"127.0.0.1:8000", []string{".example.com"}, "example.com", true},
 		{"127.0.0.1:8000", []string{".example.com"}, "evilexample.com", false},
-		// Bound elsewhere: loopback names, IP literals, the machine's own
-		// name and AllowedHosts; every other name is refused.
-		{":8000", nil, "rebind.evil:8000", false},
-		{"0.0.0.0:8000", nil, "anything", false},
-		{"[::]:8000", nil, "anything", false},
-		{":8000", nil, "", false},
-		{":8000", nil, "192.168.1.5:8000", true},
-		{":8000", nil, "[2001:db8::7]:8000", true},
-		{":8000", nil, "localhost:8000", true},
-		{":8000", nil, "web01.corp.example:8000", true},
-		{":8000", nil, "WEB01.corp.example.:8000", true},
-		{":8000", nil, "web01:8000", true},
-		{":8000", nil, "web01.other.example:8000", false},
-		{":8000", nil, "corp.example:8000", false},
-		{":8000", []string{"app.example.com"}, "app.example.com", true},
+		// Bound elsewhere without AllowedHosts: every Host, as with any
+		// restriction that is off until configured.
+		{":8000", nil, "rebind.evil:8000", true},
+		{"0.0.0.0:8000", nil, "anything", true},
+		{"[::]:8000", nil, "", true},
+		// Bound elsewhere with AllowedHosts: loopback names, IP literals,
+		// the machine's own name and the listed names; nothing else.
+		{":8000", []string{"app.example.com"}, "", false},
 		{":8000", []string{"app.example.com"}, "192.168.1.5:8000", true},
+		{":8000", []string{"app.example.com"}, "[2001:db8::7]:8000", true},
 		{":8000", []string{"app.example.com"}, "localhost:8000", true},
+		{":8000", []string{"app.example.com"}, "web01.corp.example:8000", true},
+		{":8000", []string{"app.example.com"}, "WEB01.corp.example.:8000", true},
+		{":8000", []string{"app.example.com"}, "web01:8000", true},
+		{":8000", []string{"app.example.com"}, "web01.other.example:8000", false},
+		{":8000", []string{"app.example.com"}, "corp.example:8000", false},
+		{":8000", []string{"app.example.com"}, "app.example.com", true},
 		{":8000", []string{"app.example.com"}, "rebind.evil:8000", false},
 		// AllowedHosts entries: ports are ignored, "*.x" is ".x".
 		{":8000", []string{"app.example.com:8443"}, "app.example.com:8000", true},
@@ -59,7 +59,9 @@ func TestHostPolicy(t *testing.T) {
 		{":8000", []string{"*.example.com"}, "example.com", true},
 		{":8000", []string{"*.example.com"}, "evilexample.com", false},
 		{":8000", []string{"[2001:db8::7]:8000"}, "[2001:db8::7]:8000", true},
-		{":8000", []string{"*", "", ":8000"}, "rebind.evil", false},
+		// Entries that normalise to nothing leave the server open.
+		{":8000", []string{"*", "", ":8000"}, "rebind.evil", true},
+		{"127.0.0.1:8000", []string{"*", "", ":8000"}, "rebind.evil", false},
 	} {
 		if got := newHostPolicy(tc.listen, tc.allowed).allows(tc.host); got != tc.want {
 			t.Errorf("listen %q allowed %v: Host %q = %v, want %v", tc.listen, tc.allowed, tc.host, got, tc.want)
@@ -128,10 +130,10 @@ func TestDNSRebindingRefusedOnLoopbackBind(t *testing.T) {
 
 // A server bound to every interface answers every Host by default (it cannot
 // know its public names); --allowed-hosts opts it into checking.
-// A server bound to every interface used to answer any Host unless
-// --allowed-hosts was set, which left the most common bind (":8000") open to
-// rebinding. It now answers loopback names, IP literals, its own host name
-// and the listed names only, and the refusal names the flag to set.
+// A server bound to every interface answers any Host until --allowed-hosts
+// is set, like every other restriction that is off until configured. Once
+// set, it answers loopback names, IP literals, its own host name and the
+// listed names only, and the refusal names the flag.
 func TestHostCheckOnWildcardBind(t *testing.T) {
 	localHostname = func() (string, error) { return "myserver.lan", nil }
 	t.Cleanup(func() { localHostname = os.Hostname })
@@ -140,22 +142,11 @@ func TestHostCheckOnWildcardBind(t *testing.T) {
 	s.config.Address = ":8000"
 	s.hosts = newHostPolicy(s.config.Address, nil)
 	ts := httptest.NewServer(s.buildMux())
-	for host, want := range map[string]int{
-		"myserver.lan:8000":   http.StatusOK,
-		"myserver:8000":       http.StatusOK,
-		"192.168.1.5:8000":    http.StatusOK,
-		"localhost:8000":      http.StatusOK,
-		"rebind.evil:8000":    http.StatusMisdirectedRequest,
-		"app.example.com:443": http.StatusMisdirectedRequest,
-	} {
+	for _, host := range []string{"myserver.lan:8000", "192.168.1.5:8000", "localhost:8000", "rebind.evil:8000", "app.example.com:443"} {
 		resp := rebindRequest(t, ts.URL, "POST", "/mcp", host, list)
-		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if resp.StatusCode != want {
-			t.Errorf("no allowed hosts: Host %s = %d, want %d", host, resp.StatusCode, want)
-		}
-		if want == http.StatusMisdirectedRequest && !strings.Contains(string(body), "--allowed-hosts") {
-			t.Errorf("refusal for %s does not name the flag: %q", host, body)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("no allowed hosts: Host %s = %d, want 200", host, resp.StatusCode)
 		}
 	}
 	ts.Close()
@@ -166,14 +157,19 @@ func TestHostCheckOnWildcardBind(t *testing.T) {
 	for host, want := range map[string]int{
 		"app.example.com:443": http.StatusOK,
 		"myserver.lan:8000":   http.StatusOK,
+		"myserver:8000":       http.StatusOK,
 		"192.168.1.5:8000":    http.StatusOK,
 		"rebind.evil:8000":    http.StatusMisdirectedRequest,
 		"localhost:8000":      http.StatusOK,
 	} {
 		resp := rebindRequest(t, ts.URL, "POST", "/mcp", host, list)
+		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if resp.StatusCode != want {
 			t.Errorf("Host %s = %d, want %d", host, resp.StatusCode, want)
+		}
+		if want == http.StatusMisdirectedRequest && !strings.Contains(string(body), "--allowed-hosts") {
+			t.Errorf("refusal for %s does not name the flag: %q", host, body)
 		}
 	}
 }

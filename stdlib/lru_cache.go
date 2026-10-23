@@ -129,7 +129,7 @@ func (c *lruCache) key(args []object.Object, kwargs map[string]object.Object) (s
 	for _, a := range args {
 		if !object.IsHashable(a) {
 			return "", &object.Exception{
-				Message:       "unhashable type: '" + strings.ToLower(a.Type().String()) + "'",
+				Message:       "unhashable type: '" + object.PythonTypeName(a) + "'",
 				ExceptionType: object.ExceptionTypeTypeError,
 				Raised:        true,
 			}
@@ -146,7 +146,7 @@ func (c *lruCache) key(args []object.Object, kwargs map[string]object.Object) (s
 		for _, k := range names {
 			if !object.IsHashable(kwargs[k]) {
 				return "", &object.Exception{
-					Message:       "unhashable type: '" + strings.ToLower(kwargs[k].Type().String()) + "'",
+					Message:       "unhashable type: '" + object.PythonTypeName(kwargs[k]) + "'",
 					ExceptionType: object.ExceptionTypeTypeError,
 					Raised:        true,
 				}

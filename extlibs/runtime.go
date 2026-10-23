@@ -620,7 +620,10 @@ Arguments are deep-copied before the task starts so the caller and
 task cannot race on shared state.
 
 Returns:
-  null on success, error if handler validation fails
+  Promise: wait() blocks until the task finishes and get() returns its
+  result; starting a task under a name that is still live returns that
+  task's promise. Raises RuntimeError at --max-background-tasks, and an
+  error if handler validation fails.
 
   Background tasks are fire-and-forget. For coordination between
   tasks use runtime.sync primitives (Shared, Atomic, Queue, WaitGroup).
