@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	scriptlib "github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/object"
@@ -16,8 +17,18 @@ import (
 // chooses: a JSON completion of size bytes, or a stream of chunks chunks of
 // size bytes each.
 func bigModelServer(t *testing.T, size, chunks int) *httptest.Server {
+	srv, _ := bigModelServerDone(t, size, chunks)
+	return srv
+}
+
+// bigModelServerDone is bigModelServer with a channel that receives once per
+// request when its handler returns, so a test can check that a client which
+// gave up on a stream released the server rather than leaving it blocked.
+func bigModelServerDone(t *testing.T, size, chunks int) (*httptest.Server, <-chan struct{}) {
 	t.Helper()
+	finished := make(chan struct{}, 16)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() { finished <- struct{}{} }()
 		var req struct {
 			Stream bool `json:"stream"`
 		}
@@ -26,7 +37,15 @@ func bigModelServer(t *testing.T, size, chunks int) *httptest.Server {
 			w.Header().Set("Content-Type", "text/event-stream")
 			piece := strings.Repeat("A", size)
 			for i := 0; i < chunks; i++ {
-				fmt.Fprintf(w, `data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"%s"}}]}`+"\n\n", piece)
+				// Stop once the client has gone: a reader that gave up and
+				// closed its connection makes the write fail. A reader that
+				// gave up without closing would leave this write blocked
+				// and srv.Close waiting on it, which is what the stream's
+				// own release guards against.
+				if _, err := fmt.Fprintf(w, `data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"%s"}}]}`+"\n\n", piece); err != nil {
+					return
+				}
+				w.(http.Flusher).Flush()
 			}
 			fmt.Fprint(w, `data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`+"\n\n")
 			fmt.Fprint(w, "data: [DONE]\n\n")
@@ -39,8 +58,14 @@ func bigModelServer(t *testing.T, size, chunks int) *httptest.Server {
 				"message": map[string]any{"role": "assistant", "content": strings.Repeat("A", size)}}},
 		})
 	}))
-	t.Cleanup(srv.Close)
-	return srv
+	t.Cleanup(func() {
+		// Drop any connection a handler is still writing to before Close,
+		// which waits for handlers: a regression that leaves a stream open
+		// must fail the test, not hang the package until its timeout.
+		srv.CloseClientConnections()
+		srv.Close()
+	})
+	return srv, finished
 }
 
 func limitedAIScript(t *testing.T, url string, opts ...scriptlib.Option) *scriptlib.Scriptling {
@@ -105,7 +130,7 @@ ai.Client(url, max_retries=0).completion("m", "hi")`)
 // streamed in small pieces is read chunk by chunk, so it passes. Collecting
 // it into one value with collect_stream is held to the value limit.
 func TestAIStreamLimits(t *testing.T) {
-	srv := bigModelServer(t, 16*1024, 200) // 3.2 MB in 16 KB chunks
+	srv, finished := bigModelServerDone(t, 16*1024, 200) // 3.2 MB in 16 KB chunks
 	p := limitedAIScript(t, srv.URL, scriptlib.WithMaxValueBytes(mib))
 	result, err := p.Eval(`
 import scriptling.ai as ai
@@ -130,6 +155,17 @@ s = c.completion_stream("m", "hi")
 ai.collect_stream(s)`)
 	if err == nil || !strings.Contains(err.Error(), "streamed AI response") {
 		t.Fatalf("collect_stream past the value limit: expected a MemoryError, got %v", err)
+	}
+	// The abandoned stream released its connection: the server's handler,
+	// still sending, saw the write fail and returned. It used to block on a
+	// socket nobody read, and srv.Close then hung the package until its
+	// timeout.
+	for i := 0; i < 2; i++ { // the first stream's handler and this one
+		select {
+		case <-finished:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the server is still sending into the abandoned stream: its connection was not released")
+		}
 	}
 
 	// One stream line past the limit is refused.

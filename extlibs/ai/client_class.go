@@ -1464,6 +1464,12 @@ A context.Canceled error indicates the stream was cancelled (e.g. user pressed E
 
 Returns:
   str: Error message, or None if no error`).
+		MethodWithHelp("close", closeStreamMethod, `close() - Stop the stream and release its connection
+
+Cancels the request behind the stream. Call it when a script stops reading a
+stream before the end, so the connection is not held open until the stream
+is collected; next() returns None afterwards and err() reports no error for
+the cancellation itself. A stream read to the end releases itself.`).
 		MethodWithHelp("retry", retryStreamMethod, `retry() - Get retry metadata for the stream
 
 Returns retry metadata if the connection was retried before streaming began,
@@ -1508,12 +1514,27 @@ func nextStreamMethod(self *object.Instance, ctx context.Context) object.Object 
 	var nextOK bool
 	object.RunBlocking(ctx, func() { nextOK = si.stream.Next() })
 	if !nextOK {
+		// The stream is over, by completion or by error: release its
+		// connection now rather than when the instance is collected, so a
+		// server still sending (a stream refused mid-way by the limits) is
+		// cut off instead of blocking on a socket nobody reads.
+		si.cancelStream(true)
 		return &object.Null{}
 	}
 
 	// Return current chunk
 	current := si.stream.Current()
 	return conversion.FromGo(chatCompletionResponseToGoMap(&current))
+}
+
+// closeStream method implementation: cancel the request behind the stream.
+func closeStreamMethod(self *object.Instance, ctx context.Context) object.Object {
+	si, cerr := getStreamInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+	si.cancelStream(true)
+	return &object.Null{}
 }
 
 // nextTimeoutStream method implementation

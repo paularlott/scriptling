@@ -1119,7 +1119,22 @@ func executeToolCalls(ctx context.Context, registry *object.Instance, toolCalls 
 	return results, nil
 }
 
+// collectStream gathers a stream into one result. When collecting fails (the
+// result went past the interpreter's limits, or a chunk errored) the stream
+// is abandoned mid-way, so its connection is released here: otherwise the
+// server keeps sending into a socket nobody reads until the instance is
+// collected.
 func collectStream(ctx context.Context, stream *object.Instance, chunkTimeoutSec int64, firstChunkTimeoutSec int64, callback object.Object) (map[string]any, *object.Error) {
+	result, errObj := collectStreamChunks(ctx, stream, chunkTimeoutSec, firstChunkTimeoutSec, callback)
+	if errObj != nil {
+		if si, cerr := getStreamInstance(stream); cerr == nil {
+			si.cancelStream(true)
+		}
+	}
+	return result, errObj
+}
+
+func collectStreamChunks(ctx context.Context, stream *object.Instance, chunkTimeoutSec int64, firstChunkTimeoutSec int64, callback object.Object) (map[string]any, *object.Error) {
 	reasoning := strings.Builder{}
 	content := strings.Builder{}
 	thinkingState := &streamingThinkingState{}
