@@ -2,6 +2,7 @@ package pool
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"net/http"
 	"sync"
 	"time"
@@ -129,12 +130,27 @@ func (p *scriptlingPool) GetHTTPClient() *http.Client {
 	return p.httpClient
 }
 
+// NewHTTPClientWithRoots returns a new HTTP client configured like the shared
+// pool's, trusting only the CA certificates in roots instead of the system's,
+// for script libraries that let a script name a CA bundle. It is not shared:
+// callers keep it to reuse its connections.
+func NewHTTPClientWithRoots(roots *x509.CertPool) *http.Client {
+	return newScriptlingPoolWithRoots(currentConfig(), false, roots).httpClient
+}
+
 // newScriptlingPool creates a new scriptling pool with the given configuration.
 // insecureSkipVerify controls only this pool's TLS verification; it never
 // affects any other pool.
 func newScriptlingPool(cfg *Config, insecureSkipVerify bool) *scriptlingPool {
+	return newScriptlingPoolWithRoots(cfg, insecureSkipVerify, nil)
+}
+
+// newScriptlingPoolWithRoots is newScriptlingPool trusting roots (nil: the
+// system's CA certificates).
+func newScriptlingPoolWithRoots(cfg *Config, insecureSkipVerify bool, roots *x509.CertPool) *scriptlingPool {
 	tlsCfg := &tls.Config{
 		InsecureSkipVerify: insecureSkipVerify, //nolint:gosec // isolated to the insecure pool only
+		RootCAs:            roots,
 	}
 	if !insecureSkipVerify {
 		tlsCfg.MinVersion = tls.VersionTLS13

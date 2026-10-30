@@ -2,6 +2,8 @@ package extlibs
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/pool"
@@ -31,16 +34,40 @@ const parallelRequestEntryBytes = 64
 // parallelResultSlotBytes is the size of one slot of the result list.
 const parallelResultSlotBytes = int64(unsafe.Sizeof(object.Object(nil)))
 
+// RegisterRequestsLibrary registers the requests library, under the network
+// policy cfg when one is given. A CA bundle a script names with verify="path"
+// may be any file: use RegisterRequestsLibraryConfigured to confine it.
 func RegisterRequestsLibrary(registrar interface{ RegisterLibrary(*object.Library) }, cfg ...*netsecurity.Config) {
-	lib := RequestsLibrary
-	if len(cfg) > 0 && cfg[0] != nil {
-		guard, gerr := netsecurity.NewGuard(cfg[0])
+	var policy *netsecurity.Config
+	if len(cfg) > 0 {
+		policy = cfg[0]
+	}
+	RegisterRequestsLibraryConfigured(registrar, fssecurity.Config{}, policy)
+}
+
+// RegisterRequestsLibraryConfigured registers the requests library with a
+// filesystem allow-path policy and a network policy, as the os library and the
+// CLI's --allowed-paths and --network-policy use them: a CA bundle a script
+// names with verify="path" must lie within paths' allowed directories (else an
+// uncatchable PermissionError), and every request passes the network policy.
+// A zero fssecurity.Config and a nil policy register it unrestricted.
+func RegisterRequestsLibraryConfigured(registrar interface{ RegisterLibrary(*object.Library) }, paths fssecurity.Config, policy *netsecurity.Config) {
+	paths.AllowedPaths = fssecurity.NormalizeAllowedPaths(paths.AllowedPaths)
+	if paths.AllowedPaths == nil && policy == nil {
+		registrar.RegisterLibrary(RequestsLibrary)
+		return
+	}
+	lib := &requestsLib{paths: paths}
+	if policy != nil {
+		guard, gerr := netsecurity.NewGuard(policy)
 		if gerr != nil {
 			guard = netsecurity.FailClosed(gerr)
 		}
-		lib = newRequestsLibrary(guard.HTTPClient())
+		lib.guard = guard
+		lib.client = guard.HTTPClient()
+		lib.insecureClient = guard.InsecureHTTPClient()
 	}
-	registrar.RegisterLibrary(lib)
+	registrar.RegisterLibrary(newRequestsLibrary(lib))
 }
 
 // Response class for HTTP responses
@@ -148,8 +175,44 @@ var exceptionsNamespace = object.NewStringDict(map[string]object.Object{
 	"HTTPError":        httpErrorType,
 })
 
-// parseRequestOptions parses the options dict and returns timeout, headers, params, user, pass
-func parseRequestOptions(options map[string]object.Object) (int, map[string]string, map[string]string, string, string, object.Object) {
+// tlsVerify is a request's verify option, as in Python's requests: by default
+// the server's certificate is checked against the system's CA certificates;
+// off accepts any certificate; caBundle names a PEM file of CA certificates to
+// trust instead of the system's.
+type tlsVerify struct {
+	off      bool
+	caBundle string
+}
+
+// parseVerify reads the verify option: True (the default), False, or the path
+// of a CA bundle.
+func parseVerify(options map[string]object.Object) (tlsVerify, object.Object) {
+	v, ok := options["verify"]
+	if !ok {
+		return tlsVerify{}, nil
+	}
+	switch val := v.(type) {
+	case *object.Null:
+		return tlsVerify{}, nil // None is the default, as in Python
+	case *object.Boolean:
+		on, _ := val.AsBool()
+		return tlsVerify{off: !on}, nil
+	case *object.String:
+		path, _ := val.AsString()
+		if path == "" {
+			return tlsVerify{}, errors.NewValueError("verify: the CA bundle path is empty")
+		}
+		return tlsVerify{caBundle: path}, nil
+	}
+	return tlsVerify{}, errors.NewTypeError("BOOLEAN or STRING", v.Type().String())
+}
+
+// parseRequestOptions parses the options dict and returns timeout, headers, params, user, pass, verify
+func parseRequestOptions(options map[string]object.Object) (int, map[string]string, map[string]string, string, string, tlsVerify, object.Object) {
+	verify, errObj := parseVerify(options)
+	if errObj != nil {
+		return 0, nil, nil, "", "", tlsVerify{}, errObj
+	}
 	timeout := 5
 	headers := make(map[string]string)
 	params := make(map[string]string)
@@ -183,9 +246,9 @@ func parseRequestOptions(options map[string]object.Object) (int, map[string]stri
 		}
 	}
 	if errObj := checkRequestFields(headers, params); errObj != nil {
-		return 0, nil, nil, "", "", errObj
+		return 0, nil, nil, "", "", tlsVerify{}, errObj
 	}
-	return timeout, headers, params, user, pass, nil
+	return timeout, headers, params, user, pass, verify, nil
 }
 
 // extractParams extracts params from a dict, converting all values to strings
@@ -361,11 +424,99 @@ func extractRequestArgs(kwargs object.Kwargs, args []object.Object, hasData bool
 	return url, data, options, nil
 }
 
-var RequestsLibrary = newRequestsLibrary(nil)
+var RequestsLibrary = newRequestsLibrary(&requestsLib{})
 
-// newRequestsLibrary builds the requests library. A nil client uses the
-// shared scriptling HTTP pool; a guarded client enforces a network policy.
-func newRequestsLibrary(client *http.Client) *object.Library {
+// maxCABundleClients bounds the clients kept for CA bundles. A script names a
+// handful; past the bound the oldest is dropped (a later request builds it
+// again).
+const maxCABundleClients = 16
+
+// requestsLib is one registration of the requests library: its HTTP clients,
+// its network guard and its filesystem jail.
+type requestsLib struct {
+	// client and insecureClient serve verify=True and verify=False. Without a
+	// network policy both are nil: the shared scriptling pool and its
+	// separate insecure pool. With one they are the guard's, so every policy
+	// check applies whatever verify says.
+	client, insecureClient *http.Client
+	guard                  *netsecurity.Guard
+	// paths confines the CA bundles a script names with verify="path".
+	paths fssecurity.Config
+
+	mu        sync.Mutex
+	caClients map[[sha256.Size]byte]*http.Client // by the bundle's content
+	caOrder   [][sha256.Size]byte                // oldest first
+}
+
+// checkCABundlePath refuses a CA bundle outside the allowed paths with the
+// uncatchable PermissionError of every jail denial.
+func (l *requestsLib) checkCABundlePath(path string) object.Object {
+	if l.paths.CheckPath(path) != nil {
+		return errors.NewPermissionError("access denied: CA bundle '%s' is outside allowed directories", path)
+	}
+	return nil
+}
+
+// clientFor returns the client for a request's verify option. A guarded
+// library never falls back to the unguarded pool.
+func (l *requestsLib) clientFor(ctx context.Context, v tlsVerify) (*http.Client, object.Object) {
+	switch {
+	case v.caBundle != "":
+		return l.caBundleClient(ctx, v.caBundle)
+	case !v.off:
+		return l.client, nil // nil: the shared pool
+	case l.insecureClient != nil:
+		return l.insecureClient, nil
+	default:
+		return pool.GetInsecureHTTPClient(), nil
+	}
+}
+
+// caBundleClient returns a client trusting only the CA certificates in the PEM
+// file at path, reading it through the library's jail and the interpreter's
+// limits. Clients are kept by the bundle's content, so a bundle named again
+// reuses its connections and an edited one gets a new client.
+func (l *requestsLib) caBundleClient(ctx context.Context, path string) (*http.Client, object.Object) {
+	if errObj := l.checkCABundlePath(path); errObj != nil {
+		return nil, errObj
+	}
+	pem, errObj := readFileBytes(ctx, l.paths, path)
+	if errObj != nil {
+		return nil, errObj
+	}
+	key := sha256.Sum256(pem)
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if c, ok := l.caClients[key]; ok {
+		return c, nil
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(pem) {
+		return nil, errors.NewValueError("verify: no PEM certificates in CA bundle '%s'", path)
+	}
+	var c *http.Client
+	if l.guard != nil {
+		c = l.guard.HTTPClientWithRoots(roots)
+	} else {
+		c = pool.NewHTTPClientWithRoots(roots)
+	}
+	if l.caClients == nil {
+		l.caClients = make(map[[sha256.Size]byte]*http.Client)
+	}
+	if len(l.caOrder) >= maxCABundleClients {
+		oldest := l.caOrder[0]
+		l.caOrder = l.caOrder[1:]
+		l.caClients[oldest].CloseIdleConnections()
+		delete(l.caClients, oldest)
+	}
+	l.caClients[key] = c
+	l.caOrder = append(l.caOrder, key)
+	return c, nil
+}
+
+// newRequestsLibrary builds the requests library for one registration.
+func newRequestsLibrary(lib *requestsLib) *object.Library {
 	return object.NewLibrary(RequestsLibraryName, map[string]*object.Builtin{
 		// Exceptions namespace - returns dict with exception types
 		"exceptions": {
@@ -379,12 +530,16 @@ func newRequestsLibrary(client *http.Client) *object.Library {
 				if err != nil {
 					return err
 				}
-				timeout, headers, params, user, pass, errObj := parseRequestOptions(options)
+				timeout, headers, params, user, pass, verify, errObj := parseRequestOptions(options)
 				if errObj != nil {
 					return errObj
 				}
 				// Build URL with query params
 				fullURL, errObj := buildURLWithParams(rawURL, params)
+				if errObj != nil {
+					return errObj
+				}
+				client, errObj := lib.clientFor(ctx, verify)
 				if errObj != nil {
 					return errObj
 				}
@@ -401,6 +556,7 @@ Parameters:
     - headers (dict): HTTP headers as key-value pairs
     - params (dict): Query parameters to append to URL
     - auth (tuple/list): Basic authentication as (username, password)
+    - verify (bool or str): Verify the server's TLS certificate (default: True). False accepts any certificate, for a development server only; a path names a PEM bundle of CA certificates to trust instead of the system's
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
@@ -411,12 +567,16 @@ Returns:
 				if err != nil {
 					return err
 				}
-				timeout, headers, params, user, pass, errObj := parseRequestOptions(options)
+				timeout, headers, params, user, pass, verify, errObj := parseRequestOptions(options)
 				if errObj != nil {
 					return errObj
 				}
 				// POST can also have query params
 				fullURL, errObj := buildURLWithParams(url, params)
+				if errObj != nil {
+					return errObj
+				}
+				client, errObj := lib.clientFor(ctx, verify)
 				if errObj != nil {
 					return errObj
 				}
@@ -434,6 +594,7 @@ Parameters:
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
     - auth (tuple/list): Basic authentication as (username, password)
+    - verify (bool or str): Verify the server's TLS certificate (default: True). False accepts any certificate, for a development server only; a path names a PEM bundle of CA certificates to trust instead of the system's
 
 Note: Use either 'data' or 'json', not both.
 
@@ -446,11 +607,15 @@ Returns:
 				if err != nil {
 					return err
 				}
-				timeout, headers, params, user, pass, errObj := parseRequestOptions(options)
+				timeout, headers, params, user, pass, verify, errObj := parseRequestOptions(options)
 				if errObj != nil {
 					return errObj
 				}
 				fullURL, errObj := buildURLWithParams(url, params)
+				if errObj != nil {
+					return errObj
+				}
+				client, errObj := lib.clientFor(ctx, verify)
 				if errObj != nil {
 					return errObj
 				}
@@ -468,6 +633,7 @@ Parameters:
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
     - auth (tuple/list): Basic authentication as (username, password)
+    - verify (bool or str): Verify the server's TLS certificate (default: True). False accepts any certificate, for a development server only; a path names a PEM bundle of CA certificates to trust instead of the system's
 
 Note: Use either 'data' or 'json', not both.
 
@@ -480,11 +646,15 @@ Returns:
 				if err != nil {
 					return err
 				}
-				timeout, headers, params, user, pass, errObj := parseRequestOptions(options)
+				timeout, headers, params, user, pass, verify, errObj := parseRequestOptions(options)
 				if errObj != nil {
 					return errObj
 				}
 				fullURL, errObj := buildURLWithParams(rawURL, params)
+				if errObj != nil {
+					return errObj
+				}
+				client, errObj := lib.clientFor(ctx, verify)
 				if errObj != nil {
 					return errObj
 				}
@@ -500,6 +670,7 @@ Parameters:
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
     - auth (tuple/list): Basic authentication as (username, password)
+    - verify (bool or str): Verify the server's TLS certificate (default: True). False accepts any certificate, for a development server only; a path names a PEM bundle of CA certificates to trust instead of the system's
 
 Returns:
   Response object with status_code, text, headers, body, url, and json() method`,
@@ -510,11 +681,15 @@ Returns:
 				if err != nil {
 					return err
 				}
-				timeout, headers, params, user, pass, errObj := parseRequestOptions(options)
+				timeout, headers, params, user, pass, verify, errObj := parseRequestOptions(options)
 				if errObj != nil {
 					return errObj
 				}
 				fullURL, errObj := buildURLWithParams(url, params)
+				if errObj != nil {
+					return errObj
+				}
+				client, errObj := lib.clientFor(ctx, verify)
 				if errObj != nil {
 					return errObj
 				}
@@ -532,6 +707,7 @@ Parameters:
     - timeout (int): Request timeout in seconds (default: 5)
     - headers (dict): HTTP headers as key-value pairs
     - auth (tuple/list): Basic authentication as (username, password)
+    - verify (bool or str): Verify the server's TLS certificate (default: True). False accepts any certificate, for a development server only; a path names a PEM bundle of CA certificates to trust instead of the system's
 
 Note: Use either 'data' or 'json', not both.
 
@@ -613,6 +789,31 @@ Returns:
 					pending = append(pending, i)
 				}
 
+				// Each request's client, from its verify option. A CA bundle is
+				// read here, on the script's goroutine, under the interpreter's
+				// limits: one outside the allowed paths raises, as every jail
+				// denial does; any other problem fails only that request.
+				clients := make([]*http.Client, len(requestList))
+				object.TrackSlice(clients)
+				ready := make([]int, 0, len(pending))
+				for _, i := range pending {
+					v, errObj := parseVerify(reqDicts[i])
+					if errObj == nil && v.caBundle != "" {
+						if denied := lib.checkCABundlePath(v.caBundle); denied != nil {
+							return denied
+						}
+					}
+					if errObj == nil {
+						clients[i], errObj = lib.clientFor(ctx, v)
+					}
+					if errObj != nil {
+						results[i] = createResponseInstance(0, nil, []byte(objectErrorMessage(errObj)), requestURL(reqDicts[i]))
+						continue
+					}
+					ready = append(ready, i)
+				}
+				pending = ready
+
 				// Release this goroutine's interpreter lock while the parallel batch
 				// runs, so other script goroutines can proceed meanwhile.
 				object.RunBlocking(ctx, func() {
@@ -626,7 +827,7 @@ Returns:
 							defer wg.Done()
 							defer object.BindGuard(guard)()
 							for idx := range jobs {
-								results[idx] = executeParallelRequest(workerCtx, reqDicts[idx], client)
+								results[idx] = executeParallelRequest(workerCtx, reqDicts[idx], clients[idx])
 							}
 						}()
 					}
@@ -653,6 +854,7 @@ Parameters:
     - params (dict, optional): Query parameters
     - auth (list/tuple, optional): [username, password] for basic auth
     - timeout (int, optional): Timeout in seconds (default: 30)
+    - verify (bool or str, optional): Verify the server's TLS certificate (default: True), or a CA bundle path
   max_parallel (int): Maximum concurrent requests (default: 4). The host may cap this; a larger request is reduced to the cap.
 
 Returns:
@@ -900,4 +1102,26 @@ func executeParallelRequest(ctx context.Context, spec map[string]object.Object, 
 		return createResponseInstance(0, nil, []byte(errObj.Message), urlStr)
 	}
 	return result
+}
+
+// requestURL is a parallel request's url, for a status 0 response that fails it
+// before it is sent.
+func requestURL(spec map[string]object.Object) string {
+	if u, ok := spec["url"]; ok {
+		if s, err := u.AsString(); err == nil {
+			return s
+		}
+	}
+	return ""
+}
+
+// objectErrorMessage is the message of an error or exception object.
+func objectErrorMessage(obj object.Object) string {
+	switch e := obj.(type) {
+	case *object.Error:
+		return e.Message
+	case *object.Exception:
+		return e.Message
+	}
+	return obj.Inspect()
 }

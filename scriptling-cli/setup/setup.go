@@ -116,7 +116,14 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.TOMLLibraryName, func() { p.RegisterLibrary(extlibs.TOMLLibrary) })
 
 	reg(extlibs.HTMLParserLibraryName, func() { extlibs.RegisterHTMLParserLibrary(p) })
-	reg(extlibs.RequestsLibraryName, func() { extlibs.RegisterRequestsLibrary(p, netPolicy...) })
+	reg(extlibs.RequestsLibraryName, func() {
+		// A CA bundle a script names with verify="path" is held to --allowed-paths, as os and pathlib are.
+		var policy *netsecurity.Config
+		if len(netPolicy) > 0 {
+			policy = netPolicy[0]
+		}
+		extlibs.RegisterRequestsLibraryConfigured(p, fssecurity.Config{AllowedPaths: allowedPaths}, policy)
+	})
 	reg(extlibs.SecretsLibraryName, func() { extlibs.RegisterSecretsLibrary(p) })
 	reg(extlibs.OSLibraryName, func() { extlibs.RegisterOSLibrary(p, allowedPaths) })
 	reg(extlibs.LoggingLibraryName, func() { extlibs.RegisterLoggingLibrary(p, log) })

@@ -34,6 +34,7 @@ package netsecurity
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"github.com/paularlott/scriptling/tomllimit"
@@ -490,19 +491,27 @@ func (g *Guard) resolve(ctx context.Context, host string) ([]net.IP, error) {
 // The client carries Config.ClientTimeout as its end-to-end cap — zero (the
 // default) leaves requests bounded only by their own per-request timeouts.
 func (g *Guard) HTTPClient() *http.Client {
-	return g.httpClient(false)
+	return g.httpClient(func(*tls.Config) {})
 }
 
 // InsecureHTTPClient is HTTPClient with TLS certificate verification turned
 // off, for script libraries that offer an explicit insecure option. Every
 // policy check still applies; only the certificate is not verified.
 func (g *Guard) InsecureHTTPClient() *http.Client {
-	return g.httpClient(true)
+	return g.httpClient(func(c *tls.Config) { c.InsecureSkipVerify = true })
 }
 
-func (g *Guard) httpClient(insecureSkipVerify bool) *http.Client {
+// HTTPClientWithRoots is HTTPClient trusting only the CA certificates in
+// roots instead of the system's, for script libraries that let a script name
+// a CA bundle. Every policy check still applies. Each call builds a new client:
+// callers keep it to reuse its connections.
+func (g *Guard) HTTPClientWithRoots(roots *x509.CertPool) *http.Client {
+	return g.httpClient(func(c *tls.Config) { c.RootCAs = roots })
+}
+
+func (g *Guard) httpClient(adjustTLS func(*tls.Config)) *http.Client {
 	inner := g.NewTransport()
-	inner.TLSClientConfig.InsecureSkipVerify = insecureSkipVerify
+	adjustTLS(inner.TLSClientConfig)
 	return &http.Client{
 		Transport: &guardTransport{
 			inner: inner,
