@@ -23,6 +23,7 @@ import (
 	scriptlingunicast "github.com/paularlott/scriptling/extlibs/net/unicast"
 	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	scriptlingnomad "github.com/paularlott/scriptling/extlibs/nomad"
+	scriptlingoauth "github.com/paularlott/scriptling/extlibs/oauth"
 	provisionfetch "github.com/paularlott/scriptling/extlibs/provision/fetch"
 	provisionfile "github.com/paularlott/scriptling/extlibs/provision/file"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
@@ -56,6 +57,7 @@ func AllLibraryNames() []string {
 		extlibs.SedLibraryName,
 		extlibs.ContainerLibraryName,
 		extlibs.NomadLibraryName,
+		extlibs.OAuthLibraryName,
 		extlibs.WaitForLibraryName,
 		extlibs.WebSocketLibraryName,
 		extlibs.TemplateHTMLLibraryName,
@@ -153,6 +155,13 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 		})
 	})
 	reg(extlibs.NomadLibraryName, func() { scriptlingnomad.Register(p, netPolicy...) })
+	reg(extlibs.OAuthLibraryName, func() {
+		var policy *netsecurity.Config
+		if len(netPolicy) > 0 {
+			policy = netPolicy[0]
+		}
+		scriptlingoauth.RegisterConfigured(p, fssecurity.Config{AllowedPaths: allowedPaths}, policy)
+	})
 	reg(extlibs.WaitForLibraryName, func() { extlibs.RegisterWaitForLibraryConfigured(p, allowedPaths, netPolicy...) })
 	reg(extlibs.WebSocketLibraryName, func() { extlibs.RegisterWebSocketLibrary(p, netPolicy...) })
 	reg(extlibs.TemplateHTMLLibraryName, func() { extlibs.RegisterTemplateHTMLLibrary(p) })
