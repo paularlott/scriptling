@@ -176,7 +176,7 @@ func TestMCPRoute_DELETE_Routed(t *testing.T) {
 func TestMCPRoute_BearerTokenAndCORSCoexist(t *testing.T) {
 	s := buildMinimalMCPServer(t, []string{"*"})
 	s.config.BearerToken = "secret"
-	s.bearerExpected = "Bearer secret"
+	s.resourceServer = mustResourceServer(t, s.config)
 	ts := httptest.NewServer(s.buildMux())
 	defer ts.Close()
 
@@ -207,7 +207,7 @@ func TestMCPRoute_BearerTokenAndCORSCoexist(t *testing.T) {
 }
 
 // TestBearerToken_OPTIONSExemptionIsNarrow is the regression test for the
-// vulnerability an earlier version of bearerTokenMiddleware introduced: it
+// vulnerability an earlier version of the bearer token middleware introduced: it
 // exempted every OPTIONS request from the token check, not just a genuine
 // CORS preflight to /mcp. Since OPTIONS still reached the real handler
 // afterward (next.ServeHTTP), that let anyone skip the token by sending
@@ -224,7 +224,7 @@ func TestBearerToken_OPTIONSExemptionIsNarrow(t *testing.T) {
 	}
 
 	s := &Server{config: ServerConfig{WebRoot: webRoot, BearerToken: "tok"}}
-	s.bearerExpected = "Bearer tok"
+	s.resourceServer = mustResourceServer(t, s.config)
 	ts := httptest.NewServer(s.buildMux())
 	defer ts.Close()
 

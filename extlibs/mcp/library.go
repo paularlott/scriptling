@@ -162,6 +162,11 @@ func buildLibrary(guard *netsecurity.Guard, allowProcesses bool) *object.Library
 			if structuredContent, ok := responseMap["structured_content"]; ok {
 				response.StructuredContent = structuredContent
 			}
+			for _, key := range []string{"isError", "is_error"} {
+				if v, ok := responseMap[key].(bool); ok && v {
+					response.IsError = true
+				}
+			}
 
 			if contentList, ok := responseMap["content"].([]any); ok {
 				for _, item := range contentList {
@@ -194,6 +199,10 @@ Parameters:
 
 Returns:
   object: Decoded response (parsed JSON or string)
+
+Raises:
+  An error ("MCP tool error: <text>") when the dict has isError (or is_error)
+  set to True.
 
 Example:
   decoded = mcp.decode_response(raw_response)`).

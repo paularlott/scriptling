@@ -127,13 +127,18 @@ def fail():
 	cfg := testHandlerConfig()
 	handler := BuildToolHandlerFunc(src, "fail", cfg)
 
+	// A raised exception is the tool's own failure: a tool execution error
+	// (isError result), not a protocol error.
 	req := newToolRequest(t, map[string]interface{}{})
-	_, err := handler(context.Background(), req)
-	if err == nil {
-		t.Fatal("expected error from handler")
+	resp, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected an isError result, got error: %v", err)
 	}
-	if !containsCheck(err.Error(), "something went wrong") {
-		t.Errorf("error should contain 'something went wrong': %v", err)
+	if resp == nil || !resp.IsError || len(resp.Content) != 1 {
+		t.Fatalf("expected an isError result, got %+v", resp)
+	}
+	if !containsCheck(resp.Content[0].Text, "something went wrong") {
+		t.Errorf("error text should contain 'something went wrong': %q", resp.Content[0].Text)
 	}
 }
 

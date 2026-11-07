@@ -164,7 +164,7 @@ func TestRequestToolPerUserVisibilityAndCall(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("tools/call as bob: %d", status)
 	}
-	if obj, ok := body["error"].(map[string]any); !ok || !strings.Contains(obj["message"].(string), "unknown tool") {
+	if obj, ok := body["error"].(map[string]any); !ok || !strings.Contains(strings.ToLower(obj["message"].(string)), "unknown tool") {
 		t.Fatalf("bob calling secret_tool = %#v, want unknown tool", body)
 	}
 }
@@ -288,9 +288,13 @@ while runtime.server_running():
 	if status != http.StatusOK {
 		t.Fatalf("tools/call boom: %d %#v", status, body)
 	}
-	obj, ok := body["error"].(map[string]any)
-	if !ok || !strings.Contains(obj["message"].(string), "exploded on purpose") {
-		t.Fatalf("boom result = %#v, want an error carrying the raise message", body)
+	// The tool's own failure is a tool execution error: an isError result
+	// carrying the message, not a JSON-RPC error.
+	result, _ := body["result"].(map[string]any)
+	content, _ := result["content"].([]any)
+	if isErr, _ := result["isError"].(bool); !isErr || len(content) != 1 ||
+		!strings.Contains(content[0].(map[string]any)["text"].(string), "exploded on purpose") {
+		t.Fatalf("boom result = %#v, want an isError result carrying the raise message", body)
 	}
 }
 

@@ -264,7 +264,7 @@ func BuildToolHandlerSource(src []byte, cfg HandlerConfig) mcplib.ToolHandler {
 		// non-zero exit as a failure.
 		if response != "" {
 			if exitCode != 0 {
-				return nil, mcplib.NewToolErrorInternal(response)
+				return mcplib.NewToolResponseError(response), nil
 			}
 			if isStructuredResponse(p) {
 				return structuredResponseFromJSON(response)
@@ -321,7 +321,7 @@ func BuildToolHandlerFunc(src []byte, funcName string, cfg HandlerConfig) mcplib
 			if s, ok := respObj.(*object.String); ok && s.StringValue() != "" {
 				if callErr != nil {
 					// tool.return_error — return as MCP error response.
-					return nil, mcplib.NewToolErrorInternal(s.StringValue())
+					return mcplib.NewToolResponseError(s.StringValue()), nil
 				}
 				if isStructuredResponse(p) {
 					return structuredResponseFromJSON(s.StringValue())
@@ -332,7 +332,7 @@ func BuildToolHandlerFunc(src []byte, funcName string, cfg HandlerConfig) mcplib
 		}
 
 		if callErr != nil {
-			return nil, mcplib.NewToolErrorInternal(callErr.Error())
+			return mcplib.NewToolResponseError(callErr.Error()), nil
 		}
 
 		// Map the return value to an MCP tool response.
@@ -375,14 +375,14 @@ func toolResultToResponse(result object.Object) (*mcplib.ToolResponse, error) {
 		return mcplib.NewToolResponseText(string(jsonBytes)), nil
 
 	case *object.Error:
-		return nil, mcplib.NewToolErrorInternal(v.Message)
+		return mcplib.NewToolResponseError(v.Message), nil
 
 	case *object.Exception:
 		msg := v.Message
 		if msg == "" {
 			msg = "tool raised an exception"
 		}
-		return nil, mcplib.NewToolErrorInternal(msg)
+		return mcplib.NewToolResponseError(msg), nil
 
 	default:
 		// Fallback: coerce to string.

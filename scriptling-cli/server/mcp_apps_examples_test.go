@@ -279,7 +279,8 @@ func TestMCPPrizeWheelExample(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("claim_prize(999): unexpected HTTP status %d", status)
 	}
-	if _, ok := body["error"].(map[string]any); !ok {
-		t.Fatalf("claim_prize(999) = %#v, want an error", body)
+	// A tool's own failure is a tool execution error (isError result).
+	if result, _ := body["result"].(map[string]any); result == nil || result["isError"] != true {
+		t.Fatalf("claim_prize(999) = %#v, want an isError result", body)
 	}
 }

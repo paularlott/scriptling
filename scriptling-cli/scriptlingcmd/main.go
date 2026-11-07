@@ -300,6 +300,48 @@ func buildRootCommand() *cli.Command {
 				EnvVars:      []string{"SCRIPTLING_BEARER_TOKEN"},
 				ConfigPath:   []string{"server.bearer_token"},
 			},
+			&cli.StringFlag{
+				Name:       "oidc-issuer",
+				Usage:      "Accept OAuth access tokens (JWTs) from this identity provider's issuer URL on the HTTP server (with --bearer-token, either is accepted)",
+				EnvVars:    []string{"SCRIPTLING_OIDC_ISSUER"},
+				ConfigPath: []string{"server.oidc_issuer"},
+			},
+			&cli.StringFlag{
+				Name:       "oidc-jwks-url",
+				Usage:      "JWKS URL of the identity provider (default: discovered from the issuer)",
+				EnvVars:    []string{"SCRIPTLING_OIDC_JWKS_URL"},
+				ConfigPath: []string{"server.oidc_jwks_url"},
+			},
+			&cli.StringFlag{
+				Name:       "oidc-audience",
+				Usage:      "This server's resource identifier, the public URL of its /mcp endpoint (e.g. https://mcp.example.com/mcp); tokens must name it in aud. Required with --oidc-issuer",
+				EnvVars:    []string{"SCRIPTLING_OIDC_AUDIENCE"},
+				ConfigPath: []string{"server.oidc_audience"},
+			},
+			&cli.StringFlag{
+				Name:       "oidc-required-scopes",
+				Usage:      "Scopes every identity-provider token must grant (comma or space separated)",
+				EnvVars:    []string{"SCRIPTLING_OIDC_REQUIRED_SCOPES"},
+				ConfigPath: []string{"server.oidc_required_scopes"},
+			},
+			&cli.BoolFlag{
+				Name:       "oidc-require-at-jwt",
+				Usage:      "Require identity-provider tokens to be RFC 9068 access tokens (JWT typ at+jwt), refusing ID tokens",
+				EnvVars:    []string{"SCRIPTLING_OIDC_REQUIRE_AT_JWT"},
+				ConfigPath: []string{"server.oidc_require_at_jwt"},
+			},
+			&cli.StringFlag{
+				Name:       "oidc-ca-file",
+				Usage:      "PEM file of CA certificates to trust (alongside the system roots) when fetching the identity provider's discovery document and JWKS",
+				EnvVars:    []string{"SCRIPTLING_OIDC_CA_FILE"},
+				ConfigPath: []string{"server.oidc_ca_file"},
+			},
+			&cli.BoolFlag{
+				Name:       "oidc-tls-insecure",
+				Usage:      "Skip TLS certificate verification when fetching the identity provider's discovery document and JWKS (self-signed certificates; development only)",
+				EnvVars:    []string{"SCRIPTLING_OIDC_TLS_INSECURE"},
+				ConfigPath: []string{"server.oidc_tls_insecure"},
+			},
 			&cli.Int64Flag{
 				Name:         "max-request-body",
 				Usage:        "Maximum request body size in bytes for the HTTP server (0 = 32MiB default, negative = unlimited)",
@@ -1067,6 +1109,13 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		Insecure:                cmd.GetBool("insecure"),
 		CacheDir:                cmd.GetString("cache-dir"),
 		BearerToken:             cmd.GetString("bearer-token"),
+		OIDCIssuer:              cmd.GetString("oidc-issuer"),
+		OIDCJWKSURL:             cmd.GetString("oidc-jwks-url"),
+		OIDCAudience:            cmd.GetString("oidc-audience"),
+		OIDCRequiredScopes:      splitScopes(cmd.GetString("oidc-required-scopes")),
+		OIDCRequireATJWT:        cmd.GetBool("oidc-require-at-jwt"),
+		OIDCCAFile:              cmd.GetString("oidc-ca-file"),
+		OIDCTLSInsecure:         cmd.GetBool("oidc-tls-insecure"),
 		MaxRequestBodyBytes:     cmd.GetInt64("max-request-body"),
 		JSONRPCMaxBatch:         cmd.GetInt("json-rpc-max-batch"),
 		JSONRPCMaxConcurrency:   cmd.GetInt("json-rpc-concurrency"),
@@ -1608,4 +1657,9 @@ func scriptArgs(cmd *cli.Command, file string) []string {
 		return args[1:]
 	}
 	return args
+}
+
+// splitScopes splits a comma- or space-separated scope list.
+func splitScopes(v string) []string {
+	return strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' })
 }

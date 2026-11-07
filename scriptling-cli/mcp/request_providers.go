@@ -206,17 +206,17 @@ func (p *requestToolProvider) ExecuteTool(ctx context.Context, name string, para
 		}
 		result, err := runHandlerRef(ctx, p.cfg, t.handler, params)
 		if err != nil {
-			return nil, mcplib.NewToolErrorInternal(err.Error())
+			return mcplib.NewToolResponseError(err.Error()), nil
 		}
 		// tool.return_error sets a response and exits non-zero.
 		if result.explicit != "" && result.callErr != nil {
-			return nil, mcplib.NewToolErrorInternal(result.explicit)
+			return mcplib.NewToolResponseError(result.explicit), nil
 		}
 		if result.explicit != "" {
 			return mcplib.NewToolResponseText(result.explicit), nil
 		}
 		if result.callErr != nil {
-			return nil, mcplib.NewToolErrorInternal(result.callErr.Error())
+			return mcplib.NewToolResponseError(result.callErr.Error()), nil
 		}
 		return toolResultToResponse(result.value)
 	}

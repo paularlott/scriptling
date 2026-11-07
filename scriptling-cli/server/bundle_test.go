@@ -411,7 +411,7 @@ serve = ["mcp"]
 `,
 		"tools/doubler.py": `import scriptling.runtime.mcp as mcp
 
-@mcp.tool("Double a number", params={"n": "Number"})
+@mcp.tool("Double a number", params={"n": {"type": "int", "description": "Number"}})
 def doubler(n):
     return str(int(n) * 2)
 

@@ -26,13 +26,18 @@ func TestBuildToolHandlerSource(t *testing.T) {
 	}
 }
 
-// TestBuildToolHandlerSourceError verifies return_error propagates as an error.
+// TestBuildToolHandlerSourceError verifies return_error becomes a tool
+// execution error (isError result), not a protocol error.
 func TestBuildToolHandlerSourceError(t *testing.T) {
 	src := []byte("import scriptling.mcp.tool as tool\ntool.return_error('nope')\n")
 	handler := BuildToolHandlerSource(src, NewHandlerConfig(nil))
 
-	if _, err := handler(context.Background(), mcplib.NewToolRequest(nil)); err == nil {
-		t.Fatal("expected error from return_error")
+	resp, err := handler(context.Background(), mcplib.NewToolRequest(nil))
+	if err != nil {
+		t.Fatalf("expected an isError result, got error: %v", err)
+	}
+	if resp == nil || !resp.IsError || len(resp.Content) != 1 || !strings.Contains(resp.Content[0].Text, "nope") {
+		t.Fatalf("expected an isError result carrying 'nope', got %+v", resp)
 	}
 }
 

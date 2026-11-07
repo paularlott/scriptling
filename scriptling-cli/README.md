@@ -82,6 +82,13 @@ The linter exits with code 0 if no errors are found, and code 1 if any errors ex
 | `--mcp-tools` | `SCRIPTLING_MCP_TOOLS` | Directory containing MCP tools | (disabled) |
 | `--mcp-cors-origin` | `SCRIPTLING_MCP_CORS_ORIGIN` | Allowed browser origin for cross-origin `/mcp` requests (repeatable, `*` for any) | same-origin only |
 | `--bearer-token` | `SCRIPTLING_BEARER_TOKEN` | Bearer token for authentication | none |
+| `--oidc-issuer` | `SCRIPTLING_OIDC_ISSUER` | Accept OAuth JWT access tokens from this identity provider (issuer URL); with `--bearer-token`, either is accepted | none |
+| `--oidc-jwks-url` | `SCRIPTLING_OIDC_JWKS_URL` | Identity provider JWKS URL | discovered from the issuer |
+| `--oidc-audience` | `SCRIPTLING_OIDC_AUDIENCE` | This server's resource identifier: the public URL of its `/mcp` endpoint, which tokens' `aud` must name (required with `--oidc-issuer`) | none |
+| `--oidc-required-scopes` | `SCRIPTLING_OIDC_REQUIRED_SCOPES` | Scopes every identity-provider token must grant (comma or space separated) | none |
+| `--oidc-require-at-jwt` | `SCRIPTLING_OIDC_REQUIRE_AT_JWT` | Require RFC 9068 access tokens (JWT `typ` `at+jwt`), refusing ID tokens | false |
+| `--oidc-ca-file` | `SCRIPTLING_OIDC_CA_FILE` | PEM file of CA certificates trusted (with the system roots) for the identity provider's discovery and JWKS fetches | none |
+| `--oidc-tls-insecure` | `SCRIPTLING_OIDC_TLS_INSECURE` | Skip TLS certificate verification for the identity provider's discovery and JWKS fetches (development only) | false |
 | `--allowed-paths` | `SCRIPTLING_ALLOWED_PATHS` | Comma-separated allowed filesystem paths | (no restriction) |
 | `--tls-cert` | `SCRIPTLING_TLS_CERT` | TLS certificate file | none |
 | `--tls-key` | `SCRIPTLING_TLS_KEY` | TLS key file | none |
@@ -271,6 +278,16 @@ scriptling --server :8000 --mcp-tools ./tools --mcp-exec-script setup.py
 
 # With authentication
 scriptling --server :8000 --bearer-token my-secret-token setup.py
+
+# With an OAuth identity provider (MCP authorization): the server publishes
+# /.well-known/oauth-protected-resource/mcp naming the issuer, answers 401 with
+# a WWW-Authenticate challenge pointing at it, and verifies JWT access tokens
+# (issuer, signature, expiry, audience, scopes). Handlers see the caller as
+# request.auth (subject, scopes, claims, ...).
+scriptling --server :8000 \
+  --oidc-issuer https://idp.example.com/realms/acme \
+  --oidc-audience https://mcp.example.com/mcp \
+  --oidc-required-scopes mcp:use setup.py
 
 # With filesystem restrictions
 scriptling --server :8000 --allowed-paths "/var/www,./uploads" setup.py

@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"strings"
+
 	"github.com/paularlott/scriptling/conversion"
 
 	"github.com/paularlott/mcp"
@@ -9,12 +11,20 @@ import (
 
 // DecodeToolResponse converts an MCP ToolResponse to a scriptling Object.
 // Handles:
-// - Single text content: returns parsed JSON or string
-// - Multiple content blocks: returns list of decoded blocks
-// - Structured content: returns decoded object
+//   - Single text content: returns parsed JSON or string
+//   - Multiple content blocks: returns list of decoded blocks
+//   - Structured content: returns decoded object
+//   - isError set (a tool execution error): returns an *object.Error carrying
+//     the tool's text, so the caller raises it in the script just as a
+//     JSON-RPC error from the server is raised. The remote tool's failure is
+//     never handed to the script as if it were a successful result.
 func DecodeToolResponse(response *mcp.ToolResponse) object.Object {
 	if response == nil {
 		return &object.Null{}
+	}
+
+	if response.IsError {
+		return ToolResponseError(response)
 	}
 
 	// Handle structured content (new format)
@@ -38,6 +48,34 @@ func DecodeToolResponse(response *mcp.ToolResponse) object.Object {
 		elements[i] = DecodeToolContent(block)
 	}
 	return &object.List{Elements: elements}
+}
+
+// ToolErrorPrefix starts the message of the error a script sees when a tool
+// reports a tool execution error (isError).
+const ToolErrorPrefix = "MCP tool error: "
+
+// ToolResponseErrorText is the text a tool execution error result carries:
+// its text content blocks joined by newlines, or a generic message when it
+// has none.
+func ToolResponseErrorText(response *mcp.ToolResponse) string {
+	var parts []string
+	if response != nil {
+		for _, c := range response.Content {
+			if c.Type == "text" && c.Text != "" {
+				parts = append(parts, c.Text)
+			}
+		}
+	}
+	if len(parts) == 0 {
+		return "the tool reported an error"
+	}
+	return strings.Join(parts, "\n")
+}
+
+// ToolResponseError is the script-level error for a tool execution error
+// result.
+func ToolResponseError(response *mcp.ToolResponse) *object.Error {
+	return &object.Error{Message: ToolErrorPrefix + ToolResponseErrorText(response)}
 }
 
 // DecodeToolContent converts a single ToolContent block to a scriptling Object.

@@ -14,6 +14,7 @@ import (
 	mcp_lib "github.com/paularlott/mcp"
 	"github.com/paularlott/mcp/toolmetadata"
 	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/build"
 	"github.com/paularlott/scriptling/extlibs/mcp"
 	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
 )
@@ -108,7 +109,7 @@ func watchTree(watcher *fsnotify.Watcher, dir string) int {
 // stores it and reloadMCPTools mutates it in place thereafter (rather than
 // swapping a new server) so notification subscribers stay valid across reloads.
 func (s *Server) createMCPServer() (*mcp_lib.Server, error) {
-	server := mcp_lib.NewServer("scriptling-server", "1.0.0")
+	server := mcp_lib.NewServer("scriptling-server", build.Version)
 	server.SetInstructions("Execute Scriptling tools from the tools folder.")
 	server.DeclareExtension(mcp_lib.UIAppsExtensionID, map[string]any{
 		"mimeTypes": []string{mcp_lib.UIAppMimeType},
@@ -467,7 +468,7 @@ RETURNING RESULTS:
 			if response != "" {
 				if exitCode != 0 {
 					Log.Debug("MCP execute_script returned error response", "exit_code", exitCode)
-					return nil, mcp_lib.NewToolErrorInternal(response)
+					return mcp_lib.NewToolResponseError(response), nil
 				}
 				Log.Trace("MCP execute_script completed", "exit_code", exitCode, "response_len", len(response))
 				return mcp_lib.NewToolResponseText(response), nil

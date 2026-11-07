@@ -21,8 +21,12 @@ func NewServer(config ServerConfig) (*Server, error) {
 	// The script execution tool runs arbitrary code; over HTTP it must not be
 	// reachable without a credential (a page in the user's browser can reach
 	// a local server).
-	if config.Address != "" && config.MCPExecTool && config.BearerToken == "" {
-		return nil, fmt.Errorf("--mcp-exec-script with --server requires --bearer-token: the script execution tool runs arbitrary code")
+	if config.Address != "" && config.MCPExecTool && !config.authConfigured() {
+		return nil, fmt.Errorf("--mcp-exec-script with --server requires --bearer-token or --oidc-issuer: the script execution tool runs arbitrary code")
+	}
+	resourceServer, err := buildResourceServer(config)
+	if err != nil {
+		return nil, err
 	}
 	s := &Server{
 		config:               config,
@@ -31,7 +35,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 		jsonrpcMethods:       make(map[string]string),
 		jsonrpcNotifications: make(map[string]string),
 		staticRoutes:         make(map[string]staticRoute),
-		bearerExpected:       "Bearer " + config.BearerToken,
+		resourceServer:       resourceServer,
 		scriptDone:           make(chan struct{}),
 		serverRunningCh:      make(chan struct{}),
 		hosts:                newHostPolicy(config.Address, config.AllowedHosts),

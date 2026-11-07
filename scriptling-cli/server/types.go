@@ -66,6 +66,30 @@ type ServerConfig struct {
 	TLSKey          string
 	TLSGenerate     bool
 
+	// OIDCIssuer, when set, accepts JWT access tokens from this identity
+	// provider (issuer identifier; keys found via OIDC discovery unless
+	// OIDCJWKSURL is set) and publishes OAuth protected resource metadata
+	// naming it. With BearerToken also set, either credential is accepted.
+	OIDCIssuer  string
+	OIDCJWKSURL string
+	// OIDCAudience is this server's resource identifier: the URL of its
+	// /mcp endpoint, which tokens' aud claim must name. Required with
+	// OIDCIssuer.
+	OIDCAudience string
+	// OIDCRequiredScopes must all be granted by every token from the
+	// identity provider (the static token is granted them implicitly).
+	OIDCRequiredScopes []string
+	// OIDCRequireATJWT requires the JWT header typ "at+jwt" (RFC 9068), so an
+	// ID token cannot be presented as an access token.
+	OIDCRequireATJWT bool
+	// OIDCCAFile names a PEM file whose certificates are trusted, alongside
+	// the system roots, when fetching the issuer's discovery document and
+	// JWKS (an identity provider with a private or self-signed CA).
+	OIDCCAFile string
+	// OIDCTLSInsecure skips TLS certificate verification for those fetches
+	// (development only; a warning is logged at startup).
+	OIDCTLSInsecure bool
+
 	// ContainerDenyPrivileged refuses scriptling.container run(privileged=True)
 	// in every evaluator. Privileged containers are allowed when false.
 	ContainerDenyPrivileged bool
@@ -199,15 +223,15 @@ type Server struct {
 	reloadMu              sync.Mutex // guards reloadMCP and reloadDebounce
 	reloadDebounce        *time.Timer
 	debounceDuration      time.Duration
-	mcpFolderEntries      mcpEntries    // folder-sourced MCP registrations (reloadable)
-	mcpBundleEntries      mcpEntries    // bundle-sourced MCP registrations (reloadable)
-	packLoader            *pack.Loader  // nil if no packages configured
-	webRootFS             fs.FS         // non-nil when serving webroot/ from the app bundle (cached sub-FS)
-	bearerExpected        string        // precomputed "Bearer <token>"
-	scriptDone            chan struct{} // closed when setup script goroutine exits
-	serverRunningCh       chan struct{} // this server's shutdown signal, also published through RuntimeState
-	setupShutdownOnce     sync.Once     // closes serverRunningCh at most once
-	backgroundReleaseOnce sync.Once     // releases setup-queued background tasks at most once
+	mcpFolderEntries      mcpEntries              // folder-sourced MCP registrations (reloadable)
+	mcpBundleEntries      mcpEntries              // bundle-sourced MCP registrations (reloadable)
+	packLoader            *pack.Loader            // nil if no packages configured
+	webRootFS             fs.FS                   // non-nil when serving webroot/ from the app bundle (cached sub-FS)
+	resourceServer        *mcp_lib.ResourceServer // request authentication; nil when no credential is configured
+	scriptDone            chan struct{}           // closed when setup script goroutine exits
+	serverRunningCh       chan struct{}           // this server's shutdown signal, also published through RuntimeState
+	setupShutdownOnce     sync.Once               // closes serverRunningCh at most once
+	backgroundReleaseOnce sync.Once               // releases setup-queued background tasks at most once
 }
 
 // mcpEntries tracks what was registered on the MCP server from one source so

@@ -315,6 +315,10 @@ func CreateRequestInstance(method, path, body string, headers, query, pathParams
 		"path_params": paramsDict,
 		"remote_addr": object.NewString(remoteAddr),
 		"context":     &object.Dict{Pairs: make(map[string]object.DictPair)},
+		// auth is the authenticated caller (subject, audience, scopes, expiry,
+		// claims) when the server checks a bearer token or identity-provider
+		// token, else None; the server fills it in.
+		"auth": &object.Null{},
 	})
 }
 

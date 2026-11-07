@@ -196,7 +196,7 @@ func (w *corsOriginOverrideWriter) Flush() {
 // alone would not stop the handler running. An allowed origin gets
 // Access-Control-Allow-Origin, and its preflight is answered here, since the
 // JSON-RPC handlers have no OPTIONS support; OPTIONS never reaches next, which
-// is what lets bearerTokenMiddleware exempt the preflight. Requests without an
+// is what lets authMiddleware exempt the preflight. Requests without an
 // Origin header (curl, server-to-server and plugin clients) pass through.
 func jsonrpcCorsMiddleware(allowedOrigins []string, hosts hostPolicy, next http.Handler) http.Handler {
 	allowAll := slices.Contains(allowedOrigins, "*")
@@ -296,14 +296,14 @@ func (s *Server) buildMux() http.Handler {
 	}
 
 	var handler http.Handler = mux
-	// A configured static token always wraps the whole mux, middleware or
-	// not: the script middleware guards the script-facing endpoints, but it
+	// A configured credential (static token and/or identity provider)
+	// always wraps the whole mux, middleware or not: the script middleware guards the script-facing endpoints, but it
 	// never runs for /health, static routes, the webroot fallback or custom
 	// not-found handling, so dropping the token when middleware exists left
 	// those unauthenticated. With both configured, the token applies first
 	// and the middleware layers on top.
-	if s.config.BearerToken != "" {
-		handler = s.bearerTokenMiddleware(handler)
+	if s.resourceServer != nil {
+		handler = s.authMiddleware(handler)
 	}
 	// Body caps apply outermost so no route, protocol endpoint or fallback
 	// can buffer past the limit.
@@ -568,7 +568,11 @@ func (s *Server) createRequestObject(r *http.Request, pathParams map[string]stri
 		}
 	}
 
-	return extlibs.CreateRequestInstance(r.Method, r.URL.Path, string(body), headers, query, pathParams, r.RemoteAddr)
+	req := extlibs.CreateRequestInstance(r.Method, r.URL.Path, string(body), headers, query, pathParams, r.RemoteAddr)
+	// request.auth: who the accepted token says is calling (None when the
+	// server has no credential configured).
+	req.SetField("auth", tokenInfoObject(mcplib.TokenInfoFromContext(r.Context())))
+	return req
 }
 
 // splitHandlerRef splits a "module.function" handler reference at the last
@@ -767,45 +771,6 @@ func (s *Server) buildRequestProviders(regs *extlibs.RequestRegistrations) (requ
 		out.prompts = p
 	}
 	return out, nil
-}
-
-// bearerTokenMiddleware creates authentication middleware for all endpoints.
-//
-// A genuine CORS preflight to /mcp is exempt: browsers never attach a
-// custom Authorization header to the preflight itself — only to the real
-// follow-up request, and only once the preflight response says that header
-// is allowed — so requiring one here would 401 every cross-origin browser
-// preflight unconditionally, making MCPCorsOrigins (or JSONRPCCorsOrigins)
-// impossible to use together with a bearer token. The real request the preflight clears the
-// way for still goes through this same check normally.
-//
-// The exemption is deliberately narrow — both conditions matter:
-//   - Access-Control-Request-Method must be present, not just OPTIONS. That
-//     header is what actually marks a browser CORS preflight; a plain
-//     OPTIONS request (which any client, browser or not, can send with no
-//     preflight semantics at all) doesn't carry it. An earlier version of
-//     this check exempted every OPTIONS request outright, which let anyone
-//     skip the token entirely by sending OPTIONS instead of GET — serving
-//     protected static files and running the not-found/fallback handler.
-//   - Scoped to exactly "/mcp" and "/json-rpc", the only routes whose
-//     handlers (mcp.Server.HandleRequest, jsonrpcCorsMiddleware) are built
-//     to answer a preflight safely: headers only, no body, no side effect,
-//     and for /json-rpc never reaching a script. Any other route — a
-//     static file, the app bundle's webroot, the not-found/fallback
-//     script — has no such handling, so an unauthenticated
-//     preflight-shaped request reaching it would still serve/run it same
-//     as above, just requiring one extra header to trigger.
-func (s *Server) bearerTokenMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		isPreflight := r.Method == http.MethodOptions &&
-			r.Header.Get("Access-Control-Request-Method") != "" &&
-			((s.mcpHandler != nil && r.URL.Path == "/mcp") || (s.config.JSONRPC && r.URL.Path == "/json-rpc"))
-		if !isPreflight && r.Header.Get("Authorization") != s.bearerExpected {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 // generateSelfSignedCert generates a self-signed certificate

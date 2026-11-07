@@ -57,8 +57,12 @@ func TestBuildToolHandlerPropagatesScriptError(t *testing.T) {
 		t.Fatalf("BuildToolHandler: %v", err)
 	}
 
-	if _, err := handler(context.Background(), mcplib.NewToolRequest(nil)); err == nil {
-		t.Fatalf("expected error from return_error, got nil")
+	resp, err := handler(context.Background(), mcplib.NewToolRequest(nil))
+	if err != nil {
+		t.Fatalf("expected an isError result from return_error, got error: %v", err)
+	}
+	if resp == nil || !resp.IsError || len(resp.Content) != 1 || !strings.Contains(resp.Content[0].Text, "bang") {
+		t.Fatalf("expected an isError result carrying 'bang', got %+v", resp)
 	}
 }
 

@@ -648,3 +648,62 @@ bot.system_prompt
 		t.Fatalf("skill lines not alphabetical: alpha=%d mike=%d zulu=%d", iAlpha, iMike, iZulu)
 	}
 }
+
+// TestAgentMCPToolErrorBecomesToolResult verifies a remote tool that fails
+// (an isError result, which mcp.Client.call_tool raises as "MCP tool error")
+// reaches the model as an error tool-result message, so the loop continues
+// and the model can react, rather than the turn aborting.
+func TestAgentMCPToolErrorBecomesToolResult(t *testing.T) {
+	server := mcplib.NewServer("failing-server", "1.0")
+	server.RegisterTool(
+		mcplib.NewTool("flaky", "Always fails"),
+		func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
+			return mcplib.NewToolResponseError("upstream unavailable"), nil
+		},
+	)
+	ts := httptest.NewServer(http.HandlerFunc(server.HandleRequest))
+	defer ts.Close()
+
+	script := `
+import scriptling.ai.agent as agent
+import scriptling.mcp as mcp
+
+class MockClient:
+    def __init__(self):
+        self.turn = 0
+        self.seen = []
+    def completion(self, model, messages, **kwargs):
+        self.turn += 1
+        if self.turn == 1:
+            return {"choices": [{"message": {"role": "assistant", "content": "",
+                "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "flaky__flaky", "arguments": "{}"}}]}}]}
+        for m in messages:
+            if m.get("role") == "tool":
+                self.seen.append(m.get("content", ""))
+        return {"choices": [{"message": {"role": "assistant", "content": "recovered"}}]}
+
+client = MockClient()
+flaky = mcp.Client("` + ts.URL + `", namespace="flaky")
+bot = agent.Agent(client, mcp_servers=[flaky])
+resp = bot.trigger("go", max_iterations=3)
+assert resp.content == "recovered", "loop must continue after a tool error, got: " + str(resp)
+assert len(client.seen) == 1, "model must see one tool result, got: " + str(client.seen)
+assert client.seen[0].startswith("Error: ") and "upstream unavailable" in client.seen[0], "tool result: " + client.seen[0]
+
+"OK"
+`
+
+	p := scriptlib.New()
+	stdlib.RegisterAll(p)
+	ai.Register(p)
+	Register(p)
+	scriptlingmcp.Register(p)
+
+	result, err := p.Eval(script)
+	if err != nil {
+		t.Fatalf("script failed: %v", err)
+	}
+	if str, err := result.AsString(); err != nil || str != "OK" {
+		t.Fatalf("Expected 'OK', got: %v (err: %v)", result, err)
+	}
+}

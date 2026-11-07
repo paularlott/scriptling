@@ -116,7 +116,7 @@ func TestPerUserToolsExampleAlice(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("alice calling beta_tool: %d", status)
 	}
-	if obj, ok := body["error"].(map[string]any); !ok || !strings.Contains(obj["message"].(string), "unknown tool") {
+	if obj, ok := body["error"].(map[string]any); !ok || !strings.Contains(strings.ToLower(obj["message"].(string)), "unknown tool") {
 		t.Fatalf("alice calling beta_tool = %#v, want unknown tool", body)
 	}
 }
@@ -212,7 +212,7 @@ func TestPerUserToolsExampleNoStaticTools(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("greet with no static tools: %d", status)
 	}
-	if obj, ok := body["error"].(map[string]any); !ok || !strings.Contains(obj["message"].(string), "unknown tool") {
+	if obj, ok := body["error"].(map[string]any); !ok || !strings.Contains(strings.ToLower(obj["message"].(string)), "unknown tool") {
 		t.Fatalf("greet with no static tools = %#v, want unknown tool", body)
 	}
 

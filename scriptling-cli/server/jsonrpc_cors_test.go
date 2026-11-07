@@ -163,7 +163,7 @@ func TestJSONRPCCorsWithBearerToken(t *testing.T) {
 	ts, s, probe := corsJSONRPCServer(t, []string{"http://app.example"})
 	ts.Close()
 	s.config.BearerToken = "tok"
-	s.bearerExpected = "Bearer tok"
+	s.resourceServer = mustResourceServer(t, s.config)
 	ts = httptest.NewServer(s.buildMux())
 	defer ts.Close()
 

@@ -60,9 +60,17 @@ Parameters:
 Returns:
   dict: Decoded tool response
 
+Raises:
+  An error when the server answers with a JSON-RPC error, and also when the
+  tool reports a tool execution error (isError); the message is
+  "MCP tool error: " followed by the tool's error text.
+
 Example:
-  result = client.call_tool("search", {"query": "golang"})
-  print(result)`).
+  try:
+    result = client.call_tool("search", {"query": "golang"})
+    print(result)
+  except Exception as e:
+    print("tool failed:", e)`).
 		MethodWithHelp("refresh_tools", refreshToolsMethod, `refresh_tools() - Refresh the tool cache
 
 Explicitly refreshes the cached list of tools from the server.
@@ -130,6 +138,10 @@ Parameters:
 Returns:
   dict: Tool response
 
+Raises:
+  An error on a JSON-RPC error or a tool execution error (isError), as
+  call_tool does.
+
 Example:
   result = client.execute_discovered("custom_tool", {"param": "value"})`).
 		MethodWithHelp("call_tools_parallel", callToolsParallelMethod, `call_tools_parallel(calls) - Execute multiple tools concurrently
@@ -140,7 +152,8 @@ Parameters:
   calls (list): List of dicts with "name" (str) and "arguments" (dict) keys
 
 Returns:
-  list: List of dicts with "name", "result", and "error" keys
+  list: List of dicts with "name", "result", and "error" keys ("error" is
+  set, and "result" None, for a JSON-RPC error or a tool execution error)
 
 Example:
   results = client.call_tools_parallel([
@@ -160,7 +173,8 @@ Parameters:
   calls (list): List of dicts with "name" (str) and "arguments" (dict) keys
 
 Returns:
-  list: List of dicts with "name", "result", and "error" keys
+  list: List of dicts with "name", "result", and "error" keys ("error" is
+  set, and "result" None, for a JSON-RPC error or a tool execution error)
 
 Example:
   results = client.execute_discovered_parallel([
@@ -400,6 +414,11 @@ func parallelResultsToList(results []mcplib.ParallelToolResult) *object.List {
 		var errStr string
 		if r.Err != nil {
 			errStr = r.Err.Error()
+			resultObj = &object.Null{}
+		} else if r.Response != nil && r.Response.IsError {
+			// A tool execution error is reported in "error" like a
+			// protocol error, not passed off as a result.
+			errStr = ToolErrorPrefix + ToolResponseErrorText(r.Response)
 			resultObj = &object.Null{}
 		} else {
 			resultObj = DecodeToolResponse(r.Response)

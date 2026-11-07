@@ -170,9 +170,15 @@ func RequestContextBuiltins() map[string]*object.Builtin {
 			HelpText: `get_request() - Get the HTTP request this handler is being served for
 
 Returns the same Request object the middleware saw (method, path, headers,
-query, path_params, remote_addr and the context dict the middleware may have
-populated), or None when there is no HTTP request — the stdio transports and
-anywhere else outside a served request.`,
+query, path_params, remote_addr, auth and the context dict the middleware may
+have populated), or None when there is no HTTP request — the stdio transports and
+anywhere else outside a served request.
+
+request.auth describes the authenticated caller when the server requires a
+credential (--bearer-token / --oidc-issuer): a dict with subject, audience
+(list), scopes (list), expiry (Unix seconds or None) and claims (the access
+token's JWT claims; empty for the static token, whose subject is "bearer").
+It is None when the server has no credential configured.`,
 		},
 		"request_context": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
