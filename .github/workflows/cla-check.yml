@@ -1,93 +1,14 @@
+name: CLA
+
+# The shared CLA check: https://github.com/paularlott/cla
 on:
   pull_request_target:
     types: [opened, reopened, synchronize]
 
+permissions:
+  pull-requests: write
+  issues: write
+
 jobs:
   cla-check:
-    name: Check CLA status
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run CLA check
-        env:
-          CLA_TOKEN: ${{ secrets.CLA_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          CLA_URL: https://forms.gle/dVYXv5geiZGmR1KG9
-        run: |
-          AUTHOR=$(echo "$PR_AUTHOR" | tr '[:upper:]' '[:lower:]')
-
-          # Check if author is in contributors list
-          HAS_SIGNED=$(jq -r --arg a "$AUTHOR" '.contributors | map(ascii_downcase) | index($a) != null' .clabot.json)
-
-          LABEL="cla: ok"
-          REMOVE_LABEL="cla: required"
-          if [ "$HAS_SIGNED" = "false" ]; then
-            LABEL="cla: required"
-            REMOVE_LABEL="cla: ok"
-          fi
-          ENCODED_REMOVE_LABEL=$(echo -n "$REMOVE_LABEL" | jq -sRr @uri)
-
-          # Set labels via API
-          curl -s -X POST \
-            -H "Authorization: token $CLA_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/$GH_REPO/issues/$PR_NUMBER/labels" \
-            -d "{\"labels\":[\"$LABEL\"]}"
-
-          curl -s -X DELETE \
-            -H "Authorization: token $CLA_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/$GH_REPO/issues/$PR_NUMBER/labels/$ENCODED_REMOVE_LABEL"
-
-          # Handle comment if CLA not signed
-          MARKER='<!-- CLA-MISSING-MARKER -->'
-
-          if [ "$HAS_SIGNED" = "false" ]; then
-            BODY=$(jq -n --arg m "$MARKER" --arg u "$PR_AUTHOR" --arg url "$CLA_URL" \
-              '"\($m)\nThanks for your contribution, @\($u)!\n\nBefore we can review this pull request, you need to accept the Contributor License Agreement (CLA).\n\nPlease read and sign the CLA here: \($url)\n\nOnce you have signed, a maintainer will add your GitHub username to the `.clabot.json` file and this PR will automatically update."')
-
-            # Check for existing comment
-            EXISTING=$(curl -s -H "Authorization: token $CLA_TOKEN" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/$GH_REPO/issues/$PR_NUMBER/comments?per_page=100" \
-              | jq -r --arg m "$MARKER" '.[] | select(.body | test($m)) | .id' | head -1)
-
-            if [ -n "$EXISTING" ]; then
-              curl -s -X PATCH \
-                -H "Authorization: token $CLA_TOKEN" \
-                -H "Accept: application/vnd.github.v3+json" \
-                "https://api.github.com/repos/$GH_REPO/issues/comments/$EXISTING" \
-                -d "{\"body\":$BODY}" > /dev/null
-            else
-              curl -s -X POST \
-                -H "Authorization: token $CLA_TOKEN" \
-                -H "Accept: application/vnd.github.v3+json" \
-                "https://api.github.com/repos/$GH_REPO/issues/$PR_NUMBER/comments" \
-                -d "{\"body\":$BODY}" > /dev/null
-            fi
-
-            echo "CLA not signed for user $PR_AUTHOR"
-            exit 1
-          else
-            # Remove any old CLA comment
-            EXISTING=$(curl -s -H "Authorization: token $CLA_TOKEN" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/$GH_REPO/issues/$PR_NUMBER/comments?per_page=100" \
-              | jq -r --arg m "$MARKER" '.[] | select(.body | test($m)) | .id' | head -1)
-
-            if [ -n "$EXISTING" ]; then
-              curl -s -X DELETE \
-                -H "Authorization: token $CLA_TOKEN" \
-                -H "Accept: application/vnd.github.v3+json" \
-                "https://api.github.com/repos/$GH_REPO/issues/comments/$EXISTING" > /dev/null
-            fi
-
-            echo "CLA already signed by $PR_AUTHOR"
-          fi
+    uses: paularlott/cla/.github/workflows/cla-check.yml@main
