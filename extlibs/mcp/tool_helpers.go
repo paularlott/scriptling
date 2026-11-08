@@ -667,6 +667,7 @@ Example:
 	for name, builtin := range extlibs.RequestContextBuiltins() {
 		functions[name] = builtin
 	}
+	functions["progress"] = progressBuiltin()
 
 	return object.NewLibrary("scriptling.mcp.tool", functions, nil, "MCP tool parameter access and result functions")
 }

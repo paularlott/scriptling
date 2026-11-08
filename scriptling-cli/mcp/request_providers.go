@@ -83,6 +83,7 @@ func runHandlerRef(ctx context.Context, cfg HandlerConfig, handlerRef string, kw
 type requestTool struct {
 	tool    mcplib.MCPTool
 	handler string
+	types   map[string]string // declared parameter types, for TypedToolArgs
 }
 
 type requestToolProvider struct {
@@ -93,7 +94,9 @@ type requestToolProvider struct {
 // BuildRequestToolProvider builds an mcp ToolProvider from the
 // register_request_tool registrations a middleware made. Registration dicts
 // carry name, handler and optional description / params / keywords /
-// discoverable; anything malformed is a build error and fails the request.
+// discoverable / ui / icons / title and the behaviour hints read_only /
+// destructive / idempotent / open_world; anything malformed is a build error
+// and fails the request.
 func BuildRequestToolProvider(entries []*object.Dict, cfg HandlerConfig) (mcplib.ToolProvider, error) {
 	provider := &requestToolProvider{cfg: cfg}
 	for _, entry := range entries {
@@ -139,11 +142,15 @@ func BuildRequestToolProvider(entries []*object.Dict, cfg HandlerConfig) (mcplib
 		}
 		meta.Icons = icons
 
+		if err := applyToolTitleAndHints(meta, entry); err != nil {
+			return nil, fmt.Errorf("register_request_tool %q: %w", name, err)
+		}
+
 		tool, err := toolmetadata.BuildMCPTool(name, meta)
 		if err != nil {
 			return nil, err
 		}
-		provider.tools = append(provider.tools, requestTool{tool: tool.ToMCPTool(), handler: handler})
+		provider.tools = append(provider.tools, requestTool{tool: tool.ToMCPTool(), handler: handler, types: ParamTypes(meta.Parameters)})
 	}
 	return provider, nil
 }
@@ -204,7 +211,7 @@ func (p *requestToolProvider) ExecuteTool(ctx context.Context, name string, para
 		if t.tool.Name != name {
 			continue
 		}
-		result, err := runHandlerRef(ctx, p.cfg, t.handler, params)
+		result, err := runHandlerRef(ctx, p.cfg, t.handler, TypedToolArgs(params, t.types))
 		if err != nil {
 			return mcplib.NewToolResponseError(err.Error()), nil
 		}
@@ -234,6 +241,7 @@ type requestResource struct {
 	pattern     *regexp.Regexp
 	handler     string
 	mimeType    string
+	completers  map[string]mcplib.Completer // template variable -> completer
 }
 
 type requestResourceProvider struct {
@@ -280,9 +288,61 @@ func BuildRequestResourceProvider(entries []*object.Dict, cfg HandlerConfig) (mc
 			}
 			res.varNames, res.pattern = varNames, pattern
 		}
+		completers, err := requestCompleters(entry, res.varNames, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("register_request_resource %q: %w", res.uri, err)
+		}
+		res.completers = completers
 		provider.resources = append(provider.resources, res)
 	}
 	return provider, nil
+}
+
+// requestCompleters builds the completers named by a registration's
+// "complete" dict. Request registrations have no source file, so every
+// completer is a "module.function" reference.
+func requestCompleters(entry *object.Dict, allowed []string, cfg HandlerConfig) (map[string]mcplib.Completer, error) {
+	refs, err := dictGetCompleters(entry, allowed)
+	if err != nil || len(refs) == 0 {
+		return nil, err
+	}
+	out := make(map[string]mcplib.Completer, len(refs))
+	for name, ref := range refs {
+		c, err := BuildCompleter(nil, ref, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("complete %q: %w", name, err)
+		}
+		out[name] = c
+	}
+	return out, nil
+}
+
+// CompleteResourceTemplate implements mcp.ResourceCompletionProvider: it
+// answers completion/complete for the variables of this request's templates.
+func (p *requestResourceProvider) CompleteResourceTemplate(ctx context.Context, uriTemplate string, req *mcplib.CompletionRequest) (*mcplib.CompletionResult, error) {
+	for _, res := range p.resources {
+		if !res.template || res.uri != uriTemplate {
+			continue
+		}
+		if !containsName(res.varNames, req.Argument()) {
+			return nil, mcplib.NewToolErrorInvalidParams("unknown argument: " + req.Argument())
+		}
+		return runRequestCompleter(ctx, res.completers[req.Argument()], req)
+	}
+	return nil, mcplib.ErrUnknownResource
+}
+
+// runRequestCompleter runs fn, answering with no suggestions when the
+// argument has no completer.
+func runRequestCompleter(ctx context.Context, fn mcplib.Completer, req *mcplib.CompletionRequest) (*mcplib.CompletionResult, error) {
+	if fn == nil {
+		return mcplib.NewCompletionResult(nil), nil
+	}
+	values, err := fn(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return mcplib.NewCompletionResult(values), nil
 }
 
 // parseRequestResourceTemplate compiles a {var} URI template into an anchored
@@ -393,8 +453,9 @@ func orDefault(v, def string) string {
 // ── prompts ──────────────────────────────────────────────────────────────────
 
 type requestPrompt struct {
-	prompt  mcplib.MCPPrompt
-	handler string
+	prompt     mcplib.MCPPrompt
+	handler    string
+	completers map[string]mcplib.Completer // argument -> completer
 }
 
 type requestPromptProvider struct {
@@ -415,6 +476,7 @@ func BuildRequestPromptProvider(entries []*object.Dict, cfg HandlerConfig) (mcpl
 		}
 
 		builder := mcplib.NewPrompt(name, dictGetString(entry, "description"))
+		var argNames []string
 		if pair, ok := entry.GetByString("arguments"); ok {
 			if list, ok := pair.Value.(*object.List); ok {
 				for _, el := range list.Elements {
@@ -433,10 +495,15 @@ func BuildRequestPromptProvider(entries []*object.Dict, cfg HandlerConfig) (mcpl
 						}
 					}
 					builder.Argument(argName, dictGetString(argDict, "description"), required)
+					argNames = append(argNames, argName)
 				}
 			}
 		}
-		provider.prompts = append(provider.prompts, requestPrompt{prompt: builder.ToMCPPrompt(), handler: handler})
+		completers, err := requestCompleters(entry, argNames, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("register_request_prompt %q: %w", name, err)
+		}
+		provider.prompts = append(provider.prompts, requestPrompt{prompt: builder.ToMCPPrompt(), handler: handler, completers: completers})
 	}
 	return provider, nil
 }
@@ -472,6 +539,28 @@ func (p *requestPromptProvider) GetPrompt(ctx context.Context, name string, args
 			return nil, mcplib.NewToolErrorInternal(result.callErr.Error())
 		}
 		return promptResponseOf(result.value)
+	}
+	return nil, mcplib.ErrUnknownPrompt
+}
+
+// CompletePrompt implements mcp.PromptCompletionProvider: it answers
+// completion/complete for the arguments of this request's prompts.
+func (p *requestPromptProvider) CompletePrompt(ctx context.Context, name string, req *mcplib.CompletionRequest) (*mcplib.CompletionResult, error) {
+	for _, pr := range p.prompts {
+		if pr.prompt.Name != name {
+			continue
+		}
+		declared := false
+		for _, a := range pr.prompt.Arguments {
+			if a.Name == req.Argument() {
+				declared = true
+				break
+			}
+		}
+		if !declared {
+			return nil, mcplib.NewToolErrorInvalidParams("unknown argument: " + req.Argument())
+		}
+		return runRequestCompleter(ctx, pr.completers[req.Argument()], req)
 	}
 	return nil, mcplib.ErrUnknownPrompt
 }

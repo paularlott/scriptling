@@ -23,6 +23,9 @@ type resourceMetaTOML struct {
 	Description string              `toml:"description"`
 	MimeType    string              `toml:"mimeType"`
 	UI          *resourceUIMetaTOML `toml:"ui"`
+	// Complete maps a resource template's {variable} to a "module.function"
+	// completer for completion/complete.
+	Complete map[string]string `toml:"complete"`
 }
 
 // resourceUIMetaTOML mirrors the optional [ui] table of a resource's
@@ -105,6 +108,8 @@ type promptMetaTOML struct {
 		Name        string `toml:"name"`
 		Description string `toml:"description"`
 		Required    bool   `toml:"required"`
+		// Complete is a "module.function" completer for completion/complete.
+		Complete string `toml:"complete"`
 	} `toml:"arguments"`
 }
 
@@ -119,10 +124,16 @@ func parsePromptMetadata(data []byte) (string, []PromptArgument, error) {
 	}
 	var args []PromptArgument
 	for _, a := range m.Arguments {
+		if a.Complete != "" {
+			if _, _, ok := SplitHandlerRef(a.Complete); !ok {
+				return "", nil, fmt.Errorf("argument %q: complete must be a \"module.function\" reference, got %q", a.Name, a.Complete)
+			}
+		}
 		args = append(args, PromptArgument{
 			Name:        a.Name,
 			Description: a.Description,
 			Required:    a.Required,
+			Complete:    a.Complete,
 		})
 	}
 	return m.Description, args, nil
@@ -145,6 +156,7 @@ type scannedResource struct {
 	Description string
 	MimeType    string
 	UIMeta      *mcplib.UIResourceMeta // from the sidecar's [ui] table, or nil
+	Completers  map[string]string      // template variable -> "module.function", from the sidecar's [complete] table
 	Template    bool
 	FilePath    string // path within the scanned FS (slash-separated)
 	Vars        []string
@@ -216,6 +228,8 @@ func ScanResourcesFS(fsys fs.FS) ([]scannedResource, error) {
 			// to the full URI as the name with no description.
 			name, desc, mimeType := uri, "", ""
 			var uiMeta *mcplib.UIResourceMeta
+			var completers map[string]string
+			vars := extractTemplateVars(rest)
 			if meta, found, err := readMetadataSibling(fsys, rel); err != nil {
 				return err
 			} else if found {
@@ -225,6 +239,15 @@ func ScanResourcesFS(fsys fs.FS) ([]scannedResource, error) {
 				desc = meta.Description
 				mimeType = meta.MimeType
 				uiMeta = meta.UI.toUIResourceMeta()
+				for v, ref := range meta.Complete {
+					if !containsName(vars, v) {
+						return fmt.Errorf("resource %s: [complete] names %q, which is not a variable of the template", uri, v)
+					}
+					if _, _, ok := SplitHandlerRef(ref); !ok {
+						return fmt.Errorf("resource %s: [complete] %s must be a \"module.function\" reference, got %q", uri, v, ref)
+					}
+				}
+				completers = meta.Complete
 			}
 			// The "ui" scheme is this project's convention for MCP Apps views
 			// (see docs/guides/mcp-apps.md); the spec MUSTs their mimeType be
@@ -241,9 +264,10 @@ func ScanResourcesFS(fsys fs.FS) ([]scannedResource, error) {
 				Description: desc,
 				MimeType:    mimeType,
 				UIMeta:      uiMeta,
+				Completers:  completers,
 				Template:    true,
 				FilePath:    rel,
-				Vars:        extractTemplateVars(rest),
+				Vars:        vars,
 			})
 		case hasVar && !isPy:
 			// A template pattern with no .py handler — nothing can serve it.
@@ -353,6 +377,10 @@ type PromptArgument struct {
 	Name        string
 	Description string
 	Required    bool
+	// Complete is the argument's completer for completion/complete: a
+	// function name in the decorated file, or a "module.function"
+	// reference. Empty means no suggestions.
+	Complete string
 }
 
 // scannedPrompt is one prompt discovered in the prompts folder.

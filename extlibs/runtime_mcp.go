@@ -27,7 +27,7 @@ var MCPSubLibrary = func() *object.Library {
 	functions := map[string]*object.Builtin{
 		"tool": {
 			Fn: mcpToolDecorator,
-			HelpText: `tool(description, params=None, keywords=None, discoverable=False, ui=None, icons=None) - Decorator for MCP tools
+			HelpText: `tool(description, params=None, keywords=None, discoverable=False, ui=None, icons=None, title=None, read_only=None, destructive=None, idempotent=None, open_world=None) - Decorator for MCP tools
 
 Decorates a function to register it as an MCP tool. The function's parameters
 become the tool's input schema; the return value becomes the tool response.
@@ -51,6 +51,19 @@ Parameters:
     descriptor. Each element is a dict with a required "src" (str, an
     https:// URL or data: URI) and optional "mimeType", "sizes" (list of
     strings like "48x48"), and "theme" ("light" or "dark").
+  title (str, optional): Human-readable display name for the tool, shown by
+    clients in place of the function name
+  read_only (bool, optional): True if the tool does not modify its environment
+  destructive (bool, optional): True if the tool may perform destructive
+    updates (deleting or overwriting); False if it only adds
+  idempotent (bool, optional): True if calling it again with the same
+    arguments has no further effect
+  open_world (bool, optional): True if the tool talks to external systems
+    (the web, third-party APIs); False if it stays within a closed domain
+  The four hints become the tool's annotations in tools/list. Leave one out
+  (or pass None) and clients assume the spec default: not read-only, possibly
+  destructive, not idempotent, open world. They tell clients how careful to
+  be (e.g. confirm before a destructive call); they are not access control.
 
 Returns:
   A decorator function that registers the tool and returns the original function.
@@ -72,6 +85,11 @@ Example:
   def greet(name, times=1):
       return "\n".join(f"Hello, {name}!" for _ in range(times))
 
+  @mcp.tool(description="Delete a note", title="Delete Note",
+            destructive=True, idempotent=True, open_world=False)
+  def delete_note(id):
+      ...
+
   @mcp.tool(description="Get the sales report",
             ui={"resourceUri": "ui://sales-dashboard/dashboard.html"},
             icons=[{"src": "https://example.com/sales.png", "mimeType": "image/png"}])
@@ -85,7 +103,7 @@ Example:
 		},
 		"resource": {
 			Fn: mcpResourceDecorator,
-			HelpText: `resource(uri, name="", description="", mime_type="", template=False) - Decorator for MCP resources
+			HelpText: `resource(uri, name="", description="", mime_type="", template=False, complete=None) - Decorator for MCP resources
 
 Decorates a function to register it as an MCP resource (or, with template=True,
 a URI template like "user://docs/{path}"). For a static resource the function
@@ -101,6 +119,13 @@ Parameters:
     "application/json" for dict/list results). Ignored for a "ui://" uri — the
     MCP Apps extension MUSTs that exact mimeType, so it's always set for you
   template (bool, optional): Treat uri as a {var} URI template (default: False)
+  complete (dict, optional): Completers for completion/complete, keyed by
+    template variable: {"path": complete_path}. Each value is a function in
+    this file (or its name), or a "module.function" string. A completer is
+    called as fn(argument, value, context) — the variable's name, the partial
+    value typed so far, and a dict of the arguments already filled in — and
+    returns a list of suggestion strings (the client gets at most 100).
+    Templates only.
 
 Returns:
   A decorator function that registers the resource and returns the original function.
@@ -112,13 +137,17 @@ Example:
   def app_config():
       return {"version": "1.0", "debug": False}
 
-  @mcp.resource("user://docs/{path}", template=True, mime_type="text/markdown")
+  def complete_path(argument, value, context):
+      return [p for p in ["intro", "install", "usage"] if p.startswith(value)]
+
+  @mcp.resource("user://docs/{path}", template=True, mime_type="text/markdown",
+                complete={"path": complete_path})
   def user_doc(path):
       return "# doc " + path`,
 		},
 		"prompt": {
 			Fn: mcpPromptDecorator,
-			HelpText: `prompt(description="", arguments=None) - Decorator for MCP prompts
+			HelpText: `prompt(description="", arguments=None, complete=None) - Decorator for MCP prompts
 
 Decorates a function to register it as an MCP prompt under the function's own
 name. The function's parameters become the prompt's arguments and are passed
@@ -131,6 +160,13 @@ Parameters:
   arguments (list, optional): Argument metadata dicts with "name",
     "description" and "required". Inferred from the function signature when
     omitted.
+  complete (dict, optional): Completers for completion/complete, keyed by
+    argument name: {"language": complete_language}. Each value is a function
+    in this file (or its name), or a "module.function" string. A completer
+    is called as fn(argument, value, context) — the argument's name, the
+    partial value typed so far, and a dict of the arguments already filled
+    in — and returns a list of suggestion strings (the client gets at most
+    100). An exception becomes an error for that completion request.
 
 Returns:
   A decorator function that registers the prompt and returns the original function.
@@ -142,7 +178,10 @@ Example:
   def summarise(text):
       return "Summarise the following:\n\n" + text
 
-  @mcp.prompt(description="Review code")
+  def complete_language(argument, value, context):
+      return [l for l in ["go", "python", "rust"] if l.startswith(value)]
+
+  @mcp.prompt(description="Review code", complete={"language": complete_language})
   def review(language, code):
       return {"messages": [
           {"role": "user", "content": "Review this " + language + " code:"},
@@ -187,6 +226,7 @@ Example:
 	for name, builtin := range requestRegistrationBuiltins() {
 		functions[name] = builtin
 	}
+	functions["notify_resource_updated"] = notifyResourceUpdatedBuiltin()
 	functions["transport"] = newTransportBuiltin(`transport() - How the MCP server is being served: "http", "stdio" or None
 
 Lets one setup script work in every mode: over stdio the middleware never
@@ -206,12 +246,20 @@ not being served at all.`)
 	return object.NewLibrary(RuntimeMCPLibraryName, functions, nil, "MCP tool, resource, and prompt registration via decorators")
 }()
 
+// toolHintKwargs are the behaviour-hint keywords of mcp.tool and
+// register_request_tool. They become the tool's annotations (readOnlyHint,
+// destructiveHint, idempotentHint, openWorldHint) in tools/list.
+var toolHintKwargs = []string{"read_only", "destructive", "idempotent", "open_world"}
+
 // mcpToolDecorator implements the runtime.mcp.tool() builtin. It accepts the
-// decorator kwargs (description, params, keywords, discoverable) and returns a
+// decorator kwargs (description, params, keywords, discoverable, ui, icons,
+// title and the behaviour hints) and returns a
 // wrapper function that, when called with the decorated function, records the
 // registration in __mcp_registry and returns the function unchanged.
 func mcpToolDecorator(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-	// mcp.tool(description, params=None, keywords=None, discoverable=False)
+	// mcp.tool(description, params=None, keywords=None, discoverable=False,
+	//          ui=None, icons=None, title=None, read_only=None,
+	//          destructive=None, idempotent=None, open_world=None)
 	// First positional arg is the description (required).
 	if err := errors.MinArgs(args, 1); err != nil {
 		return err
@@ -256,6 +304,33 @@ func mcpToolDecorator(ctx context.Context, kwargs object.Kwargs, args ...object.
 		iconsObj = ic
 	}
 
+	// title and the behaviour hints are optional: None (or leaving them out)
+	// leaves them unset, so each hint takes the spec default.
+	var titleObj object.Object
+	if t := kwargs.Get("title"); t != nil {
+		switch t.(type) {
+		case *object.Null:
+		case *object.String:
+			titleObj = t
+		default:
+			return errors.NewError("mcp.tool: title must be a string, got %s", t.Type())
+		}
+	}
+	hints := map[string]object.Object{}
+	for _, key := range toolHintKwargs {
+		h := kwargs.Get(key)
+		if h == nil {
+			continue
+		}
+		switch h.(type) {
+		case *object.Null:
+		case *object.Boolean:
+			hints[key] = h
+		default:
+			return errors.NewError("mcp.tool: %s must be a bool, got %s", key, h.Type())
+		}
+	}
+
 	// Return a wrapper builtin that accepts the function being decorated.
 	return &object.Builtin{
 		Fn: func(ctx context.Context, _ object.Kwargs, wrapperArgs ...object.Object) object.Object {
@@ -297,6 +372,12 @@ func mcpToolDecorator(ctx context.Context, kwargs object.Kwargs, args ...object.
 			}
 			if iconsObj != nil {
 				entry.SetByString("icons", iconsObj)
+			}
+			if titleObj != nil {
+				entry.SetByString("title", titleObj)
+			}
+			for key, h := range hints {
+				entry.SetByString(key, h)
 			}
 
 			// Append to __mcp_registry in the current environment.
@@ -400,6 +481,13 @@ func mcpResourceDecorator(ctx context.Context, kwargs object.Kwargs, args ...obj
 			template = b
 		}
 	}
+	completeObj, errObj := completeKwarg("mcp.resource", kwargs)
+	if errObj != nil {
+		return errObj
+	}
+	if completeObj != nil && !template {
+		return errors.NewError("mcp.resource: complete needs template=True (a static resource has no variables to complete)")
+	}
 
 	return &object.Builtin{
 		Fn: func(ctx context.Context, _ object.Kwargs, wrapperArgs ...object.Object) object.Object {
@@ -417,12 +505,33 @@ func mcpResourceDecorator(ctx context.Context, kwargs object.Kwargs, args ...obj
 				"template":    object.NewBoolean(template),
 				"func":        object.NewString(f.Name),
 			})
+			if completeObj != nil {
+				entry.SetByString("complete", completeObj)
+			}
 
 			if errObj := appendRegistryEntry("mcp.resource", ctx, entry); errObj != nil {
 				return errObj
 			}
 			return wrapperArgs[0]
 		},
+	}
+}
+
+// completeKwarg reads the optional complete= keyword of mcp.prompt and
+// mcp.resource: a dict of argument (or template variable) name to completer.
+// The names and completers are checked when the server scans the file.
+func completeKwarg(fn string, kwargs object.Kwargs) (object.Object, object.Object) {
+	c := kwargs.Get("complete")
+	if c == nil {
+		return nil, nil
+	}
+	switch c.(type) {
+	case *object.Null:
+		return nil, nil
+	case *object.Dict:
+		return c, nil
+	default:
+		return nil, errors.NewError("%s: complete must be a dict of argument name to completer, got %s", fn, c.Type())
 	}
 }
 
@@ -447,6 +556,10 @@ func mcpPromptDecorator(ctx context.Context, kwargs object.Kwargs, args ...objec
 		}
 		argumentsObj = a
 	}
+	completeObj, errObj := completeKwarg("mcp.prompt", kwargs)
+	if errObj != nil {
+		return errObj
+	}
 
 	return &object.Builtin{
 		Fn: func(ctx context.Context, _ object.Kwargs, wrapperArgs ...object.Object) object.Object {
@@ -463,6 +576,9 @@ func mcpPromptDecorator(ctx context.Context, kwargs object.Kwargs, args ...objec
 			})
 			if argumentsObj != nil {
 				entry.SetByString("arguments", argumentsObj)
+			}
+			if completeObj != nil {
+				entry.SetByString("complete", completeObj)
 			}
 
 			if errObj := appendRegistryEntry("mcp.prompt", ctx, entry); errObj != nil {

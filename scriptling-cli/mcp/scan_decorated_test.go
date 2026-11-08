@@ -837,3 +837,33 @@ mcp.resource("config://x")
 		t.Fatalf("no resource should be registered: %+v", regs.Resources)
 	}
 }
+
+func TestScanDecoratedRegistrations_CompleteErrors(t *testing.T) {
+	for label, src := range map[string]string{
+		"unknown prompt argument": `
+def c(argument, value, context):
+    return []
+
+@mcp.prompt(description="d", complete={"nope": c})
+def p(x):
+    return x
+`,
+		"undefined completer": `
+@mcp.prompt(description="d", complete={"x": "missing"})
+def p(x):
+    return x
+`,
+		"unknown template variable": `
+@mcp.resource("docs://{page}", template=True, complete={"nope": "m.f"})
+def r(page):
+    return page
+`,
+	} {
+		t.Run(label, func(t *testing.T) {
+			_, err := ScanDecoratedRegistrations([]byte("import scriptling.runtime.mcp as mcp\n"+src), testHandlerConfig())
+			if err == nil {
+				t.Fatal("expected a scan error")
+			}
+		})
+	}
+}

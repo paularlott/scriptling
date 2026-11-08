@@ -460,6 +460,24 @@ a clear error message.
 - **Native mode** (default): Tool appears in `tools/list` and can be called directly
 - **Discovery mode** (`discoverable = true`): Tool is hidden from `tools/list`, searchable via `tool_search`, and callable via `execute_tool`
 
+**Title and Behaviour Hints:**
+
+Optional keys that become the tool's `title` and `annotations` in `tools/list`:
+
+```toml
+title = "Delete Note"   # Human-readable display name
+read_only = false       # readOnlyHint: does not modify its environment
+destructive = true      # destructiveHint: may delete or overwrite data
+idempotent = true       # idempotentHint: repeating a call has no further effect
+open_world = false      # openWorldHint: talks to external systems
+```
+
+Leave a hint out and clients assume the spec default (not read-only, possibly
+destructive, not idempotent, open world). Hints tell clients how careful to be,
+for example to ask before a destructive call; they are not access control.
+The same options are available as keywords on `@mcp.tool(...)` and
+`mcp.register_request_tool(...)`.
+
 ##### Script File (`.py`)
 
 Implements the tool logic using the `scriptling.mcp.tool` library:

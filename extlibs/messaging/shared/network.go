@@ -2,6 +2,7 @@ package shared
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -21,10 +22,11 @@ import (
 //     other; an operator who uses messaging under a strict allow_hosts lists
 //     the platform's hosts there.
 type Network struct {
-	domains []string
-	guard   *netsecurity.Guard // nil = no network policy
-	guarded *http.Client
-	dialer  *websocket.Dialer
+	domains  []string
+	gateways []string           // extra hosts gateway connections may use (see WithGateways)
+	guard    *netsecurity.Guard // nil = no network policy
+	guarded  *http.Client
+	dialer   *websocket.Dialer
 }
 
 // NewNetwork builds the rules for a platform whose hosts are the given domains
@@ -61,7 +63,20 @@ func (n *Network) IsPlatform(rawURL string) bool {
 		return false
 	}
 	host := strings.TrimRight(strings.ToLower(u.Hostname()), ".")
-	for _, d := range n.domains {
+	return hostIn(host, n.domains)
+}
+
+// WithGateways adds domains (and their subdomains) that gateway connections
+// may dial besides the platform's own: a platform whose WebSocket gateway
+// lives on another domain (Discord's discord.gg) lists it here. Unlike the
+// platform domains, these never receive the bot credential over HTTP.
+func (n *Network) WithGateways(domains ...string) *Network {
+	n.gateways = append(n.gateways, domains...)
+	return n
+}
+
+func hostIn(host string, domains []string) bool {
+	for _, d := range domains {
 		if host == d || strings.HasSuffix(host, "."+d) {
 			return true
 		}
@@ -80,18 +95,31 @@ func (n *Network) Client(plain *http.Client) *http.Client {
 
 // DialWebsocket opens a gateway connection to rawURL, through the network
 // policy when one is configured.
+//
+// The URL comes from the platform's API (Discord's /gateway/bot and
+// resume_gateway_url, Slack's apps.connections.open), and the bot then
+// authenticates over the connection, so a tampered or spoofed response must
+// not steer it elsewhere: only wss:// URLs on the platform's own domains or
+// its gateway domains (WithGateways) are dialled, policy or not.
 func (n *Network) DialWebsocket(ctx context.Context, rawURL string) (*websocket.Conn, error) {
-	if n == nil || n.guard == nil {
-		conn, _, err := websocket.DefaultDialer.DialContext(ctx, rawURL, nil)
-		return conn, err
+	if n == nil {
+		return nil, fmt.Errorf("gateway: no network configured")
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, err
 	}
+	host := strings.TrimRight(strings.ToLower(u.Hostname()), ".")
+	if u.Scheme != "wss" || !(hostIn(host, n.domains) || hostIn(host, n.gateways)) {
+		return nil, fmt.Errorf("gateway: refusing to connect to %q: not a wss:// URL on the platform's own hosts", u.Redacted())
+	}
+	if n.guard == nil {
+		conn, _, err := websocket.DefaultDialer.DialContext(ctx, u.String(), nil)
+		return conn, err
+	}
 	if err := n.guard.CheckURL(u); err != nil {
 		return nil, err
 	}
-	conn, _, err := n.dialer.DialContext(ctx, rawURL, nil)
+	conn, _, err := n.dialer.DialContext(ctx, u.String(), nil)
 	return conn, err
 }

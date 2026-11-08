@@ -35,11 +35,16 @@ type discordClient struct {
 // ones sent the bot token.
 var platformDomains = []string{"discord.com", "discordapp.com", "discordapp.net"}
 
+// gatewayDomains are where Discord's WebSocket gateway lives
+// (wss://gateway.discord.gg); they may be dialled but never get the bot
+// credential over HTTP.
+var gatewayDomains = []string{"discord.gg"}
+
 func newClient(token string, log logger.Logger) *discordClient {
 	c := &discordClient{
 		token:      token,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
-		network:    shared.NewNetwork(platformDomains, 30*time.Second),
+		network:    shared.NewNetwork(platformDomains, 30*time.Second).WithGateways(gatewayDomains...),
 		log:        log,
 	}
 	c.Bot = shared.NewBot(c)

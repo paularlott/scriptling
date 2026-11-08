@@ -325,6 +325,60 @@ def bad():
 	}
 }
 
+func TestMCPToolDecoratorTitleAndHints(t *testing.T) {
+	p := newTestScriptling()
+	_, err := p.Eval(`
+import scriptling.runtime.mcp as mcp
+
+@mcp.tool("Delete a note", title="Delete Note", destructive=True, idempotent=False, read_only=None)
+def delete_note(id):
+    return None
+`)
+	if err != nil {
+		t.Fatalf("eval: %v", err)
+	}
+	registry, _ := p.GetVarAsObject(extlibs.MCPRegistryVar)
+	list, ok := registry.(*object.List)
+	if !ok || len(list.Elements) != 1 {
+		t.Fatalf("registry = %#v", registry)
+	}
+	entry := list.Elements[0].(*object.Dict)
+	assertDictString(t, entry, "title", "Delete Note")
+	for key, want := range map[string]bool{"destructive": true, "idempotent": false} {
+		pair, ok := entry.GetByString(key)
+		if !ok {
+			t.Fatalf("%s missing from entry", key)
+		}
+		if b, _ := pair.Value.AsBool(); b != want {
+			t.Errorf("%s = %v, want %v", key, b, want)
+		}
+	}
+	// None and absent hints are left out of the entry (unset).
+	for _, key := range []string{"read_only", "open_world"} {
+		if _, ok := entry.GetByString(key); ok {
+			t.Errorf("%s present in entry, want unset", key)
+		}
+	}
+}
+
+func TestMCPToolDecoratorTitleAndHints_WrongTypeIsError(t *testing.T) {
+	for _, kw := range []string{`title=42`, `read_only="yes"`, `destructive=1`, `idempotent=[True]`, `open_world="false"`} {
+		t.Run(kw, func(t *testing.T) {
+			p := newTestScriptling()
+			_, err := p.Eval(`
+import scriptling.runtime.mcp as mcp
+
+@mcp.tool("Bad tool", ` + kw + `)
+def bad():
+    return None
+`)
+			if err == nil {
+				t.Fatalf("expected an error for %s", kw)
+			}
+		})
+	}
+}
+
 func TestMCPToolDecoratorViaParentImport(t *testing.T) {
 	// Test that runtime.mcp.tool works via `import scriptling.runtime as runtime`
 	p := newTestScriptling()

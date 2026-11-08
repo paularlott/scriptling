@@ -213,6 +213,9 @@ func decodeRegistryEntry(entry *object.Dict, src []byte, p *scriptling.Scriptlin
 		UI:           ui,
 		Icons:        icons,
 	}
+	if err := applyToolTitleAndHints(meta, entry); err != nil {
+		return nil, fmt.Errorf("tool %q: %w", name, err)
+	}
 
 	return &DecoratedTool{
 		Name:     name,
@@ -480,6 +483,52 @@ func dictGetIcons(d *object.Dict, key string) ([]mcplib.Icon, error) {
 	return icons, nil
 }
 
+// toolHintKeys maps the snake_case registration keys of a tool's behaviour
+// hints to the field of ToolMetadata each one sets.
+var toolHintKeys = []struct {
+	key   string
+	field func(*toolmetadata.ToolMetadata) **bool
+}{
+	{"read_only", func(m *toolmetadata.ToolMetadata) **bool { return &m.ReadOnly }},
+	{"destructive", func(m *toolmetadata.ToolMetadata) **bool { return &m.Destructive }},
+	{"idempotent", func(m *toolmetadata.ToolMetadata) **bool { return &m.Idempotent }},
+	{"open_world", func(m *toolmetadata.ToolMetadata) **bool { return &m.OpenWorld }},
+}
+
+// applyToolTitleAndHints reads the optional "title" (str) and the behaviour
+// hints "read_only", "destructive", "idempotent" and "open_world" (bool) of
+// d into meta; they become the tool's title and annotations in tools/list.
+// A missing key or None leaves the value unset, so a hint takes the spec
+// default (not read-only, possibly destructive, not idempotent, open world).
+// Any other type is an error. Used by both the decorated (@mcp.tool) and
+// register_request_tool paths; the .toml format decodes its own.
+func applyToolTitleAndHints(meta *toolmetadata.ToolMetadata, d *object.Dict) error {
+	if pair, ok := d.GetByString("title"); ok {
+		switch v := pair.Value.(type) {
+		case *object.Null:
+		case *object.String:
+			meta.Title = v.StringValue()
+		default:
+			return fmt.Errorf("\"title\" must be a string, got %s", pair.Value.Type())
+		}
+	}
+	for _, h := range toolHintKeys {
+		pair, ok := d.GetByString(h.key)
+		if !ok {
+			continue
+		}
+		switch v := pair.Value.(type) {
+		case *object.Null:
+		case *object.Boolean:
+			b, _ := v.AsBool()
+			*h.field(meta) = &b
+		default:
+			return fmt.Errorf("%q must be a bool, got %s", h.key, pair.Value.Type())
+		}
+	}
+	return nil
+}
+
 // DecoratedResource is a resource registered via @mcp.resource() in a .py file.
 type DecoratedResource struct {
 	URI         string
@@ -487,8 +536,11 @@ type DecoratedResource struct {
 	Description string
 	MimeType    string
 	Template    bool
-	FuncName    string
-	Source      []byte
+	// Completers maps a template variable to its completer: a function in
+	// Source, or a "module.function" reference.
+	Completers map[string]string
+	FuncName   string
+	Source     []byte
 }
 
 // DecoratedPrompt is a prompt registered via @mcp.prompt() in a .py file.
@@ -695,7 +747,20 @@ func decodeResourceEntry(entry *object.Dict, src []byte, p *scriptling.Scriptlin
 		return nil, fmt.Errorf("resource %q: %w", uri, err)
 	}
 
+	var vars []string
+	if template {
+		vars = templateVarsOf(uri)
+	}
+	completers, err := dictGetCompleters(entry, vars)
+	if err != nil {
+		return nil, fmt.Errorf("resource %q: %w", uri, err)
+	}
+	if err := checkCompleterNames(completers, p); err != nil {
+		return nil, fmt.Errorf("resource %q: %w", uri, err)
+	}
+
 	return &DecoratedResource{
+		Completers:  completers,
 		URI:         uri,
 		Name:        name,
 		Description: dictGetString(entry, "description"),
@@ -725,11 +790,7 @@ func crossCheckResourceSignature(uri, funcName string, template bool, p *scriptl
 		return nil
 	}
 
-	path := uri
-	if idx := strings.Index(uri, "://"); idx >= 0 {
-		path = uri[idx+3:]
-	}
-	vars := extractTemplateVars(strings.Split(path, "/"))
+	vars := templateVarsOf(uri)
 	isVar := map[string]bool{}
 	for _, v := range vars {
 		isVar[v] = true
@@ -743,6 +804,15 @@ func crossCheckResourceSignature(uri, funcName string, template bool, p *scriptl
 		}
 	}
 	return nil
+}
+
+// templateVarsOf returns the {var} names of a URI template.
+func templateVarsOf(uri string) []string {
+	path := uri
+	if idx := strings.Index(uri, "://"); idx >= 0 {
+		path = uri[idx+3:]
+	}
+	return extractTemplateVars(strings.Split(path, "/"))
 }
 
 // sigParam is one parameter of a scanned function signature.
@@ -835,6 +905,21 @@ func decodePromptEntry(entry *object.Dict, src []byte, p *scriptling.Scriptling)
 		for _, sp := range sig {
 			args = append(args, PromptArgument{Name: sp.name, Required: !sp.hasDefault})
 		}
+	}
+
+	argNames := make([]string, len(args))
+	for i, a := range args {
+		argNames[i] = a.Name
+	}
+	completers, err := dictGetCompleters(entry, argNames)
+	if err != nil {
+		return nil, fmt.Errorf("prompt %q: %w", name, err)
+	}
+	if err := checkCompleterNames(completers, p); err != nil {
+		return nil, fmt.Errorf("prompt %q: %w", name, err)
+	}
+	for i := range args {
+		args[i].Complete = completers[args[i].Name]
 	}
 
 	return &DecoratedPrompt{

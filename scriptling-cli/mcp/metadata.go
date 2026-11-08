@@ -18,7 +18,17 @@ type toolMetaTOML struct {
 	Description  string   `toml:"description"`
 	Keywords     []string `toml:"keywords"`
 	Discoverable bool     `toml:"discoverable"`
-	Parameters   []struct {
+	// Title is the tool's human-readable display name (the spec's
+	// Tool.title).
+	Title string `toml:"title"`
+	// The behaviour hints (the spec's Tool.annotations). A key left out
+	// leaves the hint unset, so clients assume the spec default (not
+	// read-only, possibly destructive, not idempotent, open world).
+	ReadOnly    *bool `toml:"read_only"`
+	Destructive *bool `toml:"destructive"`
+	Idempotent  *bool `toml:"idempotent"`
+	OpenWorld   *bool `toml:"open_world"`
+	Parameters  []struct {
 		Name        string `toml:"name"`
 		Type        string `toml:"type"`
 		Description string `toml:"description"`
@@ -65,6 +75,11 @@ func parseToolMetadata(data []byte) (*toolmetadata.ToolMetadata, error) {
 		Description:  m.Description,
 		Keywords:     m.Keywords,
 		Discoverable: m.Discoverable,
+		Title:        m.Title,
+		ReadOnly:     m.ReadOnly,
+		Destructive:  m.Destructive,
+		Idempotent:   m.Idempotent,
+		OpenWorld:    m.OpenWorld,
 	}
 	for _, p := range m.Parameters {
 		meta.Parameters = append(meta.Parameters, toolmetadata.ToolParameter{

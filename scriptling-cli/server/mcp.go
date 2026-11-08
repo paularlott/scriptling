@@ -15,6 +15,7 @@ import (
 	"github.com/paularlott/mcp/toolmetadata"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/build"
+	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/extlibs/mcp"
 	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
 )
@@ -30,6 +31,10 @@ func (s *Server) setupMCP() error {
 	}
 
 	s.mcpHandler.server.Store(server)
+	// Scripts tell subscribed clients a resource changed through
+	// scriptling.runtime.mcp.notify_resource_updated(). The server is
+	// mutated in place on reload, so this stays valid.
+	extlibs.SetMCPResourceNotifier(server.NotifyResourceUpdated)
 
 	// Watch every configured source folder so any change triggers a reload.
 	// Tools and prompts are flat folders; resources and skills are trees
@@ -240,9 +245,9 @@ func (s *Server) registerToolsFromFS(server *mcp_lib.Server, fsys fs.FS, source 
 				Log.Warn("Skipping tool with missing script", "tool", entry.Name, "source", source)
 				continue
 			}
-			handler = mcpcli.BuildToolHandlerSource(entry.Source, cfg)
+			handler = mcpcli.BuildToolHandlerSourceParams(entry.Source, entry.Meta.Parameters, cfg)
 		} else {
-			handler = mcpcli.BuildToolHandlerFunc(entry.Source, entry.FuncName, cfg)
+			handler = mcpcli.BuildToolHandlerFuncParams(entry.Source, entry.FuncName, entry.Meta.Parameters, cfg)
 		}
 		server.RegisterTool(tool, handler)
 		out.tools = append(out.tools, entry.Name)
@@ -260,10 +265,11 @@ func (s *Server) registerToolsFromFS(server *mcp_lib.Server, fsys fs.FS, source 
 	for _, e := range entries.Resources {
 		handler := mcpcli.BuildResourceFuncHandler(e.Source, e.FuncName, e.URI, e.MimeType, cfg)
 		if e.Template {
-			server.RegisterResourceTemplate(
-				mcp_lib.NewResourceTemplate(e.URI, e.Name, e.Description, resourceEffectiveMIME(e.URI, e.MimeType)),
-				handler,
-			)
+			builder := mcp_lib.NewResourceTemplate(e.URI, e.Name, e.Description, resourceEffectiveMIME(e.URI, e.MimeType))
+			if err := addTemplateCompleters(builder, e.Source, e.Completers, cfg); err != nil {
+				return nil, fmt.Errorf("resource template %s: %w", e.URI, err)
+			}
+			server.RegisterResourceTemplate(builder, handler)
 			out.templateResources = append(out.templateResources, e.URI)
 			Log.Info("Registered MCP resource template", "uri", e.URI, "source", source)
 		} else {
@@ -277,9 +283,9 @@ func (s *Server) registerToolsFromFS(server *mcp_lib.Server, fsys fs.FS, source 
 	}
 
 	for _, e := range entries.Prompts {
-		builder := mcp_lib.NewPrompt(e.Name, e.Description)
-		for _, arg := range e.Arguments {
-			builder.Argument(arg.Name, arg.Description, arg.Required)
+		builder, err := promptBuilder(e.Name, e.Description, e.Arguments, e.Source, cfg)
+		if err != nil {
+			return nil, err
 		}
 		server.RegisterPrompt(builder, mcpcli.BuildPromptFuncHandler(e.Source, e.FuncName, cfg))
 		out.prompts = append(out.prompts, e.Name)
@@ -304,6 +310,46 @@ func (s *Server) registerToolsFromFS(server *mcp_lib.Server, fsys fs.FS, source 
 	}
 
 	return out, nil
+}
+
+// promptBuilder declares a prompt and its arguments, attaching each
+// argument's completer (completion/complete). src is the decorated file a
+// plain completer name refers to; nil for TOML prompts, whose completers are
+// always "module.function" references.
+func promptBuilder(name, description string, args []mcpcli.PromptArgument, src []byte, cfg mcpcli.HandlerConfig) (*mcp_lib.PromptBuilder, error) {
+	builder := mcp_lib.NewPrompt(name, description)
+	for _, arg := range args {
+		builder.Argument(arg.Name, arg.Description, arg.Required)
+		if arg.Complete == "" {
+			continue
+		}
+		completer, err := mcpcli.BuildCompleter(src, arg.Complete, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("prompt %s: argument %s: %w", name, arg.Name, err)
+		}
+		builder.Complete(completer)
+	}
+	return builder, nil
+}
+
+// addTemplateCompleters attaches a completer to each named variable of a
+// resource template; src as for promptBuilder.
+func addTemplateCompleters(builder *mcp_lib.ResourceTemplateBuilder, src []byte, completers map[string]string, cfg mcpcli.HandlerConfig) (err error) {
+	// Complete panics on a name the template doesn't contain; the scanners
+	// already check, so this only turns a disagreement into an error.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%v", r)
+		}
+	}()
+	for variable, ref := range completers {
+		completer, err := mcpcli.BuildCompleter(src, ref, cfg)
+		if err != nil {
+			return fmt.Errorf("variable %s: %w", variable, err)
+		}
+		builder.Complete(variable, completer)
+	}
+	return nil
 }
 
 // resourceEffectiveMIME resolves a decorated resource's content type: the
@@ -333,10 +379,11 @@ func (s *Server) registerResourcesFromFS(server *mcp_lib.Server, fsys fs.FS, sou
 			if readErr != nil {
 				return nil, nil, fmt.Errorf("failed to read resource template %s: %w", e.URI, readErr)
 			}
-			server.RegisterResourceTemplate(
-				mcp_lib.NewResourceTemplate(e.URI, e.Name, e.Description, e.MimeType),
-				mcpcli.BuildResourceScriptHandlerSource(src, e.MimeType, cfg),
-			)
+			builder := mcp_lib.NewResourceTemplate(e.URI, e.Name, e.Description, e.MimeType)
+			if err := addTemplateCompleters(builder, nil, e.Completers, cfg); err != nil {
+				return nil, nil, fmt.Errorf("resource template %s: %w", e.URI, err)
+			}
+			server.RegisterResourceTemplate(builder, mcpcli.BuildResourceScriptHandlerSource(src, e.MimeType, cfg))
 			templateKeys = append(templateKeys, e.URI)
 			Log.Info("Registered MCP resource template", "uri", e.URI, "source", source)
 		} else {
@@ -379,9 +426,9 @@ func (s *Server) registerPromptsFromFS(server *mcp_lib.Server, fsys fs.FS, sourc
 			}
 			handler = mcpcli.BuildPromptScriptHandlerSource(src, cfg)
 		}
-		builder := mcp_lib.NewPrompt(e.Name, e.Description)
-		for _, arg := range e.Arguments {
-			builder.Argument(arg.Name, arg.Description, arg.Required)
+		builder, err := promptBuilder(e.Name, e.Description, e.Arguments, nil, cfg)
+		if err != nil {
+			return nil, err
 		}
 		server.RegisterPrompt(builder, handler)
 		names = append(names, e.Name)

@@ -134,6 +134,49 @@ mimeType = "image/png"
 	})
 }
 
+func TestParseToolMetadata_TitleAndHints(t *testing.T) {
+	t.Run("title and some hints", func(t *testing.T) {
+		meta, err := parseToolMetadata([]byte(`description = "Delete a note"
+title = "Delete Note"
+destructive = true
+open_world = false
+`))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if meta.Title != "Delete Note" {
+			t.Errorf("Title = %q", meta.Title)
+		}
+		if meta.Destructive == nil || !*meta.Destructive {
+			t.Errorf("Destructive = %v, want true", meta.Destructive)
+		}
+		if meta.OpenWorld == nil || *meta.OpenWorld {
+			t.Errorf("OpenWorld = %v, want false", meta.OpenWorld)
+		}
+		if meta.ReadOnly != nil || meta.Idempotent != nil {
+			t.Errorf("ReadOnly = %v, Idempotent = %v, want both unset", meta.ReadOnly, meta.Idempotent)
+		}
+	})
+
+	t.Run("absent leaves everything unset", func(t *testing.T) {
+		meta, err := parseToolMetadata([]byte(`description = "d"`))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if meta.Title != "" || meta.ReadOnly != nil || meta.Destructive != nil || meta.Idempotent != nil || meta.OpenWorld != nil {
+			t.Errorf("meta = %+v, want no title or hints", meta)
+		}
+	})
+
+	for _, line := range []string{`title = 42`, `read_only = "yes"`, `destructive = 1`, `idempotent = [true]`, `open_world = "false"`} {
+		t.Run("wrong type: "+line, func(t *testing.T) {
+			if _, err := parseToolMetadata([]byte("description = \"d\"\n" + line + "\n")); err == nil {
+				t.Fatalf("expected an error for %s", line)
+			}
+		})
+	}
+}
+
 func TestParseToolMetadata(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -360,5 +403,22 @@ required = false
 
 	if _, _, err = parsePromptMetadata([]byte(`[[arguments]`)); err == nil {
 		t.Error("expected error for malformed toml")
+	}
+}
+
+func TestParsePromptMetadata_Complete(t *testing.T) {
+	_, args, err := parsePromptMetadata([]byte(`description = "d"
+[[arguments]]
+name = "lang"
+complete = "complib.langs"
+`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(args) != 1 || args[0].Complete != "complib.langs" {
+		t.Fatalf("args = %+v", args)
+	}
+	if _, _, err := parsePromptMetadata([]byte("[[arguments]]\nname = \"lang\"\ncomplete = \"langs\"\n")); err == nil {
+		t.Fatal("expected an error for a completer that isn't module.function")
 	}
 }

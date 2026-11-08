@@ -69,8 +69,31 @@ func TestNetworkDialWebsocket(t *testing.T) {
 	if _, err := strict.DialWebsocket(context.Background(), "wss://wss-primary.slack.com/link"); err == nil || !strings.Contains(err.Error(), "network policy") {
 		t.Fatalf("host outside allow_hosts: expected a policy refusal, got %v", err)
 	}
-	// Loopback IP literal: denied by the default policy rules.
-	if _, err := strict.DialWebsocket(context.Background(), "ws://127.0.0.1:1/"); err == nil || !strings.Contains(err.Error(), "network policy") {
-		t.Fatalf("IP literal: expected a policy refusal, got %v", err)
+	// Loopback IP literal: not a platform host, so refused before the policy.
+	if _, err := strict.DialWebsocket(context.Background(), "ws://127.0.0.1:1/"); err == nil || !strings.Contains(err.Error(), "refusing to connect") {
+		t.Fatalf("IP literal: expected a refusal, got %v", err)
+	}
+}
+
+// A gateway URL from a platform response is dialled only when it is wss://
+// on the platform's own or gateway domains, with or without a policy, so a
+// tampered response cannot send the bot's connection (and token) elsewhere.
+func TestNetworkDialWebsocketRefusesForeignURLs(t *testing.T) {
+	for _, n := range []*Network{
+		NewNetwork([]string{"discord.com"}, time.Second).WithGateways("discord.gg"),
+		NewNetwork([]string{"discord.com"}, time.Second, &netsecurity.Config{}).WithGateways("discord.gg"),
+	} {
+		for _, u := range []string{
+			"wss://evil.example/gateway",
+			"ws://gateway.discord.gg/?v=10",
+			"https://gateway.discord.gg/",
+			"wss://discord.gg.evil.example/",
+			"wss://127.0.0.1:1/",
+		} {
+			_, err := n.DialWebsocket(context.Background(), u)
+			if err == nil || !strings.Contains(err.Error(), "refusing to connect") {
+				t.Errorf("%s: expected a refusal, got %v", u, err)
+			}
+		}
 	}
 }

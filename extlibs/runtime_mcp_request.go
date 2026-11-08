@@ -40,11 +40,12 @@ func requestRegistrationBuiltins() map[string]*object.Builtin {
 					"name":    object.NewString(name),
 					"handler": object.NewString(handler),
 				})
-				copyOptionalKwargs(entry, kwargs, "description", "params", "keywords", "discoverable", "ui", "icons")
+				copyOptionalKwargs(entry, kwargs, "description", "params", "keywords", "discoverable", "ui", "icons", "title")
+				copyOptionalKwargs(entry, kwargs, toolHintKwargs...)
 				regs.AddTool(entry)
 				return &object.Null{}
 			},
-			HelpText: `register_request_tool(name, handler=..., description="", params=None, keywords=None, discoverable=False, ui=None, icons=None) - Register an MCP tool for this request
+			HelpText: `register_request_tool(name, handler=..., description="", params=None, keywords=None, discoverable=False, ui=None, icons=None, title=None, read_only=None, destructive=None, idempotent=None, open_world=None) - Register an MCP tool for this request
 
 handler (and every parameter after name) must be passed by keyword — only name is positional.
 
@@ -71,6 +72,13 @@ Parameters:
   icons (list, optional): Visual identifiers for this tool's tools/list
     descriptor. Each element is a dict with a required "src" (str) and
     optional "mimeType", "sizes" (list of strings), and "theme".
+  title (str, optional): Human-readable display name for the tool
+  read_only, destructive, idempotent, open_world (bool, optional): Behaviour
+    hints, published as the tool's annotations in tools/list. Leave one out
+    (or pass None) and clients assume the spec default: not read-only,
+    possibly destructive, not idempotent, open world. They tell clients how
+    careful to be; they are not access control. A non-bool value (or a
+    non-str title) fails the request.
 
 Only meaningful while serving MCP over HTTP (in middleware); returns an error
 otherwise. Inside the handler, mcp.tool.get_string() reads arguments and
@@ -113,11 +121,11 @@ Example:
 					"uri":     object.NewString(uri),
 					"handler": object.NewString(handler),
 				})
-				copyOptionalKwargs(entry, kwargs, "name", "description", "mime_type", "template")
+				copyOptionalKwargs(entry, kwargs, "name", "description", "mime_type", "template", "complete")
 				regs.AddResource(entry)
 				return &object.Null{}
 			},
-			HelpText: `register_request_resource(uri, handler=..., name="", description="", mime_type="", template=False) - Register an MCP resource for this request
+			HelpText: `register_request_resource(uri, handler=..., name="", description="", mime_type="", template=False, complete=None) - Register an MCP resource for this request
 
 handler (and every parameter after uri) must be passed by keyword — only uri is positional.
 
@@ -137,6 +145,9 @@ Parameters:
     for dict/list results). Ignored for a "ui://" uri — the MCP Apps
     extension MUSTs that exact mimeType, so it's always set for you
   template (bool, optional): Treat uri as a {var} URI template (default: False)
+  complete (dict, optional): Completers for completion/complete, keyed by
+    template variable, each a "module.function" string called as
+    fn(argument, value, context) and returning a list of suggestion strings
 
 Only meaningful while serving MCP over HTTP (in middleware); returns an error
 otherwise.
@@ -178,11 +189,11 @@ Example:
 					"name":    object.NewString(name),
 					"handler": object.NewString(handler),
 				})
-				copyOptionalKwargs(entry, kwargs, "description", "arguments")
+				copyOptionalKwargs(entry, kwargs, "description", "arguments", "complete")
 				regs.AddPrompt(entry)
 				return &object.Null{}
 			},
-			HelpText: `register_request_prompt(name, handler=..., description="", arguments=None) - Register an MCP prompt for this request
+			HelpText: `register_request_prompt(name, handler=..., description="", arguments=None, complete=None) - Register an MCP prompt for this request
 
 handler (and every parameter after name) must be passed by keyword — only name is positional.
 
@@ -200,6 +211,9 @@ Parameters:
   description (str): Prompt description
   arguments (list, optional): Argument metadata dicts with "name",
     "description" and "required"
+  complete (dict, optional): Completers for completion/complete, keyed by
+    argument name, each a "module.function" string called as
+    fn(argument, value, context) and returning a list of suggestion strings
 
 Only meaningful while serving MCP over HTTP (in middleware); returns an error
 otherwise.

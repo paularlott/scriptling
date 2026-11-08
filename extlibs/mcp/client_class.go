@@ -241,6 +241,27 @@ Example:
   out = client.get_prompt("review_code", {"language": "go", "code": "fmt.Println()"})
   for m in out.messages:
     print(m.role, m.content)`).
+		MethodWithHelp("complete", completeMethod, `complete(ref, argument, value="", context=None) - Ask the server for argument completions
+
+Asks the server to suggest values for a prompt argument or a resource
+template variable (completion/complete), for example to autocomplete input.
+
+Parameters:
+  ref (str | dict): What to complete. A prompt name, a resource template URI
+    (anything containing "://"), or the spec's dict:
+    {"type": "ref/prompt", "name": ...} / {"type": "ref/resource", "uri": ...}
+  argument (str): The argument (or template variable) to complete
+  value (str): The partial value typed so far
+  context (dict, optional): Arguments already filled in, name -> value
+
+Returns:
+  dict: {values: [str], total: int or None, hasMore: bool}; the server sends
+  at most 100 values
+
+Example:
+  out = client.complete("review_code", "language", "py")
+  print(out["values"])          # ["python"]
+  out = client.complete("docs://{path}", "path", "in")`).
 		Build()
 }
 

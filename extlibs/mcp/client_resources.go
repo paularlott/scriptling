@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	mcplib "github.com/paularlott/mcp"
 	"github.com/paularlott/scriptling/object"
@@ -205,4 +206,110 @@ func DecodePromptResponse(response *mcplib.PromptResponse) object.Object {
 	}
 	out.SetByString("messages", &object.List{Elements: msgs})
 	return out
+}
+
+// completeMethod implements MCPClient.complete(ref, argument, value="",
+// context=None): completion/complete for a prompt argument or a resource
+// template variable.
+func completeMethod(self *object.Instance, ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	ci, cerr := getMCPClientInstance(self)
+	if cerr != nil {
+		return cerr
+	}
+	if ci.client == nil {
+		return &object.Error{Message: "complete: no client configured"}
+	}
+	get := func(i int, name string) object.Object {
+		if i < len(args) {
+			return args[i]
+		}
+		return kwargs.Get(name)
+	}
+	if len(args) > 4 {
+		return &object.Error{Message: fmt.Sprintf("complete() takes at most 4 positional arguments, got %d", len(args))}
+	}
+
+	refObj := get(0, "ref")
+	if refObj == nil {
+		return &object.Error{Message: "complete: ref is required"}
+	}
+	var ref mcplib.CompletionRef
+	switch r := refObj.(type) {
+	case *object.String:
+		s := r.StringValue()
+		if strings.Contains(s, "://") {
+			ref = mcplib.CompletionRef{Type: mcplib.CompletionRefResource, URI: s}
+		} else {
+			ref = mcplib.CompletionRef{Type: mcplib.CompletionRefPrompt, Name: s}
+		}
+	case *object.Dict:
+		ref.Type, ref.Name, ref.URI = dictString(r, "type"), dictString(r, "name"), dictString(r, "uri")
+	default:
+		return &object.Error{Message: fmt.Sprintf("complete: ref must be a str or dict, got %s", refObj.Type())}
+	}
+
+	argObj := get(1, "argument")
+	if argObj == nil {
+		return &object.Error{Message: "complete: argument is required"}
+	}
+	argument, aerr := argObj.AsString()
+	if aerr != nil {
+		return &object.Error{Message: "complete: argument must be a string"}
+	}
+	value := ""
+	if v := get(2, "value"); v != nil {
+		s, verr := v.AsString()
+		if verr != nil {
+			return &object.Error{Message: "complete: value must be a string"}
+		}
+		value = s
+	}
+	var contextArgs map[string]string
+	if c := get(3, "context"); c != nil {
+		switch d := c.(type) {
+		case *object.Null:
+		case *object.Dict:
+			contextArgs = make(map[string]string, len(d.Pairs))
+			for _, pair := range d.Pairs {
+				k, kerr := pair.Key.AsString()
+				if kerr != nil {
+					return &object.Error{Message: "complete: context keys must be strings"}
+				}
+				if s, ok := pair.Value.(*object.String); ok {
+					contextArgs[k] = s.StringValue()
+				} else {
+					contextArgs[k] = pair.Value.Inspect()
+				}
+			}
+		default:
+			return &object.Error{Message: fmt.Sprintf("complete: context must be a dict, got %s", c.Type())}
+		}
+	}
+
+	res, err := ci.client.Complete(ctx, ref, argument, value, contextArgs)
+	if err != nil {
+		return &object.Error{Message: err.Error()}
+	}
+	values := make([]object.Object, len(res.Values))
+	for i, v := range res.Values {
+		values[i] = object.NewString(v)
+	}
+	var total object.Object = &object.Null{}
+	if res.Total != nil {
+		total = object.NewInteger(int64(*res.Total))
+	}
+	return object.NewStringDict(map[string]object.Object{
+		"values":  &object.List{Elements: values},
+		"total":   total,
+		"hasMore": object.NewBoolean(res.HasMore),
+	})
+}
+
+func dictString(d *object.Dict, key string) string {
+	if pair, ok := d.GetByString(key); ok {
+		if s, err := pair.Value.AsString(); err == nil {
+			return s
+		}
+	}
+	return ""
 }

@@ -34,7 +34,7 @@ func NewLibrary(log logger.Logger, cfg ...*netsecurity.Config) *object.Library {
 // (nil = unrestricted, empty = deny all), as the os library is.
 func NewLibraryConfigured(log logger.Logger, allowedPaths []string, cfg ...*netsecurity.Config) *object.Library {
 	builtins := shared.SharedBuiltins()
-	network := shared.NewNetwork(platformDomains, 30*time.Second, cfg...)
+	network := shared.NewNetwork(platformDomains, 30*time.Second, cfg...).WithGateways(gatewayDomains...)
 	files := shared.FilePolicy(allowedPaths)
 
 	// Discord-specific: client constructor

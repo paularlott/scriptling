@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/paularlott/logger"
 	mcplib "github.com/paularlott/mcp"
+	"github.com/paularlott/mcp/toolmetadata"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/conversion"
 	extlibsmcp "github.com/paularlott/scriptling/extlibs/mcp"
@@ -216,6 +218,103 @@ func structuredResponseFromJSON(jsonText string) (*mcplib.ToolResponse, error) {
 // rest stay floats, recursively through maps and slices. Go's encoding/json
 // decodes every number as float64, so tool arguments like {"n": 21} would
 // otherwise reach script functions as floats (n * 2 == 42.0).
+// ParamTypes maps each declared parameter's name to its type string, for
+// TypedToolArgs. A nil or empty list gives a nil map.
+func ParamTypes(declared []toolmetadata.ToolParameter) map[string]string {
+	if len(declared) == 0 {
+		return nil
+	}
+	types := make(map[string]string, len(declared))
+	for _, p := range declared {
+		types[p.Name] = p.Type
+	}
+	return types
+}
+
+// TypedToolArgs returns a copy of a tool call's JSON arguments with each one
+// converted to its declared type, the way a script expects to receive it:
+// an integer parameter as an int (JSON decodes every number as a float64, so
+// 7 would otherwise arrive as 7.0), a number parameter as a float (2 is 2.0),
+// and arrays of either element by element. Arguments without a declared
+// numeric type, and anything nested inside them, are converted as Python's
+// json module would (whole numbers become ints, see pythonStyleJSONNumbers).
+// The server has already validated the arguments against the schema, so a
+// value that doesn't fit its type is passed through unchanged.
+func TypedToolArgs(args map[string]any, types map[string]string) map[string]any {
+	out := make(map[string]any, len(args))
+	for k, v := range args {
+		switch types[k] {
+		case "int", "integer":
+			out[k] = jsonInt(v)
+		case "float", "number":
+			out[k] = jsonFloat(v)
+		case "array:int", "array:integer":
+			out[k] = mapJSONList(v, jsonInt)
+		case "array:float", "array:number":
+			out[k] = mapJSONList(v, jsonFloat)
+		default:
+			out[k] = pythonStyleJSONNumbers(v)
+		}
+	}
+	return out
+}
+
+// jsonInt converts a JSON-decoded whole number to int64.
+func jsonInt(v any) any {
+	switch t := v.(type) {
+	case float64:
+		if t == math.Trunc(t) && t >= math.MinInt64 && t < math.MaxInt64 {
+			return int64(t)
+		}
+		return t
+	case json.Number:
+		if i, err := t.Int64(); err == nil {
+			return i
+		}
+		if f, err := t.Float64(); err == nil {
+			return jsonInt(f)
+		}
+		return v
+	case int:
+		return int64(t)
+	default:
+		return v
+	}
+}
+
+// jsonFloat converts a JSON-decoded number to float64.
+func jsonFloat(v any) any {
+	switch t := v.(type) {
+	case float64:
+		return t
+	case json.Number:
+		if f, err := t.Float64(); err == nil {
+			return f
+		}
+		return v
+	case int:
+		return float64(t)
+	case int64:
+		return float64(t)
+	default:
+		return v
+	}
+}
+
+// mapJSONList applies conv to every element of a JSON array, returning a new
+// slice; a value that isn't an array is passed through.
+func mapJSONList(v any, conv func(any) any) any {
+	list, ok := v.([]any)
+	if !ok {
+		return pythonStyleJSONNumbers(v)
+	}
+	out := make([]any, len(list))
+	for i, elem := range list {
+		out[i] = conv(elem)
+	}
+	return out
+}
+
 func pythonStyleJSONNumbers(v any) any {
 	switch t := v.(type) {
 	case map[string]any:
@@ -249,12 +348,18 @@ func BuildToolHandler(scriptPath string, cfg HandlerConfig) (mcplib.ToolHandler,
 // BuildToolHandlerSource is BuildToolHandler for in-memory script source (e.g.
 // from a pack bundle).
 func BuildToolHandlerSource(src []byte, cfg HandlerConfig) mcplib.ToolHandler {
+	return BuildToolHandlerSourceParams(src, nil, cfg)
+}
+
+// BuildToolHandlerSourceParams is BuildToolHandlerSource for a tool whose
+// declared parameters are known: each argument is converted to its declared
+// type (see TypedToolArgs), so an integer parameter reaches the script as an
+// int and a number parameter as a float.
+func BuildToolHandlerSourceParams(src []byte, declared []toolmetadata.ToolParameter, cfg HandlerConfig) mcplib.ToolHandler {
+	types := ParamTypes(declared)
 	return func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 		p := prepareScriptling(cfg, nil)
-		params := req.Args()
-		for k, v := range params {
-			params[k] = pythonStyleJSONNumbers(v)
-		}
+		params := TypedToolArgs(req.Args(), types)
 
 		response, exitCode, err := extlibsmcp.RunToolScript(ctx, p, string(src), params)
 
@@ -295,6 +400,14 @@ func BuildToolHandlerSource(src []byte, cfg HandlerConfig) mcplib.ToolHandler {
 //   - tool.return_structured(obj) → structuredContent response (+ JSON text fallback)
 //   - exception → error response
 func BuildToolHandlerFunc(src []byte, funcName string, cfg HandlerConfig) mcplib.ToolHandler {
+	return BuildToolHandlerFuncParams(src, funcName, nil, cfg)
+}
+
+// BuildToolHandlerFuncParams is BuildToolHandlerFunc for a tool whose
+// declared parameters are known: each argument is converted to its declared
+// type (see TypedToolArgs) before the function is called.
+func BuildToolHandlerFuncParams(src []byte, funcName string, declared []toolmetadata.ToolParameter, cfg HandlerConfig) mcplib.ToolHandler {
+	types := ParamTypes(declared)
 	return func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 		p := prepareScriptling(cfg, nil)
 
@@ -305,11 +418,7 @@ func BuildToolHandlerFunc(src []byte, funcName string, cfg HandlerConfig) mcplib
 		}
 
 		// Build kwargs from the MCP request params.
-		params := req.Args()
-		for k, v := range params {
-			params[k] = pythonStyleJSONNumbers(v)
-		}
-		kwargs := scriptling.Kwargs(params)
+		kwargs := scriptling.Kwargs(TypedToolArgs(req.Args(), types))
 
 		// Call the tool function.
 		result, callErr := p.CallFunctionWithContext(ctx, funcName, kwargs)
