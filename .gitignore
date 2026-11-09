@@ -24,3 +24,6 @@ __pycache__/
 
 # built plugin binary (go build in builds/onepassword)
 /builds/onepassword/onepassword
+
+# signing and notarization settings (see .env.example)
+/.env

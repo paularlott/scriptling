@@ -1,6 +1,9 @@
 # Taskfile.yml for building Scriptling CLI
 version: "3"
 
+# Signing and notarization settings for the macOS binaries (see .env.example).
+dotenv: [".env"]
+
 vars:
   BIN_DIR: bin
   CLI_DIR: scriptling-cli
@@ -73,10 +76,113 @@ tasks:
       - task: build-slim-platforms
       - task: build-plugins-platforms
       - task: build-onepassword-platforms
+      # Sign the macOS binaries before they are zipped, so the zips and the
+      # Homebrew checksums cover the signed binaries. Notarization happens
+      # in release: it is recorded per binary, so the zips need no rebuild.
+      - task: sign-macos
       - task: create-zips
       - task: create-slim-zips
       - task: create-plugin-zips
       - task: create-onepassword-zips
+
+  sign-macos:
+    desc: Sign the macOS binaries in bin with the Developer ID identity (MACOS_SIGN_IDENTITY in .env)
+    cmds:
+      - |
+        if [ -z "$MACOS_SIGN_IDENTITY" ]; then
+          echo "MACOS_SIGN_IDENTITY is not set: copy .env.example to .env (or use build-platforms for unsigned builds)" >&2
+          exit 1
+        fi
+        entitlements="$PWD/scripts/macos/onepassword.entitlements"
+        cd {{.BIN_DIR}}
+        # sign <file> <identifier> [entitlements]. The hardened runtime and a
+        # secure timestamp are both required for notarization; --force
+        # replaces Go's ad-hoc linker signature.
+        sign() {
+          if [ -n "$3" ]; then
+            codesign --force --timestamp --options runtime --identifier "$2" \
+              --entitlements "$3" --sign "$MACOS_SIGN_IDENTITY" "$1" || exit 1
+          else
+            codesign --force --timestamp --options runtime --identifier "$2" \
+              --sign "$MACOS_SIGN_IDENTITY" "$1" || exit 1
+          fi
+        }
+        for f in scriptling*-darwin-amd64 scriptling*-darwin-arm64; do
+          name=${f%-darwin-*}
+          case $name in
+            *onepassword*) sign "$f" "com.paularlott.$name" "$entitlements" ;;
+            *) sign "$f" "com.paularlott.$name" ;;
+          esac
+        done
+        for f in plugins/darwin-*/*; do
+          sign "$f" "com.paularlott.scriptling.plugin.$(basename "$f")"
+        done
+
+  notarize-macos:
+    desc: Notarize the signed macOS binaries in bin in one submission (NOTARY_* in .env)
+    cmds:
+      - |
+        if [ -z "$NOTARY_KEY" ] || [ -z "$NOTARY_KEY_ID" ] || [ -z "$NOTARY_ISSUER" ]; then
+          echo "NOTARY_KEY, NOTARY_KEY_ID and NOTARY_ISSUER must be set: copy .env.example to .env" >&2
+          exit 1
+        fi
+        key=$NOTARY_KEY
+        case $key in "~/"*) key="$HOME/${key#\~/}" ;; esac
+        if [ ! -f "$key" ]; then
+          echo "Notary API key not found: $key" >&2
+          exit 1
+        fi
+
+        # Notarization is recorded per binary (by code hash), not per zip,
+        # so one submission holding every macOS binary covers them all in
+        # whichever release zip they are later packed into.
+        stage=$(mktemp -d "${TMPDIR:-/tmp}/scriptling-notarize.XXXXXX") || exit 1
+        trap 'rm -rf "$stage"' EXIT
+        mkdir -p "$stage/scriptling-macos/plugins" || exit 1
+        cp {{.BIN_DIR}}/scriptling*-darwin-amd64 {{.BIN_DIR}}/scriptling*-darwin-arm64 "$stage/scriptling-macos/" || exit 1
+        for d in {{.BIN_DIR}}/plugins/darwin-*; do
+          cp -R "$d" "$stage/scriptling-macos/plugins/" || exit 1
+        done
+        ditto -c -k --keepParent "$stage/scriptling-macos" "$stage/scriptling-macos.zip" || exit 1
+
+        notary() {
+          xcrun notarytool "$@" --key "$key" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER"
+        }
+        result=$(notary submit "$stage/scriptling-macos.zip" --wait --output-format json) || true
+        echo "$result"
+        status=$(echo "$result" | jq -r '.status // empty')
+        if [ "$status" != "Accepted" ]; then
+          id=$(echo "$result" | jq -r '.id // empty')
+          echo "Notarization failed (status: ${status:-unknown})" >&2
+          if [ -n "$id" ]; then notary log "$id" >&2; fi
+          exit 1
+        fi
+      - task: verify-macos
+
+  verify-macos:
+    desc: Check every macOS binary in bin is Developer ID signed and notarized (online check)
+    cmds:
+      - |
+        cd {{.BIN_DIR}}
+        failed=0
+        for f in scriptling*-darwin-amd64 scriptling*-darwin-arm64 plugins/darwin-*/*; do
+          # A freshly accepted ticket can take a few seconds to be served.
+          ok=0
+          for attempt in 1 2 3 4 5 6; do
+            if codesign --verify --strict --check-notarization "$f" 2>/dev/null; then
+              ok=1
+              break
+            fi
+            sleep 10
+          done
+          if [ "$ok" -eq 1 ] && codesign -dvv "$f" 2>&1 | grep -q '^Authority=Developer ID Application'; then
+            echo "ok: $f"
+          else
+            echo "NOT signed and notarized: $f" >&2
+            failed=1
+          fi
+        done
+        exit $failed
 
   create-zips:
     desc: Create ZIP files for all platforms
@@ -317,6 +423,15 @@ tasks:
     desc: Tag the version and create GitHub release with all platform binaries
     deps: [build-all]
     cmds:
+      - |
+        # Notarize the signed macOS binaries before anything is published. A
+        # rerun against an existing release publishes nothing new (its assets
+        # were notarized when it was created), so it skips the submission.
+        if gh release view v{{.VERSION}} --repo paularlott/scriptling >/dev/null 2>&1; then
+          echo "Release v{{.VERSION}} exists, skipping notarization"
+        else
+          {{.TASK_EXE}} notarize-macos || exit 1
+        fi
       - |
         # Stage formulas without changing the tap checkout. For a new release
         # they checksum the completed local build; for a resumable rerun they
