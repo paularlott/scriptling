@@ -87,6 +87,11 @@ This directory contains examples and tools for working with Scriptling.
   - `client.py` - lists and exercises them all over stdio
   - `README.md` - what it demonstrates
 
+- **mcp-tool-hints/** - Tool titles and behaviour hints (`read_only`, `destructive`, `idempotent`, `open_world`)
+  - `tools/notes.py` + `tools/share_note.toml` - hints declared with `@mcp.tool` and in a `.toml` sidecar
+  - `client.py` - reads the hints back and decides which calls to confirm first
+  - `README.md` - what each hint means
+
 - **mcp-app-package/** - A complete MCP app packaged as one zip: app view, plain tools, prompt and skill
   - `manifest.toml` + `setup.py` - `serve = ["mcp"]`, convention directories for the rest
   - `client.py` - verification client run against the built package
@@ -214,6 +219,7 @@ See individual example directories for more details:
 - [mcp-client/README.md](mcp-client/README.md) - MCP client examples
 - [mcp-tools/README.md](mcp-tools/README.md) - MCP tools examples
 - [mcp-decorated/README.md](mcp-decorated/README.md) - Tool, resource, prompt and skill all registered with decorators from one `.py` file
+- [mcp-tool-hints/README.md](mcp-tool-hints/README.md) - Tool titles and behaviour hints, declared on the server and read by a client
 - [mcp-app-package/README.md](mcp-app-package/README.md) - A complete MCP app (app view, tools, prompt, skill) packaged and verified from the zip
 - [mcp-resources-prompts/README.md](mcp-resources-prompts/README.md) - Tools, resources and prompts as files, no Go code
 - [mcp-app-dashboard/README.md](mcp-app-dashboard/README.md) - MCP Apps: a `.toml`-linked tool with an interactive UI

@@ -1,0 +1,12 @@
+# The same hints in a .toml sidecar, for a tool written as a plain script.
+description = "Share a note publicly by link"
+title = "Share Note"
+destructive = false
+idempotent = true
+open_world = true
+
+[[parameters]]
+name = "id"
+type = "string"
+description = "Note id"
+required = true

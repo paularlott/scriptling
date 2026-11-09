@@ -3,6 +3,7 @@ package conversion
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -16,11 +17,19 @@ const maxJSONDepth = 10000
 // ParseJSON parses a JSON string and returns a Scriptling object.
 // It uses UseNumber() to preserve large integers, and builds dicts in the
 // document's key order (as Python's json.loads does) rather than through a Go
-// map, whose iteration order is random.
+// map, whose iteration order is random. Only whitespace may follow the value:
+// "2 notes" is an error ("extra data", as in Python), not the number 2.
 func ParseJSON(jsonStr string) (object.Object, error) {
 	decoder := json.NewDecoder(strings.NewReader(jsonStr))
 	decoder.UseNumber()
-	return decodeJSONValue(decoder, 0)
+	result, err := decodeJSONValue(decoder, 0)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, fmt.Errorf("extra data after the JSON value at offset %d", decoder.InputOffset())
+	}
+	return result, nil
 }
 
 // decodeJSONValue reads one JSON value from the token stream, keeping object

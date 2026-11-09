@@ -43,12 +43,18 @@ func buildMCPClientClass() *object.Class {
 Lists all tools available from this MCP server.
 
 Returns:
-  list: List of tool dicts with name, description, inputSchema
+  list: List of tool dicts with name, title, description, inputSchema,
+  is_app and the behaviour hints read_only, destructive, idempotent and
+  open_world (True, False, or None when the server did not state it: treat
+  None destructive and open_world as True). Hints are the server's claims,
+  not guarantees.
 
 Example:
   tools = client.tools()
   for tool in tools:
-    print(tool.name + ": " + tool.description)`).
+    print(tool.name + ": " + tool.description)
+    if tool.destructive != False and not tool.read_only:
+      print("  may make destructive changes")`).
 		MethodWithHelp("call_tool", callToolMethod, `call_tool(name, arguments) - Execute a tool
 
 Executes a tool by name with the provided arguments.
@@ -516,6 +522,18 @@ func convertToolsToList(tools []mcplib.MCPTool) object.Object {
 			// view in a host UI rather than returning plain text.
 			"is_app": object.NewBoolean(mcplib.ToolIsApp(tool)),
 		})
+		// The tool's display name and behaviour hints, named as mcp.tool
+		// declares them; a hint the server did not state is None (the spec
+		// then has clients assume destructive and open_world).
+		toolDict.SetByString("title", object.NewString(tool.Title))
+		var hints mcplib.ToolAnnotations
+		if tool.Annotations != nil {
+			hints = *tool.Annotations
+		}
+		toolDict.SetByString("read_only", hintObject(hints.ReadOnlyHint))
+		toolDict.SetByString("destructive", hintObject(hints.DestructiveHint))
+		toolDict.SetByString("idempotent", hintObject(hints.IdempotentHint))
+		toolDict.SetByString("open_world", hintObject(hints.OpenWorldHint))
 		if tool.InputSchema != nil {
 			toolDict.SetByString("inputSchema", conversion.FromGo(tool.InputSchema))
 		}
@@ -525,6 +543,14 @@ func convertToolsToList(tools []mcplib.MCPTool) object.Object {
 		toolList = append(toolList, toolDict)
 	}
 	return &object.List{Elements: toolList}
+}
+
+// hintObject is a behaviour hint as a scriptling value: None when not stated.
+func hintObject(h *bool) object.Object {
+	if h == nil {
+		return &object.Null{}
+	}
+	return object.NewBoolean(*h)
 }
 
 // skillsMethod lists the server's skills (SEP-2640 entries).

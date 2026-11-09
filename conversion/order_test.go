@@ -68,6 +68,22 @@ func TestParseJSONErrors(t *testing.T) {
 	}
 }
 
+// TestParseJSONExtraData: only whitespace may follow the value, as in
+// Python's json.loads, so text that merely starts like JSON ("2 notes", an
+// MCP tool's plain reply) is not cut down to its first token.
+func TestParseJSONExtraData(t *testing.T) {
+	for _, bad := range []string{`2 notes mention milk`, `1 2`, `true story`, `{"a": 1} trailing`, `[1] [2]`, `"a" "b"`, `null x`} {
+		if got, err := ParseJSON(bad); err == nil {
+			t.Errorf("ParseJSON(%q) = %v, want an extra data error", bad, got)
+		}
+	}
+	for _, good := range []string{`2`, " 2 \n", `{"a": 1}` + "\n\t ", `"text"`, `null`} {
+		if _, err := ParseJSON(good); err != nil {
+			t.Errorf("ParseJSON(%q): %v", good, err)
+		}
+	}
+}
+
 // TestFromGoMapIsDeterministic: Go maps have no order, so conversions sort.
 func TestFromGoMapIsDeterministic(t *testing.T) {
 	m := map[string]interface{}{"q": 1, "b": 2, "x": 3, "a": 4, "m": 5, "z": 6}
