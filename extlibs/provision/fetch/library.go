@@ -18,6 +18,7 @@ import (
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/extlibs/netsecurity"
+	"github.com/paularlott/scriptling/extlibs/provision/become"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/pool"
 )
@@ -40,6 +41,16 @@ const (
 type libraryInstance struct {
 	paths  fssecurity.Config
 	client *http.Client
+	become *become.Become
+}
+
+// Option configures the library.
+type Option func(*libraryInstance)
+
+// WithBecome lets scripts write fetched files as root with become=True,
+// through b. The download itself never runs as root.
+func WithBecome(b *become.Become) Option {
+	return func(i *libraryInstance) { i.become = b }
 }
 
 // allowed returns a *fssecurity.DeniedError when path is outside the
@@ -52,7 +63,7 @@ func (i *libraryInstance) allowed(path string) error {
 // allowed directories is a PermissionError, which scripts cannot catch, as in
 // the os and pathlib libraries; anything else is an ordinary error.
 func fileError(err error) object.Object {
-	if stderrors.Is(err, fssecurity.ErrPathNotAllowed) {
+	if stderrors.Is(err, fssecurity.ErrPathNotAllowed) || stderrors.Is(err, become.ErrNotEnabled) {
 		return errors.NewPermissionError("file: %s", err.Error())
 	}
 	return &object.Error{Message: "file: " + err.Error()}
@@ -71,7 +82,7 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
 // policy and guard it passed — safe for an embedder that registers this
 // library against interpreters with different per-request/per-tenant
 // configs, not just a single process-wide policy set once at startup.
-func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, paths fssecurity.Config, guard *netsecurity.Guard) {
+func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, paths fssecurity.Config, guard *netsecurity.Guard, opts ...Option) {
 	if paths.AllowedPaths != nil {
 		normalized := make([]string, 0, len(paths.AllowedPaths))
 		for _, p := range paths.AllowedPaths {
@@ -86,6 +97,9 @@ func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) },
 	inst := &libraryInstance{paths: paths}
 	if guard != nil {
 		inst.client = guard.HTTPClient()
+	}
+	for _, o := range opts {
+		o(inst)
 	}
 	registrar.RegisterLibrary(buildLibrary(inst))
 }
@@ -135,6 +149,15 @@ func buildLibrary(inst *libraryInstance) *object.Library {
 					return &object.Error{Message: "file: dir_mode must be non-negative"}
 				}
 
+				asRoot, errObj := kwargs.GetBool("become", false)
+				if errObj != nil {
+					return errObj
+				}
+				owner, errObj := ownerArgs(kwargs)
+				if errObj != nil {
+					return errObj
+				}
+
 				// Every path is checked against the allowed directories before
 				// anything is looked at or fetched.
 				dest = expandPath(dest)
@@ -147,16 +170,19 @@ func buildLibrary(inst *libraryInstance) *object.Library {
 						return fileError(err)
 					}
 				}
+				if err := owner.Check(); err != nil {
+					return fileError(err)
+				}
 
 				if len(provides) > 0 {
-					// Only a path that can be stat'ed exists; an unreadable
-					// one (say, permission denied) does not count.
-					allExist := true
-					for _, p := range provides {
-						if _, err := os.Stat(p); err != nil {
-							allExist = false
-							break
-						}
+					var allExist bool
+					var err error
+					object.RunBlocking(ctx, func() {
+						allExist, err = become.Do[providedArgs, bool](ctx, inst.become, asRoot, inst.paths, "fetch.provided",
+							providedArgs{Paths: provides})
+					})
+					if err != nil {
+						return fileError(err)
 					}
 					if allExist {
 						return conversion.FromGo(map[string]interface{}{
@@ -175,12 +201,15 @@ func buildLibrary(inst *libraryInstance) *object.Library {
 					return &object.Error{Message: "file: " + err.Error()}
 				}
 
-				var result fetchResult
+				op := "fetch.write"
 				if unpackZip {
-					result, err = unpackZipBytes(data, dest, os.FileMode(mode), os.FileMode(dirMode), inst.allowed)
-				} else {
-					result, err = writeFetchedFile(data, dest, os.FileMode(mode), os.FileMode(dirMode))
+					op = "fetch.unzip"
 				}
+				var result fetchResult
+				object.RunBlocking(ctx, func() {
+					result, err = become.Do[writeArgs, fetchResult](ctx, inst.become, asRoot, inst.paths, op, writeArgs{
+						Data: data, Dest: dest, Mode: os.FileMode(mode), DirMode: os.FileMode(dirMode), Owner: owner})
+				})
 				if err != nil {
 					return fileError(err)
 				}
@@ -190,7 +219,7 @@ func buildLibrary(inst *libraryInstance) *object.Library {
 				result.Unpacked = unpackZip
 				return conversion.FromGo(result.toMap())
 			},
-			HelpText: `file(url, dest, insecure=False, unpack_zip=False, timeout=30, max_bytes=0, mode=0o644, dir_mode=0o755, provides=None) - Fetch a file over HTTP/HTTPS
+			HelpText: `file(url, dest, insecure=False, unpack_zip=False, timeout=30, max_bytes=0, mode=0o644, dir_mode=0o755, provides=None, owner=None, group=None, become=False) - Fetch a file over HTTP/HTTPS
 
 Downloads url to dest. Parent directories are created automatically. When
 unpack_zip is True, dest is treated as a destination directory and the fetched
@@ -210,6 +239,11 @@ Parameters:
   dir_mode (int): Directory permission mode for created directories (default 0o755)
   provides (list[str]): List of file paths to check before fetching. If all paths
     exist, returns UNCHANGED without downloading or extracting.
+  owner (str or int): Owner of the written files (and directories unpacked), by name or uid.
+    Default: new files belong to whoever writes them; existing ones keep their owner
+  group (str or int): Their group, by name or gid. Default: as for owner
+  become (bool): Write as root (default False); the download itself runs as the script's user.
+    The scriptling CLI allows it unless run with --deny-become
 
 Returns:
   dict: {"status": "created|updated|unchanged", "url": url, "path": dest,
@@ -223,7 +257,9 @@ Example:
       print("Fetched " + result["path"])
 
   archive = fetch.file("https://example.com/site.zip", "/srv/site", unpack_zip=True)
-  print("Extracted " + str(len(archive["files"])) + " files")`,
+  print("Extracted " + str(len(archive["files"])) + " files")
+
+  fetch.file("https://example.com/tool", "/usr/local/bin/tool", mode=0o755, become=True)`,
 		},
 	}, map[string]object.Object{
 		"CREATED":   object.NewString(StatusCreated),

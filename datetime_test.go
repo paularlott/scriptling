@@ -1,6 +1,7 @@
 package scriptling
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -24,10 +25,35 @@ func evalDatetimeScript(t *testing.T, script string) *Scriptling {
 	p := New()
 	p.RegisterLibrary(stdlib.DatetimeLibrary)
 	p.RegisterLibrary(stdlib.TimeLibrary)
-	if _, err := p.Eval("import time\nimport datetime\n" + script); err != nil {
+	if _, err := p.Eval("import time\nimport datetime\n" + dedent(script)); err != nil {
 		t.Fatalf("eval error: %v", err)
 	}
 	return p
+}
+
+// dedent removes the indentation every non-blank line of s shares, as
+// Python's textwrap.dedent does: the cases are indented to sit in the Go source.
+func dedent(s string) string {
+	lines := strings.Split(s, "\n")
+	prefix := ""
+	first := true
+	for _, l := range lines {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		ind := l[:len(l)-len(strings.TrimLeft(l, " \t"))]
+		if first {
+			prefix, first = ind, false
+			continue
+		}
+		for !strings.HasPrefix(ind, prefix) {
+			prefix = prefix[:len(prefix)-1]
+		}
+	}
+	for i, l := range lines {
+		lines[i] = strings.TrimPrefix(l, prefix)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func assertResult(t *testing.T, p *Scriptling, want interface{}) {

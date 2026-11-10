@@ -22,6 +22,7 @@ var pathCheck = regexp.MustCompile(`\bIsPathAllowed\(|\bCheckPath\(|\bcheckPathS
 var fsPolicyExempt = map[string]string{
 	"netsecurity/netsecurity.go": "LoadConfig reads the operator's network policy file",
 	"container/apple_cli.go":     "stats the operator's Apple container CLI path, never a script's",
+	"provision/become/helper.go": "opens /dev/tty to see whether sudo can ask for a password, never a script's path",
 }
 
 // Every library file that touches the filesystem must also apply the

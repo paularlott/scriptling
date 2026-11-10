@@ -300,8 +300,21 @@ func (p *Parser) identWithLine(line ast.LineInfo, value string) *ast.Identifier 
 
 func (p *Parser) ParseProgram() *ast.Program {
 	program := &ast.Program{Statements: make([]ast.Statement, 0, 4), Symbols: p.symbols}
+	indented := p.l.FirstLineIndented()
+	if indented {
+		p.errors = append(p.errors, "line 1: unexpected indent: the script starts indented "+
+			"(start its first line at column 0, e.g. dedent a script embedded in Go source)")
+	}
 
-	for !p.curTokenIs(token.EOF) {
+	for !indented && !p.curTokenIs(token.EOF) {
+		if p.curTokenIs(token.INDENT) {
+			if len(program.Statements) == 0 && len(p.errors) == 0 {
+				p.errors = append(p.errors, fmt.Sprintf("line %d: unexpected indent: the script starts indented "+
+					"(start its first line at column 0, e.g. dedent a script embedded in Go source)", p.curToken.Line))
+			} else {
+				p.unexpectedIndent()
+			}
+		}
 		if p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.SEMICOLON) || p.curTokenIs(token.INDENT) || p.curTokenIs(token.DEDENT) {
 			p.nextToken()
 			continue
@@ -338,10 +351,14 @@ func (p *Parser) parseStatement() ast.Statement {
 		return nil
 	}
 	p.stmtDepth++
+	errs := len(p.errors)
 	stmt := p.parseStatementInner()
 	p.stmtDepth--
 	if stmt == nil {
 		return nil
+	}
+	if len(p.errors) == errs {
+		p.checkStatementEnd()
 	}
 	// Statement parsers signal failure by returning a nil concrete pointer,
 	// which as an interface is NOT nil and would slip past callers' nil
@@ -354,6 +371,28 @@ func (p *Parser) parseStatement() ast.Statement {
 		}
 	}
 	return stmt
+}
+
+// checkStatementEnd refuses a statement followed on the same line by another
+// with nothing between them ("a = 1b = 2"), as Python does: statements are
+// separated by a newline or a ';'. A compound statement ends at its block's
+// DEDENT, which separates it from what follows.
+func (p *Parser) checkStatementEnd() {
+	if p.skippedNewline || p.parenDepth > 0 || p.curTokenIs(token.DEDENT) {
+		return
+	}
+	switch p.peekToken.Type {
+	case token.EOF, token.NEWLINE, token.SEMICOLON, token.DEDENT, token.INDENT:
+		return
+	}
+	p.errors = append(p.errors, fmt.Sprintf("line %d: invalid syntax: %q follows a statement on the same line "+
+		"(start a new line, or separate them with ;)", p.peekToken.Line, p.peekToken.Literal))
+}
+
+// unexpectedIndent reports an indented line where none may start: not the
+// first line of a block, as Python's IndentationError has it.
+func (p *Parser) unexpectedIndent() {
+	p.errors = append(p.errors, fmt.Sprintf("line %d: unexpected indent", p.curToken.Line))
 }
 
 func (p *Parser) parseStatementInner() ast.Statement {
@@ -1828,7 +1867,24 @@ func (p *Parser) parseBlockStatement() *ast.BlockStatement {
 	p.nextToken()
 
 	for !p.curTokenIs(token.DEDENT) && !p.curTokenIs(token.EOF) {
-		if p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.SEMICOLON) || p.curTokenIs(token.INDENT) {
+		if p.curTokenIs(token.INDENT) {
+			p.unexpectedIndent()
+			// Skip the deeper lines (the error stops the run) up to their
+			// own DEDENT, which must not end this block.
+			depth := 1
+			for depth > 0 && !p.curTokenIs(token.EOF) {
+				p.nextToken()
+				switch {
+				case p.curTokenIs(token.INDENT):
+					depth++
+				case p.curTokenIs(token.DEDENT):
+					depth--
+				}
+			}
+			p.nextToken()
+			continue
+		}
+		if p.curTokenIs(token.NEWLINE) || p.curTokenIs(token.SEMICOLON) {
 			p.nextToken()
 			continue
 		}

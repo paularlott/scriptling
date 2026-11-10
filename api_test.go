@@ -1543,3 +1543,26 @@ val = mylib.VALUE
 		}
 	})
 }
+
+func TestOnReset(t *testing.T) {
+	p := New()
+	var order []string
+	p.OnReset(func() { order = append(order, "first") })
+	p.OnReset(func() { order = append(order, "second") })
+	if _, err := p.Eval("x = 1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(order) != 0 {
+		t.Fatalf("ran before a reset: %v", order)
+	}
+	p.Reset()
+	p.Reset()
+	if strings.Join(order, ",") != "first,second,first,second" {
+		t.Fatalf("got %v", order)
+	}
+	c := p.Clone()
+	c.Reset()
+	if len(order) != 4 {
+		t.Fatalf("a clone ran its parent's hooks: %v", order)
+	}
+}

@@ -21,7 +21,9 @@ import (
 	"github.com/paularlott/scriptling/build"
 	"github.com/paularlott/scriptling/extlibs"
 	scriptlingcontainer "github.com/paularlott/scriptling/extlibs/container"
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/extlibs/netsecurity"
+	"github.com/paularlott/scriptling/extlibs/provision/become"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/object"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
@@ -64,6 +66,10 @@ func mustLoadPolicy(cmd *cli.Command) *netsecurity.Config {
 //
 //	func main() { scriptlingcmd.Main() }
 func Main() {
+	// Started as the root helper for become=True (through sudo): serve it
+	// and exit, before anything else.
+	become.ServeIfHelper()
+
 	env.Load()
 
 	cmd := buildRootCommand()
@@ -397,10 +403,17 @@ func buildRootCommand() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:       "network-policy",
-				Usage:      "Path to a TOML network policy file restricting script outbound network access (requests, wait_for, websocket, scriptling.ai, scriptling.mcp, scriptling.net.unicast, scriptling.net.multicast, scriptling.net.gossip, scriptling.nomad, script-supplied scriptling.container endpoints, provision.fetch and the Slack, Discord and Telegram libraries)",
+				Usage:      "Path to a TOML network policy file restricting script outbound network access (requests, wait_for, websocket, scriptling.ai, scriptling.mcp, scriptling.net.unicast, scriptling.net.multicast, scriptling.net.gossip, scriptling.nomad, scriptling.oauth, scriptling.mercure, script-supplied scriptling.container endpoints, provision.fetch and the Slack, Discord and Telegram libraries)",
 				Global:     true,
 				EnvVars:    []string{"SCRIPTLING_NETWORK_POLICY"},
 				ConfigPath: []string{"security.network_policy"},
+			},
+			&cli.BoolFlag{
+				Name:       "deny-become",
+				Usage:      "Refuse provisioning steps run as root with become=True (scriptling.provision.file, fetch, command and package); they are allowed by default, through sudo, and refused whenever the subprocess library is disabled",
+				Global:     true,
+				EnvVars:    []string{"SCRIPTLING_DENY_BECOME"},
+				ConfigPath: []string{"security.deny_become"},
 			},
 			&cli.BoolFlag{
 				Name:       "no-subprocess",
@@ -506,6 +519,14 @@ func buildRootCommand() *cli.Command {
 			scriptling.SetMemoryLimit(max(cmd.GetInt64("memory-limit"), 0))
 			scriptling.SetMaxValueBytes(max(cmd.GetInt64("max-value-bytes"), 0))
 			scriptling.SetMaxBackgroundTasks(max(cmd.GetInt64("max-background-tasks"), 0))
+			// become=True steps run through sudo, which a script could run
+			// with subprocess anyway; setup refuses them where subprocess is
+			// disabled. The helper starts only when a script first asks.
+			if !cmd.GetBool("deny-become") {
+				setup.SetBecome(become.New(become.Config{
+					Paths: fssecurity.Config{AllowedPaths: bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths"))},
+				}))
+			}
 
 			// JSON-RPC stdio mode uses stdout as the protocol stream, so logs
 			// must go to stderr to avoid corrupting responses.
@@ -565,12 +586,21 @@ func buildRootCommand() *cli.Command {
 		// say) does not leave them running.
 		PostRun: func(ctx context.Context, cmd *cli.Command) error {
 			closePlugins()
+			closeBecome()
 			return nil
 		},
 		Run: runScriptling,
 	}
 
 	return cmd
+}
+
+// closeBecome stops the root helper, if one was started.
+func closeBecome() {
+	if b := setup.Become(); b != nil {
+		_ = b.Close()
+		setup.SetBecome(nil)
+	}
 }
 
 // programCacheBudget maps the --program-cache-max-bytes flag value to the

@@ -59,6 +59,25 @@ func (l *Lexer) Reset(input string) {
 	l.readChar()
 }
 
+// FirstLineIndented reports whether the source's first line holds code and
+// starts with spaces or tabs. The lexer measures indentation after a newline
+// only, so a parser of whole scripts checks this itself (as Python, it
+// refuses an indented first line); an expression ("f'{ x }'") may start so.
+func (l *Lexer) FirstLineIndented() bool {
+	i := 0
+	for i < len(l.input) && (l.input[i] == ' ' || l.input[i] == '\t') {
+		i++
+	}
+	if i == 0 || i == len(l.input) {
+		return false
+	}
+	switch l.input[i] {
+	case '\n', '\r', '#':
+		return false
+	}
+	return true
+}
+
 func (l *Lexer) readChar() {
 	if l.readPosition >= len(l.input) {
 		l.ch = 0
@@ -571,7 +590,9 @@ func (l *Lexer) countIndent() int {
 		}
 		l.readChar()
 	}
-	if l.ch == '\n' || l.ch == '#' {
+	// A blank line (spaces only, a comment, CRLF, or the end of the source)
+	// does not change the indentation, as in Python.
+	if l.ch == '\n' || l.ch == '#' || l.ch == 0 || (l.ch == '\r' && l.peekChar() == '\n') {
 		return l.indentStack[len(l.indentStack)-1]
 	}
 	return count

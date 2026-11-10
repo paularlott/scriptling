@@ -112,6 +112,9 @@ type Scriptling struct {
 	sourceFile          string
 	guard               *object.ResourceGuard
 	panicHandler        func(*PanicError)
+
+	resetMu    sync.Mutex
+	resetHooks []func()
 }
 
 // New creates an interpreter. Its resource limits follow the process defaults
@@ -750,6 +753,13 @@ func (p *Scriptling) ResetEnv(keepKeys ...string) {
 // libraries to remain imported across resets, either re-issue the import after
 // Reset or use ResetEnv(keepKeys...) to keep named bindings.
 func (p *Scriptling) Reset() {
+	// What the last script left open goes first (see OnReset).
+	p.resetMu.Lock()
+	hooks := append([]func(){}, p.resetHooks...)
+	p.resetMu.Unlock()
+	for _, fn := range hooks {
+		fn()
+	}
 	// Drain any buffered output so it cannot leak into the next evaluation.
 	_ = p.env.GetOutput()
 	// Clear everything except the import builtin; registered libraries stay in
@@ -759,6 +769,16 @@ func (p *Scriptling) Reset() {
 	// absent so the next Eval behaves as the first.
 	p.env.Set("__name__", object.NewString("__main__"))
 	p.env.Delete("__file__")
+}
+
+// OnReset registers fn to run at the start of every Reset, in the order
+// registered: for an embedder that pools interpreters, to end what one
+// script left open (connections, subscriptions) before the next unrelated
+// script gets the interpreter. A Clone does not inherit them.
+func (p *Scriptling) OnReset(fn func()) {
+	p.resetMu.Lock()
+	p.resetHooks = append(p.resetHooks, fn)
+	p.resetMu.Unlock()
 }
 
 // Clone creates a new Scriptling interpreter that shares library registrations
