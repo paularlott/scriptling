@@ -13,7 +13,7 @@ require (
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/paularlott/cli v0.10.2
 	github.com/paularlott/gossip v0.30.3
-	github.com/paularlott/gossiper v0.0.0-00010101000000-000000000000
+	github.com/paularlott/gossiper v0.0.0-20261110051655-c6845c4ffb75
 	github.com/paularlott/jsonrpc v0.4.0
 	github.com/paularlott/logger v0.4.0
 	github.com/paularlott/mcp v0.35.2
@@ -62,9 +62,9 @@ require (
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
-	golang.org/x/oauth2 v0.37.0 // indirect
+	golang.org/x/oauth2 v0.38.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
-	golang.org/x/term v0.47.0 // indirect
+	golang.org/x/term v0.48.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	modernc.org/libc v1.80.2 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
