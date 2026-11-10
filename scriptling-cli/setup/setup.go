@@ -13,6 +13,7 @@ import (
 	scriptlingcontainer "github.com/paularlott/scriptling/extlibs/container"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	scriptlingmcp "github.com/paularlott/scriptling/extlibs/mcp"
+	scriptlingmercure "github.com/paularlott/scriptling/extlibs/mercure"
 	messagingconsole "github.com/paularlott/scriptling/extlibs/messaging/console"
 	"github.com/paularlott/scriptling/extlibs/messaging/discord"
 	"github.com/paularlott/scriptling/extlibs/messaging/slack"
@@ -58,6 +59,7 @@ func AllLibraryNames() []string {
 		extlibs.ContainerLibraryName,
 		extlibs.NomadLibraryName,
 		extlibs.OAuthLibraryName,
+		extlibs.MercureLibraryName,
 		extlibs.WaitForLibraryName,
 		extlibs.WebSocketLibraryName,
 		extlibs.TemplateHTMLLibraryName,
@@ -161,6 +163,9 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 			policy = netPolicy[0]
 		}
 		scriptlingoauth.RegisterConfigured(p, fssecurity.Config{AllowedPaths: allowedPaths}, policy)
+	})
+	reg(extlibs.MercureLibraryName, func() {
+		scriptlingmercure.RegisterConfigured(p, fssecurity.Config{AllowedPaths: allowedPaths}, firstPolicy(netPolicy))
 	})
 	reg(extlibs.WaitForLibraryName, func() { extlibs.RegisterWaitForLibraryConfigured(p, allowedPaths, netPolicy...) })
 	reg(extlibs.WebSocketLibraryName, func() { extlibs.RegisterWebSocketLibrary(p, netPolicy...) })

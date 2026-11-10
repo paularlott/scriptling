@@ -77,6 +77,12 @@ This directory contains examples and tools for working with Scriptling.
     - `gossip_advanced.py` - Advanced config and event handlers
     - `README.md` - Gossip library documentation
 
+- **mercure/** - Publish and subscribe with Mercure hubs (`scriptling.mercure`)
+  - `publish_subscribe.py` - Publish, subscribe, private updates and resuming
+  - `listener.py`, `notify.py` - A long-running subscriber and a publisher for it
+  - `stream_publish.py` - Bulk publishing, a POST per update and over a stream (gossiper)
+  - `README.md` - Running the official Mercure hub or gossiper
+
 - **mcp-tools/** - Example MCP tools for use with the CLI MCP server
   - `*.toml` - Tool metadata files
   - `*.py` - Tool implementation scripts

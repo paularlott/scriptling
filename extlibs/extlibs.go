@@ -47,6 +47,7 @@ const (
 	ContainerLibraryName      = "scriptling.container"
 	NomadLibraryName          = "scriptling.nomad"
 	OAuthLibraryName          = "scriptling.oauth"
+	MercureLibraryName        = "scriptling.mercure"
 	TemplateHTMLLibraryName   = "scriptling.template.html"
 	TemplateTextLibraryName   = "scriptling.template.text"
 	FileProvisionLibraryName  = "scriptling.provision.file"
