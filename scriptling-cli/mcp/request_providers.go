@@ -49,6 +49,7 @@ func runHandlerRef(ctx context.Context, cfg HandlerConfig, handlerRef string, kw
 	}
 
 	p := prepareScriptling(cfg, nil)
+	defer p.Close()
 	if err := p.ImportWithContext(ctx, libName); err != nil {
 		return refHandlerResult{}, fmt.Errorf("failed to import library %s: %w", libName, err)
 	}

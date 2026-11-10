@@ -10,8 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/evaluator"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/object"
 )
@@ -44,12 +46,32 @@ func NewZipfileLibrary(config fssecurity.Config) *object.Library {
 
 // zipFileNativeData holds the open archive state for a ZipFile instance.
 type zipFileNativeData struct {
-	reader *zip.ReadCloser
-	writer *zip.Writer
-	file   *os.File
-	path   string
-	mode   string
-	closed bool
+	reader  *zip.ReadCloser
+	writer  *zip.Writer
+	file    *os.File
+	path    string
+	mode    string
+	once    sync.Once
+	release func() // forgets the archive in the interpreter that opened it
+}
+
+// close closes the archive once, whether the script closes it or the
+// interpreter that opened it does.
+func (nd *zipFileNativeData) close() {
+	nd.once.Do(func() {
+		if nd.release != nil {
+			nd.release()
+		}
+		if nd.writer != nil {
+			nd.writer.Close()
+		}
+		if nd.reader != nil {
+			nd.reader.Close()
+		}
+		if nd.file != nil {
+			nd.file.Close()
+		}
+	})
 }
 
 func (z *zipfileLibraryInstance) createLibrary() *object.Library {
@@ -126,9 +148,11 @@ func (z *zipfileLibraryInstance) zipConstructor(ctx context.Context, kwargs obje
 		return errors.NewError("ZipFile: mode must be 'r' or 'w', got '%s'", mode)
 	}
 
-	return object.NewInstanceWithData(z.ZipClass, map[string]object.Object{
+	inst := object.NewInstanceWithData(z.ZipClass, map[string]object.Object{
 		"__str__": object.NewString(filepath.Base(path) + " (mode=" + mode + ")"),
 	}, nd)
+	nd.release = evaluator.TrackResource(ctx, inst, nd.close)
+	return inst
 }
 
 func zipFromArgs(args []object.Object) (*zipFileNativeData, object.Object) {
@@ -415,21 +439,7 @@ func (z *zipfileLibraryInstance) fnClose(ctx context.Context, kwargs object.Kwar
 	if errObj != nil {
 		return errObj
 	}
-	if nd.closed {
-		return &object.Null{}
-	}
-	object.RunBlocking(ctx, func() {
-		if nd.writer != nil {
-			nd.writer.Close()
-		}
-		if nd.reader != nil {
-			nd.reader.Close()
-		}
-		if nd.file != nil {
-			nd.file.Close()
-		}
-	})
-	nd.closed = true
+	object.RunBlocking(ctx, nd.close)
 	return &object.Null{}
 }
 

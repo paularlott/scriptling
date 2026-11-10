@@ -107,6 +107,28 @@ func SetEnvInContext(ctx context.Context, env *object.Environment) context.Conte
 	return derived
 }
 
+// TrackResource registers something a library opened for the script running
+// in ctx (a client, a connection, a child process, a file handle) so it does
+// not outlive the script's use of it: close runs when the interpreter is
+// reset or closed, and once owner, the object the script holds, is garbage
+// collected. The library calls release when the script closes it itself.
+//
+// close must be safe to call more than once and from any goroutine, and
+// neither it nor release may hold on to owner, or owner could never be
+// collected. owner may be nil: then only the interpreter closes it.
+func TrackResource(ctx context.Context, owner any, close func()) (release func()) {
+	untrack := func() {}
+	if env, ok := ctx.Value(envContextKey).(*object.Environment); ok {
+		untrack = env.TrackResource(close)
+	}
+	if owner != nil {
+		// Off the finalizer goroutine: closing can block (a child process
+		// shutting down, an archive being flushed), and finalizers share one.
+		_ = object.SetGCReleaseHook(owner, func() { go close() })
+	}
+	return untrack
+}
+
 // GetEnvFromContext retrieves environment from context for external functions
 func GetEnvFromContext(ctx context.Context) *object.Environment {
 	if env, ok := ctx.Value(envContextKey).(*object.Environment); ok {

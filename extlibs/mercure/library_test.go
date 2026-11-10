@@ -9,14 +9,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/extlibs/netsecurity"
+	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
@@ -511,24 +512,91 @@ sub.receive(timeout=10).data`)
 	}
 }
 
-// A runtime reset closes the clients scripts left open.
-func TestResetClosesClients(t *testing.T) {
-	h := newHub(t)
-	if _, err := run(t, plain, prelude(h, "")+`sub = hub.subscribe("t")`); err != nil {
+// openInterpreter is an interpreter with a client and a subscription left
+// open, made under a call that has since ended: the subscription outlives it.
+func openInterpreter(t *testing.T, h *testHub) (*scriptling.Scriptling, *hubClient) {
+	t.Helper()
+	p := scriptling.New()
+	stdlib.RegisterAll(p)
+	Register(p)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if _, err := p.EvalWithContext(ctx, "import scriptling.mercure as mercure\n"+prelude(h, "")+`sub = hub.subscribe("t")`); err != nil {
 		t.Fatal(err)
 	}
-	openClients.Lock()
-	n := len(openClients.m)
-	openClients.Unlock()
-	if n == 0 {
-		t.Fatal("no open client")
+	cancel()
+	out, err := p.EvalWithContext(context.Background(), `
+hub.publish("t", "after the call")
+sub.receive(timeout=10).data`)
+	if err != nil || out.Inspect() != "after the call" {
+		t.Fatalf("the subscription did not outlive the call that made it: %v %v", out, err)
 	}
-	extlibs.ResetRuntime()
-	openClients.Lock()
-	n = len(openClients.m)
-	openClients.Unlock()
-	if n != 0 {
-		t.Errorf("%d clients open after a reset", n)
+	obj, err := p.GetVarAsObject("hub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hc, errObj := impl[*hubClient](obj.(*object.Instance))
+	if errObj != nil {
+		t.Fatal(errObj)
+	}
+	return p, hc
+}
+
+// The interpreter closes the clients its scripts left open, subscriptions
+// and all, when it is reset or closed.
+func TestInterpreterClosesClients(t *testing.T) {
+	h := newHub(t)
+	for name, end := range map[string]func(*scriptling.Scriptling){
+		"Reset":    (*scriptling.Scriptling).Reset,
+		"ResetEnv": func(p *scriptling.Scriptling) { p.ResetEnv() },
+		"Close":    (*scriptling.Scriptling).Close,
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, hc := openInterpreter(t, h)
+			end(p)
+			if !hc.closed() {
+				t.Fatal("the client is still open")
+			}
+		})
+	}
+}
+
+// A client the script closes itself is forgotten: closing the interpreter
+// later has nothing left to close.
+func TestClosedClientForgotten(t *testing.T) {
+	h := newHub(t)
+	p, hc := openInterpreter(t, h)
+	if _, err := p.EvalWithContext(context.Background(), "hub.close()"); err != nil {
+		t.Fatal(err)
+	}
+	if !hc.closed() {
+		t.Fatal("close() did not close the client")
+	}
+	if hc.release == nil {
+		t.Fatal("the client was not tracked")
+	}
+	p.Close() // nothing to close; must not panic or block
+}
+
+// A client the script no longer holds is closed once it is collected, and an
+// open subscription does not keep its interpreter from being collected.
+func TestCollectedClientCloses(t *testing.T) {
+	h := newHub(t)
+	p, hc := openInterpreter(t, h)
+	collected := make(chan struct{})
+	runtime.AddCleanup(p, func(c chan struct{}) { close(c) }, collected)
+	p = nil
+	deadline := time.Now().Add(10 * time.Second)
+	for !hc.closed() {
+		if time.Now().After(deadline) {
+			select {
+			case <-collected:
+				t.Fatal("the interpreter was collected, but its client is still open")
+			default:
+				t.Fatal("the interpreter was never collected: its open subscription keeps it")
+			}
+		}
+		runtime.GC()
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -693,43 +761,5 @@ hub.publish("https://example.com/1", "d7")
 sub.receive(timeout=10).data`)
 	if err != nil || out != "d7" {
 		t.Errorf("draft-07 from the key: %s %v", out, err)
-	}
-}
-
-// WithLifetime closes the clients an environment made, subscriptions and all,
-// when it is done with, and refuses new ones after.
-func TestWithLifetime(t *testing.T) {
-	h := newHub(t)
-	life, end := context.WithCancel(context.Background())
-	p := scriptling.New()
-	stdlib.RegisterAll(p)
-	RegisterConfigured(p, fssecurity.Config{}, nil, WithLifetime(func() context.Context { return life }))
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if _, err := p.EvalWithContext(ctx, "import scriptling.mercure as mercure\n"+prelude(h, "")+`
-sub = hub.subscribe("https://example.com/left-open")
-hub.publish("https://example.com/left-open", "x")
-first = sub.receive(timeout=10).data
-`); err != nil {
-		t.Fatal(err)
-	}
-	end()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		v, err := p.EvalWithContext(ctx, "hub.closed")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if v.Inspect() == "True" {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the client is still open after its environment ended")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	_, err := p.EvalWithContext(ctx, `mercure.Client("`+h.url+`")`)
-	if err == nil || !strings.Contains(err.Error(), "environment has ended") {
-		t.Fatalf("a client after the end: %v", err)
 	}
 }

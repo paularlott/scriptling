@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/paularlott/scriptling/evaluator"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/object"
@@ -1544,25 +1546,116 @@ val = mylib.VALUE
 	})
 }
 
-func TestOnReset(t *testing.T) {
+// resources registers the library res, whose open(name) opens a resource
+// named name for the script: close() on the object it returns closes it, as a
+// library's would. closed records the names closed, in order.
+func resources(p *Scriptling) *[]string {
+	var mu sync.Mutex
+	closed := &[]string{}
+	lib := object.NewLibraryBuilder("res", "test resources")
+	lib.Function("open", func(ctx context.Context, name string) object.Object {
+		var once sync.Once
+		shut := func() {
+			once.Do(func() {
+				mu.Lock()
+				*closed = append(*closed, name)
+				mu.Unlock()
+			})
+		}
+		release := evaluator.TrackResource(ctx, nil, shut)
+		return &object.Builtin{Attributes: map[string]object.Object{
+			"close": &object.Builtin{Fn: func(context.Context, object.Kwargs, ...object.Object) object.Object {
+				release()
+				shut()
+				return &object.Null{}
+			}},
+		}}
+	})
+	p.RegisterLibrary(lib.Build())
+	return closed
+}
+
+// The interpreter closes what scripts opened and left open, newest first,
+// when it is reset or closed, and only once.
+func TestInterpreterClosesResources(t *testing.T) {
+	for name, end := range map[string]func(*Scriptling){
+		"Reset":    (*Scriptling).Reset,
+		"ResetEnv": func(p *Scriptling) { p.ResetEnv("a") },
+		"Close":    (*Scriptling).Close,
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := New()
+			closed := resources(p)
+			if _, err := p.Eval(`import res
+a = res.open("first")
+b = res.open("second")
+c = res.open("third")
+c.close()`); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(*closed, ","); got != "third" {
+				t.Fatalf("before %s: %s", name, got)
+			}
+			end(p)
+			if got := strings.Join(*closed, ","); got != "third,second,first" {
+				t.Fatalf("after %s: %s", name, got)
+			}
+			end(p)
+			if len(*closed) != 3 {
+				t.Fatalf("closed again: %v", *closed)
+			}
+			// Still usable, and what is opened next is tracked again.
+			if _, err := p.Eval(`import res
+d = res.open("fourth")`); err != nil {
+				t.Fatal(err)
+			}
+			p.Close()
+			if got := (*closed)[len(*closed)-1]; got != "fourth" {
+				t.Fatalf("after reuse: %v", *closed)
+			}
+		})
+	}
+}
+
+// What a script library's functions open belongs to the interpreter that
+// imported the library.
+func TestScriptLibraryResourcesBelongToInterpreter(t *testing.T) {
 	p := New()
-	var order []string
-	p.OnReset(func() { order = append(order, "first") })
-	p.OnReset(func() { order = append(order, "second") })
-	if _, err := p.Eval("x = 1"); err != nil {
+	closed := resources(p)
+	if err := p.RegisterScriptLibrary("conns", `
+import res
+held = res.open("at import")
+def connect(name):
+    return res.open(name)
+`); err != nil {
 		t.Fatal(err)
 	}
-	if len(order) != 0 {
-		t.Fatalf("ran before a reset: %v", order)
+	if _, err := p.Eval(`import conns
+c = conns.connect("from a call")`); err != nil {
+		t.Fatal(err)
 	}
-	p.Reset()
-	p.Reset()
-	if strings.Join(order, ",") != "first,second,first,second" {
-		t.Fatalf("got %v", order)
+	p.Close()
+	if got := strings.Join(*closed, ","); got != "from a call,at import" {
+		t.Fatalf("closed: %q", got)
 	}
-	c := p.Clone()
-	c.Reset()
-	if len(order) != 4 {
-		t.Fatalf("a clone ran its parent's hooks: %v", order)
+}
+
+// One close that panics does not keep the others open.
+func TestResourceClosePanicDoesNotStopTheRest(t *testing.T) {
+	p := New()
+	closed := resources(p)
+	p.RegisterFunc("open_bad", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		evaluator.TrackResource(ctx, nil, func() { panic("boom") })
+		return &object.Null{}
+	})
+	if _, err := p.Eval(`import res
+a = res.open("a")
+open_bad()
+b = res.open("b")`); err != nil {
+		t.Fatal(err)
+	}
+	p.Close()
+	if got := strings.Join(*closed, ","); got != "b,a" {
+		t.Fatalf("closed: %q", got)
 	}
 }

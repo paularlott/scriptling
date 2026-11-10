@@ -33,6 +33,7 @@ import (
 func BuildCompleterSource(src []byte, funcName string, cfg HandlerConfig) mcplib.Completer {
 	return func(ctx context.Context, req *mcplib.CompletionRequest) ([]string, error) {
 		p := prepareScriptling(cfg, nil)
+		defer p.Close()
 		if _, err := p.EvalWithContext(ctx, string(src)); err != nil {
 			return nil, fmt.Errorf("failed to load completer source: %w", err)
 		}
@@ -50,6 +51,7 @@ func BuildCompleterRef(ref string, cfg HandlerConfig) mcplib.Completer {
 			return nil, fmt.Errorf("invalid completer reference %q", ref)
 		}
 		p := prepareScriptling(cfg, nil)
+		defer p.Close()
 		if err := p.ImportWithContext(ctx, libName); err != nil {
 			return nil, fmt.Errorf("failed to import library %s: %w", libName, err)
 		}

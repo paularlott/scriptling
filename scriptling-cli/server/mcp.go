@@ -505,6 +505,7 @@ RETURNING RESULTS:
 			code, _ := req.String("code")
 			Log.Trace("MCP execute_script invoked", "code_len", len(code))
 			p := scriptling.New()
+			defer p.Close()
 			s.setupScriptling(p)
 
 			response, exitCode, err := mcp.RunToolScript(ctx, p, code, map[string]interface{}{})

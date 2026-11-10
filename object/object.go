@@ -1170,6 +1170,11 @@ type gilLock struct {
 	waiters  atomic.Int64
 	notifyMu sync.Mutex
 	notify   chan struct{} // lazily created; closed to broadcast, then replaced
+
+	// resources are what scripts in this lock domain opened and have not
+	// closed (see TrackResource). A script library's domain shares its
+	// interpreter's (see ShareResources).
+	resources *resourceSet
 }
 
 // broadcastUnlock wakes every registered context-aware waiter. Callers must
@@ -1232,7 +1237,7 @@ func NewEnvironment() *Environment {
 		// globals and nonlocals are nil by default - allocated on demand
 	}
 	env.root = env
-	env.gil = &gilLock{}
+	env.gil = &gilLock{resources: &resourceSet{}}
 	return env
 }
 
@@ -1256,7 +1261,7 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 		env.root = outer.root
 	} else {
 		env.root = env
-		env.gil = &gilLock{}
+		env.gil = &gilLock{resources: &resourceSet{}}
 	}
 
 	if outer != nil {

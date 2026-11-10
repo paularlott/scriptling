@@ -20,6 +20,10 @@ const childModeEnv = "SCRIPTLING_MCP_TEST_CHILD"
 // childMarkerEnv names a file the child writes as soon as it starts.
 const childMarkerEnv = "SCRIPTLING_MCP_TEST_MARKER"
 
+// childStoppedEnv names a file the child writes once its client has closed
+// its input and it has stopped serving.
+const childStoppedEnv = "SCRIPTLING_MCP_TEST_STOPPED"
+
 func TestMain(m *testing.M) {
 	if os.Getenv(childModeEnv) == "1" {
 		runChildMCPServer()
@@ -47,6 +51,9 @@ func runChildMCPServer() {
 		},
 	)
 	_ = s.ServeStdio(context.Background())
+	if stopped := os.Getenv(childStoppedEnv); stopped != "" {
+		_ = os.WriteFile(stopped, []byte("stopped"), 0o644)
+	}
 }
 
 // TestClientStdioEnvPassedThrough launches this test binary as a stdio MCP

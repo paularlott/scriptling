@@ -112,9 +112,6 @@ type Scriptling struct {
 	sourceFile          string
 	guard               *object.ResourceGuard
 	panicHandler        func(*PanicError)
-
-	resetMu    sync.Mutex
-	resetHooks []func()
 }
 
 // New creates an interpreter. Its resource limits follow the process defaults
@@ -721,7 +718,11 @@ func (p *Scriptling) UnsetVar(name string) {
 // the listed keys (plus the "import" builtin which is always preserved).
 // Imported library dicts remain if their names are passed in keepKeys.
 // This allows VM reuse across requests without re-registering libraries.
+//
+// Like Reset, it first closes what scripts opened and left open (see Close),
+// kept keys or not.
 func (p *Scriptling) ResetEnv(keepKeys ...string) {
+	p.env.CloseResources()
 	keep := make(map[string]bool, len(keepKeys)+1)
 	keep["import"] = true
 	for _, k := range keepKeys {
@@ -742,6 +743,8 @@ func (p *Scriptling) ResetEnv(keepKeys ...string) {
 //   - The "import" builtin and the configured library loader.
 //
 // What Reset clears:
+//   - What scripts opened and left open: clients, connections, child
+//     processes and file handles (see Close).
 //   - Every global binding created by the most recent Eval: variables,
 //     functions, classes, and the dicts bound by previous imports. Libraries
 //     are re-imported on demand by the next script (import dedup is keyed on
@@ -753,13 +756,7 @@ func (p *Scriptling) ResetEnv(keepKeys ...string) {
 // libraries to remain imported across resets, either re-issue the import after
 // Reset or use ResetEnv(keepKeys...) to keep named bindings.
 func (p *Scriptling) Reset() {
-	// What the last script left open goes first (see OnReset).
-	p.resetMu.Lock()
-	hooks := append([]func(){}, p.resetHooks...)
-	p.resetMu.Unlock()
-	for _, fn := range hooks {
-		fn()
-	}
+	p.env.CloseResources()
 	// Drain any buffered output so it cannot leak into the next evaluation.
 	_ = p.env.GetOutput()
 	// Clear everything except the import builtin; registered libraries stay in
@@ -771,14 +768,18 @@ func (p *Scriptling) Reset() {
 	p.env.Delete("__file__")
 }
 
-// OnReset registers fn to run at the start of every Reset, in the order
-// registered: for an embedder that pools interpreters, to end what one
-// script left open (connections, subscriptions) before the next unrelated
-// script gets the interpreter. A Clone does not inherit them.
-func (p *Scriptling) OnReset(fn func()) {
-	p.resetMu.Lock()
-	p.resetHooks = append(p.resetHooks, fn)
-	p.resetMu.Unlock()
+// Close closes what scripts in this interpreter opened and have not closed
+// themselves: Mercure clients and subscriptions, WebSocket connections, stdio
+// MCP servers (child processes) and zip and tar archives. Call it when the
+// interpreter is done with, such as after a one-off call; Reset and ResetEnv
+// do it too. Anything a script still holds is closed as well once it is
+// garbage collected, but that is not prompt.
+//
+// The interpreter stays usable: its variables are kept, and what scripts open
+// after Close is tracked again. Background tasks close what they opened when
+// their function returns.
+func (p *Scriptling) Close() {
+	p.env.CloseResources()
 }
 
 // Clone creates a new Scriptling interpreter that shares library registrations
@@ -1267,8 +1268,10 @@ func (p *Scriptling) evaluateScriptLibrary(ctx context.Context, name string, scr
 	}
 	childChain := append(append([]string{}, chain...), name)
 
-	// Create a new environment for the library
+	// Create a new environment for the library. What its functions open
+	// belongs to this interpreter, to be closed with it.
 	libEnv := object.NewEnvironment()
+	libEnv.ShareResources(p.env)
 
 	// Inherit writer from main environment (for output capture)
 	writer := p.env.GetWriter()

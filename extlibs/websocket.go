@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/evaluator"
 	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
 )
@@ -22,6 +23,7 @@ type WebSocketClientConn struct {
 	closed     bool
 	closedCh   chan struct{}
 	remoteAddr string
+	release    func() // forgets the connection in the interpreter that opened it
 }
 
 // NewWebSocketClientConn creates a new wrapped WebSocket connection
@@ -92,6 +94,9 @@ func (c *WebSocketClientConn) Close() error {
 		return nil
 	}
 	c.closed = true
+	if c.release != nil {
+		c.release()
+	}
 	close(c.closedCh)
 	return c.conn.Close()
 }
@@ -206,8 +211,9 @@ func newWebSocketLibrary(guard *netsecurity.Guard) *object.Library {
 				// Wrap connection
 				wsConn := NewWebSocketClientConn(conn)
 
-				// Return connection object with methods
-				return &object.Builtin{
+				// Return connection object with methods; the interpreter
+				// closes it should the script not.
+				connObj := &object.Builtin{
 					Attributes: map[string]object.Object{
 						"send": &object.Builtin{
 							Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -347,6 +353,10 @@ Returns:
 					},
 					HelpText: "WebSocket connection object",
 				}
+				wsConn.mu.Lock()
+				wsConn.release = evaluator.TrackResource(ctx, connObj, func() { _ = wsConn.Close() })
+				wsConn.mu.Unlock()
+				return connObj
 			},
 			HelpText: `connect(url, timeout=10, headers={}) - Connect to a WebSocket server
 

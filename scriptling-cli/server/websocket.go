@@ -192,6 +192,7 @@ func (s *Server) runWebSocketHandler(ctx context.Context, handlerRef string, cli
 
 	// Create fresh scriptling environment
 	p := scriptling.New()
+	defer p.Close()
 	s.setupScriptling(p)
 	s.applyPackLoader(p)
 

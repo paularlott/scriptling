@@ -834,6 +834,17 @@ func prepareBackgroundTask(promise *Promise, handler string, fnArgs []object.Obj
 		defer releaseTaskName(promise)
 		ctx, run := parentGuard.StartRun(ctx)
 		defer run.End()
+		// What the task opened and left open closes when its function
+		// returns: the task's environment, and the interpreter the factory
+		// made for it (a dotted handler's library is evaluated there).
+		var taskEnv *object.Environment
+		var taskInstance SandboxInstance
+		defer func() {
+			taskEnv.CloseResources()
+			if c, ok := taskInstance.(interface{ Close() }); ok {
+				c.Close()
+			}
+		}()
 		defer func() {
 			if !daemon {
 				RuntimeState.TaskWG.Done()
@@ -860,10 +871,12 @@ func prepareBackgroundTask(promise *Promise, handler string, fnArgs []object.Obj
 				promise.set(nil, fmt.Errorf("factory returned nil"))
 				return
 			}
+			taskInstance = scriptling
 
 			inheritResourceGuard(scriptling, parentGuard)
 			newEnv := object.NewEnvironment()
 			newEnv.SetResourceGuard(parentGuard)
+			taskEnv = newEnv
 			if err := loadLibraryIntoEnvWithContext(ctx, scriptling, libName, newEnv); err != nil {
 				promise.set(nil, fmt.Errorf("failed to load library %s: %v", libName, err))
 				return
@@ -900,6 +913,7 @@ func prepareBackgroundTask(promise *Promise, handler string, fnArgs []object.Obj
 					promise.set(nil, fmt.Errorf("factory returned nil"))
 					return
 				}
+				taskInstance = scriptling
 
 				inheritResourceGuard(scriptling, parentGuard)
 				newEnv = object.NewEnvironment()
@@ -947,6 +961,8 @@ func prepareBackgroundTask(promise *Promise, handler string, fnArgs []object.Obj
 					})
 				}
 			}
+
+			taskEnv = newEnv
 
 			// Copy only sibling functions into the clean env, rebound to
 			// newEnv so closures resolve correctly. No other globals are

@@ -201,7 +201,8 @@ func (h *reloadableMCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 
 // Server represents the HTTP server
 type Server struct {
-	startCh               chan struct{} // this server's start signal; tags its setup script
+	startCh               chan struct{}          // this server's start signal; tags its setup script
+	setupInterp           *scriptling.Scriptling // the setup script's interpreter, closed with the server (guarded by mu)
 	config                ServerConfig
 	httpServer            *http.Server
 	mcpHandler            *reloadableMCPHandler

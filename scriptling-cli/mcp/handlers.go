@@ -359,6 +359,7 @@ func BuildToolHandlerSourceParams(src []byte, declared []toolmetadata.ToolParame
 	types := ParamTypes(declared)
 	return func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 		p := prepareScriptling(cfg, nil)
+		defer p.Close()
 		params := TypedToolArgs(req.Args(), types)
 
 		response, exitCode, err := extlibsmcp.RunToolScript(ctx, p, string(src), params)
@@ -410,6 +411,7 @@ func BuildToolHandlerFuncParams(src []byte, funcName string, declared []toolmeta
 	types := ParamTypes(declared)
 	return func(ctx context.Context, req *mcplib.ToolRequest) (*mcplib.ToolResponse, error) {
 		p := prepareScriptling(cfg, nil)
+		defer p.Close()
 
 		// Evaluate the source to define the decorated functions.
 		_, evalErr := p.EvalWithContext(ctx, string(src))
@@ -561,6 +563,7 @@ func BuildResourceScriptHandler(scriptPath, mimeType string, cfg HandlerConfig) 
 func BuildResourceScriptHandlerSource(src []byte, mimeType string, cfg HandlerConfig) mcplib.ResourceHandler {
 	return func(ctx context.Context, req *mcplib.ResourceRequest) (*mcplib.ResourceResponse, error) {
 		p := prepareScriptling(cfg, nil)
+		defer p.Close()
 
 		params := map[string]any{"__uri": req.URI()}
 		for k, v := range req.Vars() {
@@ -609,6 +612,7 @@ func BuildPromptScriptHandler(scriptPath string, cfg HandlerConfig) (mcplib.Prom
 func BuildPromptScriptHandlerSource(src []byte, cfg HandlerConfig) mcplib.PromptHandler {
 	return func(ctx context.Context, req *mcplib.PromptRequest) (*mcplib.PromptResponse, error) {
 		p := prepareScriptling(cfg, nil)
+		defer p.Close()
 
 		params := map[string]any{}
 		for k, v := range req.Args() {
@@ -708,6 +712,7 @@ func BuildResourceFuncHandler(src []byte, funcName, uri, mimeType string, cfg Ha
 	}
 	return func(ctx context.Context, req *mcplib.ResourceRequest) (*mcplib.ResourceResponse, error) {
 		p := prepareScriptling(cfg, nil)
+		defer p.Close()
 		if _, evalErr := p.EvalWithContext(ctx, string(src)); evalErr != nil {
 			return nil, fmt.Errorf("failed to load resource source: %w", evalErr)
 		}
@@ -774,6 +779,7 @@ func BuildResourceFuncHandler(src []byte, funcName, uri, mimeType string, cfg Ha
 func BuildPromptFuncHandler(src []byte, funcName string, cfg HandlerConfig) mcplib.PromptHandler {
 	return func(ctx context.Context, req *mcplib.PromptRequest) (*mcplib.PromptResponse, error) {
 		p := prepareScriptling(cfg, nil)
+		defer p.Close()
 		if _, evalErr := p.EvalWithContext(ctx, string(src)); evalErr != nil {
 			return nil, fmt.Errorf("failed to load prompt source: %w", evalErr)
 		}

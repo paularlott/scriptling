@@ -213,6 +213,7 @@ func (s *Server) runPluginHandler(ctx context.Context, handlerRef string, args [
 	}
 
 	p := scriptling.New()
+	defer p.Close()
 	s.setupScriptling(p)
 	s.applyPackLoader(p)
 

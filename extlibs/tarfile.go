@@ -9,8 +9,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/evaluator"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/object"
 )
@@ -52,7 +54,24 @@ type tarFileNativeData struct {
 	headers     []*tar.Header
 	path        string
 	mode        string
-	closed      bool
+	once        sync.Once
+	release     func() // forgets the archive in the interpreter that opened it
+}
+
+// close closes the archive once, whether the script closes it or the
+// interpreter that opened it does.
+func (nd *tarFileNativeData) close() {
+	nd.once.Do(func() {
+		if nd.release != nil {
+			nd.release()
+		}
+		if nd.writer != nil {
+			nd.writer.Close()
+		}
+		if nd.closer != nil {
+			nd.closer.Close()
+		}
+	})
 }
 
 func (t *tarfileLibraryInstance) createLibrary() *object.Library {
@@ -168,9 +187,11 @@ func (t *tarfileLibraryInstance) tarConstructor(ctx context.Context, kwargs obje
 		return errors.NewError("TarFile: mode must be 'r', 'r:gz', 'w', or 'w:gz', got '%s'", mode)
 	}
 
-	return object.NewInstanceWithData(t.TarClass, map[string]object.Object{
+	inst := object.NewInstanceWithData(t.TarClass, map[string]object.Object{
 		"__str__": object.NewString(filepath.Base(path) + " (mode=" + mode + ")"),
 	}, nd)
+	nd.release = evaluator.TrackResource(ctx, inst, nd.close)
+	return inst
 }
 
 // tarGzipCloser closes both the gzip writer/reader and the underlying file.
@@ -500,18 +521,7 @@ func (t *tarfileLibraryInstance) fnClose(ctx context.Context, kwargs object.Kwar
 	if errObj != nil {
 		return errObj
 	}
-	if nd.closed {
-		return &object.Null{}
-	}
-	object.RunBlocking(ctx, func() {
-		if nd.writer != nil {
-			nd.writer.Close()
-		}
-		if nd.closer != nil {
-			nd.closer.Close()
-		}
-	})
-	nd.closed = true
+	object.RunBlocking(ctx, nd.close)
 	return &object.Null{}
 }
 

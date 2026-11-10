@@ -229,6 +229,7 @@ func (s *Server) runJSONRPCHandler(ctx context.Context, handlerRef string, param
 	}
 
 	p := scriptling.New()
+	defer p.Close()
 	s.setupScriptling(p)
 	s.applyPackLoader(p)
 

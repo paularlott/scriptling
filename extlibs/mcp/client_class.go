@@ -6,15 +6,32 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/paularlott/scriptling/conversion"
-
 	mcplib "github.com/paularlott/mcp"
+	"github.com/paularlott/scriptling/conversion"
+	"github.com/paularlott/scriptling/evaluator"
 	"github.com/paularlott/scriptling/object"
 )
 
 // ClientInstance wraps an MCP client for use in scriptling
 type ClientInstance struct {
 	client *mcplib.Client
+
+	// A stdio server the script started is closed once, by the script or by
+	// the interpreter that started it (see trackStdio).
+	once     sync.Once
+	closeErr error
+	release  func()
+}
+
+// close closes the client: for a stdio client, it shuts the server down.
+func (c *ClientInstance) close() error {
+	c.once.Do(func() {
+		if c.release != nil {
+			c.release()
+		}
+		c.closeErr = c.client.Close()
+	})
+	return c.closeErr
 }
 
 // GetClient returns the underlying MCP client
@@ -488,10 +505,19 @@ func closeMethod(self *object.Instance, ctx context.Context) object.Object {
 	if ci.client == nil {
 		return &object.Null{}
 	}
-	if err := ci.client.Close(); err != nil {
+	if err := ci.close(); err != nil {
 		return &object.Error{Message: "close failed: " + err.Error()}
 	}
 	return &object.Null{}
+}
+
+// trackStdio makes the stdio server a script started the interpreter's to
+// shut down, should the script not close it (see evaluator.TrackResource).
+func trackStdio(ctx context.Context, inst *object.Instance) *object.Instance {
+	if ci, errObj := getMCPClientInstance(inst); errObj == nil {
+		ci.release = evaluator.TrackResource(ctx, inst, func() { _ = ci.close() })
+	}
+	return inst
 }
 
 // createClientInstance creates a new scriptling Instance wrapping an MCP client.

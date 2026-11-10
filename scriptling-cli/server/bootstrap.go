@@ -311,6 +311,11 @@ func (s *Server) shutdownSetup() {
 // runSetupScript runs the setup script once to register routes
 func (s *Server) runSetupScript() error {
 	p := scriptling.New()
+	// What the setup script opens (clients its handlers share, say) lives as
+	// long as the server: Stop closes it.
+	s.mu.Lock()
+	s.setupInterp = p
+	s.mu.Unlock()
 	// Tag the script with this server so a late start_server() or
 	// server_running() from it cannot affect a newer server.
 	ctx := extlibs.WithServerStart(context.Background(), s.startCh)

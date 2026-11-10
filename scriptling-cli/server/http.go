@@ -412,7 +412,16 @@ func (s *Server) Stop(ctx context.Context) error {
 		s.webRootZip.Close()
 	}
 
-	return s.httpServer.Shutdown(ctx)
+	err := s.httpServer.Shutdown(ctx)
+	// The handlers are done: close what the setup script left open.
+	s.mu.Lock()
+	setup := s.setupInterp
+	s.setupInterp = nil
+	s.mu.Unlock()
+	if setup != nil {
+		setup.Close()
+	}
+	return err
 }
 
 // handleHealth handles health check requests
@@ -597,6 +606,7 @@ func (s *Server) runHandler(ctx context.Context, handlerRef string, reqObj *obje
 	}
 
 	p := scriptling.New()
+	defer p.Close()
 	s.setupScriptling(p)
 	s.applyPackLoader(p)
 

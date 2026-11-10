@@ -31,7 +31,7 @@ import (
 	"github.com/paularlott/gossiper/client"
 	"github.com/paularlott/scriptling/conversion"
 	scriptlingerrors "github.com/paularlott/scriptling/errors"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/evaluator"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/object"
@@ -58,33 +58,7 @@ var minTokenTTL = 10 * time.Second
 var (
 	library     *object.Library
 	libraryOnce sync.Once
-
-	// openClients are the clients not yet closed, closed for the script on a
-	// runtime reset.
-	openClients = struct {
-		sync.Mutex
-		m     map[*hubClient]struct{}
-		armed bool // closeAll is registered with the runtime's cleanup
-	}{m: map[*hubClient]struct{}{}}
 )
-
-// armCleanup registers closeAll to run on the next runtime reset, unless it
-// is already. A reset forgets its cleanup functions once it has run them, so
-// it is registered again with the next client.
-func armCleanup() {
-	openClients.Lock()
-	defer openClients.Unlock()
-	if openClients.armed {
-		return
-	}
-	openClients.armed = true
-	extlibs.RegisterCleanup(func() {
-		openClients.Lock()
-		openClients.armed = false
-		openClients.Unlock()
-		closeAll()
-	})
-}
 
 // Register registers scriptling.mercure, under the network policy cfg when
 // one is given. A CA bundle a script names with verify="path" may be any file:
@@ -103,15 +77,13 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }, cfg ...*n
 // policy, and a CA bundle named with verify="path" must lie within the allowed
 // paths. A zero fssecurity.Config and a nil policy register it unrestricted.
 //
-// Clients live until the script closes them, or until a runtime reset; give
-// WithLifetime to close them when an environment is done with as well.
-func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, paths fssecurity.Config, policy *netsecurity.Config, opts ...Option) {
+// A client and its subscriptions live until the script closes them, or until
+// the interpreter that made it closes what its scripts left open (Reset,
+// ResetEnv, Close), or once the script no longer holds the client.
+func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, paths fssecurity.Config, policy *netsecurity.Config) {
 	paths.AllowedPaths = fssecurity.NormalizeAllowedPaths(paths.AllowedPaths)
 	t := &transports{paths: paths}
-	for _, o := range opts {
-		o(t)
-	}
-	if paths.AllowedPaths == nil && policy == nil && t.lifetime == nil {
+	if paths.AllowedPaths == nil && policy == nil {
 		libraryOnce.Do(func() { library = buildLibrary(&transports{}) })
 		registrar.RegisterLibrary(library)
 		return
@@ -126,40 +98,13 @@ func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) },
 	registrar.RegisterLibrary(buildLibrary(t))
 }
 
-// closeAll closes every client still open.
-func closeAll() {
-	openClients.Lock()
-	clients := make([]*hubClient, 0, len(openClients.m))
-	for h := range openClients.m {
-		clients = append(clients, h)
-	}
-	openClients.Unlock()
-	for _, h := range clients {
-		h.close()
-	}
-}
-
 // ── Transport ───────────────────────────────────────────────────────────────
 
 // transports builds a client's HTTP transport under the registration's
 // network policy and allowed paths.
 type transports struct {
-	guard    *netsecurity.Guard
-	paths    fssecurity.Config
-	lifetime func() context.Context
-}
-
-// Option configures the library.
-type Option func(*transports)
-
-// WithLifetime bounds the clients scripts make through this registration:
-// lifetime is called as each client is made, and the client and its
-// subscriptions are closed when the context it returns ends. It is for an
-// embedder that throws an environment away, or lends it to another user,
-// after a script: a subscription the script left open goes with it. A client
-// made after that context has ended fails.
-func WithLifetime(lifetime func() context.Context) Option {
-	return func(t *transports) { t.lifetime = lifetime }
+	guard *netsecurity.Guard
+	paths fssecurity.Config
 }
 
 // transport is an HTTP transport for the hub at u: TLS verified, unverified
@@ -328,7 +273,7 @@ type hubClient struct {
 	subs   map[*subscription]struct{}
 	ended  bool
 
-	stopLifetime func() bool // forgets WithLifetime's close; nil without one
+	release func() // forgets the client in the interpreter that made it
 }
 
 func newClient(ctx context.Context, t *transports, kwargs object.Kwargs, hubURL string) object.Object {
@@ -389,20 +334,9 @@ func newClient(ctx context.Context, t *transports, kwargs object.Kwargs, hubURL 
 		return errObject(err)
 	}
 	h := &hubClient{c: c, url: hubURL, tr: tr, tokens: tokens, subs: map[*subscription]struct{}{}}
-	if t.lifetime != nil {
-		life := t.lifetime()
-		if life.Err() != nil {
-			_ = c.Close()
-			tr.CloseIdleConnections()
-			return &object.Error{Message: "mercure: this environment has ended"}
-		}
-		h.stopLifetime = context.AfterFunc(life, h.close)
-	}
-	armCleanup()
-	openClients.Lock()
-	openClients.m[h] = struct{}{}
-	openClients.Unlock()
-	return newInstance(getClientClass(), "MercureClient", h)
+	inst := newInstance(getClientClass(), "MercureClient", h)
+	h.release = evaluator.TrackResource(ctx, inst, h.close)
+	return inst
 }
 
 // clientTokens is a client's token source: minted from key= and renewed, or
@@ -452,12 +386,7 @@ func clientTokens(kwargs object.Kwargs, hubURL string) (*tokenSource, object.Obj
 // the subscriptions let go of them.
 func (h *hubClient) close() {
 	h.once.Do(func() {
-		if h.stopLifetime != nil {
-			h.stopLifetime()
-		}
-		openClients.Lock()
-		delete(openClients.m, h)
-		openClients.Unlock()
+		h.release()
 		h.mu.Lock()
 		h.ended = true
 		subs := make([]*subscription, 0, len(h.subs))
@@ -470,6 +399,7 @@ func (h *hubClient) close() {
 			deadline := time.After(closeWait)
 			for _, s := range subs {
 				s.drain(deadline)
+				s.cancel()
 			}
 			h.tr.CloseIdleConnections()
 		}()
@@ -951,21 +881,35 @@ func dataArg(v object.Object) (string, object.Object) {
 // ── Subscription ────────────────────────────────────────────────────────────
 
 type subscription struct {
-	h *hubClient
-	s *client.Subscription
+	h      *hubClient
+	s      *client.Subscription
+	cancel context.CancelFunc
 }
 
+// subscribe opens a subscription that lives until it or its client is
+// closed. It runs under a context of its own, not the script call's: a call's
+// context carries the interpreter, which a subscription left open would
+// otherwise keep from being collected, and a call that ends (a timeout, a
+// pooled interpreter's run) would end the subscription with it. ctx bounds
+// only the wait for the hub to accept it.
 func (h *hubClient) subscribe(ctx context.Context, spec client.Subscribe) (*subscription, object.Object) {
 	if h.closed() {
 		return nil, &object.Error{Message: client.ErrClosed.Error()}
 	}
+	life, cancel := context.WithCancel(context.Background())
+	stop := context.AfterFunc(ctx, cancel)
 	var s *client.Subscription
 	var err error
-	object.RunBlocking(ctx, func() { s, err = h.c.Subscribe(ctx, spec) })
+	object.RunBlocking(ctx, func() { s, err = h.c.Subscribe(life, spec) })
+	if !stop() && err == nil { // the call ended as the hub accepted it
+		s.Close()
+		err = ctx.Err()
+	}
 	if err != nil {
+		cancel()
 		return nil, publishError(ctx, h.tokens.explain(err))
 	}
-	sub := &subscription{h: h, s: s}
+	sub := &subscription{h: h, s: s, cancel: cancel}
 	h.mu.Lock()
 	h.subs[sub] = struct{}{}
 	h.mu.Unlock()
@@ -974,6 +918,7 @@ func (h *hubClient) subscribe(ctx context.Context, spec client.Subscribe) (*subs
 
 func (s *subscription) close() {
 	s.s.Close()
+	s.cancel()
 	s.h.mu.Lock()
 	delete(s.h.subs, s)
 	s.h.mu.Unlock()

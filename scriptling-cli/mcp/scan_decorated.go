@@ -131,6 +131,7 @@ func ScanToolsFSDual(fsys fs.FS, cfg HandlerConfig) ([]ScannedToolEntry, error) 
 // required from presence of defaults).
 func ScanDecoratedTools(src []byte, cfg HandlerConfig) ([]DecoratedTool, error) {
 	p := prepareScriptling(cfg, nil)
+	defer p.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -652,6 +653,7 @@ func ScanRegistrationsFSDual(fsys fs.FS, cfg HandlerConfig) (*DecoratedRegistrat
 // content.
 func ScanDecoratedRegistrations(src []byte, cfg HandlerConfig) (*DecoratedRegistrations, error) {
 	p := prepareScriptling(cfg, nil)
+	defer p.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

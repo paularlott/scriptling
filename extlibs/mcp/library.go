@@ -290,7 +290,7 @@ Example:
 				return nil, fmt.Errorf("mcp.Client: failed to start stdio server %q: %w", target, err)
 			}
 			declareUIAppsSupport(client)
-			return createClientInstance(client), nil
+			return trackStdio(ctx, createClientInstance(client)), nil
 		}, `Client(target, **kwargs) - Create a new MCP client (HTTP or stdio)
 
 Creates a client for a remote MCP server. The transport is chosen from target:
