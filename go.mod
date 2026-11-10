@@ -12,8 +12,8 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/paularlott/cli v0.10.2
-	github.com/paularlott/gossip v0.30.3
-	github.com/paularlott/gossiper v0.0.0-20261110051655-c6845c4ffb75
+	github.com/paularlott/gossip v0.31.0
+	github.com/paularlott/gossiper/client v1.0.0
 	github.com/paularlott/jsonrpc v0.4.0
 	github.com/paularlott/logger v0.4.0
 	github.com/paularlott/mcp v0.35.2
@@ -36,7 +36,6 @@ require (
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/flatbuffers v25.12.19+incompatible // indirect
 	github.com/hashicorp/go-msgpack/v2 v2.1.5 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -70,5 +69,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
-
-replace github.com/paularlott/gossiper => ../gossiper

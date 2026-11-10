@@ -6,17 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/paularlott/gossiper"
-	"github.com/paularlott/gossiper/auth"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
@@ -25,66 +21,6 @@ import (
 )
 
 const testKey = "mercure-test-key-0123456789abcdef0123456789"
-
-// testHub is an in-process gossiper hub, over HTTP/1.1 and HTTP/2 without TLS.
-type testHub struct {
-	url     string
-	streams atomic.Int64 // streaming publishes opened
-	forms   atomic.Int64 // form POSTs
-	query   atomic.Value // the query of the last subscription
-	gets    atomic.Int64 // subscriptions opened (and reopened)
-}
-
-func newHub(t testing.TB, mod func(*gossiper.Config)) *testHub {
-	t.Helper()
-	return newHubWith(t, mod, false)
-}
-
-// newHubWith is newHub, refusing streaming publishes as any other Mercure hub
-// does (it reads the body as a form) when noStreams is set.
-func newHubWith(t testing.TB, mod func(*gossiper.Config), noStreams bool) *testHub {
-	t.Helper()
-	cfg := gossiper.Config{PublisherKey: auth.KeyConfig{Key: testKey, Algorithm: "HS256"},
-		TrustedIssuers: []string{"https://localhost"}}
-	if mod != nil {
-		mod(&cfg)
-	}
-	h, err := gossiper.New(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	th := &testHub{}
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			th.query.Store(r.URL.RawQuery)
-			th.gets.Add(1)
-		}
-		if r.Method == http.MethodPost {
-			if strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-ndjson") {
-				th.streams.Add(1)
-				if noStreams {
-					http.Error(w, `Missing "topic" parameter`, http.StatusBadRequest)
-					return
-				}
-			} else {
-				th.forms.Add(1)
-			}
-		}
-		h.ServeHTTP(w, r)
-	}))
-	srv.Config.Protocols = new(http.Protocols)
-	srv.Config.Protocols.SetHTTP1(true)
-	srv.Config.Protocols.SetUnencryptedHTTP2(true)
-	srv.Start()
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = h.Close(ctx)
-		srv.Close()
-	})
-	th.url = srv.URL + "/.well-known/mercure"
-	return th
-}
 
 func run(t *testing.T, register func(*scriptling.Scriptling), script string) (string, error) {
 	t.Helper()
@@ -111,7 +47,7 @@ hub = mercure.Client("` + h.url + `", token=TOKEN` + clientArgs + `)
 }
 
 func TestPublishSubscribeDefaultHTTP(t *testing.T) {
-	h := newHub(t, nil)
+	h := newHub(t)
 	out, err := run(t, plain, prelude(h, "")+`
 sub = hub.subscribe(match_urlpattern="https://example.com/books/:id")
 id1 = hub.publish("https://example.com/books/1", {"title": "Dune", "n": 1}, id="urn:book:1", type="book", retry=1.5)
@@ -138,7 +74,7 @@ result
 func TestStreamPublishMany(t *testing.T) {
 	for _, mode := range []string{"True", `"auto"`} {
 		t.Run(mode, func(t *testing.T) {
-			h := newHub(t, nil)
+			h := newHub(t)
 			out, err := run(t, plain, prelude(h, ", stream="+mode)+`
 sub = hub.subscribe(["https://example.com/n"], buffer=2000)
 ids = hub.publish_many([{"topic": "https://example.com/n", "data": str(i)} for i in range(1000)])
@@ -166,7 +102,7 @@ sub.close()
 }
 
 func TestPublishManyHTTPKeepsOrder(t *testing.T) {
-	h := newHub(t, nil)
+	h := newHub(t)
 	out, err := run(t, plain, prelude(h, "")+`
 sub = hub.subscribe("https://example.com/n")
 ids = hub.publish_many([{"topic": "https://example.com/n", "data": {"i": i}} for i in range(20)])
@@ -184,7 +120,7 @@ got == list(range(20)) and len(ids) == 20
 // With stream="auto", a hub without streams gets a POST per update, one after
 // another: the updates keep their order.
 func TestAutoWithoutStreamsKeepsOrder(t *testing.T) {
-	h := newHubWith(t, nil, true)
+	h := newHubWith(t, true)
 	out, err := run(t, plain, prelude(h, `, stream="auto"`)+`
 sub = hub.subscribe("https://example.com/n", buffer=500)
 ids = hub.publish_many([{"topic": "https://example.com/n", "data": str(i)} for i in range(300)])
@@ -200,7 +136,7 @@ got = [sub.receive(timeout=10).data for _ in range(300)]
 }
 
 func TestH2C(t *testing.T) {
-	h := newHub(t, nil)
+	h := newHub(t)
 	out, err := run(t, plain, prelude(h, ", stream=True, h2c=True")+`
 sub = hub.subscribe("https://example.com/h")
 hub.publish("https://example.com/h", "x")
@@ -212,7 +148,7 @@ sub.receive(timeout=10).data
 }
 
 func TestErrors(t *testing.T) {
-	h := newHub(t, nil)
+	h := newHub(t)
 	for name, tc := range map[string]struct{ script, want string }{
 		"publish beyond the token's grants": {`
 tok = mercure.create_token(KEY, hub.url, publish=["https://example.com/mine"])
@@ -297,7 +233,7 @@ except Exception as e:
 }
 
 func TestPrivateUpdates(t *testing.T) {
-	h := newHub(t, func(c *gossiper.Config) { c.Anonymous = true })
+	h := newHub(t, "--anonymous")
 	out, err := run(t, plain, prelude(h, "")+`
 allowed = mercure.Client(hub.url, token=mercure.create_token(KEY, hub.url, subscribe=["https://example.com/p"]))
 anon = mercure.Client(hub.url)
@@ -313,7 +249,7 @@ hub.publish("https://example.com/p", "public")
 }
 
 func TestResumeFromLastEventID(t *testing.T) {
-	h := newHub(t, nil)
+	h := newHub(t)
 	out, err := run(t, plain, prelude(h, "")+`
 first = hub.publish("https://example.com/r", "1")
 hub.publish("https://example.com/r", "2")
@@ -327,7 +263,7 @@ sub = hub.subscribe("https://example.com/r", last_event_id=first)
 }
 
 func TestWithBlocksClose(t *testing.T) {
-	h := newHub(t, nil)
+	h := newHub(t)
 	out, err := run(t, plain, prelude(h, "")+`
 with mercure.Client(hub.url, token=TOKEN) as c:
     with c.subscribe("https://example.com/w") as sub:
@@ -342,7 +278,7 @@ with mercure.Client(hub.url, token=TOKEN) as c:
 }
 
 func TestEventHelpers(t *testing.T) {
-	h := newHub(t, nil)
+	h := newHub(t)
 	out, err := run(t, plain, prelude(h, "")+`
 sub = hub.subscribe("https://example.com/e")
 hub.publish("https://example.com/e", "not json", id="urn:e")
@@ -413,7 +349,7 @@ func TestCreateToken(t *testing.T) {
 
 // Mercure 1.0 access tokens and matchers, as hubs in Mercure 1.0 mode take them.
 func TestMercure1AccessTokens(t *testing.T) {
-	h := newHub(t, func(c *gossiper.Config) { c.TrustedIssuers = []string{"https://localhost"} })
+	h := newHub(t)
 	out, err := run(t, plain, `
 KEY = "`+testKey+`"
 URL = "`+h.url+`"
@@ -471,7 +407,7 @@ except Exception as e:
 // Topics given to subscribe() by position are Mercure 1.0 exact matchers;
 // topics= are draft-07 selectors.
 func TestSubscribeParameters(t *testing.T) {
-	h := newHub(t, func(c *gossiper.Config) { c.Protocol = gossiper.ProtocolBoth }) // topic= too
+	h := newHub(t, "--protocol", "both") // topic= too
 	for script, want := range map[string]string{
 		`hub.subscribe("https://example.com/a", "https://example.com/b")`:         "match=https%3A%2F%2Fexample.com%2Fa&match=https%3A%2F%2Fexample.com%2Fb",
 		`hub.subscribe(["https://example.com/a"], match="https://example.com/b")`: "match=https%3A%2F%2Fexample.com%2Fa&match=https%3A%2F%2Fexample.com%2Fb",
@@ -490,7 +426,7 @@ func TestSubscribeParameters(t *testing.T) {
 // Draft-07, opted into, against a hub that takes only draft-07. (A hub's
 // default, as the reference hub's, is Mercure 1.0 only.)
 func TestDraft07Hub(t *testing.T) {
-	h := newHub(t, func(c *gossiper.Config) { c.Protocol = gossiper.ProtocolLegacy })
+	h := newHub(t, "--protocol", "legacy")
 	out, err := run(t, plain, `
 KEY = "`+testKey+`"
 hub = mercure.Client("`+h.url+`", token=mercure.create_token(KEY, publish=["*"], subscribe=["*"], draft07=True))
@@ -515,7 +451,7 @@ except Exception as e:
 }
 
 func TestNetworkPolicy(t *testing.T) {
-	h := newHub(t, nil)
+	h := newHub(t)
 	blocked := func(p *scriptling.Scriptling) { Register(p, &netsecurity.Config{AllowIPLiterals: true}) }
 	_, err := run(t, blocked, `mercure.Client("`+h.url+`")`)
 	if err == nil || !strings.Contains(err.Error(), "loopback") {
@@ -555,17 +491,10 @@ func TestCABundleAllowedPaths(t *testing.T) {
 }
 
 func TestTLSHub(t *testing.T) {
-	cfg := gossiper.Config{PublisherKey: auth.KeyConfig{Key: testKey, Algorithm: "HS256"},
-		TrustedIssuers: []string{"https://localhost"}}
-	g, err := gossiper.New(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := httptest.NewTLSServer(g)
+	// HTTPS in front of the hub: the client checks the certificate.
+	srv := httptest.NewTLSServer(forward(t, startHub(t, nil)))
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = g.Close(ctx)
+		srv.CloseClientConnections()
 		srv.Close()
 	})
 	url := srv.URL + "/.well-known/mercure"
@@ -584,7 +513,7 @@ sub.receive(timeout=10).data`)
 
 // A runtime reset closes the clients scripts left open.
 func TestResetClosesClients(t *testing.T) {
-	h := newHub(t, nil)
+	h := newHub(t)
 	if _, err := run(t, plain, prelude(h, "")+`sub = hub.subscribe("t")`); err != nil {
 		t.Fatal(err)
 	}
@@ -605,7 +534,7 @@ func TestResetClosesClients(t *testing.T) {
 
 // A script stopped while it waits for an event stops at once.
 func TestReceiveStopsWithTheRun(t *testing.T) {
-	h := newHub(t, nil)
+	h := newHub(t)
 	p := scriptling.New()
 	stdlib.RegisterAll(p)
 	Register(p)
@@ -665,7 +594,7 @@ func TestKeyRenewsAcrossExpiry(t *testing.T) {
 	t.Cleanup(func() { minTokenTTL = 10 * time.Second })
 	for _, mode := range []string{"False", "True"} {
 		t.Run("stream="+mode, func(t *testing.T) {
-			h := newHub(t, nil)
+			h := newHub(t)
 			out, err := run(t, plain, `
 import time
 hub = mercure.Client("`+h.url+`", key="`+testKey+`", token_ttl=2, stream=`+mode+`)
@@ -700,7 +629,7 @@ while len(got) < sent:
 // A token given with token= is presented as it is: once it expires the hub
 // refuses it, and the error says what to do; set_token() replaces it.
 func TestStaticTokenExpiryAndSetToken(t *testing.T) {
-	h := newHub(t, nil)
+	h := newHub(t)
 	out, err := run(t, plain, `
 import time
 URL = "`+h.url+`"
@@ -756,7 +685,7 @@ func TestKeyArguments(t *testing.T) {
 		}
 	}
 	// draft-07 tokens without expiry, from the key.
-	h := newHub(t, func(c *gossiper.Config) { c.Protocol = gossiper.ProtocolBoth })
+	h := newHub(t, "--protocol", "both")
 	out, err := run(t, plain, `
 hub = mercure.Client("`+h.url+`", key="`+testKey+`", draft07=True, token_ttl=0)
 sub = hub.subscribe(topics="https://example.com/{id}")
@@ -770,7 +699,7 @@ sub.receive(timeout=10).data`)
 // WithLifetime closes the clients an environment made, subscriptions and all,
 // when it is done with, and refuses new ones after.
 func TestWithLifetime(t *testing.T) {
-	h := newHub(t, nil)
+	h := newHub(t)
 	life, end := context.WithCancel(context.Background())
 	p := scriptling.New()
 	stdlib.RegisterAll(p)

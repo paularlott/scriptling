@@ -34,7 +34,7 @@ func benchScript(b *testing.B, h *testHub, setup, body string) {
 func benchClient(b *testing.B, h *testHub, tr client.Transport) *client.Client {
 	b.Helper()
 	tok := benchToken(b, h)
-	c, err := client.New(client.Options{URL: h.url, Token: tok, Transport: tr})
+	c, err := client.New(client.Options{URL: h.direct, Token: tok, Transport: tr})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func benchClient(b *testing.B, h *testHub, tr client.Transport) *client.Client {
 
 func benchToken(b *testing.B, h *testHub) string {
 	b.Helper()
-	spec := &tokenSpec{key: []byte(testKey), algorithm: "HS256", issuer: defaultIssuer, audience: h.url,
+	spec := &tokenSpec{key: []byte(testKey), algorithm: "HS256", issuer: defaultIssuer, audience: h.direct,
 		clientID: "bench", matchType: "exact", publish: []string{"*"}, subscribe: []string{"*"}, ttl: 3600e9}
 	tok, err := newMintingSource(spec).get(context.Background())
 	if err != nil {
@@ -54,13 +54,13 @@ func benchToken(b *testing.B, h *testHub) string {
 }
 
 func clientSetup(h *testHub, args string) string {
-	return fmt.Sprintf("hub = mercure.Client(%q, key=%q%s)\n", h.url, testKey, args)
+	return fmt.Sprintf("hub = mercure.Client(%q, key=%q%s)\n", h.direct, testKey, args)
 }
 
 // One publish at a time, each a POST answered before the next.
 func BenchmarkPublishPOST(b *testing.B) {
 	b.Run("go", func(b *testing.B) {
-		c := benchClient(b, newHub(b, nil), client.HTTP)
+		c := benchClient(b, newHub(b), client.HTTP)
 		b.ResetTimer()
 		for range b.N {
 			if _, err := c.Publish(context.Background(), client.Update{Topics: []string{"https://example.com/b"}, Data: "x"}); err != nil {
@@ -69,7 +69,7 @@ func BenchmarkPublishPOST(b *testing.B) {
 		}
 	})
 	b.Run("scriptling", func(b *testing.B) {
-		h := newHub(b, nil)
+		h := newHub(b)
 		benchScript(b, h, clientSetup(h, ""), `
 for i in range(N):
     hub.publish("https://example.com/b", "x")
@@ -80,7 +80,7 @@ for i in range(N):
 // One publish at a time over a stream, each answered before the next.
 func BenchmarkPublishStreamOneByOne(b *testing.B) {
 	b.Run("go", func(b *testing.B) {
-		c := benchClient(b, newHub(b, nil), client.Stream)
+		c := benchClient(b, newHub(b), client.Stream)
 		b.ResetTimer()
 		for range b.N {
 			if _, err := c.Publish(context.Background(), client.Update{Topics: []string{"https://example.com/b"}, Data: "x"}); err != nil {
@@ -89,7 +89,7 @@ func BenchmarkPublishStreamOneByOne(b *testing.B) {
 		}
 	})
 	b.Run("scriptling", func(b *testing.B) {
-		h := newHub(b, nil)
+		h := newHub(b)
 		benchScript(b, h, clientSetup(h, ", stream=True"), `
 for i in range(N):
     hub.publish("https://example.com/b", "x")
@@ -100,7 +100,7 @@ for i in range(N):
 // Many publishes pipelined over a stream.
 func BenchmarkPublishStreamPipelined(b *testing.B) {
 	b.Run("go", func(b *testing.B) {
-		c := benchClient(b, newHub(b, nil), client.Stream)
+		c := benchClient(b, newHub(b), client.Stream)
 		b.ResetTimer()
 		var wg sync.WaitGroup
 		wg.Add(b.N)
@@ -113,7 +113,7 @@ func BenchmarkPublishStreamPipelined(b *testing.B) {
 		wg.Wait()
 	})
 	b.Run("scriptling", func(b *testing.B) {
-		h := newHub(b, nil)
+		h := newHub(b)
 		benchScript(b, h, clientSetup(h, ", stream=True"), `
 hub.publish_many([{"topic": "https://example.com/b", "data": "x"} for i in range(N)])
 `)
@@ -135,7 +135,7 @@ func BenchmarkReceive(b *testing.B) {
 		wg.Wait()
 	}
 	b.Run("go", func(b *testing.B) {
-		h := newHub(b, nil)
+		h := newHub(b)
 		pub := benchClient(b, h, client.Stream)
 		sub, err := benchClient(b, h, client.HTTP).Subscribe(context.Background(),
 			client.Subscribe{Match: []string{"https://example.com/r"}, Buffer: 2 * batch})
@@ -159,7 +159,7 @@ func BenchmarkReceive(b *testing.B) {
 		}
 	})
 	b.Run("scriptling", func(b *testing.B) {
-		h := newHub(b, nil)
+		h := newHub(b)
 		pub := benchClient(b, h, client.Stream)
 		p := scriptling.New()
 		stdlib.RegisterAll(p)
