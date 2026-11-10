@@ -766,3 +766,41 @@ sub.receive(timeout=10).data`)
 		t.Errorf("draft-07 from the key: %s %v", out, err)
 	}
 }
+
+// WithLifetime closes the clients an environment made, subscriptions and all,
+// when it is done with, and refuses new ones after.
+func TestWithLifetime(t *testing.T) {
+	h := newHub(t, nil)
+	life, end := context.WithCancel(context.Background())
+	p := scriptling.New()
+	stdlib.RegisterAll(p)
+	RegisterConfigured(p, fssecurity.Config{}, nil, WithLifetime(func() context.Context { return life }))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := p.EvalWithContext(ctx, "import scriptling.mercure as mercure\n"+prelude(h, "")+`
+sub = hub.subscribe("https://example.com/left-open")
+hub.publish("https://example.com/left-open", "x")
+first = sub.receive(timeout=10).data
+`); err != nil {
+		t.Fatal(err)
+	}
+	end()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		v, err := p.EvalWithContext(ctx, "hub.closed")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.Inspect() == "True" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the client is still open after its environment ended")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	_, err := p.EvalWithContext(ctx, `mercure.Client("`+h.url+`")`)
+	if err == nil || !strings.Contains(err.Error(), "environment has ended") {
+		t.Fatalf("a client after the end: %v", err)
+	}
+}

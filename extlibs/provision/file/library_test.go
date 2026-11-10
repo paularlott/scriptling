@@ -173,11 +173,18 @@ func TestEnsureOverwriteDifferentMode(t *testing.T) {
 	_, err := p.Eval(`
 import scriptling.provision.file as file
 status = file.ensure("` + path + `", "same", mode=0o600)
-if status != file.UNCHANGED:
-    raise Exception("expected UNCHANGED")
+if status != file.UPDATED:
+    raise Exception("expected UPDATED, got " + status)
+if file.ensure("` + path + `", "same", mode=0o600) != file.UNCHANGED:
+    raise Exception("expected UNCHANGED the second time")
+if file.ensure("` + path + `", "same") != file.UNCHANGED:
+    raise Exception("without mode= the mode is left alone")
 `)
 	if err != nil {
 		t.Fatalf("Failed to run ensure: %v", err)
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+		t.Errorf("mode %o, want 600", info.Mode().Perm())
 	}
 }
 

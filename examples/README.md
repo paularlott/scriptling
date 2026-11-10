@@ -83,6 +83,11 @@ This directory contains examples and tools for working with Scriptling.
   - `stream_publish.py` - Bulk publishing, a POST per update and over a stream (gossiper)
   - `README.md` - Running the official Mercure hub or gossiper
 
+- **provision/** - Set up a machine: packages, files and commands, as root where needed (`scriptling.provision.*`)
+  - `web_server.py` - Install nginx and serve a static site
+  - `dev_tools.py` - Install tools and add settings to `~/.bashrc`
+  - `README.md` - Running steps as root with `become=True`
+
 - **mcp-tools/** - Example MCP tools for use with the CLI MCP server
   - `*.toml` - Tool metadata files
   - `*.py` - Tool implementation scripts

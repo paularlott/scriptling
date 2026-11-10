@@ -25,8 +25,11 @@ import (
 	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	scriptlingnomad "github.com/paularlott/scriptling/extlibs/nomad"
 	scriptlingoauth "github.com/paularlott/scriptling/extlibs/oauth"
+	"github.com/paularlott/scriptling/extlibs/provision/become"
+	provisioncommand "github.com/paularlott/scriptling/extlibs/provision/command"
 	provisionfetch "github.com/paularlott/scriptling/extlibs/provision/fetch"
 	provisionfile "github.com/paularlott/scriptling/extlibs/provision/file"
+	provisionpackage "github.com/paularlott/scriptling/extlibs/provision/packages"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	scriptlingsimilarity "github.com/paularlott/scriptling/extlibs/similarity"
 	"github.com/paularlott/scriptling/libloader"
@@ -71,6 +74,8 @@ func AllLibraryNames() []string {
 		extlibs.ResolveLibraryName,
 		extlibs.FileProvisionLibraryName,
 		extlibs.FetchProvisionLibraryName,
+		extlibs.CommandProvisionLibraryName,
+		extlibs.PackageProvisionLibraryName,
 		extlibs.AILibraryName,
 		extlibs.AgentLibraryName,
 		extlibs.SimilarityLibraryName,
@@ -83,6 +88,19 @@ func AllLibraryNames() []string {
 		extlibs.ToonLibraryName,
 	)
 }
+
+// rootHelper runs the provision libraries' become=True operations; nil
+// refuses them unless scriptling itself runs as root.
+var rootHelper *become.Become
+
+// SetBecome lets scripts run provisioning steps as root through b (the CLI
+// sets one unless --deny-become). Pass nil to turn it off again. Where the
+// subprocess library is disabled, become stays off: running as root through
+// sudo is a subprocess.
+func SetBecome(b *become.Become) { rootHelper = b }
+
+// Become returns what SetBecome set.
+func Become() *become.Become { return rootHelper }
 
 // Scriptling configures a Scriptling instance with the built-in CLI libraries.
 // libdirs: Directories for on-demand library loading (first entry is typically the script dir or cwd)
@@ -177,8 +195,14 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(extlibs.UnicastLibraryName, func() { scriptlingunicast.Register(p, netPolicy...) })
 	reg(extlibs.GossipLibraryName, func() { scriptlinggossip.Register(p, log, netPolicy...) })
 	reg(extlibs.ResolveLibraryName, func() { scriptlingresolve.Register(p, scriptResolver(netPolicy)) })
+	// become=True runs sudo: only where a script could run it through
+	// subprocess anyway.
+	root := rootHelper
+	if disabled[extlibs.SubprocessLibraryName] {
+		root = nil
+	}
 	reg(extlibs.FileProvisionLibraryName, func() {
-		provisionfile.RegisterConfigured(p, fssecurity.Config{AllowedPaths: allowedPaths})
+		provisionfile.RegisterConfigured(p, fssecurity.Config{AllowedPaths: allowedPaths}, provisionfile.WithBecome(root))
 	})
 	reg(extlibs.FetchProvisionLibraryName, func() {
 		var guard *netsecurity.Guard
@@ -189,8 +213,18 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 			}
 			guard = g
 		}
-		provisionfetch.RegisterConfigured(p, fssecurity.Config{AllowedPaths: allowedPaths}, guard)
+		provisionfetch.RegisterConfigured(p, fssecurity.Config{AllowedPaths: allowedPaths}, guard, provisionfetch.WithBecome(root))
 	})
+	// Running commands is a subprocess, so these are there only where the
+	// subprocess library is.
+	if !disabled[extlibs.SubprocessLibraryName] {
+		reg(extlibs.CommandProvisionLibraryName, func() {
+			provisioncommand.RegisterConfigured(p, provisioncommand.WithBecome(root))
+		})
+		reg(extlibs.PackageProvisionLibraryName, func() {
+			provisionpackage.RegisterConfigured(p, provisionpackage.WithBecome(root))
+		})
+	}
 
 	reg(extlibs.AILibraryName, func() { ai.Register(p, netPolicy...) })
 	reg(aimemory.MemoryLibraryName, func() { aimemory.Register(p, log) })

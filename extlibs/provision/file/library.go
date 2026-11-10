@@ -2,34 +2,29 @@ package file
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
+	"github.com/paularlott/scriptling/extlibs/provision/become"
 	"github.com/paularlott/scriptling/object"
 )
 
 const (
 	LibraryName = "scriptling.provision.file"
-	LibraryDesc = "File provisioning utilities for creating and updating files with correct permissions"
+	LibraryDesc = "File provisioning utilities for creating and updating files with correct permissions and owners"
 )
 
-// libraryInstance holds the filesystem policy this library was registered with.
+// libraryInstance holds the filesystem policy this library was registered
+// with, and what runs its operations as root (nil: running as root is off).
 type libraryInstance struct {
-	paths fssecurity.Config
-}
-
-// denied returns the PermissionError for op when path is outside the
-// configured allowed directories, nil otherwise; a nil AllowedPaths means no
-// restriction. Scripts cannot catch it, as with the os and pathlib libraries.
-func (i *libraryInstance) denied(op, path string) object.Object {
-	if err := i.paths.CheckPath(path); err != nil {
-		return errors.NewPermissionError("%s: %s", op, err.Error())
-	}
-	return nil
+	paths  fssecurity.Config
+	become *become.Become
 }
 
 const (
@@ -49,6 +44,16 @@ const (
 	StatusExists    = "exists"
 )
 
+// Option configures the library.
+type Option func(*libraryInstance)
+
+// WithBecome lets scripts run the library's operations as root with
+// become=True, through b. Without it, become=True fails unless the process is
+// already root.
+func WithBecome(b *become.Become) Option {
+	return func(i *libraryInstance) { i.become = b }
+}
+
 func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
 	RegisterConfigured(registrar, fssecurity.Config{})
 }
@@ -62,7 +67,7 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }) {
 // policy it passed — safe for an embedder that registers this library
 // against interpreters with different per-request/per-tenant configs, not
 // just a single process-wide policy set once at startup.
-func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, paths fssecurity.Config) {
+func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, paths fssecurity.Config, opts ...Option) {
 	if paths.AllowedPaths != nil {
 		normalized := make([]string, 0, len(paths.AllowedPaths))
 		for _, p := range paths.AllowedPaths {
@@ -74,8 +79,69 @@ func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) },
 		}
 		paths.AllowedPaths = normalized
 	}
-	registrar.RegisterLibrary(buildLibrary(&libraryInstance{paths: paths}))
+	inst := &libraryInstance{paths: paths}
+	for _, o := range opts {
+		o(inst)
+	}
+	registrar.RegisterLibrary(buildLibrary(inst))
 }
+
+// do runs the library's operation name, as root when asRoot is set.
+func do[A any](ctx context.Context, inst *libraryInstance, asRoot bool, name string, a A) object.Object {
+	var status string
+	var err error
+	object.RunBlocking(ctx, func() {
+		status, err = become.Do[A, string](ctx, inst.become, asRoot, inst.paths, "file."+name, a)
+	})
+	if err != nil {
+		return opError(name, err)
+	}
+	return object.NewString(status)
+}
+
+// opError is the script error for a failed operation. A path outside the
+// allowed directories, or root where it is not allowed, is a PermissionError
+// the script cannot catch, as in the os and pathlib libraries.
+func opError(name string, err error) object.Object {
+	if stderrors.Is(err, fssecurity.ErrPathNotAllowed) || stderrors.Is(err, become.ErrNotEnabled) {
+		return errors.NewPermissionError("%s: %s", name, err.Error())
+	}
+	return &object.Error{Message: name + ": " + err.Error()}
+}
+
+// rootArgs reads the become, owner and group arguments.
+func rootArgs(name string, kwargs object.Kwargs) (bool, become.Owner, object.Object) {
+	asRoot, errObj := kwargs.GetBool("become", false)
+	if errObj != nil {
+		return false, become.Owner{}, errObj
+	}
+	var owner become.Owner
+	for _, k := range []struct {
+		arg string
+		to  *string
+	}{{"owner", &owner.User}, {"group", &owner.Group}} {
+		v := kwargs.Get(k.arg)
+		switch v := v.(type) {
+		case nil, *object.Null:
+		case *object.String:
+			*k.to, _ = v.AsString()
+		case *object.Integer:
+			if v.IntValue() < 0 {
+				return false, owner, &object.Error{Message: fmt.Sprintf("%s: %s must not be negative", name, k.arg)}
+			}
+			*k.to = strconv.FormatInt(v.IntValue(), 10)
+		default:
+			return false, owner, &object.Error{Message: fmt.Sprintf("%s: %s must be a name or a number", name, k.arg)}
+		}
+	}
+	return asRoot, owner, nil
+}
+
+const rootHelp = `  owner (str or int): The file's owner, by name or uid. Default: a new file belongs to whoever writes it
+    (root with become=True); an existing one keeps its owner
+  group (str or int): The file's group, by name or gid. Default: as for owner
+  become (bool): Run as root (default False), through sudo: asked once, without a password where sudo
+    allows that. The scriptling CLI refuses it with --deny-become`
 
 func buildLibrary(inst *libraryInstance) *object.Library {
 	return object.NewLibrary(LibraryName, map[string]*object.Builtin{
@@ -84,65 +150,35 @@ func buildLibrary(inst *libraryInstance) *object.Library {
 				if len(args) != 2 {
 					return &object.Error{Message: fmt.Sprintf("ensure expected 2 arguments, got %d", len(args))}
 				}
-
 				path, coerceErr := args[0].CoerceString()
 				if coerceErr != nil {
 					return &object.Error{Message: "ensure: path must be a string"}
 				}
-
 				content, coerceErr := args[1].CoerceString()
 				if coerceErr != nil {
 					return &object.Error{Message: "ensure: content must be a string"}
 				}
-
-				mode := int(kwargs.MustGetInt("mode", defaultFileMode))
-				createOnly := kwargs.MustGetBool("create_only", false)
-
-				path = expandPath(path)
-
-				if denied := inst.denied("ensure", path); denied != nil {
-					return denied
+				asRoot, owner, errObj := rootArgs("ensure", kwargs)
+				if errObj != nil {
+					return errObj
 				}
-
-				_, err := os.Stat(path)
-				if object.FileEquals(path, []byte(content)) {
-					return object.NewString(StatusUnchanged)
-				}
-
-				if err == nil && createOnly {
-					return object.NewString(StatusUnchanged)
-				}
-
-				fileExisted := err == nil
-
-				// RawDir, not filepath.Dir: the cleaned parent of an
-				// unclean path can resolve somewhere the checked path does
-				// not walk through.
-				dir := fssecurity.RawDir(path)
-				if dir != "" && dir != "." {
-					if err := os.MkdirAll(dir, defaultDirMode); err != nil {
-						return &object.Error{Message: fmt.Sprintf("ensure: failed to create directory %s: %s", dir, err.Error())}
-					}
-				}
-
-				if err := os.WriteFile(path, []byte(content), os.FileMode(mode)); err != nil {
-					return &object.Error{Message: fmt.Sprintf("ensure: failed to write %s: %s", path, err.Error())}
-				}
-
-				if err := os.Chmod(path, os.FileMode(mode)); err != nil {
-					return &object.Error{Message: fmt.Sprintf("ensure: failed to set mode on %s: %s", path, err.Error())}
-				}
-
-				if fileExisted {
-					return object.NewString(StatusUpdated)
-				}
-				return object.NewString(StatusCreated)
+				return do(ctx, inst, asRoot, "ensure", ensureArgs{
+					Path:       expandPath(path),
+					Content:    content,
+					Mode:       int(kwargs.MustGetInt("mode", defaultFileMode)),
+					ModeGiven:  kwargs.Has("mode"),
+					CreateOnly: kwargs.MustGetBool("create_only", false),
+					Owner:      owner,
+				})
 			},
-			HelpText: `ensure(path, content, mode=0o644, create_only=False) - Ensure a file exists with the given content
+			HelpText: `ensure(path, content, mode=0o644, create_only=False, owner=None, group=None, become=False) - Ensure a file exists with the given content
 
 Creates parent directories if needed. If the file already exists with the
 same content, it is left unchanged. Otherwise the file is written with the
 specified mode.
+
+When mode, owner or group is given, an existing file with the right content
+is given them too, and the call returns "updated" if that changed anything.
 
 When create_only is True, an existing file is never modified: the call
 returns "unchanged" without writing, even if the content differs. New files
@@ -153,11 +189,12 @@ Parameters:
   content (str): File contents
   mode (int): File permission mode (default 0o644)
   create_only (bool): If True, never modify an existing file (default False)
+` + rootHelp + `
 
 Returns:
   str: "created" if the file was newly written,
-       "updated" if the file existed but content differed,
-       "unchanged" if the file existed with identical content,
+       "updated" if the file existed but its content, mode or owner differed,
+       "unchanged" if the file existed as it should be,
        or if the file existed and create_only is True
 
 Example:
@@ -166,41 +203,32 @@ Example:
   if status == file.CREATED:
       print("File created")
   elif status == file.UPDATED:
-      print("File updated")`,
+      print("File updated")
+
+  file.ensure("/etc/app/app.conf", "port = 8080\n", become=True)`,
 		},
 		"absent": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return &object.Error{Message: fmt.Sprintf("absent expected 1 argument, got %d", len(args))}
 				}
-
 				path, coerceErr := args[0].CoerceString()
 				if coerceErr != nil {
 					return &object.Error{Message: "absent: path must be a string"}
 				}
-
-				path = expandPath(path)
-
-				if denied := inst.denied("absent", path); denied != nil {
-					return denied
+				asRoot, errObj := kwargs.GetBool("become", false)
+				if errObj != nil {
+					return errObj
 				}
-
-				if _, err := os.Stat(path); os.IsNotExist(err) {
-					return object.NewString(StatusAbsent)
-				}
-
-				if err := os.Remove(path); err != nil {
-					return &object.Error{Message: fmt.Sprintf("absent: failed to remove %s: %s", path, err.Error())}
-				}
-
-				return object.NewString(StatusRemoved)
+				return do(ctx, inst, asRoot, "absent", pathArgs{Path: expandPath(path)})
 			},
-			HelpText: `absent(path) - Ensure a file does not exist
+			HelpText: `absent(path, become=False) - Ensure a file does not exist
 
 Removes the file if it exists. Does nothing if the file is already absent.
 
 Parameters:
   path (str): Path to the file (supports ~ expansion)
+  become (bool): Run as root (default False)
 
 Returns:
   str: file.REMOVED if the file was deleted,
@@ -217,93 +245,68 @@ Example:
 				if len(args) != 1 {
 					return &object.Error{Message: fmt.Sprintf("ensure_directory expected 1 argument, got %d", len(args))}
 				}
-
 				path, coerceErr := args[0].CoerceString()
 				if coerceErr != nil {
 					return &object.Error{Message: "ensure_directory: path must be a string"}
 				}
-
-				mode := int(kwargs.MustGetInt("mode", defaultDirMode))
-
-				path = expandPath(path)
-
-				if denied := inst.denied("ensure_directory", path); denied != nil {
-					return denied
+				asRoot, owner, errObj := rootArgs("ensure_directory", kwargs)
+				if errObj != nil {
+					return errObj
 				}
-
-				info, err := os.Stat(path)
-				if err == nil {
-					if !info.IsDir() {
-						return &object.Error{Message: fmt.Sprintf("ensure_directory: %s exists but is not a directory", path)}
-					}
-					return object.NewString(StatusExists)
-				}
-
-				if err := os.MkdirAll(path, os.FileMode(mode)); err != nil {
-					return &object.Error{Message: fmt.Sprintf("ensure_directory: failed to create %s: %s", path, err.Error())}
-				}
-
-				return object.NewString(StatusCreated)
+				return do(ctx, inst, asRoot, "ensure_directory", dirArgs{
+					Path:      expandPath(path),
+					Mode:      int(kwargs.MustGetInt("mode", defaultDirMode)),
+					ModeGiven: kwargs.Has("mode"),
+					Owner:     owner,
+				})
 			},
-			HelpText: `ensure_directory(path, mode=0o755) - Ensure a directory exists
+			HelpText: `ensure_directory(path, mode=0o755, owner=None, group=None, become=False) - Ensure a directory exists
 
-Creates the directory and all parent directories if needed.
+Creates the directory and all parent directories if needed. When mode, owner
+or group is given, the directory gets exactly them, whether it is new or not;
+parent directories it creates get the defaults.
 
 Parameters:
   path (str): Path to the directory (supports ~ expansion)
   mode (int): Directory permission mode (default 0o755)
+` + rootHelp + `
 
 Returns:
   str: file.CREATED if the directory was newly created,
-       file.EXISTS if the directory already existed
+       file.UPDATED if it existed and its mode or owner was changed,
+       file.EXISTS if the directory already existed as it should be
 
 Example:
   import scriptling.provision.file as file
   status = file.ensure_directory("~/.config/myapp", mode=0o700)
   if status == file.CREATED:
-      print("Directory created")`,
+      print("Directory created")
+
+  file.ensure_directory("/srv/app", owner="www-data", group="www-data", become=True)`,
 		},
 		"absent_directory": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return &object.Error{Message: fmt.Sprintf("absent_directory expected 1 argument, got %d", len(args))}
 				}
-
 				path, coerceErr := args[0].CoerceString()
 				if coerceErr != nil {
 					return &object.Error{Message: "absent_directory: path must be a string"}
 				}
-
-				path = expandPath(path)
-
-				if denied := inst.denied("absent_directory", path); denied != nil {
-					return denied
+				asRoot, errObj := kwargs.GetBool("become", false)
+				if errObj != nil {
+					return errObj
 				}
-
-				info, err := os.Stat(path)
-				if os.IsNotExist(err) {
-					return object.NewString(StatusAbsent)
-				}
-				if err != nil {
-					return &object.Error{Message: fmt.Sprintf("absent_directory: %s", err.Error())}
-				}
-				if !info.IsDir() {
-					return &object.Error{Message: fmt.Sprintf("absent_directory: %s is not a directory", path)}
-				}
-
-				if err := os.Remove(path); err != nil {
-					return &object.Error{Message: fmt.Sprintf("absent_directory: failed to remove %s: %s", path, err.Error())}
-				}
-
-				return object.NewString(StatusRemoved)
+				return do(ctx, inst, asRoot, "absent_directory", pathArgs{Path: expandPath(path)})
 			},
-			HelpText: `absent_directory(path) - Ensure an empty directory does not exist
+			HelpText: `absent_directory(path, become=False) - Ensure an empty directory does not exist
 
 Removes the directory if it exists and is empty. Returns an error if the
 directory is not empty.
 
 Parameters:
   path (str): Path to the directory (supports ~ expansion)
+  become (bool): Run as root (default False)
 
 Returns:
   str: file.REMOVED if the directory was deleted,
@@ -320,12 +323,10 @@ Example:
 				if len(args) != 2 {
 					return &object.Error{Message: fmt.Sprintf("ensure_block expected 2 arguments, got %d", len(args))}
 				}
-
 				path, coerceErr := args[0].CoerceString()
 				if coerceErr != nil {
 					return &object.Error{Message: "ensure_block: path must be a string"}
 				}
-
 				content, coerceErr := args[1].CoerceString()
 				if coerceErr != nil {
 					return &object.Error{Message: "ensure_block: content must be a string"}
@@ -335,8 +336,6 @@ Example:
 				comment := kwargs.MustGetString("comment", defaultComment)
 				position := kwargs.MustGetString("position", positionEnd)
 				insertAfter := kwargs.MustGetString("insert_after", "")
-				mode := int(kwargs.MustGetInt("mode", defaultFileMode))
-				createOnly := kwargs.MustGetBool("create_only", false)
 
 				if err := validateBlockParams(comment, id); err != nil {
 					return &object.Error{Message: "ensure_block: " + err.Error()}
@@ -344,11 +343,8 @@ Example:
 				if insertAfter == "" && position != positionStart && position != positionEnd {
 					return &object.Error{Message: fmt.Sprintf("ensure_block: position must be %q or %q, got %q", positionStart, positionEnd, position)}
 				}
-
 				beginLine, endLine := blockMarkerLines(comment, id)
-
-				contentLines := splitContentLines(content)
-				for _, l := range contentLines {
+				for _, l := range splitContentLines(content) {
 					if lineEqualsMarker(l, endLine) {
 						return &object.Error{Message: "ensure_block: content contains the end marker"}
 					}
@@ -356,61 +352,23 @@ Example:
 						return &object.Error{Message: "ensure_block: content contains the begin marker"}
 					}
 				}
-
-				path = expandPath(path)
-
-				if denied := inst.denied("ensure_block", path); denied != nil {
-					return denied
+				asRoot, owner, errObj := rootArgs("ensure_block", kwargs)
+				if errObj != nil {
+					return errObj
 				}
-
-				lines, trailingNL, existed, err := readFileLines(path)
-				if err != nil {
-					return &object.Error{Message: fmt.Sprintf("ensure_block: failed to read %s: %s", path, err.Error())}
-				}
-
-				state, beginIdx, endIdx := findBlock(lines, beginLine, endLine)
-				switch state {
-				case blockOrphan:
-					return &object.Error{Message: fmt.Sprintf("ensure_block: orphaned markers found in %s for id %q", path, id)}
-				case blockValid:
-					if createOnly {
-						return object.NewString(StatusUnchanged)
-					}
-					existingInner := lines[beginIdx+1 : endIdx]
-					if linesEqual(existingInner, contentLines) {
-						return object.NewString(StatusUnchanged)
-					}
-					newLines := make([]string, 0, len(lines)-(endIdx-beginIdx-1)+len(contentLines))
-					newLines = append(newLines, lines[:beginIdx+1]...)
-					newLines = append(newLines, contentLines...)
-					newLines = append(newLines, lines[endIdx:]...)
-					if err := writeFileLines(path, newLines, trailingNL, mode); err != nil {
-						return &object.Error{Message: fmt.Sprintf("ensure_block: failed to write %s: %s", path, err.Error())}
-					}
-					return object.NewString(StatusUpdated)
-				case blockAbsent:
-					blockLines := make([]string, 0, 2+len(contentLines))
-					blockLines = append(blockLines, beginLine)
-					blockLines = append(blockLines, contentLines...)
-					blockLines = append(blockLines, endLine)
-
-					newLines, insErr := insertBlock(lines, blockLines, position, insertAfter, path)
-					if insErr != nil {
-						return &object.Error{Message: "ensure_block: " + insErr.Error()}
-					}
-
-					writeTrailing := trailingNL
-					if !existed {
-						writeTrailing = true
-					}
-					if err := writeFileLines(path, newLines, writeTrailing, mode); err != nil {
-						return &object.Error{Message: fmt.Sprintf("ensure_block: failed to write %s: %s", path, err.Error())}
-					}
-					return object.NewString(StatusCreated)
-				}
-				return object.NewString(StatusUnchanged)
+				return do(ctx, inst, asRoot, "ensure_block", blockArgs{
+					Path:        expandPath(path),
+					Content:     content,
+					ID:          id,
+					Comment:     comment,
+					Position:    position,
+					InsertAfter: insertAfter,
+					Mode:        int(kwargs.MustGetInt("mode", defaultFileMode)),
+					CreateOnly:  kwargs.MustGetBool("create_only", false),
+					Owner:       owner,
+				})
 			},
-			HelpText: `ensure_block(path, content, id="managed", comment="#", position="end", insert_after="", mode=0o644, create_only=False) - Maintain a managed block within a file
+			HelpText: `ensure_block(path, content, id="managed", comment="#", position="end", insert_after="", mode=0o644, create_only=False, owner=None, group=None, become=False) - Maintain a managed block within a file
 
 Wraps the given content in distinctive markers and replaces only the text
 between them on each run. Everything outside the markers is left untouched.
@@ -435,77 +393,42 @@ Parameters:
   comment (str): Comment prefix used to build markers (default "#")
   position (str): Where to insert a new block: "end" (default) or "start"
   insert_after (str): Substring anchor; new block inserted after first match
-  mode (int): File permission mode used when creating the file (default 0o644)
+  mode (int): File permission mode used when writing the file (default 0o644)
   create_only (bool): If True, never modify an existing block (default False)
+` + rootHelp + `
 
 Returns:
   str: "created" if the block was newly inserted,
-       "updated" if the block existed but content differed,
+       "updated" if the block existed but content (or the file's owner) differed,
        "unchanged" if the block existed with identical content,
        or if the block existed and create_only is True
 
 Example:
   import scriptling.provision.file as file
   status = file.ensure_block("~/.bashrc", "export EDITOR=vim\n", id="editor")
-  status = file.ensure_block("/etc/hosts", "127.0.0.1 myapp\n", insert_after="localhost")`,
+  status = file.ensure_block("/etc/hosts", "127.0.0.1 myapp\n", insert_after="localhost", become=True)`,
 		},
 		"absent_block": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) != 1 {
 					return &object.Error{Message: fmt.Sprintf("absent_block expected 1 argument, got %d", len(args))}
 				}
-
 				path, coerceErr := args[0].CoerceString()
 				if coerceErr != nil {
 					return &object.Error{Message: "absent_block: path must be a string"}
 				}
-
 				id := kwargs.MustGetString("id", defaultBlockID)
 				comment := kwargs.MustGetString("comment", defaultComment)
-
 				if err := validateBlockParams(comment, id); err != nil {
 					return &object.Error{Message: "absent_block: " + err.Error()}
 				}
-
-				beginLine, endLine := blockMarkerLines(comment, id)
-
-				path = expandPath(path)
-
-				if denied := inst.denied("absent_block", path); denied != nil {
-					return denied
+				asRoot, errObj := kwargs.GetBool("become", false)
+				if errObj != nil {
+					return errObj
 				}
-
-				lines, trailingNL, existed, err := readFileLines(path)
-				if err != nil {
-					return &object.Error{Message: fmt.Sprintf("absent_block: failed to read %s: %s", path, err.Error())}
-				}
-				if !existed {
-					return object.NewString(StatusUnchanged)
-				}
-
-				mode := defaultFileMode
-				if info, statErr := os.Stat(path); statErr == nil {
-					mode = int(info.Mode().Perm())
-				}
-
-				state, beginIdx, endIdx := findBlock(lines, beginLine, endLine)
-				switch state {
-				case blockOrphan:
-					return &object.Error{Message: fmt.Sprintf("absent_block: orphaned markers found in %s for id %q", path, id)}
-				case blockAbsent:
-					return object.NewString(StatusUnchanged)
-				case blockValid:
-					newLines := make([]string, 0, len(lines)-(endIdx-beginIdx+1))
-					newLines = append(newLines, lines[:beginIdx]...)
-					newLines = append(newLines, lines[endIdx+1:]...)
-					if err := writeFileLines(path, newLines, trailingNL, mode); err != nil {
-						return &object.Error{Message: fmt.Sprintf("absent_block: failed to write %s: %s", path, err.Error())}
-					}
-					return object.NewString(StatusRemoved)
-				}
-				return object.NewString(StatusUnchanged)
+				return do(ctx, inst, asRoot, "absent_block", blockArgs{Path: expandPath(path), ID: id, Comment: comment})
 			},
-			HelpText: `absent_block(path, id="managed", comment="#") - Remove a managed block
+			HelpText: `absent_block(path, id="managed", comment="#", become=False) - Remove a managed block
 
 Removes the marker-delimited block (markers and all content between them) for
 the given id. Everything else in the file is left untouched. If no such block
@@ -515,6 +438,7 @@ Parameters:
   path (str): Path to the file (supports ~ expansion)
   id (str): Block identifier embedded in the markers (default "managed")
   comment (str): Comment prefix used to build markers (default "#")
+  become (bool): Run as root (default False)
 
 Returns:
   str: file.REMOVED if the block was deleted,
@@ -667,48 +591,4 @@ func insertBlock(lines []string, blockLines []string, position, insertAfter, pat
 	newLines = append(newLines, lines...)
 	newLines = append(newLines, blockLines...)
 	return newLines, nil
-}
-
-// readFileLines reads a file and splits it into lines. existed is false when the
-// file does not exist; trailingNL reports whether the original ended with "\n".
-func readFileLines(path string) (lines []string, trailingNL, existed bool, err error) {
-	raw, readErr := object.ReadFileLimitedErr(path)
-	if readErr != nil {
-		if os.IsNotExist(readErr) {
-			return nil, true, false, nil
-		}
-		return nil, true, false, readErr
-	}
-	existed = true
-	s := string(raw)
-	trailingNL = strings.HasSuffix(s, "\n")
-	s = strings.TrimSuffix(s, "\n")
-	if s == "" {
-		return nil, trailingNL, existed, nil
-	}
-	return strings.Split(s, "\n"), trailingNL, existed, nil
-}
-
-// writeFileLines joins lines and writes them, creating parent directories and
-// applying mode. An empty lines slice writes an empty file.
-func writeFileLines(path string, lines []string, trailingNL bool, mode int) error {
-	// RawDir, not filepath.Dir: only directories that checking path walked
-	// may be created.
-	dir := fssecurity.RawDir(path)
-	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, defaultDirMode); err != nil {
-			return err
-		}
-	}
-	s := ""
-	if len(lines) > 0 {
-		s = strings.Join(lines, "\n")
-		if trailingNL {
-			s += "\n"
-		}
-	}
-	if err := os.WriteFile(path, []byte(s), os.FileMode(mode)); err != nil {
-		return err
-	}
-	return os.Chmod(path, os.FileMode(mode))
 }

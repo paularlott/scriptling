@@ -102,14 +102,20 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }, cfg ...*n
 // --network-policy give them: every connection to a hub passes the network
 // policy, and a CA bundle named with verify="path" must lie within the allowed
 // paths. A zero fssecurity.Config and a nil policy register it unrestricted.
-func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, paths fssecurity.Config, policy *netsecurity.Config) {
+//
+// Clients live until the script closes them, or until a runtime reset; give
+// WithLifetime to close them when an environment is done with as well.
+func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, paths fssecurity.Config, policy *netsecurity.Config, opts ...Option) {
 	paths.AllowedPaths = fssecurity.NormalizeAllowedPaths(paths.AllowedPaths)
-	if paths.AllowedPaths == nil && policy == nil {
+	t := &transports{paths: paths}
+	for _, o := range opts {
+		o(t)
+	}
+	if paths.AllowedPaths == nil && policy == nil && t.lifetime == nil {
 		libraryOnce.Do(func() { library = buildLibrary(&transports{}) })
 		registrar.RegisterLibrary(library)
 		return
 	}
-	t := &transports{paths: paths}
 	if policy != nil {
 		guard, gerr := netsecurity.NewGuard(policy)
 		if gerr != nil {
@@ -138,8 +144,22 @@ func closeAll() {
 // transports builds a client's HTTP transport under the registration's
 // network policy and allowed paths.
 type transports struct {
-	guard *netsecurity.Guard
-	paths fssecurity.Config
+	guard    *netsecurity.Guard
+	paths    fssecurity.Config
+	lifetime func() context.Context
+}
+
+// Option configures the library.
+type Option func(*transports)
+
+// WithLifetime bounds the clients scripts make through this registration:
+// lifetime is called as each client is made, and the client and its
+// subscriptions are closed when the context it returns ends. It is for an
+// embedder that throws an environment away, or lends it to another user,
+// after a script: a subscription the script left open goes with it. A client
+// made after that context has ended fails.
+func WithLifetime(lifetime func() context.Context) Option {
+	return func(t *transports) { t.lifetime = lifetime }
 }
 
 // transport is an HTTP transport for the hub at u: TLS verified, unverified
@@ -307,6 +327,8 @@ type hubClient struct {
 	mu     sync.Mutex
 	subs   map[*subscription]struct{}
 	ended  bool
+
+	stopLifetime func() bool // forgets WithLifetime's close; nil without one
 }
 
 func newClient(ctx context.Context, t *transports, kwargs object.Kwargs, hubURL string) object.Object {
@@ -367,6 +389,15 @@ func newClient(ctx context.Context, t *transports, kwargs object.Kwargs, hubURL 
 		return errObject(err)
 	}
 	h := &hubClient{c: c, url: hubURL, tr: tr, tokens: tokens, subs: map[*subscription]struct{}{}}
+	if t.lifetime != nil {
+		life := t.lifetime()
+		if life.Err() != nil {
+			_ = c.Close()
+			tr.CloseIdleConnections()
+			return &object.Error{Message: "mercure: this environment has ended"}
+		}
+		h.stopLifetime = context.AfterFunc(life, h.close)
+	}
 	armCleanup()
 	openClients.Lock()
 	openClients.m[h] = struct{}{}
@@ -421,6 +452,9 @@ func clientTokens(kwargs object.Kwargs, hubURL string) (*tokenSource, object.Obj
 // the subscriptions let go of them.
 func (h *hubClient) close() {
 	h.once.Do(func() {
+		if h.stopLifetime != nil {
+			h.stopLifetime()
+		}
 		openClients.Lock()
 		delete(openClients.m, h)
 		openClients.Unlock()
