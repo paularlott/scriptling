@@ -364,6 +364,13 @@ tasks:
     cmds:
       - go test -race ./...
 
+  vulncheck:
+    desc: Scan for known vulnerabilities in reachable dependency and Go standard library code (stdlib as of the local toolchain)
+    cmds:
+      - go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - cmd: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        dir: builds/onepassword
+
   homebrew-formula:
     desc: Generate the Homebrew formula
     cmds:

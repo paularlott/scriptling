@@ -1,0 +1,38 @@
+# Scans reachable code for known Go vulnerabilities. The toolchain comes
+# from go.mod, so a standard-library advisory against the version releases
+# are built with fails the check. The daily run catches advisories published
+# after the last push.
+name: govulncheck
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Scan scriptling
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      - name: Scan 1Password build
+        if: ${{ !cancelled() }}
+        working-directory: builds/onepassword
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
