@@ -39,7 +39,7 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/paularlott/cli v0.10.3 // indirect
-	github.com/paularlott/gossip v0.31.0 // indirect
+	github.com/paularlott/gossip v0.31.1 // indirect
 	github.com/paularlott/gossiper/client v1.0.0 // indirect
 	github.com/paularlott/jsonrpc v0.4.0 // indirect
 	github.com/paularlott/logger v0.4.0 // indirect
