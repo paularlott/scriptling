@@ -10,7 +10,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/paularlott/logger"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/runtime"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/scriptling-cli/setup"
 )
@@ -23,7 +23,7 @@ func newNestedWatchServer(t *testing.T, skillsDir, resourcesDir string) *Server 
 	t.Helper()
 	libDir := t.TempDir()
 	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 	s := &Server{
 		config: ServerConfig{
 			MCPSkillsDir:    skillsDir,

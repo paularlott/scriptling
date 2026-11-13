@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/runtime"
 	"github.com/paularlott/scriptling/plugin"
 )
 
@@ -47,7 +47,7 @@ runtime.start_server()
 		t.Fatal("plugin server not built")
 	}
 
-	fetcher := scriptFetcher{s: s, read: extlibs.RuntimeState.PluginFetchRead}
+	fetcher := scriptFetcher{s: s, read: runtime.RuntimeState.PluginFetchRead}
 	data, err := fetcher.Read(context.Background(), "plug://", "icon.svg")
 	if err != nil || string(data) != "<svg>icon</svg>" {
 		t.Fatalf("string read = %q, %v", data, err)

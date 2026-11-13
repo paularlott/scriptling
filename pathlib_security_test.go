@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/filesystem"
 )
 
 func TestPathlibSecurity(t *testing.T) {
@@ -34,7 +34,7 @@ func TestPathlibSecurity(t *testing.T) {
 	s := scriptling.New()
 
 	// Register pathlib with restrictions
-	extlibs.RegisterPathlibLibrary(s, []string{allowedDir})
+	filesystem.RegisterPathlib(s, []string{allowedDir})
 
 	tests := []struct {
 		name      string

@@ -19,12 +19,15 @@ import (
 	logslog "github.com/paularlott/logger/slog"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/build"
-	"github.com/paularlott/scriptling/extlibs"
 	scriptlingcontainer "github.com/paularlott/scriptling/extlibs/container"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
 	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	"github.com/paularlott/scriptling/extlibs/provision/become"
+	"github.com/paularlott/scriptling/extlibs/runtime"
+	"github.com/paularlott/scriptling/extlibs/runtime/kv"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
+	"github.com/paularlott/scriptling/extlibs/subprocess"
+	"github.com/paularlott/scriptling/extlibs/sys"
 	"github.com/paularlott/scriptling/object"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
@@ -864,8 +867,8 @@ func rejectBundleFlags(c bundleFlagConflicts) error {
 // script path, leaving --no-subprocess a no-op in server modes.
 func effectiveDisabledLibs(cmd *cli.Command) []string {
 	disabledLibs := cmd.GetStringSlice("disable-lib")
-	if cmd.GetBool("no-subprocess") && !slices.Contains(disabledLibs, extlibs.SubprocessLibraryName) {
-		disabledLibs = append(disabledLibs, extlibs.SubprocessLibraryName)
+	if cmd.GetBool("no-subprocess") && !slices.Contains(disabledLibs, subprocess.LibraryName) {
+		disabledLibs = append(disabledLibs, subprocess.LibraryName)
 	}
 	return disabledLibs
 }
@@ -925,10 +928,7 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	disabledLibs := effectiveDisabledLibs(cmd)
 
 	if cmd.GetBool("list-libs") {
-		disabled := make(map[string]bool, len(disabledLibs))
-		for _, name := range disabledLibs {
-			disabled[name] = true
-		}
+		disabled := setup.DisabledSet(disabledLibs)
 		for _, name := range setup.AllLibraryNames() {
 			if !disabled[name] {
 				fmt.Println(name)
@@ -960,10 +960,10 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	}
 
 	kvStoragePath := cmd.GetString("kv-storage")
-	if err := extlibs.InitKVStore(kvStoragePath, globalLogger); err != nil {
+	if err := kv.InitStore(kvStoragePath, globalLogger); err != nil {
 		return fmt.Errorf("failed to initialize KV store: %w", err)
 	}
-	defer extlibs.CloseKVStore()
+	defer kv.CloseStore()
 
 	libDirs := bootstrap.BuildLibDirs(baseDir, cmd.GetStringSlice("libpath"))
 	netPolicy, err := bootstrap.LoadNetworkPolicy(cmd.GetString("network-policy"))
@@ -1029,8 +1029,8 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	if file != "" {
 		stdinReader = os.Stdin
 	}
-	extlibs.RegisterSysLibrary(p, argv, stdinReader)
-	extlibs.ReleaseBackgroundTasks()
+	sys.Register(p, argv, stdinReader)
+	runtime.ReleaseBackgroundTasks()
 
 	// Requirements declared in the script's metadata block are checked before
 	// anything runs, against the environment exactly as the script will see it.
@@ -1044,12 +1044,12 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 	// MCP — return above and never reach this point.
 	if code := cmd.GetString("code"); code != "" {
 		err := evalAndCheckExit(p, code)
-		extlibs.WaitBackgroundTasks()
+		runtime.WaitBackgroundTasks()
 		return err
 	}
 	if interactive {
 		err := runInteractive(p)
-		extlibs.WaitBackgroundTasks()
+		runtime.WaitBackgroundTasks()
 		return err
 	}
 	if file != "" {
@@ -1059,12 +1059,12 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 		} else {
 			err = runFile(p, file)
 		}
-		extlibs.WaitBackgroundTasks()
+		runtime.WaitBackgroundTasks()
 		return err
 	}
 	if !isStdinEmpty() {
 		err := runStdin(p)
-		extlibs.WaitBackgroundTasks()
+		runtime.WaitBackgroundTasks()
 		return err
 	}
 	if packLoader != nil {
@@ -1080,11 +1080,11 @@ func runScriptling(ctx context.Context, cmd *cli.Command) error {
 			}
 			if entry.Script != nil {
 				err := evalAndCheckExit(p, string(entry.Script))
-				extlibs.WaitBackgroundTasks()
+				runtime.WaitBackgroundTasks()
 				return err
 			}
 			err := evalAndCheckExit(p, fmt.Sprintf("import %s\n%s.%s()", entry.Module, entry.Module, entry.Function))
-			extlibs.WaitBackgroundTasks()
+			runtime.WaitBackgroundTasks()
 			return err
 		}
 	}

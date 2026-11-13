@@ -11,8 +11,8 @@ import (
 	"github.com/paularlott/mcp/toolmetadata"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/ast"
-	"github.com/paularlott/scriptling/extlibs"
 	extlibsmcp "github.com/paularlott/scriptling/extlibs/mcp"
+	"github.com/paularlott/scriptling/extlibs/runtime"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -141,7 +141,7 @@ func ScanDecoratedTools(src []byte, cfg HandlerConfig) ([]DecoratedTool, error) 
 		return nil, fmt.Errorf("eval failed: %w", err)
 	}
 
-	registryObj, getErr := p.GetVarAsObject(extlibs.MCPRegistryVar)
+	registryObj, getErr := p.GetVarAsObject(runtime.MCPRegistryVar)
 	if getErr != nil {
 		// No registry means no decorated tools — not an error.
 		return nil, nil
@@ -149,7 +149,7 @@ func ScanDecoratedTools(src []byte, cfg HandlerConfig) ([]DecoratedTool, error) 
 
 	registryList, ok := registryObj.(*object.List)
 	if !ok {
-		return nil, fmt.Errorf("%s is not a list", extlibs.MCPRegistryVar)
+		return nil, fmt.Errorf("%s is not a list", runtime.MCPRegistryVar)
 	}
 
 	if len(registryList.Elements) == 0 {
@@ -663,7 +663,7 @@ func ScanDecoratedRegistrations(src []byte, cfg HandlerConfig) (*DecoratedRegist
 		return nil, fmt.Errorf("eval failed: %w", err)
 	}
 
-	registryObj, getErr := p.GetVarAsObject(extlibs.MCPRegistryVar)
+	registryObj, getErr := p.GetVarAsObject(runtime.MCPRegistryVar)
 	if getErr != nil {
 		// No registry means no decorated registrations — not an error.
 		return &DecoratedRegistrations{}, nil
@@ -671,7 +671,7 @@ func ScanDecoratedRegistrations(src []byte, cfg HandlerConfig) (*DecoratedRegist
 
 	registryList, ok := registryObj.(*object.List)
 	if !ok {
-		return nil, fmt.Errorf("%s is not a list", extlibs.MCPRegistryVar)
+		return nil, fmt.Errorf("%s is not a list", runtime.MCPRegistryVar)
 	}
 
 	out := &DecoratedRegistrations{}

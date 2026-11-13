@@ -1011,6 +1011,15 @@ func (p *Scriptling) RegisterLibrary(lib *object.Library) {
 	p.registeredLibraries[lib.Name()] = lib
 }
 
+// RegisteredLibrary returns the Go library registered under name with
+// RegisterLibrary, if any. Libraries made of sub-libraries (such as
+// scriptling.runtime) use it to expose each registered sub-library as an
+// attribute of the parent.
+func (p *Scriptling) RegisteredLibrary(name string) (*object.Library, bool) {
+	lib, ok := p.registeredLibraries[name]
+	return lib, ok
+}
+
 // HasLibrary reports whether the given name already resolves to a library:
 // one registered here (native or script), or one the library loader can
 // supply from disk. The plugin loader uses it to refuse a plugin whose

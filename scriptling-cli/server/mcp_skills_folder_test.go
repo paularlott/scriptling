@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/paularlott/logger"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/runtime"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
 	"github.com/paularlott/scriptling/scriptling-cli/setup"
@@ -20,7 +20,7 @@ func newSkillsFolderServer(t *testing.T, skillsDir string) *Server {
 	t.Helper()
 	libDir := t.TempDir()
 	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 	s := &Server{
 		config: ServerConfig{
 			MCPSkillsDir: skillsDir,

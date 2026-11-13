@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/paularlott/logger"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/runtime"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/scriptling-cli/setup"
 )
@@ -23,7 +23,7 @@ func buildMinimalMCPServer(t *testing.T, corsOrigins []string) *Server {
 	t.Helper()
 	libDir := t.TempDir()
 	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 
 	toolsDir := t.TempDir()
 	writeFile(t, filepath.Join(toolsDir, "greet.toml"), []byte("description = \"Greet\"\n"))

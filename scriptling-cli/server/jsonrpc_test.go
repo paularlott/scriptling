@@ -15,7 +15,7 @@ import (
 
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/runtime"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/scriptling-cli/setup"
 )
@@ -33,7 +33,7 @@ func jsonrpcTestServer(t *testing.T, handlerSrc string, methods, notifications m
 	// One-time global factory configuration (idempotent enough for tests).
 	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
 
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 
 	s := &Server{
 		config: ServerConfig{
@@ -514,7 +514,7 @@ func TestJSONRPCParseError(t *testing.T) {
 // TestRuntimeJSONRPCLibraryRegistration confirms method/notification/error
 // populate RuntimeState when invoked from a Scriptling script.
 func TestRuntimeJSONRPCLibraryRegistration(t *testing.T) {
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 
 	srv, _ := jsonrpcTestServer(t, "", nil, nil)
 	p := scriptling.New()
@@ -531,14 +531,14 @@ err
 		t.Fatal(err)
 	}
 
-	if extlibs.RuntimeState.JSONRPCMethods["add"] != "rpcmod.add" {
-		t.Errorf("method not registered: %v", extlibs.RuntimeState.JSONRPCMethods)
+	if runtime.RuntimeState.JSONRPCMethods["add"] != "rpcmod.add" {
+		t.Errorf("method not registered: %v", runtime.RuntimeState.JSONRPCMethods)
 	}
-	if extlibs.RuntimeState.JSONRPCNotifications["ping"] != "rpcmod.ping" {
-		t.Errorf("notification not registered: %v", extlibs.RuntimeState.JSONRPCNotifications)
+	if runtime.RuntimeState.JSONRPCNotifications["ping"] != "rpcmod.ping" {
+		t.Errorf("notification not registered: %v", runtime.RuntimeState.JSONRPCNotifications)
 	}
 
-	if !extlibs.IsJSONRPCError(result) {
+	if !runtime.IsJSONRPCError(result) {
 		t.Errorf("expected JSONRPCError instance, got %T (%v)", result, result)
 	}
 }

@@ -23,8 +23,12 @@ import (
 	"os"
 
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/filesystem"
 	scriptlingmcp "github.com/paularlott/scriptling/extlibs/mcp"
+	"github.com/paularlott/scriptling/extlibs/requests"
+	"github.com/paularlott/scriptling/extlibs/subprocess"
+	"github.com/paularlott/scriptling/extlibs/sys"
+	"github.com/paularlott/scriptling/extlibs/waitfor"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
@@ -33,16 +37,14 @@ func main() {
 	p := scriptling.New()
 	stdlib.RegisterAll(p)
 
-	// Register extended libraries
-	extlibs.RegisterRequestsLibrary(p)
-	extlibs.RegisterSysLibrary(p, []string{}, nil)
-	extlibs.RegisterSecretsLibrary(p)
-	extlibs.RegisterSubprocessLibrary(p)
-	extlibs.RegisterHTMLParserLibrary(p)
+	// Register extension libraries
+	requests.Register(p)
+	sys.Register(p, []string{}, nil)
+	subprocess.Register(p)
 	// Threads library removed - use scriptling.runtime instead
-	extlibs.RegisterOSLibrary(p, []string{})
-	extlibs.RegisterPathlibLibrary(p, []string{})
-	extlibs.RegisterWaitForLibrary(p)
+	filesystem.RegisterOS(p, []string{})
+	filesystem.RegisterPathlib(p, []string{})
+	waitfor.Register(p)
 
 	// Register the MCP library
 	scriptlingmcp.Register(p)

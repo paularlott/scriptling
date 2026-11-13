@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/filesystem"
 )
 
 func TestOSLibraryPathSecurity(t *testing.T) {
@@ -40,7 +40,7 @@ func TestOSLibraryPathSecurity(t *testing.T) {
 
 	t.Run("allowed path read", func(t *testing.T) {
 		p := New()
-		extlibs.RegisterOSLibrary(p, []string{allowedDir})
+		filesystem.RegisterOS(p, []string{allowedDir})
 
 		script := `
 import os
@@ -58,7 +58,7 @@ content == "test content"
 
 	t.Run("denied path read", func(t *testing.T) {
 		p := New()
-		extlibs.RegisterOSLibrary(p, []string{allowedDir})
+		filesystem.RegisterOS(p, []string{allowedDir})
 
 		script := `
 import os
@@ -73,7 +73,7 @@ content
 
 	t.Run("allowed path write", func(t *testing.T) {
 		p := New()
-		extlibs.RegisterOSLibrary(p, []string{allowedDir})
+		filesystem.RegisterOS(p, []string{allowedDir})
 
 		newFile := filepath.Join(allowedDir, "new.txt")
 		script := `
@@ -92,7 +92,7 @@ os.read_file("` + newFile + `") == "new content"
 
 	t.Run("denied path write", func(t *testing.T) {
 		p := New()
-		extlibs.RegisterOSLibrary(p, []string{allowedDir})
+		filesystem.RegisterOS(p, []string{allowedDir})
 
 		hackedFile := filepath.Join(outsideDir, "hacked.txt")
 		script := `
@@ -111,7 +111,7 @@ os.write_file("` + hackedFile + `", "hacked!")
 
 	t.Run("path traversal attack blocked", func(t *testing.T) {
 		p := New()
-		extlibs.RegisterOSLibrary(p, []string{allowedDir})
+		filesystem.RegisterOS(p, []string{allowedDir})
 
 		// Try to escape using ../
 		traversalPath := filepath.Join(allowedDir, "..", "outside", "secret.txt")
@@ -128,7 +128,7 @@ content
 
 	t.Run("os.path.exists respects security", func(t *testing.T) {
 		p := New()
-		extlibs.RegisterOSLibrary(p, []string{allowedDir})
+		filesystem.RegisterOS(p, []string{allowedDir})
 
 		script := `
 import os.path
@@ -142,7 +142,7 @@ os.path.exists("` + outsideFile + `")
 
 	t.Run("listdir respects security", func(t *testing.T) {
 		p := New()
-		extlibs.RegisterOSLibrary(p, []string{allowedDir})
+		filesystem.RegisterOS(p, []string{allowedDir})
 
 		script := `
 import os
@@ -156,7 +156,7 @@ os.listdir("` + outsideDir + `")
 
 	t.Run("no restrictions allows all", func(t *testing.T) {
 		p := New()
-		extlibs.RegisterOSLibrary(p, nil) // No restrictions
+		filesystem.RegisterOS(p, nil) // No restrictions
 
 		script := `
 import os
@@ -174,7 +174,7 @@ content == "secret data"
 
 	t.Run("symlink attack blocked", func(t *testing.T) {
 		p := New()
-		extlibs.RegisterOSLibrary(p, []string{allowedDir})
+		filesystem.RegisterOS(p, []string{allowedDir})
 
 		// Create a symlink inside allowed dir that points to outside
 		symlinkPath := filepath.Join(allowedDir, "evil_link")
@@ -198,7 +198,7 @@ content
 
 	t.Run("symlink dir attack blocked", func(t *testing.T) {
 		p := New()
-		extlibs.RegisterOSLibrary(p, []string{allowedDir})
+		filesystem.RegisterOS(p, []string{allowedDir})
 
 		// Create a symlink to the outside directory
 		symlinkDir := filepath.Join(allowedDir, "evil_dir_link")
@@ -244,7 +244,7 @@ func TestOSSymlinkDanglingWriteBlocked(t *testing.T) {
 	}
 
 	p := New()
-	extlibs.RegisterOSLibrary(p, []string{jail})
+	filesystem.RegisterOS(p, []string{jail})
 	_, err = p.Eval(`import os
 os.write_file("` + link + `", "pwned")`)
 	if err == nil {
@@ -273,7 +273,7 @@ func TestOSSymlinkRelativeTargetValidatedAgainstLinkDir(t *testing.T) {
 	}
 
 	p := New()
-	extlibs.RegisterOSLibrary(p, []string{jail})
+	filesystem.RegisterOS(p, []string{jail})
 
 	// jail/escape -> ../outside/x  (relative target leaves the jail).
 	_, err = p.Eval(`import os
@@ -317,7 +317,7 @@ func TestOSMakedirsMissingComponentThroughLink(t *testing.T) {
 	}
 
 	p := New()
-	extlibs.RegisterOSLibrary(p, []string{jail})
+	filesystem.RegisterOS(p, []string{jail})
 	sep := string(os.PathSeparator)
 	for _, tc := range []struct {
 		path    string
@@ -371,7 +371,7 @@ func TestOSSymlinkTargetResolvedUncleaned(t *testing.T) {
 	}
 
 	p := New()
-	extlibs.RegisterOSLibrary(p, []string{jail})
+	filesystem.RegisterOS(p, []string{jail})
 	for _, src := range []string{"x/s/..", "x/s/../secret", "missing/../x/s/.."} {
 		dst := filepath.Join(jail, "l")
 		if _, err := p.Eval(`import os

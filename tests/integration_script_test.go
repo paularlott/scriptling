@@ -8,54 +8,71 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/extlibs/agent"
 	"github.com/paularlott/scriptling/extlibs/ai"
 	"github.com/paularlott/scriptling/extlibs/console"
+	"github.com/paularlott/scriptling/extlibs/filesystem"
+	"github.com/paularlott/scriptling/extlibs/platform"
+	"github.com/paularlott/scriptling/extlibs/requests"
+	"github.com/paularlott/scriptling/extlibs/runtime"
+	rthttp "github.com/paularlott/scriptling/extlibs/runtime/http"
+	"github.com/paularlott/scriptling/extlibs/runtime/kv"
 	scriptlingsimilarity "github.com/paularlott/scriptling/extlibs/similarity"
+	"github.com/paularlott/scriptling/extlibs/subprocess"
+	"github.com/paularlott/scriptling/extlibs/sys"
+	"github.com/paularlott/scriptling/extlibs/toml"
+	"github.com/paularlott/scriptling/extlibs/yaml"
 	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
+// registerRuntime registers scriptling.runtime with all its sub-libraries,
+// as the CLI does.
+func registerRuntime(p *scriptling.Scriptling) {
+	rthttp.Register(p, nil)
+	kv.Register(p, nil)
+	runtime.RegisterSync(p)
+	runtime.RegisterSandbox(p, nil)
+	runtime.RegisterJSONRPC(p)
+	runtime.RegisterMCP(p)
+	runtime.Register(p)
+}
+
 func newTestInterpreter(t *testing.T) *scriptling.Scriptling {
 	t.Helper()
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 	p := scriptling.New()
 	stdlib.RegisterAll(p)
-	extlibs.RegisterRequestsLibrary(p)
-	extlibs.RegisterSysLibrary(p, nil, nil)
-	extlibs.RegisterSecretsLibrary(p)
-	extlibs.RegisterSubprocessLibrary(p)
-	extlibs.RegisterHTMLParserLibrary(p)
-	extlibs.RegisterRuntimeLibraryAll(p, nil)
-	extlibs.RegisterOSLibrary(p, nil)
-	extlibs.RegisterPathlibLibrary(p, nil)
-	extlibs.RegisterFSLibrary(p, nil)
+	platform.Register(p)
+	requests.Register(p)
+	sys.Register(p, nil, nil)
+	subprocess.Register(p)
+	registerRuntime(p)
+	filesystem.RegisterOS(p, nil)
+	filesystem.RegisterPathlib(p, nil)
+	filesystem.RegisterFS(p, nil)
 	console.Register(p)
-	extlibs.RegisterYAMLLibrary(p)
-	extlibs.RegisterTOMLLibrary(p)
-	extlibs.RegisterGlobLibrary(p, nil)
-	extlibs.RegisterGrepLibrary(p, nil)
-	extlibs.RegisterFindLibrary(p, nil)
-	extlibs.RegisterSedLibrary(p, nil)
-	extlibs.RegisterShlexLibrary(p)
-	extlibs.RegisterTempfileLibrary(p, nil)
-	extlibs.RegisterShutilLibrary(p, nil)
-	extlibs.RegisterZipfileLibrary(p, nil)
-	extlibs.RegisterTarfileLibrary(p, nil)
-	extlibs.RegisterCsvLibrary(p)
-	extlibs.RegisterXmlLibrary(p)
+	yaml.Register(p)
+	toml.Register(p)
+	filesystem.RegisterGlob(p, nil)
+	filesystem.RegisterGrep(p, nil)
+	filesystem.RegisterFind(p, nil)
+	filesystem.RegisterSed(p, nil)
+	filesystem.RegisterTempfile(p, nil)
+	filesystem.RegisterShutil(p, nil)
+	filesystem.RegisterZipfile(p, nil)
+	filesystem.RegisterTarfile(p, nil)
 	scriptlingsimilarity.Register(p)
 	ai.Register(p)
 	agent.Register(p)
 	agent.RegisterInteract(p)
-	extlibs.SetBackgroundFactory(func() extlibs.SandboxInstance {
+	runtime.SetBackgroundFactory(func() runtime.SandboxInstance {
 		p2 := scriptling.New()
 		stdlib.RegisterAll(p2)
-		extlibs.RegisterRuntimeLibraryAll(p2, nil)
+		registerRuntime(p2)
 		return p2
 	})
-	extlibs.ReleaseBackgroundTasks()
+	runtime.ReleaseBackgroundTasks()
 	return p
 }
 

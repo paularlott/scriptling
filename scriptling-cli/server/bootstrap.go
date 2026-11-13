@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/runtime"
+	rthttp "github.com/paularlott/scriptling/extlibs/runtime/http"
+	"github.com/paularlott/scriptling/extlibs/runtime/kv"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 	"github.com/paularlott/scriptling/scriptling-cli/bootstrap"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
@@ -86,9 +88,9 @@ func NewServer(config ServerConfig) (*Server, error) {
 	if !waitWebSocketHandlers(5 * time.Second) {
 		Log.Warn("Resetting the runtime with WebSocket handlers still running")
 	}
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 
-	if err := extlibs.InitKVStore(config.KVStoragePath, Log); err != nil {
+	if err := kv.InitStore(config.KVStoragePath, Log); err != nil {
 		return nil, fmt.Errorf("failed to initialize KV store: %w", err)
 	}
 
@@ -103,26 +105,26 @@ func NewServer(config ServerConfig) (*Server, error) {
 	// acts on the shared state only while it is still the current one.
 	startCh := make(chan struct{})
 	s.startCh = startCh
-	extlibs.RuntimeState.Lock()
-	extlibs.RuntimeState.ServerStartCh = startCh
-	extlibs.RuntimeState.ServerRunningCh = s.serverRunningCh
-	extlibs.RuntimeState.ServerCollect = func() {
+	runtime.RuntimeState.Lock()
+	runtime.RuntimeState.ServerStartCh = startCh
+	runtime.RuntimeState.ServerRunningCh = s.serverRunningCh
+	runtime.RuntimeState.ServerCollect = func() {
 		s.collectRoutes()
 		s.collectJSONRPCMethods()
 	}
-	extlibs.RuntimeState.Unlock()
+	runtime.RuntimeState.Unlock()
 
 	// Background task instances come from the process-wide factory, which
 	// knows nothing about this server's packages: a task handler named as a
 	// bundle module ("mod.fn") would not resolve. Layer the pack loader onto
 	// the factory so server-mode tasks see the same modules request handlers
-	// do. Like the rest of extlibs.RuntimeState this is process-global: the
+	// do. Like the rest of runtime.RuntimeState this is process-global: the
 	// last server to configure a loader wins, which matches the one-server
 	// CLI process and the existing global release of background tasks.
 	if s.packLoader != nil {
-		if base := extlibs.BackgroundFactory(); base != nil {
+		if base := runtime.BackgroundFactory(); base != nil {
 			loader := s.packLoader
-			extlibs.SetBackgroundFactory(func() extlibs.SandboxInstance {
+			runtime.SetBackgroundFactory(func() runtime.SandboxInstance {
 				p := base()
 				if instance, ok := p.(*scriptling.Scriptling); ok {
 					bootstrap.ApplyPackLoader(instance, loader)
@@ -173,25 +175,25 @@ func NewServer(config ServerConfig) (*Server, error) {
 
 		// If start_server() was not called, collect routes and signal start now
 		// (backward compat). Mirrors the collection done inside start_server().
-		extlibs.RuntimeState.Lock()
-		alreadyStarted := extlibs.RuntimeState.ServerStarted
-		if extlibs.RuntimeState.ServerStartCh != startCh {
+		runtime.RuntimeState.Lock()
+		alreadyStarted := runtime.RuntimeState.ServerStarted
+		if runtime.RuntimeState.ServerStartCh != startCh {
 			// Stale goroutine: a newer server's ResetRuntime replaced the start
 			// channel after this one — leaked from an earlier server, e.g. a
 			// test that never signalled shutdown — began. Abandon; the new
 			// server drives its own lifecycle, and closing its channel or
 			// flipping its ServerStarted would start it before its own setup
 			// script finished (and swallow that script's error).
-			extlibs.RuntimeState.Unlock()
+			runtime.RuntimeState.Unlock()
 			if runErr != nil {
 				Log.Error("Setup script error after server start", "error", runErr)
 			}
 			return
 		}
 		if !alreadyStarted {
-			extlibs.RuntimeState.ServerStarted = true
-			if extlibs.RuntimeState.ServerCollect != nil {
-				extlibs.RuntimeState.ServerCollect()
+			runtime.RuntimeState.ServerStarted = true
+			if runtime.RuntimeState.ServerCollect != nil {
+				runtime.RuntimeState.ServerCollect()
 			}
 			// The error goes on its (buffered) channel before the start
 			// signal: NewServer wakes on startCh and reads startErrCh without
@@ -204,7 +206,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 		} else if runErr != nil {
 			Log.Error("Setup script error after server start", "error", runErr)
 		}
-		extlibs.RuntimeState.Unlock()
+		runtime.RuntimeState.Unlock()
 	}()
 
 	// Wait until routes are collected and the start signal is sent.
@@ -278,7 +280,7 @@ func (s *Server) mcpEnabled() bool {
 }
 
 func (s *Server) releaseBackgroundTasks() {
-	s.backgroundReleaseOnce.Do(extlibs.ReleaseBackgroundTasks)
+	s.backgroundReleaseOnce.Do(runtime.ReleaseBackgroundTasks)
 }
 
 // shutdownSetup releases setup-created work, signals server_running() to stop,
@@ -286,12 +288,12 @@ func (s *Server) releaseBackgroundTasks() {
 // idempotent so normal lifecycle cleanup can safely share this path.
 func (s *Server) shutdownSetup() {
 	s.setupShutdownOnce.Do(func() {
-		extlibs.RuntimeState.Lock()
-		if extlibs.RuntimeState.ServerRunningCh == s.serverRunningCh {
+		runtime.RuntimeState.Lock()
+		if runtime.RuntimeState.ServerRunningCh == s.serverRunningCh {
 			close(s.serverRunningCh)
-			extlibs.RuntimeState.ServerRunningCh = nil
+			runtime.RuntimeState.ServerRunningCh = nil
 		}
-		extlibs.RuntimeState.Unlock()
+		runtime.RuntimeState.Unlock()
 
 		s.releaseBackgroundTasks()
 	})
@@ -318,7 +320,7 @@ func (s *Server) runSetupScript() error {
 	s.mu.Unlock()
 	// Tag the script with this server so a late start_server() or
 	// server_running() from it cannot affect a newer server.
-	ctx := extlibs.WithServerStart(context.Background(), s.startCh)
+	ctx := runtime.WithServerStart(context.Background(), s.startCh)
 	s.setupScriptling(p)
 	s.applyPackLoader(p)
 
@@ -399,9 +401,9 @@ func (s *Server) setupScriptling(p *scriptling.Scriptling) {
 
 // collectRoutes collects registered routes from the scriptling.runtime library
 func (s *Server) collectRoutes() {
-	s.middleware = extlibs.RuntimeState.Middleware
-	s.notFoundHandler = extlibs.RuntimeState.NotFoundHandler
-	for key, route := range extlibs.RuntimeState.Routes {
+	s.middleware = rthttp.State.Middleware
+	s.notFoundHandler = rthttp.State.NotFoundHandler
+	for key, route := range rthttp.State.Routes {
 		if route.Static {
 			// key is "GET path" for static routes; extract the path
 			_, path, _ := strings.Cut(key, " ")
@@ -411,7 +413,7 @@ func (s *Server) collectRoutes() {
 		}
 		Log.Info("Registered route", "key", key, "handler", route.Handler)
 	}
-	for path, wsRoute := range extlibs.RuntimeState.WebSocketRoutes {
+	for path, wsRoute := range rthttp.State.WebSocketRoutes {
 		s.wsHandlers[path] = wsRoute.Handler
 		Log.Info("Registered WebSocket route", "path", path, "handler", wsRoute.Handler)
 	}

@@ -8,7 +8,7 @@ import (
 	"os"
 
 	scriptling "github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/runtime"
 	"github.com/paularlott/scriptling/object"
 	plugin "github.com/paularlott/scriptling/plugin"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
@@ -20,28 +20,28 @@ import (
 // (buildMux → /json-rpc handler) can use the same pre-built instance.
 // No-op if runtime.plugin.serve() was not called.
 func (s *Server) buildPluginServer() {
-	extlibs.RuntimeState.RLock()
-	name := extlibs.RuntimeState.PluginName
+	runtime.RuntimeState.RLock()
+	name := runtime.RuntimeState.PluginName
 	if name == "" {
-		extlibs.RuntimeState.RUnlock()
+		runtime.RuntimeState.RUnlock()
 		return
 	}
-	version := extlibs.RuntimeState.PluginVersion
-	desc := extlibs.RuntimeState.PluginDescription
-	metadata := extlibs.RuntimeState.PluginMetadata
-	handlers := make(map[string]string, len(extlibs.RuntimeState.PluginFunctions))
-	for k, v := range extlibs.RuntimeState.PluginFunctions {
+	version := runtime.RuntimeState.PluginVersion
+	desc := runtime.RuntimeState.PluginDescription
+	metadata := runtime.RuntimeState.PluginMetadata
+	handlers := make(map[string]string, len(runtime.RuntimeState.PluginFunctions))
+	for k, v := range runtime.RuntimeState.PluginFunctions {
 		handlers[k] = v
 	}
-	constants := make(map[string]object.Object, len(extlibs.RuntimeState.PluginConstants))
-	for k, v := range extlibs.RuntimeState.PluginConstants {
+	constants := make(map[string]object.Object, len(runtime.RuntimeState.PluginConstants))
+	for k, v := range runtime.RuntimeState.PluginConstants {
 		constants[k] = v
 	}
-	classes := make(map[string]string, len(extlibs.RuntimeState.PluginClasses))
-	for k, v := range extlibs.RuntimeState.PluginClasses {
+	classes := make(map[string]string, len(runtime.RuntimeState.PluginClasses))
+	for k, v := range runtime.RuntimeState.PluginClasses {
 		classes[k] = v
 	}
-	extlibs.RuntimeState.RUnlock()
+	runtime.RuntimeState.RUnlock()
 
 	ps := scriptlingplugin.NewServer(name, version, desc)
 	if metadata != nil {
@@ -74,8 +74,8 @@ func (s *Server) buildPluginServer() {
 	// A script-declared fetcher (runtime.plugin.register_fetcher): the peer
 	// serves sources from script handlers — how a script peer carries a
 	// host's declared assets inside itself.
-	if scheme, read := extlibs.RuntimeState.PluginFetchScheme, extlibs.RuntimeState.PluginFetchRead; read != "" {
-		ps.RegisterFetcher(scheme, scriptFetcher{s: s, read: read, glob: extlibs.RuntimeState.PluginFetchGlob})
+	if scheme, read := runtime.RuntimeState.PluginFetchScheme, runtime.RuntimeState.PluginFetchRead; read != "" {
+		ps.RegisterFetcher(scheme, scriptFetcher{s: s, read: read, glob: runtime.RuntimeState.PluginFetchGlob})
 		Log.Debug("Registered plugin fetcher", "scheme", scheme, "read", read)
 	}
 

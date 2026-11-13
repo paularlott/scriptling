@@ -55,7 +55,7 @@ func RegisterLibraries(registrar Registrar, manager *Manager, policy ...*Policy)
 // SubprocessLibraryName is the library name whose absence from the enabled set
 // means the host has disabled process execution ("--no-subprocess",
 // "--disable-lib subprocess"). Kept here so callers can derive allowProcesses
-// without importing extlibs.
+// without importing extlibs/subprocess.
 const SubprocessLibraryName = "subprocess"
 
 // ProcessesAllowed reports whether disabledLibs leaves process execution on,

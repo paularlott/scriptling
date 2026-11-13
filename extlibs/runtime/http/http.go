@@ -1,0 +1,1164 @@
+// Package http provides the scriptling.runtime.http library: route, static
+// file and WebSocket registration for the scriptling server, plus response
+// helpers. It links gorilla/websocket for the server-side WebSocket wrapper.
+//
+// Registrations are recorded in State, which shares runtime.RuntimeState's
+// lock with the server lifecycle in the core runtime package: start_server()
+// snapshots the routes (RuntimeState.ServerCollect) under that lock, so a
+// route is either in the snapshot or warned about as registered too late.
+package http
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/url"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gorilla/websocket"
+	"github.com/paularlott/scriptling/conversion"
+	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/evaluator"
+	"github.com/paularlott/scriptling/extlibs/fssecurity"
+	"github.com/paularlott/scriptling/extlibs/runtime"
+	"github.com/paularlott/scriptling/libutil"
+	"github.com/paularlott/scriptling/object"
+)
+
+// LibraryName is the name scripts import the library by.
+const LibraryName = "scriptling.runtime.http"
+
+// State holds the registrations made through scriptling.runtime.http. It is
+// guarded by runtime.RuntimeState's lock (not a lock of its own) so that
+// start_server() can snapshot it atomically with the server lifecycle; hold
+// runtime.RuntimeState.Lock (or RLock to read) while touching it.
+// runtime.ResetRuntime clears it and closes the open WebSocket connections.
+var State = struct {
+	// HTTP routes, keyed "METHOD path"
+	Routes          map[string]*RouteInfo
+	Middleware      string
+	NotFoundHandler string
+
+	// WebSocket routes and connections
+	WebSocketRoutes      map[string]*WebSocketRouteInfo
+	WebSocketConnections map[string]*WebSocketServerConn
+}{
+	Routes:               make(map[string]*RouteInfo),
+	WebSocketRoutes:      make(map[string]*WebSocketRouteInfo),
+	WebSocketConnections: make(map[string]*WebSocketServerConn),
+}
+
+// cleanupOnce registers resetState with libutil.RegisterCleanup once:
+// registered cleanups persist across resets.
+var cleanupOnce sync.Once
+
+// resetState clears State and closes every open WebSocket connection. It is
+// run by runtime.ResetRuntime through libutil.RunCleanups.
+func resetState() {
+	runtime.RuntimeState.Lock()
+	conns := State.WebSocketConnections
+	State.Routes = make(map[string]*RouteInfo)
+	State.Middleware = ""
+	State.NotFoundHandler = ""
+	State.WebSocketRoutes = make(map[string]*WebSocketRouteInfo)
+	State.WebSocketConnections = make(map[string]*WebSocketServerConn)
+	runtime.RuntimeState.Unlock()
+	for _, conn := range conns {
+		conn.Close()
+	}
+}
+
+// Register registers the scriptling.runtime.http library. allowedPaths
+// restricts the directories static() may serve, as it restricts the
+// filesystem libraries: nil leaves them unrestricted, an empty slice denies
+// every one. A directory outside the allowed paths is refused with a
+// PermissionError that a script cannot catch, and the server serves only
+// files that resolve inside the allowed paths.
+//
+// When scriptling.runtime is also registered with the same registrar the
+// library is reachable as an attribute of it (`rt.http`) too.
+func Register(registrar object.LibraryRegistrar, allowedPaths []string) {
+	libutil.RegisterSubLibrary(registrar, newLibrary(allowedPaths))
+}
+
+// httpResponse creates a standard HTTP response dict with status, headers, and body.
+// The headers parameter should be a map of header names to values that will be converted to object.String.
+func httpResponse(statusCode int64, headers map[string]string, body object.Object) object.Object {
+	headerDict := make(map[string]object.Object, len(headers))
+	for k, v := range headers {
+		headerDict[k] = object.NewString(v)
+	}
+
+	return object.NewStringDict(map[string]object.Object{
+		"status":  object.NewInteger(statusCode),
+		"headers": object.NewStringDict(headerDict),
+		"body":    body,
+	})
+}
+
+// RouteInfo stores information about a registered route
+type RouteInfo struct {
+	Methods   []string
+	Handler   string
+	Static    bool
+	StaticDir string
+	// StaticAllowed is the --allowed-paths set in force when the static route
+	// was registered (absolute); nil means unrestricted. The server serves
+	// only files that resolve inside it, and hides dotfiles and listings.
+	StaticAllowed []string
+}
+
+// WebSocketRouteInfo stores information about a registered WebSocket route
+type WebSocketRouteInfo struct {
+	Handler string // "library.function" to call for each connection
+}
+
+// MaxWebSocketMessage bounds a single inbound frame set. Without it a
+// client can pin as much memory as it cares to send.
+const MaxWebSocketMessage = 8 << 20 // 8 MiB
+
+// WebSocketServerConn wraps a server-side WebSocket connection.
+//
+// Locking: mu guards state, readMu serializes readers, and writeMu serializes
+// writers. Neither I/O lock is needed by Close, so closing the transport can
+// interrupt a blocked read or write while preserving Gorilla's one-reader /
+// one-writer rules.
+type WebSocketServerConn struct {
+	mu         sync.Mutex
+	readMu     sync.Mutex
+	writeMu    sync.Mutex
+	closeOnce  sync.Once
+	closeErr   error
+	conn       *websocket.Conn
+	id         string
+	remoteAddr string
+	closed     bool
+	closedCh   chan struct{}
+}
+
+// NewWebSocketServerConn creates a new server WebSocket connection wrapper
+func NewWebSocketServerConn(conn *websocket.Conn, id string) *WebSocketServerConn {
+	addr := ""
+	if conn.RemoteAddr() != nil {
+		addr = conn.RemoteAddr().String()
+	}
+	conn.SetReadLimit(MaxWebSocketMessage)
+	return &WebSocketServerConn{
+		conn:       conn,
+		id:         id,
+		remoteAddr: addr,
+		closedCh:   make(chan struct{}),
+	}
+}
+
+// ID returns the connection ID
+func (c *WebSocketServerConn) ID() string {
+	return c.id
+}
+
+// RemoteAddr returns the remote address
+func (c *WebSocketServerConn) RemoteAddr() string {
+	return c.remoteAddr
+}
+
+// ReadWithTimeout reads a message with timeout. Returns messageType, data, error.
+// On timeout, returns 0, nil, nil
+func (c *WebSocketServerConn) ReadWithTimeout(timeout time.Duration) (int, []byte, error) {
+	// Serialize readers without holding the state lock: the read may block
+	// indefinitely, and Close has to stay free to cut it short.
+	c.readMu.Lock()
+	defer c.readMu.Unlock()
+
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return 0, nil, net.ErrClosed
+	}
+	c.mu.Unlock()
+
+	if timeout > 0 {
+		deadline := time.Now().Add(timeout)
+		if err := c.conn.SetReadDeadline(deadline); err != nil {
+			return 0, nil, err
+		}
+	} else {
+		if err := c.conn.SetReadDeadline(time.Time{}); err != nil {
+			return 0, nil, err
+		}
+	}
+
+	msgType, data, err := c.conn.ReadMessage()
+	if err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return 0, nil, nil
+		}
+		_ = c.Close()
+		return 0, nil, err
+	}
+	return msgType, data, nil
+}
+
+func (c *WebSocketServerConn) markClosed() {
+	c.mu.Lock()
+	if !c.closed {
+		c.closed = true
+		close(c.closedCh)
+	}
+	c.mu.Unlock()
+}
+
+func (c *WebSocketServerConn) closeTransport() error {
+	c.closeOnce.Do(func() {
+		c.closeErr = c.conn.Close()
+	})
+	return c.closeErr
+}
+
+// WriteMessage sends a message
+func (c *WebSocketServerConn) WriteMessage(msgType int, data []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return net.ErrClosed
+	}
+	if err := c.conn.WriteMessage(msgType, data); err != nil {
+		_ = c.Close()
+		return err
+	}
+	return nil
+}
+
+// Close closes the connection
+func (c *WebSocketServerConn) Close() error {
+	c.markClosed()
+	return c.closeTransport()
+}
+
+// IsConnected returns whether the connection is still open
+func (c *WebSocketServerConn) IsConnected() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.closed
+}
+
+// ClosedChan returns a channel that closes when the connection closes
+func (c *WebSocketServerConn) ClosedChan() <-chan struct{} {
+	return c.closedCh
+}
+
+// requestFieldGetter builds a Request method that reads name from a dict field
+// on the instance, falling back to default (None when omitted). lowerLookup
+// lowercases the name before lookup, for the headers dict.
+func requestFieldGetter(field, methodName string, lowerLookup bool, help string) *object.Builtin {
+	return &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.RangeArgs(args, 2, 3); err != nil {
+				return err
+			}
+			instance, ok := args[0].(*object.Instance)
+			if !ok {
+				return errors.NewError("%s() called on non-Request object", methodName)
+			}
+
+			name, err := args[1].AsString()
+			if err != nil {
+				return err
+			}
+			if lowerLookup {
+				name = strings.ToLower(name)
+			}
+
+			var def object.Object = &object.Null{}
+			switch {
+			case len(args) > 2:
+				def = args[2]
+			case kwargs.Get("default") != nil:
+				def = kwargs.Get("default")
+			}
+
+			if dict, _ := instance.Field(field).(*object.Dict); dict != nil {
+				if pair, ok := dict.GetByString(name); ok {
+					return pair.Value
+				}
+			}
+			return def
+		},
+		HelpText: help,
+	}
+}
+
+// RequestClass is the class for Request objects passed to handlers
+var RequestClass = &object.Class{
+	Name: "Request",
+	Methods: map[string]object.Object{
+		"path_param": requestFieldGetter("path_params", "path_param", false, `path_param(name, default=None) - Get a path parameter captured from a route wildcard
+
+Route patterns like "/api/users/{id}" capture the matching request path
+segments. Returns the captured value, default, or None.
+
+Parameters:
+  name (string): Path parameter name
+  default (any, optional): Value returned when the parameter is absent`),
+		"query_param": requestFieldGetter("query", "query_param", false, `query_param(name, default=None) - Get a query parameter
+
+Returns the first value of the query parameter, default, or None.
+
+Parameters:
+  name (string): Query parameter name
+  default (any, optional): Value returned when the parameter is absent`),
+		"header": requestFieldGetter("headers", "header", true, `header(name, default=None) - Get a request header
+
+Header names are case-insensitive. Returns the header value, default, or None.
+
+Parameters:
+  name (string): Header name
+  default (any, optional): Value returned when the header is absent`),
+		"json": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				instance, ok := args[0].(*object.Instance)
+				if !ok {
+					return errors.NewError("json() called on non-Request object")
+				}
+
+				body, err := instance.Field("body").AsString()
+				if err != nil {
+					return err
+				}
+
+				if body == "" {
+					return &object.Null{}
+				}
+
+				return conversion.MustParseJSON(body)
+			},
+			HelpText: `json() - Parse request body as JSON
+
+Returns the parsed JSON as a dict or list, or None if body is empty.`,
+		},
+	},
+}
+
+// CreateRequestInstance creates a new Request instance with the given data.
+// pathParams holds values captured from route wildcards ("{id}" and
+// "{path...}") and remoteAddr the client address; both are exposed as
+// request fields (path_params, remote_addr). The context field starts as an
+// empty dict for middleware to populate — see WithRequestContext.
+func CreateRequestInstance(method, path, body string, headers, query, pathParams map[string]string, remoteAddr string) *object.Instance {
+	headerDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+	for k, v := range headers {
+		lk := strings.ToLower(k)
+		headerDict.SetByString(lk, object.NewString(v))
+	}
+
+	queryDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+	for k, v := range query {
+		queryDict.SetByString(k, object.NewString(v))
+	}
+
+	paramsDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+	for k, v := range pathParams {
+		paramsDict.SetByString(k, object.NewString(v))
+	}
+
+	return object.NewInstanceWithFields(RequestClass, map[string]object.Object{
+		"method":      object.NewString(method),
+		"path":        object.NewString(path),
+		"body":        object.NewString(body),
+		"headers":     headerDict,
+		"query":       queryDict,
+		"path_params": paramsDict,
+		"remote_addr": object.NewString(remoteAddr),
+		"context":     &object.Dict{Pairs: make(map[string]object.DictPair)},
+		// auth is the authenticated caller (subject, audience, scopes, expiry,
+		// claims) when the server checks a bearer token or identity-provider
+		// token, else None; the server fills it in.
+		"auth": &object.Null{},
+	})
+}
+
+// WebSocketClientClass is the class for WebSocket client objects passed to handlers
+var WebSocketClientClass = &object.Class{
+	Name: "WebSocketClient",
+	Methods: map[string]object.Object{
+		"connected": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				instance, ok := args[0].(*object.Instance)
+				if !ok {
+					return errors.NewError("connected() called on non-WebSocketClient object")
+				}
+
+				conn := getWSConnFromInstance(instance)
+				if conn == nil {
+					return object.NewBoolean(false)
+				}
+				return object.NewBoolean(conn.IsConnected())
+			},
+			HelpText: `connected() - Check if the WebSocket connection is still open
+
+Returns True if connected, False otherwise.`,
+		},
+		"receive": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+				instance, ok := args[0].(*object.Instance)
+				if !ok {
+					return errors.NewError("receive() called on non-WebSocketClient object")
+				}
+
+				timeout := 30.0
+				if t := kwargs.Get("timeout"); t != nil {
+					if timeoutFloat, e := t.AsFloat(); e == nil {
+						timeout = timeoutFloat
+					}
+				}
+
+				conn := getWSConnFromInstance(instance)
+				if conn == nil {
+					return &object.Null{}
+				}
+
+				msgType, data, err := conn.ReadWithTimeout(time.Duration(timeout * float64(time.Second)))
+				if err != nil || data == nil {
+					return &object.Null{}
+				}
+
+				if msgType == websocket.TextMessage {
+					return object.NewString(string(data))
+				}
+				// Binary message - return as list of bytes
+				elements := make([]object.Object, len(data))
+				for i, b := range data {
+					elements[i] = object.NewInteger(int64(b))
+				}
+				return &object.List{Elements: elements}
+			},
+			HelpText: `receive(timeout=30) - Receive a message from the WebSocket
+
+Parameters:
+  timeout (number, optional): Timeout in seconds (default: 30)
+
+Returns:
+  string for text messages, list of bytes for binary, or None on timeout/disconnect`,
+		},
+		"send": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 2); err != nil {
+					return err
+				}
+				instance, ok := args[0].(*object.Instance)
+				if !ok {
+					return errors.NewError("send() called on non-WebSocketClient object")
+				}
+
+				msg := args[1]
+				var data []byte
+
+				// Check if it's a dict - convert to JSON
+				if dict, ok := msg.(*object.Dict); ok {
+					jsonData, jsonErr := json.Marshal(conversion.ToGo(dict))
+					if jsonErr != nil {
+						return errors.NewError("failed to encode JSON: %s", jsonErr.Error())
+					}
+					data = jsonData
+				} else if str, ok := msg.(*object.String); ok {
+					data = []byte(str.StringValue())
+				} else {
+					strVal, coerceErr := object.CoerceWireString(msg)
+					if coerceErr != nil {
+						return errors.NewError("message must be string or dict")
+					}
+					data = []byte(strVal)
+				}
+
+				conn := getWSConnFromInstance(instance)
+				if conn == nil {
+					return errors.NewError("connection closed")
+				}
+
+				if writeErr := conn.WriteMessage(websocket.TextMessage, data); writeErr != nil {
+					return errors.NewError("send failed: %s", writeErr.Error())
+				}
+				return &object.Null{}
+			},
+			HelpText: `send(message) - Send a message to the WebSocket client
+
+Parameters:
+  message (string or dict): Message to send. Dicts are automatically JSON encoded.`,
+		},
+		"send_binary": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 2); err != nil {
+					return err
+				}
+				instance, ok := args[0].(*object.Instance)
+				if !ok {
+					return errors.NewError("send_binary() called on non-WebSocketClient object")
+				}
+
+				list, ok := args[1].(*object.List)
+				if !ok {
+					return errors.NewError("send_binary requires a list of bytes")
+				}
+
+				data := make([]byte, len(list.Elements))
+				for i, elem := range list.Elements {
+					b, e := elem.AsInt()
+					if e != nil || b < 0 || b > 255 {
+						return errors.NewError("send_binary requires list of bytes (0-255)")
+					}
+					data[i] = byte(b)
+				}
+
+				conn := getWSConnFromInstance(instance)
+				if conn == nil {
+					return errors.NewError("connection closed")
+				}
+
+				if writeErr := conn.WriteMessage(websocket.BinaryMessage, data); writeErr != nil {
+					return errors.NewError("send_binary failed: %s", writeErr.Error())
+				}
+				return &object.Null{}
+			},
+			HelpText: `send_binary(data) - Send binary data to the WebSocket client
+
+Parameters:
+  data (list): List of byte values (0-255)`,
+		},
+		"close": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				instance, ok := args[0].(*object.Instance)
+				if !ok {
+					return errors.NewError("close() called on non-WebSocketClient object")
+				}
+
+				conn := getWSConnFromInstance(instance)
+				if conn != nil {
+					conn.Close()
+				}
+				return &object.Null{}
+			},
+			HelpText: `close() - Close the WebSocket connection`,
+		},
+	},
+}
+
+// getWSConnFromInstance extracts the WebSocketServerConn from an instance
+func getWSConnFromInstance(instance *object.Instance) *WebSocketServerConn {
+	conn, _ := instance.NativeData.(*WebSocketServerConn)
+	return conn
+}
+
+// CreateWebSocketClientInstance creates a new WebSocketClient instance
+func CreateWebSocketClientInstance(conn *WebSocketServerConn) *object.Instance {
+	return object.NewInstanceWithData(WebSocketClientClass, map[string]object.Object{
+		"remote_addr": object.NewString(conn.RemoteAddr()),
+	}, conn)
+}
+
+// makeHTTPDecorator returns a builtin that, when applied to a function (by
+// the @decorator mechanism), resolves the "module.function" reference and
+// calls register with it. The decorated function is returned unchanged.
+func makeHTTPDecorator(ctx context.Context, register func(ref string)) object.Object {
+	env := evaluator.GetEnvFromContext(ctx)
+	return &object.Builtin{
+		Fn: func(_ context.Context, _ object.Kwargs, args ...object.Object) object.Object {
+			if len(args) == 0 {
+				return errors.NewError("decorator requires a function")
+			}
+			fn, ok := args[0].(*object.Function)
+			if !ok {
+				return errors.NewError("decorated value must be a function, got %s", args[0].Type())
+			}
+			if fn.Name == "" {
+				return errors.NewError("decorated function has no name")
+			}
+			ref := libutil.ModuleRef(env, fn.Name)
+			if ref == "" {
+				return errors.NewError("cannot determine module name for decorator — ensure __name__ or __file__ is set")
+			}
+			register(ref)
+			return fn
+		},
+	}
+}
+
+// registerHTTPRoute is the shared registration logic for all HTTP verbs.
+func registerHTTPRoute(method, path, handler string) {
+	runtime.RuntimeState.Lock()
+	defer runtime.RuntimeState.Unlock()
+	// Idempotent re-import: if the route already exists with the same handler,
+	// this is a decorated library being re-imported at request time — skip
+	// silently instead of warning about late registration.
+	if existing, ok := State.Routes[method+" "+path]; ok && existing.Handler == handler {
+		return
+	}
+	if runtime.RuntimeState.ServerStarted {
+		fmt.Fprintf(os.Stderr, "warning: runtime.http route %q registered after start_server() — route will not be served\n", path)
+	}
+	State.Routes[method+" "+path] = &RouteInfo{
+		Methods: []string{method},
+		Handler: handler,
+	}
+}
+
+// httpVerbEntry builds a builtin for a single HTTP verb that supports both
+// decorator (@http.get("/path")) and imperative (http.get("/path", "lib.func"))
+// usage.
+func httpVerbEntry(method string) *object.Builtin {
+	lower := strings.ToLower(method)
+	return &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.MinArgs(args, 1); err != nil {
+				return err
+			}
+			path, err := args[0].AsString()
+			if err != nil {
+				return err
+			}
+
+			// Decorator form: @http.get("/path")
+			if len(args) == 1 {
+				return makeHTTPDecorator(ctx, func(ref string) {
+					registerHTTPRoute(method, path, ref)
+				})
+			}
+
+			// Imperative form: http.get("/path", "lib.func")
+			handler, err := args[1].AsString()
+			if err != nil {
+				return err
+			}
+			registerHTTPRoute(method, path, handler)
+			return &object.Null{}
+		},
+		HelpText: fmt.Sprintf(`%s(path, handler=None) - Register a %s route or use as decorator
+
+Decorator form:
+  import scriptling.http as http
+
+  @http.%s("/path")
+  def handler(request):
+      return http.json(200, {"status": "ok"})
+
+Imperative form:
+  runtime.http.%s("/path", "library.function")
+
+Parameters:
+  path (string): URL path for the route
+  handler (string, imperative only): Handler function as "library.function"`, lower, method, lower, lower),
+	}
+}
+
+// newLibrary builds the runtime.http library with static() confined to
+// allowedPaths (nil: unrestricted, empty: deny every directory).
+func newLibrary(allowedPaths []string) *object.Library {
+	cleanupOnce.Do(func() { libutil.RegisterCleanup(resetState) })
+	paths := fssecurity.Config{AllowedPaths: fssecurity.NormalizeAllowedPaths(allowedPaths)}
+	return object.NewLibrary(LibraryName, map[string]*object.Builtin{
+		"get":    httpVerbEntry("GET"),
+		"post":   httpVerbEntry("POST"),
+		"put":    httpVerbEntry("PUT"),
+		"patch":  httpVerbEntry("PATCH"),
+		"delete": httpVerbEntry("DELETE"),
+
+		"route": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				var methods []string
+				if m := kwargs.Get("methods"); m != nil {
+					if list, e := m.AsList(); e == nil {
+						for _, item := range list {
+							if method, e := item.AsString(); e == nil {
+								methods = append(methods, strings.ToUpper(method))
+							}
+						}
+					}
+				}
+				if len(methods) == 0 {
+					methods = []string{"GET", "POST", "PUT", "DELETE"}
+				}
+
+				// Decorator form: @http.route("/path", methods=["GET","POST"])
+				if len(args) == 1 {
+					return makeHTTPDecorator(ctx, func(ref string) {
+						for _, m := range methods {
+							registerHTTPRoute(m, path, ref)
+						}
+					})
+				}
+
+				// Imperative form: route("/path", "lib.func", methods=["GET","POST"])
+				handler, err := args[1].AsString()
+				if err != nil {
+					return err
+				}
+				for _, m := range methods {
+					registerHTTPRoute(m, path, handler)
+				}
+				return &object.Null{}
+			},
+			HelpText: `route(path, handler=None, methods=["GET","POST","PUT","DELETE"]) - Register a route for multiple methods, or use as decorator
+
+Decorator form:
+  @http.route("/api", methods=["GET", "POST"])
+  def handler(request):
+      ...
+
+Imperative form:
+  runtime.http.route("/api", "handlers.api", methods=["GET", "POST"])`,
+		},
+
+		"middleware": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+
+				// Decorator form: @http.middleware
+				if fn, ok := args[0].(*object.Function); ok {
+					env := evaluator.GetEnvFromContext(ctx)
+					ref := libutil.ModuleRef(env, fn.Name)
+					if ref == "" {
+						return errors.NewError("cannot determine module name for @http.middleware decorator")
+					}
+					runtime.RuntimeState.Lock()
+					State.Middleware = ref
+					runtime.RuntimeState.Unlock()
+					return fn
+				}
+
+				// Imperative form: middleware("lib.func")
+				handler, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				runtime.RuntimeState.Lock()
+				if runtime.RuntimeState.ServerStarted {
+					fmt.Fprintf(os.Stderr, "warning: runtime.http.middleware registered after start_server() — will not be applied\n")
+				}
+				State.Middleware = handler
+				runtime.RuntimeState.Unlock()
+
+				return &object.Null{}
+			},
+			HelpText: `middleware(handler) - Register middleware for all routes and protocol endpoints, or use as bare decorator
+
+Decorator form:
+  @http.middleware
+  def auth(request):
+      ...
+
+Imperative form:
+  runtime.http.middleware("auth.check_request")
+
+The middleware receives the request object and should return:
+  - None to continue to the handler
+  - A response dict to short-circuit (block the request)
+
+It runs for every HTTP route and, when the server has MCP or JSON-RPC
+enabled, for the /mcp and /json-rpc endpoints too — so one middleware can
+authenticate API clients, MCP clients, and JSON-RPC callers alike. When a
+middleware is registered it replaces static --bearer-token checking on the
+protocol endpoints.`,
+		},
+
+		"static": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 2); err != nil {
+					return err
+				}
+
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				directory, err := args[1].AsString()
+				if err != nil {
+					return err
+				}
+
+				// Under --allowed-paths a static route may only publish a
+				// directory inside the allowed paths: serving it would otherwise
+				// hand its files to remote clients, and to the script itself.
+				if paths.AllowedPaths != nil && !paths.IsPathAllowed(directory) {
+					return errors.NewPermissionError("access denied: static directory '%s' is outside allowed directories", directory)
+				}
+
+				runtime.RuntimeState.Lock()
+				if runtime.RuntimeState.ServerStarted {
+					fmt.Fprintf(os.Stderr, "warning: runtime.http.static %q registered after start_server() — route will not be served\n", path)
+				}
+				State.Routes["GET "+path] = &RouteInfo{
+					Methods:   []string{"GET"},
+					Static:    true,
+					StaticDir: directory,
+					// The server confines what it serves from the directory to
+					// the same paths, so symlinks inside it cannot lead out.
+					StaticAllowed: paths.AllowedPaths,
+				}
+				runtime.RuntimeState.Unlock()
+
+				return &object.Null{}
+			},
+			HelpText: `static(path, directory) - Register a static file serving route
+
+Parameters:
+  path (string): URL path prefix for static files (e.g., "/assets")
+  directory (string): Local directory to serve files from
+
+Example:
+  runtime.http.static("/assets", "./public")`,
+		},
+
+		"json": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+
+				statusCode := int64(200)
+				var data object.Object = &object.Null{}
+
+				if len(args) >= 2 {
+					if code, err := args[0].AsInt(); err == nil {
+						statusCode = code
+					}
+					data = args[1]
+				} else {
+					data = args[0]
+				}
+
+				if c := kwargs.Get("status"); c != nil {
+					if code, e := c.AsInt(); e == nil {
+						statusCode = code
+					}
+				}
+
+				return httpResponse(statusCode, map[string]string{
+					"Content-Type": "application/json",
+				}, data)
+			},
+			HelpText: `json(status_code, data) - Create a JSON response
+
+Parameters:
+  status_code (int): HTTP status code (e.g., 200, 404, 500)
+  data: Data to serialize as JSON
+
+Returns:
+  dict: Response object for the server
+
+Example:
+  return runtime.http.json(200, {"status": "ok"})
+  return runtime.http.json(404, {"error": "Not found"})`,
+		},
+
+		"redirect": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+
+				location, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				statusCode := int64(302)
+				if len(args) > 1 {
+					if code, e := args[1].AsInt(); e == nil {
+						statusCode = code
+					}
+				}
+				if c := kwargs.Get("status"); c != nil {
+					if code, e := c.AsInt(); e == nil {
+						statusCode = code
+					}
+				}
+
+				return httpResponse(statusCode, map[string]string{
+					"Location": location,
+				}, object.NewString(""))
+			},
+			HelpText: `redirect(location, status=302) - Create a redirect response
+
+Parameters:
+  location (string): URL to redirect to
+  status (int, optional): HTTP status code (default: 302)
+
+Returns:
+  dict: Response object for the server
+
+Example:
+  return runtime.http.redirect("/new-location")
+  return runtime.http.redirect("/permanent", status=301)`,
+		},
+
+		"html": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+
+				statusCode := int64(200)
+				var htmlContent object.Object = object.NewString("")
+
+				if len(args) >= 2 {
+					if code, err := args[0].AsInt(); err == nil {
+						statusCode = code
+					}
+					htmlContent = args[1]
+				} else {
+					htmlContent = args[0]
+				}
+
+				if c := kwargs.Get("status"); c != nil {
+					if code, e := c.AsInt(); e == nil {
+						statusCode = code
+					}
+				}
+
+				return httpResponse(statusCode, map[string]string{
+					"Content-Type": "text/html; charset=utf-8",
+				}, htmlContent)
+			},
+			HelpText: `html(status_code, content) - Create an HTML response
+
+Parameters:
+  status_code (int): HTTP status code
+  content (string): HTML content to return
+
+Returns:
+  dict: Response object for the server
+
+Example:
+  return runtime.http.html(200, "<h1>Hello World</h1>")`,
+		},
+
+		"text": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+
+				statusCode := int64(200)
+				var textContent object.Object = object.NewString("")
+
+				if len(args) >= 2 {
+					if code, err := args[0].AsInt(); err == nil {
+						statusCode = code
+					}
+					textContent = args[1]
+				} else {
+					textContent = args[0]
+				}
+
+				if c := kwargs.Get("status"); c != nil {
+					if code, e := c.AsInt(); e == nil {
+						statusCode = code
+					}
+				}
+
+				return httpResponse(statusCode, map[string]string{
+					"Content-Type": "text/plain; charset=utf-8",
+				}, textContent)
+			},
+			HelpText: `text(status_code, content) - Create a plain text response
+
+Parameters:
+  status_code (int): HTTP status code
+  content (string): Text content to return
+
+Returns:
+  dict: Response object for the server
+
+Example:
+  return runtime.http.text(200, "Hello World")`,
+		},
+
+		"parse_query": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+
+				queryString, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				values, parseErr := url.ParseQuery(queryString)
+				if parseErr != nil {
+					return errors.NewError("failed to parse query string: %s", parseErr.Error())
+				}
+
+				pairs := make(map[string]object.DictPair)
+				for key, vals := range values {
+					keyObj := object.NewString(key)
+					dk := object.DictKey(keyObj)
+					if len(vals) == 1 {
+						pairs[dk] = object.DictPair{
+							Key:   keyObj,
+							Value: object.NewString(vals[0]),
+						}
+					} else {
+						elements := make([]object.Object, len(vals))
+						for i, v := range vals {
+							elements[i] = object.NewString(v)
+						}
+						pairs[dk] = object.DictPair{
+							Key:   keyObj,
+							Value: &object.List{Elements: elements},
+						}
+					}
+				}
+
+				return &object.Dict{Pairs: pairs}
+			},
+			HelpText: `parse_query(query_string) - Parse a URL query string
+
+Parameters:
+  query_string (string): Query string to parse (with or without leading ?)
+
+Returns:
+  dict: Parsed key-value pairs
+
+Example:
+  params = runtime.http.parse_query("name=John&age=30")`,
+		},
+
+		"not_found": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+
+				// Decorator form: @http.not_found
+				if fn, ok := args[0].(*object.Function); ok {
+					env := evaluator.GetEnvFromContext(ctx)
+					ref := libutil.ModuleRef(env, fn.Name)
+					if ref == "" {
+						return errors.NewError("cannot determine module name for @http.not_found decorator")
+					}
+					runtime.RuntimeState.Lock()
+					State.NotFoundHandler = ref
+					runtime.RuntimeState.Unlock()
+					return fn
+				}
+
+				// Imperative form: not_found("lib.func")
+				handler, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				runtime.RuntimeState.Lock()
+				if runtime.RuntimeState.ServerStarted {
+					fmt.Fprintf(os.Stderr, "warning: runtime.http.not_found registered after start_server() — will not be applied\n")
+				}
+				State.NotFoundHandler = handler
+				runtime.RuntimeState.Unlock()
+
+				return &object.Null{}
+			},
+			HelpText: `not_found(handler) - Register a 404 handler, or use as bare decorator
+
+Decorator form:
+  @http.not_found
+  def handle_404(request):
+      ...
+
+Imperative form:
+  runtime.http.not_found("handlers.not_found")
+
+The handler receives the request object and should return a response.
+It is called when no route matches the request path, or when a static
+asset is not found.`,
+		},
+
+		"websocket": {
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.MinArgs(args, 1); err != nil {
+					return err
+				}
+
+				path, err := args[0].AsString()
+				if err != nil {
+					return err
+				}
+
+				// Decorator form: @http.websocket("/ws")
+				if len(args) == 1 {
+					return makeHTTPDecorator(ctx, func(ref string) {
+						runtime.RuntimeState.Lock()
+						State.WebSocketRoutes[path] = &WebSocketRouteInfo{Handler: ref}
+						runtime.RuntimeState.Unlock()
+					})
+				}
+
+				// Imperative form: websocket("/ws", "lib.func")
+				handler, err := args[1].AsString()
+				if err != nil {
+					return err
+				}
+
+				runtime.RuntimeState.Lock()
+				if runtime.RuntimeState.ServerStarted {
+					fmt.Fprintf(os.Stderr, "warning: runtime.http.websocket %q registered after start_server() — route will not be served\n", path)
+				}
+				State.WebSocketRoutes[path] = &WebSocketRouteInfo{
+					Handler: handler,
+				}
+				runtime.RuntimeState.Unlock()
+
+				return &object.Null{}
+			},
+			HelpText: `websocket(path, handler=None) - Register a WebSocket route, or use as decorator
+
+Decorator form:
+  @http.websocket("/ws")
+  def chat_handler(client):
+      client.send("Welcome!")
+      while client.connected():
+          msg = client.receive(timeout=60)
+          if msg:
+              client.send("Echo: " + msg)
+
+Imperative form:
+  runtime.http.websocket("/chat", "handlers.chat_handler")
+
+The handler receives a WebSocketClient object and runs for the connection lifetime.`,
+		},
+	}, map[string]object.Object{
+		"Request":         RequestClass,
+		"WebSocketClient": WebSocketClientClass,
+	}, "HTTP server route registration and response helpers")
+}

@@ -6,7 +6,7 @@ go 1.27.4
 replace github.com/paularlott/scriptling => ../..
 
 require (
-	github.com/paularlott/scriptling v0.38.0
+	github.com/paularlott/scriptling v0.40.0
 	github.com/paularlott/scriptling-onepassword v0.1.1
 )
 
@@ -32,18 +32,18 @@ require (
 	github.com/ianlancetaylor/demangle v0.0.0-20261012173340-cbb8aaea4290 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/pgx/v5 v5.12.0 // indirect
+	github.com/jackc/pgx/v5 v5.13.0 // indirect
 	github.com/jackc/puddle/v2 v2.2.3 // indirect
 	github.com/klauspost/compress v1.20.4 // indirect
 	github.com/lufia/plan9stats v0.0.0-20261101121723-be84dd9509a0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
-	github.com/paularlott/cli v0.10.2 // indirect
+	github.com/paularlott/cli v0.10.3 // indirect
 	github.com/paularlott/gossip v0.31.0 // indirect
 	github.com/paularlott/gossiper/client v1.0.0 // indirect
 	github.com/paularlott/jsonrpc v0.4.0 // indirect
 	github.com/paularlott/logger v0.4.0 // indirect
-	github.com/paularlott/mcp v0.35.2 // indirect
+	github.com/paularlott/mcp v0.36.0 // indirect
 	github.com/paularlott/snapshotkv v0.6.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20260916203055-22a1a467d9f0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

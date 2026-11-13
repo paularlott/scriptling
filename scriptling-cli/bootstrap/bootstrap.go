@@ -8,6 +8,7 @@ import (
 
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/extlibs/netsecurity"
+	"github.com/paularlott/scriptling/extlibs/netsecurity/policyfile"
 	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/scriptling-cli/pack"
 )
@@ -44,7 +45,7 @@ func LoadNetworkPolicy(path string) (*netsecurity.Config, error) {
 	if path == "" {
 		return nil, nil
 	}
-	return netsecurity.LoadConfig(path)
+	return policyfile.LoadConfig(path)
 }
 
 // ParseAllowedPaths parses a comma-separated list of paths.

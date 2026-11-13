@@ -5,7 +5,8 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/runtime"
+	"github.com/paularlott/scriptling/extlibs/sys"
 )
 
 // newSysStreamTestInterpreter returns an interpreter with the sys library
@@ -14,7 +15,7 @@ import (
 func newSysStreamTestInterpreter(t *testing.T) (*Scriptling, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	p := New()
-	extlibs.RegisterSysLibrary(p, []string{}, nil)
+	sys.Register(p, []string{}, nil)
 	var out, errOut bytes.Buffer
 	p.SetOutputWriter(&out)
 	p.SetErrorWriter(&errOut)
@@ -23,7 +24,7 @@ func newSysStreamTestInterpreter(t *testing.T) (*Scriptling, *bytes.Buffer, *byt
 
 func TestSysStreamsExistWithoutStdin(t *testing.T) {
 	p := New()
-	extlibs.RegisterSysLibrary(p, []string{}, nil)
+	sys.Register(p, []string{}, nil)
 	_, err := p.Eval(`
 import sys
 n_out = sys.stdout.write("")
@@ -238,7 +239,7 @@ is_none = sys.stdout.flush() is None
 
 func TestSysStreamFlushFlushesBufferedWriter(t *testing.T) {
 	p := New()
-	extlibs.RegisterSysLibrary(p, []string{}, nil)
+	sys.Register(p, []string{}, nil)
 	var raw bytes.Buffer
 	buffered := bufio.NewWriter(&raw)
 	p.SetOutputWriter(buffered)
@@ -297,19 +298,20 @@ with sys.stdout as f:
 }
 
 func TestSysStreamsDiscardedInSandbox(t *testing.T) {
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 	var out, errOut bytes.Buffer
-	extlibs.SetSandboxFactory(func() extlibs.SandboxInstance {
+	runtime.SetSandboxFactory(func() runtime.SandboxInstance {
 		q := New()
-		extlibs.RegisterSysLibrary(q, []string{}, nil)
+		sys.Register(q, []string{}, nil)
 		q.SetOutputWriter(&out)
 		q.SetErrorWriter(&errOut)
 		return q
 	})
-	defer extlibs.SetSandboxFactory(nil)
+	defer runtime.SetSandboxFactory(nil)
 
 	p := New()
-	extlibs.RegisterRuntimeLibraryAll(p, nil)
+	runtime.RegisterSandbox(p, nil)
+	runtime.Register(p)
 	_, err := p.Eval(`
 import scriptling.runtime as runtime
 

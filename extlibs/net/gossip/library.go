@@ -18,8 +18,8 @@ import (
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/evaliface"
-	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/extlibs/netsecurity"
+	"github.com/paularlott/scriptling/libutil"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -1528,7 +1528,7 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }, loggerIns
 	libraryOnce.Do(func() {
 		log = loggerInstance
 		library = buildLibrary(nil)
-		extlibs.RegisterCleanup(func() {
+		libutil.RegisterCleanup(func() {
 			// Take the clusters out under the lock, then stop them without
 			// it: stopping can wait for in-flight requests.
 			clusters.Lock()

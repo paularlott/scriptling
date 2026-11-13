@@ -5,13 +5,15 @@ import (
 
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/extlibs/agent"
 	"github.com/paularlott/scriptling/extlibs/ai"
 	aimemory "github.com/paularlott/scriptling/extlibs/ai/memory"
 	scriptlingconsole "github.com/paularlott/scriptling/extlibs/console"
 	scriptlingcontainer "github.com/paularlott/scriptling/extlibs/container"
+	"github.com/paularlott/scriptling/extlibs/filesystem"
 	"github.com/paularlott/scriptling/extlibs/fssecurity"
+	"github.com/paularlott/scriptling/extlibs/logging"
+	"github.com/paularlott/scriptling/extlibs/markdown"
 	scriptlingmcp "github.com/paularlott/scriptling/extlibs/mcp"
 	scriptlingmercure "github.com/paularlott/scriptling/extlibs/mercure"
 	messagingconsole "github.com/paularlott/scriptling/extlibs/messaging/console"
@@ -22,16 +24,29 @@ import (
 	scriptlingmulticast "github.com/paularlott/scriptling/extlibs/net/multicast"
 	scriptlingresolve "github.com/paularlott/scriptling/extlibs/net/resolve"
 	scriptlingunicast "github.com/paularlott/scriptling/extlibs/net/unicast"
+	"github.com/paularlott/scriptling/extlibs/net/websocket"
 	"github.com/paularlott/scriptling/extlibs/netsecurity"
 	scriptlingnomad "github.com/paularlott/scriptling/extlibs/nomad"
 	scriptlingoauth "github.com/paularlott/scriptling/extlibs/oauth"
+	"github.com/paularlott/scriptling/extlibs/platform"
 	"github.com/paularlott/scriptling/extlibs/provision/become"
 	provisioncommand "github.com/paularlott/scriptling/extlibs/provision/command"
 	provisionfetch "github.com/paularlott/scriptling/extlibs/provision/fetch"
 	provisionfile "github.com/paularlott/scriptling/extlibs/provision/file"
 	provisionpackage "github.com/paularlott/scriptling/extlibs/provision/packages"
+	"github.com/paularlott/scriptling/extlibs/requests"
+	"github.com/paularlott/scriptling/extlibs/runtime"
+	rthttp "github.com/paularlott/scriptling/extlibs/runtime/http"
+	"github.com/paularlott/scriptling/extlibs/runtime/kv"
+	"github.com/paularlott/scriptling/extlibs/secret"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	scriptlingsimilarity "github.com/paularlott/scriptling/extlibs/similarity"
+	"github.com/paularlott/scriptling/extlibs/subprocess"
+	"github.com/paularlott/scriptling/extlibs/sys"
+	"github.com/paularlott/scriptling/extlibs/template"
+	"github.com/paularlott/scriptling/extlibs/toml"
+	"github.com/paularlott/scriptling/extlibs/waitfor"
+	"github.com/paularlott/scriptling/extlibs/yaml"
 	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/object"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
@@ -40,53 +55,71 @@ import (
 
 // AllLibraryNames returns the names of all built-in CLI libraries: every
 // standard library (from stdlib.LibraryNames, so none is missed) and the
-// extended libraries setup registers.
+// extension libraries setup registers.
 func AllLibraryNames() []string {
 	return append(stdlib.LibraryNames(),
-		extlibs.YAMLLibraryName,
-		extlibs.TOMLLibraryName,
-		extlibs.HTMLParserLibraryName,
-		extlibs.RequestsLibraryName,
-		extlibs.SecretsLibraryName,
-		extlibs.OSLibraryName,
-		extlibs.OSPathLibraryName,
-		extlibs.LoggingLibraryName,
-		extlibs.RuntimeLibraryName,
-		extlibs.SecretLibraryName,
-		extlibs.SubprocessLibraryName,
-		extlibs.PathlibLibraryName,
-		extlibs.GlobLibraryName,
-		extlibs.FSLibraryName,
-		extlibs.GrepLibraryName,
-		extlibs.SedLibraryName,
-		extlibs.ContainerLibraryName,
-		extlibs.NomadLibraryName,
-		extlibs.OAuthLibraryName,
-		extlibs.MercureLibraryName,
-		extlibs.WaitForLibraryName,
-		extlibs.WebSocketLibraryName,
-		extlibs.TemplateHTMLLibraryName,
-		extlibs.TemplateTextLibraryName,
-		extlibs.MarkdownLibraryName,
-		extlibs.MulticastLibraryName,
-		extlibs.UnicastLibraryName,
-		extlibs.GossipLibraryName,
-		extlibs.ResolveLibraryName,
-		extlibs.FileProvisionLibraryName,
-		extlibs.FetchProvisionLibraryName,
-		extlibs.CommandProvisionLibraryName,
-		extlibs.PackageProvisionLibraryName,
-		extlibs.AILibraryName,
-		extlibs.AgentLibraryName,
-		extlibs.SimilarityLibraryName,
+		platform.LibraryName,
+		yaml.LibraryName,
+		toml.LibraryName,
+		requests.LibraryName,
+		filesystem.OSLibraryName,
+		filesystem.OSPathLibraryName,
+		logging.LibraryName,
+		runtime.RuntimeLibraryName,
+		secret.LibraryName,
+		subprocess.LibraryName,
+		filesystem.PathlibLibraryName,
+		filesystem.GlobLibraryName,
+		filesystem.FSLibraryName,
+		filesystem.GrepLibraryName,
+		filesystem.SedLibraryName,
+		scriptlingcontainer.LibraryName,
+		scriptlingnomad.LibraryName,
+		scriptlingoauth.LibraryName,
+		scriptlingmercure.LibraryName,
+		waitfor.LibraryName,
+		websocket.LibraryName,
+		template.HTMLLibraryName,
+		template.TextLibraryName,
+		markdown.LibraryName,
+		scriptlingmulticast.LibraryName,
+		scriptlingunicast.LibraryName,
+		scriptlinggossip.LibraryName,
+		scriptlingresolve.LibraryName,
+		provisionfile.LibraryName,
+		provisionfetch.LibraryName,
+		provisioncommand.LibraryName,
+		provisionpackage.LibraryName,
+		ai.AILibraryName,
+		agent.AgentLibraryName,
+		scriptlingsimilarity.LibraryName,
 		scriptlingconsole.LibraryName,
 		telegram.LibraryName,
 		discord.LibraryName,
 		slack.LibraryName,
 		messagingconsole.LibraryName,
-		extlibs.MCPLibraryName,
-		extlibs.ToonLibraryName,
+		scriptlingmcp.MCPLibraryName,
+		scriptlingmcp.ToonLibraryName,
 	)
+}
+
+// DisabledSet returns the set of library names disabledLibs turns off. csv
+// and xml are also importable under their short alias names, so disabling
+// scriptling.csv or scriptling.xml disables the alias too.
+func DisabledSet(disabledLibs []string) map[string]bool {
+	disabled := make(map[string]bool, len(disabledLibs)+2)
+	for _, name := range disabledLibs {
+		disabled[name] = true
+	}
+	for name, alias := range map[string]string{
+		stdlib.CSVLibraryName: stdlib.CSVAliasLibraryName,
+		stdlib.XMLLibraryName: stdlib.XMLAliasLibraryName,
+	} {
+		if disabled[name] {
+			disabled[alias] = true
+		}
+	}
+	return disabled
 }
 
 // rootHelper runs the provision libraries' become=True operations; nil
@@ -118,10 +151,7 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 		})
 	}
 
-	disabled := make(map[string]bool, len(disabledLibs))
-	for _, name := range disabledLibs {
-		disabled[name] = true
-	}
+	disabled := DisabledSet(disabledLibs)
 	reg := func(name string, fn func()) {
 		if !disabled[name] {
 			fn()
@@ -133,39 +163,35 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	// a second list here, which fell behind it (msgpack, copy, enum,
 	// dataclasses and typing were missing whenever any library was disabled).
 	stdlib.RegisterAll(disabledFilter{p, disabled})
+	reg(platform.LibraryName, func() { platform.Register(p) })
 
-	reg(extlibs.YAMLLibraryName, func() { p.RegisterLibrary(extlibs.YAMLLibrary) })
-	reg(extlibs.TOMLLibraryName, func() { p.RegisterLibrary(extlibs.TOMLLibrary) })
+	reg(yaml.LibraryName, func() { p.RegisterLibrary(yaml.Library) })
+	reg(toml.LibraryName, func() { p.RegisterLibrary(toml.Library) })
 
-	reg(extlibs.HTMLParserLibraryName, func() { extlibs.RegisterHTMLParserLibrary(p) })
-	reg(extlibs.RequestsLibraryName, func() {
+	reg(requests.LibraryName, func() {
 		// A CA bundle a script names with verify="path" is held to --allowed-paths, as os and pathlib are.
 		var policy *netsecurity.Config
 		if len(netPolicy) > 0 {
 			policy = netPolicy[0]
 		}
-		extlibs.RegisterRequestsLibraryConfigured(p, fssecurity.Config{AllowedPaths: allowedPaths}, policy)
+		requests.RegisterConfigured(p, fssecurity.Config{AllowedPaths: allowedPaths}, policy)
 	})
-	reg(extlibs.SecretsLibraryName, func() { extlibs.RegisterSecretsLibrary(p) })
-	reg(extlibs.OSLibraryName, func() { extlibs.RegisterOSLibrary(p, allowedPaths) })
-	reg(extlibs.LoggingLibraryName, func() { extlibs.RegisterLoggingLibrary(p, log) })
-	reg(extlibs.RuntimeLibraryName, func() { extlibs.RegisterRuntimeLibraryAll(p, allowedPaths) })
-	reg(extlibs.SecretLibraryName, func() { extlibs.RegisterSecretLibrary(p, secretRegistry) })
-	reg(extlibs.SubprocessLibraryName, func() { extlibs.RegisterSubprocessLibrary(p) })
-	reg(extlibs.PathlibLibraryName, func() { extlibs.RegisterPathlibLibrary(p, allowedPaths) })
-	reg(extlibs.GlobLibraryName, func() { extlibs.RegisterGlobLibrary(p, allowedPaths) })
-	reg(extlibs.TempfileLibraryName, func() { extlibs.RegisterTempfileLibrary(p, allowedPaths) })
-	reg(extlibs.ShutilLibraryName, func() { extlibs.RegisterShutilLibrary(p, allowedPaths) })
-	reg(extlibs.ShlexLibraryName, func() { extlibs.RegisterShlexLibrary(p) })
-	reg(extlibs.ZipfileLibraryName, func() { extlibs.RegisterZipfileLibrary(p, allowedPaths) })
-	reg(extlibs.TarfileLibraryName, func() { extlibs.RegisterTarfileLibrary(p, allowedPaths) })
-	reg(extlibs.CsvLibraryName, func() { extlibs.RegisterCsvLibrary(p) })
-	reg(extlibs.XmlLibraryName, func() { extlibs.RegisterXmlLibrary(p) })
-	reg(extlibs.FSLibraryName, func() { extlibs.RegisterFSLibrary(p, allowedPaths) })
-	reg(extlibs.GrepLibraryName, func() { extlibs.RegisterGrepLibrary(p, allowedPaths) })
-	reg(extlibs.FindLibraryName, func() { extlibs.RegisterFindLibrary(p, allowedPaths) })
-	reg(extlibs.SedLibraryName, func() { extlibs.RegisterSedLibrary(p, allowedPaths) })
-	reg(extlibs.ContainerLibraryName, func() {
+	reg(filesystem.OSLibraryName, func() { filesystem.RegisterOS(p, allowedPaths) })
+	reg(logging.LibraryName, func() { logging.Register(p, log) })
+	reg(runtime.RuntimeLibraryName, func() { registerRuntime(p, allowedPaths, disabled) })
+	reg(secret.LibraryName, func() { secret.Register(p, secretRegistry) })
+	reg(subprocess.LibraryName, func() { subprocess.Register(p) })
+	reg(filesystem.PathlibLibraryName, func() { filesystem.RegisterPathlib(p, allowedPaths) })
+	reg(filesystem.GlobLibraryName, func() { filesystem.RegisterGlob(p, allowedPaths) })
+	reg(filesystem.TempfileLibraryName, func() { filesystem.RegisterTempfile(p, allowedPaths) })
+	reg(filesystem.ShutilLibraryName, func() { filesystem.RegisterShutil(p, allowedPaths) })
+	reg(filesystem.ZipfileLibraryName, func() { filesystem.RegisterZipfile(p, allowedPaths) })
+	reg(filesystem.TarfileLibraryName, func() { filesystem.RegisterTarfile(p, allowedPaths) })
+	reg(filesystem.FSLibraryName, func() { filesystem.RegisterFS(p, allowedPaths) })
+	reg(filesystem.GrepLibraryName, func() { filesystem.RegisterGrep(p, allowedPaths) })
+	reg(filesystem.FindLibraryName, func() { filesystem.RegisterFind(p, allowedPaths) })
+	reg(filesystem.SedLibraryName, func() { filesystem.RegisterSed(p, allowedPaths) })
+	reg(scriptlingcontainer.LibraryName, func() {
 		scriptlingcontainer.RegisterWithOptions(p, scriptlingcontainer.Options{
 			DockerSock:     dockerSock,
 			PodmanSock:     podmanSock,
@@ -174,37 +200,37 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 			DenyPrivileged: containerDenyPrivileged,
 		})
 	})
-	reg(extlibs.NomadLibraryName, func() { scriptlingnomad.Register(p, netPolicy...) })
-	reg(extlibs.OAuthLibraryName, func() {
+	reg(scriptlingnomad.LibraryName, func() { scriptlingnomad.Register(p, netPolicy...) })
+	reg(scriptlingoauth.LibraryName, func() {
 		var policy *netsecurity.Config
 		if len(netPolicy) > 0 {
 			policy = netPolicy[0]
 		}
 		scriptlingoauth.RegisterConfigured(p, fssecurity.Config{AllowedPaths: allowedPaths}, policy)
 	})
-	reg(extlibs.MercureLibraryName, func() {
+	reg(scriptlingmercure.LibraryName, func() {
 		scriptlingmercure.RegisterConfigured(p, fssecurity.Config{AllowedPaths: allowedPaths}, firstPolicy(netPolicy))
 	})
-	reg(extlibs.WaitForLibraryName, func() { extlibs.RegisterWaitForLibraryConfigured(p, allowedPaths, netPolicy...) })
-	reg(extlibs.WebSocketLibraryName, func() { extlibs.RegisterWebSocketLibrary(p, netPolicy...) })
-	reg(extlibs.TemplateHTMLLibraryName, func() { extlibs.RegisterTemplateHTMLLibrary(p) })
-	reg(extlibs.TemplateTextLibraryName, func() { extlibs.RegisterTemplateTextLibrary(p) })
-	reg(extlibs.MarkdownLibraryName, func() { extlibs.RegisterMarkdownLibrary(p) })
+	reg(waitfor.LibraryName, func() { waitfor.RegisterConfigured(p, allowedPaths, netPolicy...) })
+	reg(websocket.LibraryName, func() { websocket.Register(p, netPolicy...) })
+	reg(template.HTMLLibraryName, func() { template.RegisterHTML(p) })
+	reg(template.TextLibraryName, func() { template.RegisterText(p) })
+	reg(markdown.LibraryName, func() { markdown.Register(p) })
 
-	reg(extlibs.MulticastLibraryName, func() { scriptlingmulticast.Register(p, netPolicy...) })
-	reg(extlibs.UnicastLibraryName, func() { scriptlingunicast.Register(p, netPolicy...) })
-	reg(extlibs.GossipLibraryName, func() { scriptlinggossip.Register(p, log, netPolicy...) })
-	reg(extlibs.ResolveLibraryName, func() { scriptlingresolve.Register(p, scriptResolver(netPolicy)) })
+	reg(scriptlingmulticast.LibraryName, func() { scriptlingmulticast.Register(p, netPolicy...) })
+	reg(scriptlingunicast.LibraryName, func() { scriptlingunicast.Register(p, netPolicy...) })
+	reg(scriptlinggossip.LibraryName, func() { scriptlinggossip.Register(p, log, netPolicy...) })
+	reg(scriptlingresolve.LibraryName, func() { scriptlingresolve.Register(p, scriptResolver(netPolicy)) })
 	// become=True runs sudo: only where a script could run it through
 	// subprocess anyway.
 	root := rootHelper
-	if disabled[extlibs.SubprocessLibraryName] {
+	if disabled[subprocess.LibraryName] {
 		root = nil
 	}
-	reg(extlibs.FileProvisionLibraryName, func() {
+	reg(provisionfile.LibraryName, func() {
 		provisionfile.RegisterConfigured(p, fssecurity.Config{AllowedPaths: allowedPaths}, provisionfile.WithBecome(root))
 	})
-	reg(extlibs.FetchProvisionLibraryName, func() {
+	reg(provisionfetch.LibraryName, func() {
 		var guard *netsecurity.Guard
 		if policy := firstPolicy(netPolicy); policy != nil {
 			g, err := netsecurity.NewGuard(policy)
@@ -217,22 +243,22 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	})
 	// Running commands is a subprocess, so these are there only where the
 	// subprocess library is.
-	if !disabled[extlibs.SubprocessLibraryName] {
-		reg(extlibs.CommandProvisionLibraryName, func() {
+	if !disabled[subprocess.LibraryName] {
+		reg(provisioncommand.LibraryName, func() {
 			provisioncommand.RegisterConfigured(p, provisioncommand.WithBecome(root))
 		})
-		reg(extlibs.PackageProvisionLibraryName, func() {
+		reg(provisionpackage.LibraryName, func() {
 			provisionpackage.RegisterConfigured(p, provisionpackage.WithBecome(root))
 		})
 	}
 
-	reg(extlibs.AILibraryName, func() { ai.Register(p, netPolicy...) })
+	reg(ai.AILibraryName, func() { ai.Register(p, netPolicy...) })
 	reg(aimemory.MemoryLibraryName, func() { aimemory.Register(p, log) })
-	reg(extlibs.AgentLibraryName, func() { agent.Register(p) })
-	reg(extlibs.RuntimePluginLibraryName, func() { extlibs.RegisterRuntimePluginLibrary(p) })
-	reg(extlibs.SimilarityLibraryName, func() { scriptlingsimilarity.Register(p) })
+	reg(agent.AgentLibraryName, func() { agent.Register(p) })
+	reg(runtime.RuntimePluginLibraryName, func() { runtime.RegisterPlugin(p) })
+	reg(scriptlingsimilarity.LibraryName, func() { scriptlingsimilarity.Register(p) })
 	reg(scriptlingconsole.LibraryName, func() { scriptlingconsole.Register(p) })
-	if registerInteract && !disabled[extlibs.InteractLibraryName] {
+	if registerInteract && !disabled[agent.InteractLibraryName] {
 		agent.RegisterInteract(p)
 	}
 
@@ -241,13 +267,13 @@ func Scriptling(p *scriptling.Scriptling, libdirs []string, registerInteract boo
 	reg(slack.LibraryName, func() { slack.RegisterConfigured(p, log, allowedPaths, netPolicy...) })
 	reg(messagingconsole.LibraryName, func() { messagingconsole.Register(p) })
 
-	reg(extlibs.MCPLibraryName, func() {
+	reg(scriptlingmcp.MCPLibraryName, func() {
 		// A stdio MCP server is a subprocess: allow it only where the
 		// subprocess library is allowed.
-		scriptlingmcp.RegisterConfigured(p, firstPolicy(netPolicy), !disabled[extlibs.SubprocessLibraryName])
+		scriptlingmcp.RegisterConfigured(p, firstPolicy(netPolicy), !disabled[subprocess.LibraryName])
 	})
-	reg(extlibs.ToonLibraryName, func() { scriptlingmcp.RegisterToon(p) })
-	if !disabled[extlibs.MCPLibraryName] {
+	reg(scriptlingmcp.ToonLibraryName, func() { scriptlingmcp.RegisterToon(p) })
+	if !disabled[scriptlingmcp.MCPLibraryName] {
 		scriptlingmcp.RegisterToolHelpers(p)
 	}
 
@@ -274,6 +300,28 @@ func (f disabledFilter) RegisterLibrary(lib *object.Library) {
 	}
 }
 
+// RegisteredLibrary lets sub-libraries registered through the filter attach
+// to their parent library (scriptling.runtime's rt.kv, rt.http, ...).
+func (f disabledFilter) RegisteredLibrary(name string) (*object.Library, bool) {
+	return f.p.RegisteredLibrary(name)
+}
+
+// registerRuntime registers scriptling.runtime and its sub-libraries (http,
+// kv, sync, sandbox, jsonrpc, mcp; plugin is registered separately). Each
+// sub-library honours --allowed-paths where it touches the filesystem
+// (static files, kv stores, sandbox exec_file), and can also be turned off on
+// its own with --disable-lib.
+func registerRuntime(p *scriptling.Scriptling, allowedPaths []string, disabled map[string]bool) {
+	r := disabledFilter{p, disabled}
+	rthttp.Register(r, allowedPaths)
+	kv.Register(r, allowedPaths)
+	runtime.RegisterSync(r)
+	runtime.RegisterSandbox(r, allowedPaths)
+	runtime.RegisterJSONRPC(r)
+	runtime.RegisterMCP(r)
+	runtime.Register(r)
+}
+
 // firstPolicy returns the first policy of a variadic list, or nil.
 func firstPolicy(netPolicy []*netsecurity.Config) *netsecurity.Config {
 	if len(netPolicy) > 0 {
@@ -285,7 +333,7 @@ func firstPolicy(netPolicy []*netsecurity.Config) *netsecurity.Config {
 // Factories configures the global sandbox and background factories.
 // Call this once at startup, before any scripts execute.
 func Factories(libdirs []string, allowedPaths []string, disabledLibs []string, secretRegistry *secretprovider.Registry, log logger.Logger, dockerSock, podmanSock string, containerDenyPrivileged bool, netPolicy ...*netsecurity.Config) {
-	factory := func() extlibs.SandboxInstance {
+	factory := func() runtime.SandboxInstance {
 		p := scriptling.New()
 		Scriptling(p, libdirs, false, allowedPaths, disabledLibs, secretRegistry, log, dockerSock, podmanSock, containerDenyPrivileged, netPolicy...)
 		// Compiled-in plugins (default scriptling builds) must exist in every
@@ -294,8 +342,8 @@ func Factories(libdirs []string, allowedPaths []string, disabledLibs []string, s
 		scriptlingplugin.RegisterLibrariesConfigured(p, nil, scriptlingplugin.PolicyFromSecurity(firstPolicy(netPolicy), allowedPaths), scriptlingplugin.ProcessesAllowed(disabledLibs))
 		return p
 	}
-	extlibs.SetSandboxFactory(factory)
-	extlibs.SetBackgroundFactory(factory)
+	runtime.SetSandboxFactory(factory)
+	runtime.SetBackgroundFactory(factory)
 }
 
 // RegisterSys registers the sys library (sys.argv, sys.platform, etc.) on the
@@ -306,5 +354,5 @@ func RegisterSys(p *scriptling.Scriptling, argv []string) {
 	if argv == nil {
 		argv = []string{}
 	}
-	extlibs.RegisterSysLibrary(p, argv, nil)
+	sys.Register(p, argv, nil)
 }

@@ -11,7 +11,8 @@ import (
 	mcptoon "github.com/paularlott/mcp/toon"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/evaluator"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/reqctx"
+	"github.com/paularlott/scriptling/libutil"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -645,7 +646,7 @@ Example:
 					return err
 				}
 
-				errorJSON := extlibs.ErrorJSONBody(message)
+				errorJSON := libutil.ErrorJSONBody(message)
 				return setResponseAndExit(ctx, errorJSON, 1)
 			},
 			HelpText: `return_error(message) - Return an error from the tool and stop execution
@@ -664,7 +665,7 @@ Example:
 	// get_request / request_context: reach the HTTP request and the
 	// middleware's context dict from tool scripts, which receive only their
 	// parameters.
-	for name, builtin := range extlibs.RequestContextBuiltins() {
+	for name, builtin := range reqctx.RequestContextBuiltins() {
 		functions[name] = builtin
 	}
 	functions["progress"] = progressBuiltin()

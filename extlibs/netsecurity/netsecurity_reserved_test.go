@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"net"
-	"os"
 	"strings"
 	"testing"
 )
@@ -96,20 +95,6 @@ func TestDialContextBlocksReservedResolution(t *testing.T) {
 	// Trusted host bypasses the category check: failure (if any) is a dial error.
 	if _, err := g.DialContext(context.Background(), "tcp", "trusted.corp:1"); err != nil && strings.Contains(err.Error(), "network policy") {
 		t.Errorf("trusted host should not be policy-blocked, got %v", err)
-	}
-}
-
-func TestLoadConfigAllowReservedIPs(t *testing.T) {
-	path := t.TempDir() + "/policy.toml"
-	if err := os.WriteFile(path, []byte("allow_reserved_ips = true\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := LoadConfig(path)
-	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
-	}
-	if !cfg.AllowReservedIPs {
-		t.Errorf("allow_reserved_ips not loaded: %+v", cfg)
 	}
 }
 

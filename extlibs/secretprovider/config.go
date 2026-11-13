@@ -27,7 +27,9 @@ type Config struct {
 	InsecureSkipTLS bool `toml:"insecure_skip_tls"`
 }
 
-// RegisterConfigs creates and registers providers from config blocks.
+// RegisterConfigs creates and registers providers from config blocks. Each
+// block's provider type must have been registered with RegisterFactory (for
+// example by vault.Register or onepassword.Register).
 func RegisterConfigs(registry *Registry, configs []Config) error {
 	for _, cfg := range configs {
 		provider, err := NewProvider(cfg)
@@ -51,17 +53,17 @@ func RegisterConfigs(registry *Registry, configs []Config) error {
 	return nil
 }
 
-// NewProvider creates a concrete provider from config.
+// NewProvider creates a concrete provider from config, using the factory
+// registered for cfg.Provider. A onepassword config with
+// service_account_token goes to the 1Password service-account constructor
+// (see RegisterOnePasswordServiceAccount) instead.
 func NewProvider(cfg Config) (Provider, error) {
-	switch cfg.Provider {
-	case "vault":
-		return NewVaultProvider(cfg)
-	case "onepassword":
-		if cfg.ServiceAccountToken != "" {
-			return newOnePasswordServiceAccountProvider(cfg)
-		}
-		return NewOnePasswordProvider(cfg)
-	default:
-		return nil, fmt.Errorf("unsupported secret provider %q", cfg.Provider)
+	if cfg.Provider == onePasswordTypeName && cfg.ServiceAccountToken != "" {
+		return newOnePasswordServiceAccountProvider(cfg)
 	}
+	factory, ok := lookupFactory(cfg.Provider)
+	if !ok {
+		return nil, unregisteredTypeError(cfg.Provider)
+	}
+	return factory(cfg)
 }

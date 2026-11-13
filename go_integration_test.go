@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/requests"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/stdlib"
 )
@@ -790,7 +790,7 @@ func TestGoIntegration_CompleteExample(t *testing.T) {
 
 	// Register libraries
 	stdlib.RegisterAll(p)
-	extlibs.RegisterRequestsLibrary(p)
+	requests.Register(p)
 
 	// Set configuration from Go
 	p.SetVar("api_base", "https://api.example.com")

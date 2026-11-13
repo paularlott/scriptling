@@ -650,7 +650,12 @@ Example:
 		if errObj != nil {
 			return errObj
 		}
-		return newInstance(getSubscriptionClass(), "MercureSubscription", s)
+		// The subscription holds its client. A client the script no longer
+		// names (mercure.Client(...).subscribe(...)) is otherwise collected,
+		// and collecting it closes the client and ends this subscription.
+		sub := newInstance(getSubscriptionClass(), "MercureSubscription", s)
+		sub.SetField("_client", self)
+		return sub
 	}, `subscribe(*topics, **kwargs) - Subscribe to topics; returns once the hub accepted the subscription
 
 The subscription reconnects by itself, resuming from its last event ID, until it is closed.

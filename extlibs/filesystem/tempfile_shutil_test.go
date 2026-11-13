@@ -1,0 +1,293 @@
+package filesystem
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/object"
+)
+
+// ===================== tempfile =====================
+
+func TestTempfileMkstemp(t *testing.T) {
+	p := scriptling.New()
+	RegisterTempfile(p, nil)
+
+	result, err := p.Eval(`import tempfile
+tempfile.mkstemp(prefix="test_")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, _ := result.AsString()
+	if path == "" {
+		t.Fatal("mkstemp should return a path")
+	}
+	info, statErr := os.Stat(path)
+	if statErr != nil || info.IsDir() {
+		t.Error("mkstemp should create a regular file")
+	}
+	os.Remove(path)
+}
+
+func TestTempfileMkdtemp(t *testing.T) {
+	p := scriptling.New()
+	RegisterTempfile(p, nil)
+
+	result, err := p.Eval(`import tempfile
+tempfile.mkdtemp(prefix="testdir_")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, _ := result.AsString()
+	if path == "" {
+		t.Fatal("mkdtemp should return a path")
+	}
+	info, statErr := os.Stat(path)
+	if statErr != nil || !info.IsDir() {
+		t.Error("mkdtemp should create a directory")
+	}
+	os.RemoveAll(path)
+}
+
+func TestTempfileSuffix(t *testing.T) {
+	p := scriptling.New()
+	RegisterTempfile(p, nil)
+
+	result, err := p.Eval(`import tempfile
+f = tempfile.mkstemp(prefix="data_", suffix=".json")
+f.endswith(".json")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !evalBool(result) {
+		t.Error("mkstemp should respect suffix")
+	}
+}
+
+func TestTempfileSecurityRestricted(t *testing.T) {
+	allowed := t.TempDir()
+	p := scriptling.New()
+	RegisterTempfile(p, []string{allowed})
+
+	// mkstemp with explicit dir outside allowed
+	other := t.TempDir()
+	_, err := p.Eval(`import tempfile
+tempfile.mkstemp(dir="` + other + `")`)
+	if err == nil {
+		t.Error("expected error for temp file outside allowed paths")
+	}
+
+	// mkdtemp with no dir should succeed in allowed path
+	result, err := p.Eval(`import tempfile
+d = tempfile.mkdtemp()
+d.startswith("` + allowed + `")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !evalBool(result) {
+		t.Error("mkdtemp should create within allowed path when no dir given")
+	}
+}
+
+func TestTempfileGettempdir(t *testing.T) {
+	p := scriptling.New()
+	RegisterTempfile(p, nil)
+
+	result, err := p.Eval(`import tempfile
+len(tempfile.gettempdir()) > 0`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !evalBool(result) {
+		t.Error("gettempdir should return a non-empty string")
+	}
+}
+
+// ===================== shutil =====================
+
+func setupShutilTree(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "sub"), 0755)
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("hello"), 0644)
+	os.WriteFile(filepath.Join(root, "sub", "b.txt"), []byte("world"), 0644)
+	return root
+}
+
+func TestShutilCopyFile(t *testing.T) {
+	root := setupShutilTree(t)
+	dst := filepath.Join(root, "copy.txt")
+	p := scriptling.New()
+	RegisterShutil(p, nil)
+
+	_, err := p.Eval(`import shutil
+shutil.copy("` + filepath.Join(root, "a.txt") + `", "` + dst + `")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, e := os.Stat(dst); e != nil {
+		t.Error("copy should create the destination file")
+	}
+}
+
+func TestShutilCopyTree(t *testing.T) {
+	root := setupShutilTree(t)
+	dst := filepath.Join(root, "copied")
+	p := scriptling.New()
+	RegisterShutil(p, nil)
+
+	_, err := p.Eval(`import shutil
+shutil.copytree("` + filepath.Join(root, "sub") + `", "` + dst + `")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, e := os.Stat(filepath.Join(dst, "b.txt")); e != nil {
+		t.Error("copytree should copy subdirectory contents")
+	}
+}
+
+func TestShutilRmtree(t *testing.T) {
+	root := setupShutilTree(t)
+	sub := filepath.Join(root, "sub")
+	p := scriptling.New()
+	RegisterShutil(p, nil)
+
+	_, err := p.Eval(`import shutil
+shutil.rmtree("` + sub + `")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, e := os.Stat(sub); !os.IsNotExist(e) {
+		t.Error("rmtree should remove the directory")
+	}
+}
+
+func TestShutilMove(t *testing.T) {
+	root := setupShutilTree(t)
+	src := filepath.Join(root, "a.txt")
+	dst := filepath.Join(root, "moved.txt")
+	p := scriptling.New()
+	RegisterShutil(p, nil)
+
+	_, err := p.Eval(`import shutil
+shutil.move("` + src + `", "` + dst + `")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, e := os.Stat(dst); e != nil {
+		t.Error("move should create the destination")
+	}
+	if _, e := os.Stat(src); !os.IsNotExist(e) {
+		t.Error("move should remove the source")
+	}
+}
+
+func TestShutilDiskUsage(t *testing.T) {
+	p := scriptling.New()
+	RegisterShutil(p, nil)
+
+	result, err := p.Eval(`import shutil
+du = shutil.disk_usage("/")
+du["total"] > 0 and du["free"] > 0`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !evalBool(result) {
+		t.Error("disk_usage should return positive values")
+	}
+}
+
+func TestShutilSecurityDenied(t *testing.T) {
+	allowed := t.TempDir()
+	denied := t.TempDir()
+	src := filepath.Join(denied, "secret.txt")
+	os.WriteFile(src, []byte("x"), 0644)
+
+	p := scriptling.New()
+	RegisterShutil(p, []string{allowed})
+
+	_, err := p.Eval(`import shutil
+shutil.copy("` + src + `", "` + filepath.Join(allowed, "out.txt") + `")`)
+	if err == nil {
+		t.Error("expected permission error copying from denied path")
+	}
+
+	_, err = p.Eval(`import shutil
+shutil.rmtree("` + denied + `")`)
+	if err == nil {
+		t.Error("expected permission error rmtree on denied path")
+	}
+}
+
+// A symlink planted inside an allowed directory must not let copytree
+// dereference it to read a file outside the jail: copyDir must re-validate
+// every entry it recurses into, not just the top-level src/dst.
+func TestShutilCopyTreeDeniesSymlinkReadEscape(t *testing.T) {
+	allowed := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("outside-jail-secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(allowed, "d")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(src, "pw")); err != nil {
+		t.Fatal(err)
+	}
+
+	p := scriptling.New()
+	RegisterShutil(p, []string{allowed})
+
+	dst := filepath.Join(allowed, "esc")
+	_, err := p.Eval(`import shutil
+shutil.copytree("` + src + `", "` + dst + `")`)
+	if err == nil {
+		t.Fatal("expected permission error copying a directory containing a symlink to an out-of-jail file")
+	}
+	if _, statErr := os.Stat(filepath.Join(dst, "pw")); statErr == nil {
+		t.Error("out-of-jail file content must not have been copied into the jail")
+	}
+}
+
+// A symlinked destination component inside an allowed directory must not
+// let copytree write through it to a location outside the jail.
+func TestShutilCopyTreeDeniesSymlinkWriteEscape(t *testing.T) {
+	allowed := t.TempDir()
+	outside := t.TempDir()
+	src := filepath.Join(allowed, "src", "sub")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "pwn.txt"), []byte("PAYLOAD"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(allowed, "dst")
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dst, "sub")); err != nil {
+		t.Fatal(err)
+	}
+
+	p := scriptling.New()
+	RegisterShutil(p, []string{allowed})
+
+	_, err := p.Eval(`import shutil
+shutil.copytree("` + filepath.Join(allowed, "src") + `", "` + dst + `")`)
+	if err == nil {
+		t.Fatal("expected permission error copying through a symlinked destination component")
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, "pwn.txt")); statErr == nil {
+		t.Error("file must not have been written outside the jail")
+	}
+}
+
+// evalBool is a test helper that coerces an Object to bool.
+func evalBool(obj object.Object) bool {
+	b, _ := obj.AsBool()
+	return b
+}

@@ -24,12 +24,18 @@ const (
 	StatisticsLibraryName  = "statistics"
 	FunctoolsLibraryName   = "functools"
 	TextwrapLibraryName    = "textwrap"
-	PlatformLibraryName    = "platform"
 	ItertoolsLibraryName   = "itertools"
 	CollectionsLibraryName = "collections"
 	EnumLibraryName        = "enum"
 	DataclassesLibraryName = "dataclasses"
 	TypingLibraryName      = "typing"
+	CSVLibraryName         = "scriptling.csv"
+	CSVAliasLibraryName    = "csv"
+	XMLLibraryName         = "scriptling.xml"
+	XMLAliasLibraryName    = "xml"
+	HTMLParserLibraryName  = "html.parser"
+	ShlexLibraryName       = "shlex"
+	SecretsLibraryName     = "secrets"
 )
 
 // RegisterAll registers all standard libraries
@@ -51,7 +57,6 @@ func RegisterAll(p interface{ RegisterLibrary(*object.Library) }) {
 	p.RegisterLibrary(StatisticsLibrary)
 	p.RegisterLibrary(FunctoolsLibrary)
 	p.RegisterLibrary(TextwrapLibrary)
-	p.RegisterLibrary(PlatformLibrary)
 	p.RegisterLibrary(ItertoolsLibrary)
 	p.RegisterLibrary(CollectionsLibrary)
 	p.RegisterLibrary(EnumLibrary)
@@ -62,6 +67,13 @@ func RegisterAll(p interface{ RegisterLibrary(*object.Library) }) {
 	p.RegisterLibrary(DifflibLibrary)
 	p.RegisterLibrary(MsgpackLibrary)
 	p.RegisterLibrary(CopyLibrary)
+	p.RegisterLibrary(CSVLibrary)
+	p.RegisterLibrary(CSVAliasLibrary)
+	p.RegisterLibrary(XMLLibrary)
+	p.RegisterLibrary(XMLAliasLibrary)
+	p.RegisterLibrary(HTMLParserLibrary)
+	p.RegisterLibrary(ShlexLibrary)
+	p.RegisterLibrary(SecretsLibrary)
 }
 
 // LibraryNames returns the names of every library RegisterAll registers, in

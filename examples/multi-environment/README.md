@@ -24,7 +24,7 @@ go build -o multi_env_example main.go
 
 ## Key Points
 
-- The `RegisterLoggingLibrary` function creates a new library instance for each environment
+- The `logging.Register` function creates a new library instance for each environment
 - Each library instance has its own logger that was passed during registration
 - This allows different environments to log to different destinations with different configurations
 - There's no global state shared between environments

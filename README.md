@@ -233,7 +233,8 @@ p.SetLibraryLoader(loader)
 import (
     "github.com/paularlott/scriptling"
     "github.com/paularlott/scriptling/stdlib"
-    "github.com/paularlott/scriptling/extlibs"
+    "github.com/paularlott/scriptling/extlibs/filesystem"
+    "github.com/paularlott/scriptling/extlibs/requests"
 )
 
 // Create interpreter
@@ -246,12 +247,13 @@ stdlib.RegisterAll(p)
 p.RegisterLibrary(stdlib.JSONLibrary)
 p.RegisterLibrary(stdlib.MathLibrary)
 
-// Register additional custom libraries
-p.RegisterLibrary(extlibs.RequestsLibrary)
+// Register extension libraries: each lives in its own package under
+// extlibs/, so a program links only the libraries it registers
+requests.Register(p)
 
 // Register os and pathlib with security restrictions
-extlibs.RegisterOSLibrary(p, []string{"/tmp", "/home/user/data"})
-extlibs.RegisterPathlibLibrary(p, []string{"/tmp", "/home/user/data"})
+filesystem.RegisterOS(p, []string{"/tmp", "/home/user/data"})
+filesystem.RegisterPathlib(p, []string{"/tmp", "/home/user/data"})
 
 // Import libraries programmatically (no need for import statements in scripts)
 p.Import("json")

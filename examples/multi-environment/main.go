@@ -7,7 +7,7 @@ import (
 
 	logslog "github.com/paularlott/logger/slog"
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/logging"
 )
 
 func main() {
@@ -33,11 +33,11 @@ func main() {
 
 	// Create first scriptling environment
 	p1 := scriptling.New()
-	extlibs.RegisterLoggingLibrary(p1, logger1)
+	logging.Register(p1, logger1)
 
 	// Create second scriptling environment
 	p2 := scriptling.New()
-	extlibs.RegisterLoggingLibrary(p2, logger2)
+	logging.Register(p2, logger2)
 
 	// Read the example script
 	scriptContent, err := os.ReadFile("example.py")

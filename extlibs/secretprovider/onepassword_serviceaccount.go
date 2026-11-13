@@ -5,6 +5,11 @@ import (
 	"sync"
 )
 
+// onePasswordTypeName is the provider type the 1Password Connect provider
+// (extlibs/secretprovider/onepassword) registers under; a config of this type
+// with service_account_token is built by the service-account constructor.
+const onePasswordTypeName = "onepassword"
+
 var (
 	serviceAccountMu      sync.RWMutex
 	serviceAccountFactory func(Config) (Provider, error)

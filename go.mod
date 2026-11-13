@@ -4,19 +4,19 @@ go 1.27.4
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/alicebob/miniredis/v2 v2.38.0
+	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/dgraph-io/badger/v4 v4.9.6
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/jackc/pgx/v5 v5.12.0
-	github.com/paularlott/cli v0.10.2
+	github.com/jackc/pgx/v5 v5.13.0
+	github.com/paularlott/cli v0.10.3
 	github.com/paularlott/gossip v0.31.0
 	github.com/paularlott/gossiper/client v1.0.0
 	github.com/paularlott/jsonrpc v0.4.0
 	github.com/paularlott/logger v0.4.0
-	github.com/paularlott/mcp v0.35.2
+	github.com/paularlott/mcp v0.36.0
 	github.com/paularlott/snapshotkv v0.6.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/valkey-io/valkey-go v1.0.79
@@ -54,7 +54,7 @@ require (
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
-	github.com/yuin/gopher-lua v1.1.1 // indirect
+	github.com/yuin/gopher-lua v1.1.2 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.47.0 // indirect

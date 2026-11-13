@@ -12,7 +12,9 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/reqctx"
+	"github.com/paularlott/scriptling/extlibs/runtime"
+	rthttp "github.com/paularlott/scriptling/extlibs/runtime/http"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -116,7 +118,7 @@ func waitWebSocketHandlers(d time.Duration) bool {
 }
 
 func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, path string) {
-	route := extlibs.RuntimeState.WebSocketRoutes[path]
+	route := rthttp.State.WebSocketRoutes[path]
 	if route == nil {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return
@@ -127,7 +129,7 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, 
 	// proceed. The request is stashed on the context so the handler can read
 	// what the middleware put in request.context.
 	reqObj := s.createRequestObject(r, nil, nil)
-	ctx := extlibs.WithRequestContext(r.Context(), reqObj)
+	ctx := reqctx.WithRequestContext(r.Context(), reqObj)
 	if s.middleware != "" {
 		Log.Trace("Running middleware", "handler", s.middleware, "path", path)
 		if resp := s.runHandler(ctx, s.middleware, reqObj); resp != nil {
@@ -147,17 +149,17 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, 
 	connID := fmt.Sprintf("ws_%d", atomic.AddInt64(&websocketConnCounter, 1))
 
 	// Create wrapped connection
-	wsConn := extlibs.NewWebSocketServerConn(conn, connID)
+	wsConn := rthttp.NewWebSocketServerConn(conn, connID)
 
 	Log.Info("WebSocket connected", "path", path, "id", connID, "remote", conn.RemoteAddr())
 
 	// Register connection for lifecycle tracking
-	extlibs.RuntimeState.Lock()
-	extlibs.RuntimeState.WebSocketConnections[connID] = wsConn
-	extlibs.RuntimeState.Unlock()
+	runtime.RuntimeState.Lock()
+	rthttp.State.WebSocketConnections[connID] = wsConn
+	runtime.RuntimeState.Unlock()
 
 	// Create client object for scriptling
-	clientObj := extlibs.CreateWebSocketClientInstance(wsConn)
+	clientObj := rthttp.CreateWebSocketClientInstance(wsConn)
 
 	// Run the handler. The upgrade request's context values (the stashed
 	// request) carry over, but its cancellation does not: the handler outlives
@@ -172,16 +174,16 @@ func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, 
 	}()
 
 	// Cleanup after handler returns
-	extlibs.RuntimeState.Lock()
-	delete(extlibs.RuntimeState.WebSocketConnections, connID)
-	extlibs.RuntimeState.Unlock()
+	runtime.RuntimeState.Lock()
+	delete(rthttp.State.WebSocketConnections, connID)
+	runtime.RuntimeState.Unlock()
 
 	wsConn.Close()
 	Log.Info("WebSocket disconnected", "path", path, "id", connID)
 }
 
 // runWebSocketHandler runs the scriptling WebSocket handler function
-func (s *Server) runWebSocketHandler(ctx context.Context, handlerRef string, clientObj *object.Instance, conn *extlibs.WebSocketServerConn, path, connID string) {
+func (s *Server) runWebSocketHandler(ctx context.Context, handlerRef string, clientObj *object.Instance, conn *rthttp.WebSocketServerConn, path, connID string) {
 	libName, _, ok := splitHandlerRef(handlerRef)
 	if !ok {
 		Log.Error("Invalid WebSocket handler reference", "handler", handlerRef)

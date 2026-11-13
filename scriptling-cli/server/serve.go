@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/reqctx"
 )
 
 // setTransport records how the process is serving so scripts can ask via
@@ -16,9 +16,7 @@ import (
 // NewServer: the setup script executes there and branches on the value (e.g.
 // registering extra tools statically over stdio, where middleware never runs).
 func setTransport(t string) {
-	extlibs.RuntimeState.Lock()
-	extlibs.RuntimeState.Transport = t
-	extlibs.RuntimeState.Unlock()
+	reqctx.SetTransport(t)
 }
 
 // RunServer is the main entry point for running the server

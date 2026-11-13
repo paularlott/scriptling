@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/filesystem"
+	"github.com/paularlott/scriptling/extlibs/sys"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
@@ -63,7 +64,7 @@ func TestProtectedExceptionsCannotBeSwallowed(t *testing.T) {
 		t.Run(name+"/PermissionError", func(t *testing.T) {
 			p := New()
 			stdlib.RegisterAll(p)
-			extlibs.RegisterOSLibrary(p, []string{allowed})
+			filesystem.RegisterOS(p, []string{allowed})
 			_, err := p.Eval("import os\n" + wrapIn(s, `os.read_file("`+secret+`")`))
 			if err == nil || !strings.Contains(err.Error(), "outside allowed directories") {
 				t.Fatalf("expected the PermissionError to end the script, got: %v", err)
@@ -75,7 +76,7 @@ func TestProtectedExceptionsCannotBeSwallowed(t *testing.T) {
 		t.Run(name+"/SystemExit", func(t *testing.T) {
 			p := New()
 			stdlib.RegisterAll(p)
-			extlibs.RegisterSysLibrary(p, nil, nil)
+			sys.Register(p, nil, nil)
 			_, err := p.Eval("import sys\n" + wrapIn(s, "sys.exit(3)"))
 			if err == nil || !strings.Contains(err.Error(), "SystemExit") {
 				t.Fatalf("expected SystemExit to end the script, got: %v", err)

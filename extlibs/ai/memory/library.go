@@ -8,8 +8,8 @@ import (
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
-	"github.com/paularlott/scriptling/extlibs"
 	extai "github.com/paularlott/scriptling/extlibs/ai"
+	"github.com/paularlott/scriptling/extlibs/runtime/kv"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/snapshotkv"
 )
@@ -58,7 +58,7 @@ func buildLibrary(log logger.Logger) *object.Library {
 		}
 
 		// Extract the underlying snapshotkv.DB via the package-level registry
-		db := extlibs.KVStoreDB(args[0])
+		db := kv.StoreDB(args[0])
 		if db == nil {
 			return errors.NewError("memory.new: argument must be a kv store object (e.g. kv.default or kv.open(...))")
 		}

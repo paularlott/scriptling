@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling/evaluator"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/requests"
 	"github.com/paularlott/scriptling/libloader"
 	"github.com/paularlott/scriptling/object"
 	"github.com/paularlott/scriptling/stdlib"
@@ -344,7 +344,7 @@ func TestHTTPLibrary(t *testing.T) {
 	defer server.Close()
 
 	p := New()
-	p.RegisterLibrary(extlibs.RequestsLibrary)
+	p.RegisterLibrary(requests.RequestsLibrary)
 	_, err := p.Eval(fmt.Sprintf(`
 import requests
 options = {"timeout": 10}

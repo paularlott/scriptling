@@ -19,7 +19,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
 	extlibsmcp "github.com/paularlott/scriptling/extlibs/mcp"
 )
 
@@ -357,7 +356,7 @@ empty_context = tool.request_context().get("user", "fallback")
 // handler has no HTTP request behind it.
 func TestJSONRPCRequestAccessorsOutsideHTTPRequest(t *testing.T) {
 	p := scriptling.New()
-	extlibs.RegisterRuntimeLibraryAll(p, nil)
+	registerRuntimeAll(p, nil)
 
 	if _, err := p.Eval(`
 import scriptling.runtime as runtime

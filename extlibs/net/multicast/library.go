@@ -11,9 +11,9 @@ import (
 	"golang.org/x/net/ipv4"
 
 	"github.com/paularlott/scriptling/errors"
-	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/extlibs/net/internal"
 	"github.com/paularlott/scriptling/extlibs/netsecurity"
+	"github.com/paularlott/scriptling/libutil"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -325,7 +325,7 @@ Example:
 func Register(registrar interface{ RegisterLibrary(*object.Library) }, cfg ...*netsecurity.Config) {
 	libraryOnce.Do(func() {
 		library = buildLibrary(nil)
-		extlibs.RegisterCleanup(func() {
+		libutil.RegisterCleanup(func() {
 			groups.Lock()
 			for _, g := range groups.m {
 				g.closeConn()

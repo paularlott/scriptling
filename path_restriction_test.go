@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/filesystem"
 )
 
 // setupRestricted creates a Scriptling instance with os and pathlib restricted
@@ -21,8 +21,8 @@ import (
 func setupRestricted(t *testing.T, allowedDir string) *scriptling.Scriptling {
 	t.Helper()
 	p := scriptling.New()
-	extlibs.RegisterOSLibrary(p, []string{allowedDir})
-	extlibs.RegisterPathlibLibrary(p, []string{allowedDir})
+	filesystem.RegisterOS(p, []string{allowedDir})
+	filesystem.RegisterPathlib(p, []string{allowedDir})
 	return p
 }
 

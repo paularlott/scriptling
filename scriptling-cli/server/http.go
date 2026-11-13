@@ -19,7 +19,10 @@ import (
 	mcplib "github.com/paularlott/mcp"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/conversion"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/reqctx"
+	"github.com/paularlott/scriptling/extlibs/runtime"
+	rthttp "github.com/paularlott/scriptling/extlibs/runtime/http"
+	"github.com/paularlott/scriptling/libutil"
 	"github.com/paularlott/scriptling/object"
 	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
 	"github.com/paularlott/scriptling/util"
@@ -396,13 +399,13 @@ func tlsConfigFor(s *Server, certFiles []string) (*tls.Config, error) {
 
 // Stop gracefully stops the server
 func (s *Server) Stop(ctx context.Context) error {
-	extlibs.RuntimeState.Lock()
-	conns := make([]*extlibs.WebSocketServerConn, 0, len(extlibs.RuntimeState.WebSocketConnections))
-	for _, conn := range extlibs.RuntimeState.WebSocketConnections {
+	runtime.RuntimeState.Lock()
+	conns := make([]*rthttp.WebSocketServerConn, 0, len(rthttp.State.WebSocketConnections))
+	for _, conn := range rthttp.State.WebSocketConnections {
 		conns = append(conns, conn)
 	}
-	extlibs.RuntimeState.WebSocketConnections = make(map[string]*extlibs.WebSocketServerConn)
-	extlibs.RuntimeState.Unlock()
+	rthttp.State.WebSocketConnections = make(map[string]*rthttp.WebSocketServerConn)
+	runtime.RuntimeState.Unlock()
 
 	for _, conn := range conns {
 		conn.Close()
@@ -461,7 +464,7 @@ func (s *Server) handleScriptRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	reqObj := s.createRequestObject(r, pathParams(r), body)
-	ctx := extlibs.WithRequestContext(r.Context(), reqObj)
+	ctx := reqctx.WithRequestContext(r.Context(), reqObj)
 
 	if s.middleware != "" {
 		Log.Trace("Running middleware", "handler", s.middleware)
@@ -533,7 +536,7 @@ func (s *Server) serveNotFound(w http.ResponseWriter, r *http.Request) {
 	if s.notFoundHandler != "" {
 		Log.Trace("Handling 404 via not_found handler", "handler", s.notFoundHandler, "path", r.URL.Path)
 		reqObj := s.createRequestObject(r, nil, nil)
-		ctx := extlibs.WithRequestContext(r.Context(), reqObj)
+		ctx := reqctx.WithRequestContext(r.Context(), reqObj)
 		// The middleware guards the not-found path like every other
 		// endpoint that runs script. Without this, an unmatched path was the
 		// one request shape that executed a handler (with full server
@@ -577,7 +580,7 @@ func (s *Server) createRequestObject(r *http.Request, pathParams map[string]stri
 		}
 	}
 
-	req := extlibs.CreateRequestInstance(r.Method, r.URL.Path, string(body), headers, query, pathParams, r.RemoteAddr)
+	req := rthttp.CreateRequestInstance(r.Method, r.URL.Path, string(body), headers, query, pathParams, r.RemoteAddr)
 	// request.auth: who the accepted token says is calling (None when the
 	// server has no credential configured).
 	req.SetField("auth", tokenInfoObject(mcplib.TokenInfoFromContext(r.Context())))
@@ -621,7 +624,7 @@ func (s *Server) runHandler(ctx context.Context, handlerRef string, reqObj *obje
 		return object.NewStringDict(map[string]object.Object{
 			"status":  object.NewInteger(500),
 			"headers": &object.Dict{Pairs: map[string]object.DictPair{}},
-			"body":    object.NewString(extlibs.ErrorJSONBody(err.Error())),
+			"body":    object.NewString(libutil.ErrorJSONBody(err.Error())),
 		})
 	}
 
@@ -708,7 +711,7 @@ func (s *Server) scriptProtocolMiddleware(next http.Handler) http.Handler {
 
 		reqObj := s.createRequestObject(r, nil, bodyBytes)
 		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		r = r.WithContext(extlibs.WithRequestContext(r.Context(), reqObj))
+		r = r.WithContext(reqctx.WithRequestContext(r.Context(), reqObj))
 
 		if s.middleware != "" {
 			Log.Trace("Running middleware", "handler", s.middleware, "path", r.URL.Path)
@@ -721,14 +724,14 @@ func (s *Server) scriptProtocolMiddleware(next http.Handler) http.Handler {
 		// Build the per-request MCP providers from what the middleware
 		// registered. A malformed registration is a build error: fail the
 		// request rather than serving a different tool set than intended.
-		if regs := extlibs.RegistrationsFrom(r.Context()); regs != nil && !regs.Empty() {
+		if regs := reqctx.RegistrationsFrom(r.Context()); regs != nil && !regs.Empty() {
 			providers, err := s.buildRequestProviders(regs)
 			if err != nil {
 				Log.Error("Request MCP registration failed", "error", err)
 				s.writeResponse(w, object.NewStringDict(map[string]object.Object{
 					"status":  object.NewInteger(500),
 					"headers": &object.Dict{Pairs: map[string]object.DictPair{}},
-					"body":    object.NewString(extlibs.ErrorJSONBody(err.Error())),
+					"body":    object.NewString(libutil.ErrorJSONBody(err.Error())),
 				}))
 				return
 			}
@@ -755,7 +758,7 @@ type requestProviders struct {
 	prompts   mcplib.PromptProvider
 }
 
-func (s *Server) buildRequestProviders(regs *extlibs.RequestRegistrations) (requestProviders, error) {
+func (s *Server) buildRequestProviders(regs *reqctx.RequestRegistrations) (requestProviders, error) {
 	var out requestProviders
 	cfg := s.handlerConfig()
 

@@ -8,7 +8,7 @@ import (
 
 	"github.com/paularlott/logger"
 	mcp_lib "github.com/paularlott/mcp"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/runtime"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/scriptling-cli/setup"
 )
@@ -19,7 +19,7 @@ func mcpStdioTestServer(t *testing.T) *mcp_lib.Server {
 	t.Helper()
 	libDir := t.TempDir()
 	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 
 	s := &Server{
 		config: ServerConfig{

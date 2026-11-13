@@ -1,3 +1,25 @@
+// Package secretprovider is the host-side registry behind scriptling.secret:
+// the Provider interface, the alias Registry, provider Config blocks, and a
+// table of provider-type factories.
+//
+// It holds no concrete provider, so it links no HTTP client. An application
+// either registers its own Provider with Registry.Register, or enables the
+// built-in provider types it wants and builds providers from config:
+//
+//	import (
+//		"github.com/paularlott/scriptling/extlibs/secretprovider"
+//		"github.com/paularlott/scriptling/extlibs/secretprovider/onepassword"
+//		"github.com/paularlott/scriptling/extlibs/secretprovider/vault"
+//	)
+//
+//	if err := vault.Register(); err != nil { ... }       // provider = "vault"
+//	if err := onepassword.Register(); err != nil { ... } // provider = "onepassword" (Connect)
+//	registry := secretprovider.NewRegistry()
+//	err := secretprovider.RegisterConfigs(registry, configs)
+//
+// A onepassword config with service_account_token needs the
+// github.com/paularlott/scriptling-onepassword extension imported, which
+// installs itself with RegisterOnePasswordServiceAccount.
 package secretprovider
 
 import (

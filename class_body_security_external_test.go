@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/filesystem"
 	"github.com/paularlott/scriptling/stdlib"
 )
 
@@ -16,7 +16,7 @@ import (
 func TestClassBodySecurityViolationPropagates(t *testing.T) {
 	allowedDir := t.TempDir()
 	p := scriptling.New()
-	extlibs.RegisterOSLibrary(p, []string{allowedDir})
+	filesystem.RegisterOS(p, []string{allowedDir})
 
 	_, err := p.Eval(`
 import os
@@ -38,7 +38,7 @@ class C:
 func TestInitSecurityViolationPropagates(t *testing.T) {
 	allowedDir := t.TempDir()
 	p := scriptling.New()
-	extlibs.RegisterOSLibrary(p, []string{allowedDir})
+	filesystem.RegisterOS(p, []string{allowedDir})
 
 	_, err := p.Eval(`
 import os

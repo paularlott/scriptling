@@ -13,9 +13,9 @@ import (
 	"testing"
 
 	"encoding/json"
-	"github.com/paularlott/scriptling"
 
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling"
+	"github.com/paularlott/scriptling/extlibs/reqctx"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -531,7 +531,7 @@ while runtime.server_running():
 // stdio alternative.
 func TestRequestRegistrationOutsideRequestErrors(t *testing.T) {
 	p := scriptling.New()
-	extlibs.RegisterRuntimeLibraryAll(p, nil)
+	registerRuntimeAll(p, nil)
 
 	_, err := p.Eval(`
 import scriptling.runtime.mcp as mcp
@@ -594,7 +594,7 @@ while runtime.server_running():
 // serving modes, None when not being served at all.
 func TestTransportReportsProcessMode(t *testing.T) {
 	p := scriptling.New()
-	extlibs.RegisterRuntimeLibraryAll(p, nil)
+	registerRuntimeAll(p, nil)
 
 	eval := func(code string) string {
 		res, err := p.Eval(code)
@@ -608,9 +608,7 @@ func TestTransportReportsProcessMode(t *testing.T) {
 		return s.StringValue()
 	}
 
-	extlibs.RuntimeState.Lock()
-	extlibs.RuntimeState.Transport = "stdio"
-	extlibs.RuntimeState.Unlock()
+	reqctx.SetTransport("stdio")
 	if got := eval(`
 import scriptling.runtime.mcp as mcp
 import scriptling.runtime as runtime
@@ -619,9 +617,7 @@ mcp.transport() + "/" + runtime.jsonrpc.transport()
 		t.Fatalf("stdio mode: got %q", got)
 	}
 
-	extlibs.RuntimeState.Lock()
-	extlibs.RuntimeState.Transport = ""
-	extlibs.RuntimeState.Unlock()
+	reqctx.SetTransport("")
 	res, err := p.Eval(`
 import scriptling.runtime.mcp as mcp
 mcp.transport() == None

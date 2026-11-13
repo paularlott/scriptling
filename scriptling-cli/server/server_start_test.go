@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/runtime"
 	"github.com/paularlott/scriptling/object"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 )
@@ -42,9 +42,9 @@ func TestNewServerAutoStartOnExit(t *testing.T) {
 		t.Fatalf("NewServer returned error for exiting setup script: %v", err)
 	}
 
-	extlibs.RuntimeState.RLock()
-	started := extlibs.RuntimeState.ServerStarted
-	extlibs.RuntimeState.RUnlock()
+	runtime.RuntimeState.RLock()
+	started := runtime.RuntimeState.ServerStarted
+	runtime.RuntimeState.RUnlock()
 	if !started {
 		t.Fatal("server should auto-start when the setup script exits without start_server()")
 	}
@@ -92,11 +92,11 @@ while runtime.server_running():
 	}
 
 	// Signal shutdown: server_running() returns False → loop ends → goroutine exits.
-	extlibs.RuntimeState.Lock()
-	if extlibs.RuntimeState.ServerRunningCh != nil {
-		close(extlibs.RuntimeState.ServerRunningCh)
+	runtime.RuntimeState.Lock()
+	if runtime.RuntimeState.ServerRunningCh != nil {
+		close(runtime.RuntimeState.ServerRunningCh)
 	}
-	extlibs.RuntimeState.Unlock()
+	runtime.RuntimeState.Unlock()
 
 	select {
 	case <-s.scriptDone:
@@ -109,11 +109,11 @@ while runtime.server_running():
 // script's loop to exit. Used to clean up the "script stays alive" tests.
 func signalShutdown(t *testing.T, s *Server) {
 	t.Helper()
-	extlibs.RuntimeState.Lock()
-	if extlibs.RuntimeState.ServerRunningCh != nil {
-		close(extlibs.RuntimeState.ServerRunningCh)
+	runtime.RuntimeState.Lock()
+	if runtime.RuntimeState.ServerRunningCh != nil {
+		close(runtime.RuntimeState.ServerRunningCh)
 	}
-	extlibs.RuntimeState.Unlock()
+	runtime.RuntimeState.Unlock()
 	select {
 	case <-s.scriptDone:
 	case <-time.After(3 * time.Second):
@@ -232,10 +232,10 @@ while runtime.server_running():
 	defer signalShutdown(t, s)
 
 	// Verify plugin state was captured.
-	extlibs.RuntimeState.RLock()
-	pluginName := extlibs.RuntimeState.PluginName
-	pluginFns := extlibs.RuntimeState.PluginFunctions
-	extlibs.RuntimeState.RUnlock()
+	runtime.RuntimeState.RLock()
+	pluginName := runtime.RuntimeState.PluginName
+	pluginFns := runtime.RuntimeState.PluginFunctions
+	runtime.RuntimeState.RUnlock()
 
 	if pluginName != "testplugin" {
 		t.Fatalf("PluginName = %q, want %q", pluginName, "testplugin")
@@ -1393,7 +1393,7 @@ while runtime.server_running():
 // stdio plugin server over a single in-process connection. All goroutines share
 // one *plugin.Client; the client multiplexes calls by JSON-RPC ID and the
 // server dispatches each in its own goroutine. Surfaces races in the server
-// dispatch path, evaluator setup, and the runtimeParentLibraries sync.Map.
+// dispatch path, evaluator setup, and the per-interpreter runtime library registration.
 func TestPluginServerStdioParallel(t *testing.T) {
 	const workers = 20
 	const callsPerWorker = 10

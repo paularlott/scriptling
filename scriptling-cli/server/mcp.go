@@ -15,8 +15,8 @@ import (
 	"github.com/paularlott/mcp/toolmetadata"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/build"
-	"github.com/paularlott/scriptling/extlibs"
 	"github.com/paularlott/scriptling/extlibs/mcp"
+	"github.com/paularlott/scriptling/extlibs/runtime"
 	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
 )
 
@@ -34,7 +34,7 @@ func (s *Server) setupMCP() error {
 	// Scripts tell subscribed clients a resource changed through
 	// scriptling.runtime.mcp.notify_resource_updated(). The server is
 	// mutated in place on reload, so this stays valid.
-	extlibs.SetMCPResourceNotifier(server.NotifyResourceUpdated)
+	runtime.SetMCPResourceNotifier(server.NotifyResourceUpdated)
 
 	// Watch every configured source folder so any change triggers a reload.
 	// Tools and prompts are flat folders; resources and skills are trees

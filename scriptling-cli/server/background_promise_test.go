@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/runtime"
 )
 
 // A background task started from a setup script (the queued/released path) and
@@ -21,7 +21,7 @@ import (
 // a hang where the task's goroutine and the watcher's goroutine both vanished
 // without the promise ever resolving in server mode.
 func TestBackgroundTaskPromiseResolvesInServer(t *testing.T) {
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 
 	script := writeSetup(t, `
 import time
@@ -63,20 +63,20 @@ runtime.background("w", "watcher", shared=True)
 
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		extlibs.RuntimeState.RLock()
-		taskDone, taskOK := extlibs.RuntimeState.Atomics["task_done"]
-		watcherDone, watcherOK := extlibs.RuntimeState.Atomics["watcher_done"]
-		extlibs.RuntimeState.RUnlock()
+		runtime.RuntimeState.RLock()
+		taskDone, taskOK := runtime.RuntimeState.Atomics["task_done"]
+		watcherDone, watcherOK := runtime.RuntimeState.Atomics["watcher_done"]
+		runtime.RuntimeState.RUnlock()
 		if taskOK && taskDone.Value() != 0 && watcherOK && watcherDone.Value() != 0 {
 			return // both completed
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	extlibs.RuntimeState.RLock()
-	taskDone, taskOK := extlibs.RuntimeState.Atomics["task_done"]
-	watcherDone, watcherOK := extlibs.RuntimeState.Atomics["watcher_done"]
-	extlibs.RuntimeState.RUnlock()
+	runtime.RuntimeState.RLock()
+	taskDone, taskOK := runtime.RuntimeState.Atomics["task_done"]
+	watcherDone, watcherOK := runtime.RuntimeState.Atomics["watcher_done"]
+	runtime.RuntimeState.RUnlock()
 	if !taskOK || taskDone.Value() == 0 {
 		t.Fatal("task handler never completed")
 	}
@@ -90,16 +90,16 @@ runtime.background("w", "watcher", shared=True)
 // a failing fire-and-forget task must be reported through the task error
 // logger instead of dying silently.
 func TestBackgroundTaskScalarsAndErrorReporting(t *testing.T) {
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 
 	var mu sync.Mutex
 	var reported []string
-	extlibs.SetTaskErrorLogger(func(name string, err error) {
+	runtime.SetTaskErrorLogger(func(name string, err error) {
 		mu.Lock()
 		defer mu.Unlock()
 		reported = append(reported, name+": "+err.Error())
 	})
-	defer extlibs.SetTaskErrorLogger(nil)
+	defer runtime.SetTaskErrorLogger(nil)
 
 	script := writeSetup(t, `
 import time
@@ -130,17 +130,17 @@ runtime.background("bad", "bad_task")
 
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		extlibs.RuntimeState.RLock()
-		done, ok := extlibs.RuntimeState.Atomics["scalar_done"]
-		extlibs.RuntimeState.RUnlock()
+		runtime.RuntimeState.RLock()
+		done, ok := runtime.RuntimeState.Atomics["scalar_done"]
+		runtime.RuntimeState.RUnlock()
 		if ok && done.Value() != 0 {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	extlibs.RuntimeState.RLock()
-	done, ok := extlibs.RuntimeState.Atomics["scalar_done"]
-	extlibs.RuntimeState.RUnlock()
+	runtime.RuntimeState.RLock()
+	done, ok := runtime.RuntimeState.Atomics["scalar_done"]
+	runtime.RuntimeState.RUnlock()
 	if !ok || done.Value() == 0 {
 		t.Fatal("task referencing module-level constants never completed")
 	}
@@ -171,7 +171,7 @@ runtime.background("bad", "bad_task")
 // (each request gets a fresh interpreter). The task must not be re-launched —
 // every request observes the one running task.
 func TestBackgroundTaskNotRespawnedByRequests(t *testing.T) {
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 
 	dir := t.TempDir()
 	handlersPy := `import scriptling.runtime as runtime
@@ -210,17 +210,17 @@ runtime.http.get("/starts", "handlers.starts")
 	// Wait for the released task to start exactly once.
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		extlibs.RuntimeState.RLock()
-		started, ok := extlibs.RuntimeState.Atomics["respawn_starts"]
-		extlibs.RuntimeState.RUnlock()
+		runtime.RuntimeState.RLock()
+		started, ok := runtime.RuntimeState.Atomics["respawn_starts"]
+		runtime.RuntimeState.RUnlock()
 		if ok && started.Value() == 1 {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	extlibs.RuntimeState.RLock()
-	started, ok := extlibs.RuntimeState.Atomics["respawn_starts"]
-	extlibs.RuntimeState.RUnlock()
+	runtime.RuntimeState.RLock()
+	started, ok := runtime.RuntimeState.Atomics["respawn_starts"]
+	runtime.RuntimeState.RUnlock()
 	if !ok || started.Value() != 1 {
 		t.Fatalf("ticker started %d times after release, want 1", started.Value())
 	}
@@ -249,7 +249,7 @@ runtime.http.get("/starts", "handlers.starts")
 
 	// Let the one task finish so no goroutine stays parked on the gate.
 	feeder := scriptling.New()
-	extlibs.RegisterRuntimeLibraryAll(feeder, nil)
+	registerRuntimeAll(feeder, nil)
 	if _, err := feeder.Eval(`import scriptling.runtime as runtime
 runtime.sync.Queue("respawn_gate").put(1)
 `); err != nil {

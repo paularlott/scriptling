@@ -15,7 +15,7 @@ import (
 
 	"github.com/paularlott/logger"
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/runtime"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/scriptling-cli/setup"
 )
@@ -28,7 +28,7 @@ func TestToolHintsExample(t *testing.T) {
 	}
 
 	setup.Factories(nil, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 	s, err := NewServer(ServerConfig{MCPToolsDir: filepath.Join(dir, "tools")})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

@@ -125,13 +125,76 @@ func TestRegistryListUnknownAlias(t *testing.T) {
 	}
 }
 
-func TestOnePasswordConnectConfigUnchanged(t *testing.T) {
-	p, err := NewProvider(Config{Provider: "onepassword", Address: "http://connect:8080", Token: "connect-token"})
-	if err != nil {
-		t.Fatalf("Connect config: %v", err)
+// TestNewProviderUnregisteredType: this test binary links no concrete
+// provider package, so the built-in type names are not registered and a
+// config naming them fails clearly instead of silently doing nothing.
+func TestNewProviderUnregisteredType(t *testing.T) {
+	for _, typeName := range []string{"vault", "onepassword", "nosuch"} {
+		_, err := NewProvider(Config{Provider: typeName, Address: "http://127.0.0.1:1", Token: "t"})
+		if err == nil {
+			t.Fatalf("NewProvider(%q) error = nil, want not registered", typeName)
+		}
+		if !strings.Contains(err.Error(), `"`+typeName+`"`) || !strings.Contains(err.Error(), "not compiled in or not registered") {
+			t.Fatalf("NewProvider(%q) error = %v, want it to name the type and say it is not registered", typeName, err)
+		}
 	}
-	if _, ok := p.(*onePasswordProvider); !ok {
-		t.Fatalf("Connect config built %T, want the Connect provider", p)
+
+	registry := NewRegistry()
+	err := RegisterConfigs(registry, []Config{{Provider: "vault", Alias: "v", Address: "http://127.0.0.1:1", Token: "t"}})
+	if err == nil || !strings.Contains(err.Error(), "not compiled in or not registered") {
+		t.Fatalf("RegisterConfigs error = %v, want not registered", err)
+	}
+	if registry.HasProviders() {
+		t.Fatal("a failed RegisterConfigs must not register the alias")
+	}
+}
+
+func TestRegisterFactory(t *testing.T) {
+	const typeName = "test_factory_stub"
+	var got Config
+	err := RegisterFactory(typeName, func(cfg Config) (Provider, error) {
+		got = cfg
+		return &testProvider{id: typeName, value: "v"}, nil
+	})
+	if err != nil {
+		t.Fatalf("RegisterFactory: %v", err)
+	}
+
+	registry := NewRegistry()
+	if err := RegisterConfigs(registry, []Config{{Provider: typeName, Alias: "stub", Address: "addr", CacheTTL: "1m"}}); err != nil {
+		t.Fatalf("RegisterConfigs: %v", err)
+	}
+	if got.Address != "addr" {
+		t.Fatalf("factory received %+v, want the config block", got)
+	}
+	if v, err := registry.Resolve(context.Background(), "stub", "p", "f"); err != nil || v != "v:p:f" {
+		t.Fatalf("Resolve = %q, %v", v, err)
+	}
+
+	found := false
+	for _, name := range RegisteredTypes() {
+		found = found || name == typeName
+	}
+	if !found {
+		t.Fatalf("RegisteredTypes() = %v, want %q", RegisteredTypes(), typeName)
+	}
+	if _, err := NewProvider(Config{Provider: "nosuch"}); err == nil || !strings.Contains(err.Error(), typeName) {
+		t.Fatalf("unregistered-type error = %v, want it to list the registered types", err)
+	}
+
+	// Duplicate type names are rejected like duplicate aliases, never swapped.
+	if err := RegisterFactory(typeName, func(Config) (Provider, error) { return nil, nil }); err == nil || !strings.Contains(err.Error(), "already registered") {
+		t.Fatalf("duplicate RegisterFactory error = %v, want already registered", err)
+	}
+	if v, err := registry.Resolve(context.Background(), "stub", "p", "f"); err != nil || v != "v:p:f" {
+		t.Fatalf("after rejected duplicate: Resolve = %q, %v", v, err)
+	}
+
+	if err := RegisterFactory("", func(Config) (Provider, error) { return nil, nil }); err == nil {
+		t.Fatal("empty type name should be rejected")
+	}
+	if err := RegisterFactory("test_factory_nil", nil); err == nil {
+		t.Fatal("nil factory should be rejected")
 	}
 }
 

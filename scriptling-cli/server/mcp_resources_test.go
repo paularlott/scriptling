@@ -11,7 +11,7 @@ import (
 
 	"github.com/paularlott/logger"
 	mcplib "github.com/paularlott/mcp"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/runtime"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/scriptling-cli/setup"
 )
@@ -24,7 +24,7 @@ func buildResourceTestServer(t *testing.T) *Server {
 	t.Helper()
 	libDir := t.TempDir()
 	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 
 	toolsDir := t.TempDir()
 	writeFile(t, filepath.Join(toolsDir, "greet.toml"), []byte("description = \"Greet a name\"\nkeywords=[\"hi\"]\n\n[[parameters]]\nname=\"name\"\ntype=\"string\"\ndescription=\"Name to greet\"\nrequired=true\n"))
@@ -103,7 +103,7 @@ func pipeClientServer(t *testing.T, mcpServer *mcplib.Server) (*mcplib.Client, f
 func TestMCPServerMultiVarTemplate(t *testing.T) {
 	libDir := t.TempDir()
 	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 
 	resDir := t.TempDir()
 	// resources/greeting/{first}/person/{last}.py  ->  greeting://{first}/person/{last}

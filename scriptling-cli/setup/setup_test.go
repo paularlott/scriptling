@@ -8,7 +8,7 @@ import (
 
 	logslog "github.com/paularlott/logger/slog"
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/filesystem"
 	scriptlingplugin "github.com/paularlott/scriptling/plugin"
 	"github.com/paularlott/scriptling/stdlib"
 )
@@ -192,13 +192,13 @@ P.load("s", "` + launcher + `", scriptling=False)`
 // msgpack, copy, enum, dataclasses and typing had been left off it.
 func TestDisabledLibsKeepEveryOtherStandardLibrary(t *testing.T) {
 	p := scriptling.New()
-	Scriptling(p, nil, false, nil, []string{extlibs.OSLibraryName}, nil, logslog.New(logslog.Config{Level: "error"}), "", "", false)
+	Scriptling(p, nil, false, nil, []string{filesystem.OSLibraryName}, nil, logslog.New(logslog.Config{Level: "error"}), "", "", false)
 	for _, name := range stdlib.LibraryNames() {
 		if !p.HasLibrary(name) {
 			t.Errorf("standard library %q missing with os disabled", name)
 		}
 	}
-	if p.HasLibrary(extlibs.OSLibraryName) {
+	if p.HasLibrary(filesystem.OSLibraryName) {
 		t.Error("os was registered although disabled")
 	}
 	if _, err := p.Eval("import msgpack, copy, enum, dataclasses, typing\nx = msgpack.unpackb(msgpack.packb({'a': 1}))['a']"); err != nil {

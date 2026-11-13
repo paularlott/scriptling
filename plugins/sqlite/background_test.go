@@ -4,15 +4,16 @@ import (
 	"testing"
 
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/runtime"
 )
 
 // configureEmbeddedInstance is the minimal embedder recipe: a plain
-// interpreter with the runtime library and the database drivers registered.
+// interpreter with the runtime core (background tasks) and the database
+// drivers registered.
 // Hosts that compile the drivers in do this on every instance they spin up —
 // including background/sandbox factories.
 func configureEmbeddedInstance(p *scriptling.Scriptling) {
-	extlibs.RegisterRuntimeLibraryAll(p, nil)
+	runtime.Register(p)
 	RegisterInProcess(p, nil)
 }
 
@@ -23,12 +24,12 @@ func configureEmbeddedInstance(p *scriptling.Scriptling) {
 // setup completes — the CLI does this after evaluating the main script —
 // so the test queues, releases, then awaits: the host contract in miniature.
 func TestBackgroundTaskEnvironment(t *testing.T) {
-	extlibs.SetBackgroundFactory(func() extlibs.SandboxInstance {
+	runtime.SetBackgroundFactory(func() runtime.SandboxInstance {
 		p := scriptling.New()
 		configureEmbeddedInstance(p)
 		return p
 	})
-	defer extlibs.SetBackgroundFactory(nil)
+	defer runtime.SetBackgroundFactory(nil)
 
 	p := scriptling.New()
 	configureEmbeddedInstance(p)
@@ -56,7 +57,7 @@ promise = runtime.background("dbjob", "db_task")
 	if _, err := p.Eval(queue); err != nil {
 		t.Fatalf("queue eval: %v", err)
 	}
-	extlibs.ReleaseBackgroundTasks()
+	runtime.ReleaseBackgroundTasks()
 
 	result, err := p.Eval(`
 value = promise.get()

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/filesystem"
 	"github.com/paularlott/scriptling/libloader"
 )
 
@@ -62,7 +62,7 @@ os.path.dirname(__file__)
 	}
 
 	p := scriptling.New()
-	extlibs.RegisterOSLibrary(p, nil)
+	filesystem.RegisterOS(p, nil)
 
 	result, err := p.EvalFile(scriptPath)
 	if err != nil {

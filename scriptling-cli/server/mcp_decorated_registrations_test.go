@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/paularlott/logger"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/runtime"
 	"github.com/paularlott/scriptling/extlibs/secretprovider"
 	"github.com/paularlott/scriptling/scriptling-cli/setup"
 )
@@ -19,7 +19,7 @@ import (
 func TestMCPDecoratedRegistrations(t *testing.T) {
 	libDir := t.TempDir()
 	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 
 	toolsDir := t.TempDir()
 	writeFile(t, filepath.Join(toolsDir, "everything.py"), []byte(`
@@ -203,7 +203,7 @@ def region_guide():
 func TestMCPDecoratedSkillFrontmatterMismatch(t *testing.T) {
 	libDir := t.TempDir()
 	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 
 	toolsDir := t.TempDir()
 	writeFile(t, filepath.Join(toolsDir, "broken.py"), []byte(`
@@ -253,7 +253,7 @@ def fine():
 func TestMCPDecoratedFailuresAtRead(t *testing.T) {
 	libDir := t.TempDir()
 	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 
 	toolsDir := t.TempDir()
 	writeFile(t, filepath.Join(toolsDir, "broken.py"), []byte(`
@@ -307,7 +307,7 @@ def fine():
 func TestMCPPromptRequiredArguments(t *testing.T) {
 	libDir := t.TempDir()
 	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 
 	toolsDir := t.TempDir()
 	writeFile(t, filepath.Join(toolsDir, "decorated_prompt.py"), []byte(`
@@ -387,7 +387,7 @@ required = true
 func TestMCPDecoratedUIResourceMimeForced(t *testing.T) {
 	libDir := t.TempDir()
 	setup.Factories([]string{libDir}, nil, nil, secretprovider.NewRegistry(), logger.NewNullLogger(), "", "", false)
-	extlibs.ResetRuntime()
+	runtime.ResetRuntime()
 
 	toolsDir := t.TempDir()
 	writeFile(t, filepath.Join(toolsDir, "view.py"), []byte(`

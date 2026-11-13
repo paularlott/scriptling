@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/paularlott/scriptling"
-	"github.com/paularlott/scriptling/extlibs"
+	"github.com/paularlott/scriptling/extlibs/filesystem"
 	"github.com/paularlott/scriptling/extlibs/mcp"
 	"github.com/paularlott/scriptling/object"
 )
@@ -19,7 +19,7 @@ func TestRunToolScriptSecurityDeniedPathInTryExcept(t *testing.T) {
 	sl := scriptling.New()
 	mcp.RegisterToolHelpers(sl)
 	// Register OS library restricted to /tmp only
-	extlibs.RegisterOSLibrary(sl, []string{"/tmp"})
+	filesystem.RegisterOS(sl, []string{"/tmp"})
 
 	code := `
 import os

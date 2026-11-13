@@ -15,7 +15,7 @@ import (
 	"github.com/paularlott/jsonrpc"
 	"github.com/paularlott/scriptling"
 	"github.com/paularlott/scriptling/conversion"
-	"github.com/paularlott/scriptling/extlibs"
+	scriptruntime "github.com/paularlott/scriptling/extlibs/runtime"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -59,12 +59,12 @@ func (s *Server) jsonrpcLimits() (maxBatch, maxConcurrency int) {
 // Caller must hold RuntimeState.Lock() (write lock) — no additional locking
 // is done here, matching collectRoutes which reads fields the same way.
 func (s *Server) collectJSONRPCMethods() {
-	s.jsonrpcMethods = make(map[string]string, len(extlibs.RuntimeState.JSONRPCMethods))
-	for name, handler := range extlibs.RuntimeState.JSONRPCMethods {
+	s.jsonrpcMethods = make(map[string]string, len(scriptruntime.RuntimeState.JSONRPCMethods))
+	for name, handler := range scriptruntime.RuntimeState.JSONRPCMethods {
 		s.jsonrpcMethods[name] = handler
 	}
-	s.jsonrpcNotifications = make(map[string]string, len(extlibs.RuntimeState.JSONRPCNotifications))
-	for name, handler := range extlibs.RuntimeState.JSONRPCNotifications {
+	s.jsonrpcNotifications = make(map[string]string, len(scriptruntime.RuntimeState.JSONRPCNotifications))
+	for name, handler := range scriptruntime.RuntimeState.JSONRPCNotifications {
 		s.jsonrpcNotifications[name] = handler
 	}
 
@@ -154,7 +154,7 @@ func (s *Server) invokeJSONRPCHandler(ctx context.Context, handlerRef string, ra
 	}
 
 	// Handler returned an explicit JSON-RPC error object.
-	if extlibs.IsJSONRPCError(result) {
+	if scriptruntime.IsJSONRPCError(result) {
 		inst := result.(*object.Instance)
 		code, _ := inst.Field("code").AsInt()
 		message, _ := inst.Field("message").AsString()
