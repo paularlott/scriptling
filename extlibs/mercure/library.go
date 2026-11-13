@@ -80,10 +80,15 @@ func Register(registrar interface{ RegisterLibrary(*object.Library) }, cfg ...*n
 // A client and its subscriptions live until the script closes them, or until
 // the interpreter that made it closes what its scripts left open (Reset,
 // ResetEnv, Close), or once the script no longer holds the client.
-func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, paths fssecurity.Config, policy *netsecurity.Config) {
+//
+// opts narrow what scripts may do: WithoutSubscribe lets them publish only.
+func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) }, paths fssecurity.Config, policy *netsecurity.Config, opts ...Option) {
 	paths.AllowedPaths = fssecurity.NormalizeAllowedPaths(paths.AllowedPaths)
 	t := &transports{paths: paths}
-	if paths.AllowedPaths == nil && policy == nil {
+	for _, opt := range opts {
+		opt(t)
+	}
+	if paths.AllowedPaths == nil && policy == nil && !t.noSubscribe {
 		libraryOnce.Do(func() { library = buildLibrary(&transports{}) })
 		registrar.RegisterLibrary(library)
 		return
@@ -103,8 +108,20 @@ func RegisterConfigured(registrar interface{ RegisterLibrary(*object.Library) },
 // transports builds a client's HTTP transport under the registration's
 // network policy and allowed paths.
 type transports struct {
-	guard *netsecurity.Guard
-	paths fssecurity.Config
+	guard       *netsecurity.Guard
+	paths       fssecurity.Config
+	noSubscribe bool // clients publish only (WithoutSubscribe)
+}
+
+// Option narrows what scripts may do with the library (see RegisterConfigured).
+type Option func(*transports)
+
+// WithoutSubscribe lets scripts publish but not receive: Client.subscribe
+// raises PermissionError, and everything else works as before. It is for an
+// embedder whose scripts send updates out but must not read what others
+// publish.
+func WithoutSubscribe() Option {
+	return func(t *transports) { t.noSubscribe = true }
 }
 
 // transport is an HTTP transport for the hub at u: TLS verified, unverified
@@ -273,7 +290,8 @@ type hubClient struct {
 	subs   map[*subscription]struct{}
 	ended  bool
 
-	release func() // forgets the client in the interpreter that made it
+	noSubscribe bool   // made by a registration that lets scripts publish only
+	release     func() // forgets the client in the interpreter that made it
 }
 
 func newClient(ctx context.Context, t *transports, kwargs object.Kwargs, hubURL string) object.Object {
@@ -333,7 +351,7 @@ func newClient(ctx context.Context, t *transports, kwargs object.Kwargs, hubURL 
 		tr.CloseIdleConnections()
 		return errObject(err)
 	}
-	h := &hubClient{c: c, url: hubURL, tr: tr, tokens: tokens, subs: map[*subscription]struct{}{}}
+	h := &hubClient{c: c, url: hubURL, tr: tr, tokens: tokens, subs: map[*subscription]struct{}{}, noSubscribe: t.noSubscribe}
 	inst := newInstance(getClientClass(), "MercureClient", h)
 	h.release = evaluator.TrackResource(ctx, inst, h.close)
 	return inst
@@ -584,6 +602,9 @@ Example:
 		if errObj != nil {
 			return errObj
 		}
+		if h.noSubscribe {
+			return scriptlingerrors.NewPermissionError("mercure: subscribing is turned off here; this client can only publish")
+		}
 		// Topics by position are Mercure 1.0 exact matchers, as match= is;
 		// topics= are draft-07 selectors (URI templates), for hubs that take
 		// only those.
@@ -640,6 +661,9 @@ Parameters:
 
 Returns:
   Subscription
+
+Raises:
+  PermissionError: When the host lets scripts publish only
 
 Example:
   sub = hub.subscribe(match_urlpattern="https://example.com/books/:id")

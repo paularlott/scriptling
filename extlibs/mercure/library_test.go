@@ -763,3 +763,38 @@ sub.receive(timeout=10).data`)
 		t.Errorf("draft-07 from the key: %s %v", out, err)
 	}
 }
+
+// WithoutSubscribe lets scripts publish but not receive: what a script
+// publishes reaches other subscribers, and subscribe raises PermissionError,
+// which, as for every host restriction, the script cannot catch. A
+// registration without it is unaffected.
+func TestWithoutSubscribe(t *testing.T) {
+	h := newHub(t)
+	publishOnly := func(p *scriptling.Scriptling) { RegisterConfigured(p, fssecurity.Config{}, nil, WithoutSubscribe()) }
+
+	// A normal interpreter listens, so the publish-only one is seen to send.
+	listener := scriptling.New()
+	stdlib.RegisterAll(listener)
+	Register(listener)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := listener.EvalWithContext(ctx, "import scriptling.mercure as mercure\n"+prelude(h, "")+`sub = hub.subscribe("t")`); err != nil {
+		t.Fatalf("a normal registration cannot subscribe: %v", err)
+	}
+	defer listener.Close()
+
+	_, err := run(t, publishOnly, prelude(h, "")+`
+hub.publish("t", "sent by a publish-only client")
+try:
+    hub.subscribe("t")
+except PermissionError:
+    pass
+`)
+	if err == nil || !strings.Contains(err.Error(), "subscribing is turned off") {
+		t.Fatalf("subscribe was not refused, or the refusal was caught: %v", err)
+	}
+	got, err := listener.EvalWithContext(ctx, `sub.receive(timeout=10).data`)
+	if err != nil || got.Inspect() != "sent by a publish-only client" {
+		t.Fatalf("the publish did not arrive: %v %v", got, err)
+	}
+}
