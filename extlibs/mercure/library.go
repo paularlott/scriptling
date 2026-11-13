@@ -117,9 +117,9 @@ type transports struct {
 type Option func(*transports)
 
 // WithoutSubscribe lets scripts publish but not receive: Client.subscribe
-// raises PermissionError, and everything else works as before. It is for an
-// embedder whose scripts send updates out but must not read what others
-// publish.
+// raises RuntimeError, which a script may catch to carry on without it, and
+// everything else works as before. It is for an embedder whose scripts send
+// updates out but must not read what others publish.
 func WithoutSubscribe() Option {
 	return func(t *transports) { t.noSubscribe = true }
 }
@@ -603,7 +603,12 @@ Example:
 			return errObj
 		}
 		if h.noSubscribe {
-			return scriptlingerrors.NewPermissionError("mercure: subscribing is turned off here; this client can only publish")
+			// Catchable, unlike a security refusal: knowing that subscribing
+			// is off gives a script nothing, and it can fall back.
+			return &object.Error{
+				Message:       "mercure: subscribing is turned off here; this client can only publish",
+				ExceptionType: object.ExceptionTypeRuntimeError,
+			}
 		}
 		// Topics by position are Mercure 1.0 exact matchers, as match= is;
 		// topics= are draft-07 selectors (URI templates), for hubs that take
@@ -663,7 +668,7 @@ Returns:
   Subscription
 
 Raises:
-  PermissionError: When the host lets scripts publish only
+  RuntimeError: When the host lets scripts publish only
 
 Example:
   sub = hub.subscribe(match_urlpattern="https://example.com/books/:id")

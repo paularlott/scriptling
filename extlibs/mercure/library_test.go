@@ -765,9 +765,9 @@ sub.receive(timeout=10).data`)
 }
 
 // WithoutSubscribe lets scripts publish but not receive: what a script
-// publishes reaches other subscribers, and subscribe raises PermissionError,
-// which, as for every host restriction, the script cannot catch. A
-// registration without it is unaffected.
+// publishes reaches other subscribers, and subscribe raises RuntimeError,
+// which the script can catch and carry on. A registration without it is
+// unaffected.
 func TestWithoutSubscribe(t *testing.T) {
 	h := newHub(t)
 	publishOnly := func(p *scriptling.Scriptling) { RegisterConfigured(p, fssecurity.Config{}, nil, WithoutSubscribe()) }
@@ -783,18 +783,25 @@ func TestWithoutSubscribe(t *testing.T) {
 	}
 	defer listener.Close()
 
-	_, err := run(t, publishOnly, prelude(h, "")+`
+	out, err := run(t, publishOnly, prelude(h, "")+`
 hub.publish("t", "sent by a publish-only client")
 try:
     hub.subscribe("t")
-except PermissionError:
-    pass
-`)
-	if err == nil || !strings.Contains(err.Error(), "subscribing is turned off") {
-		t.Fatalf("subscribe was not refused, or the refusal was caught: %v", err)
+    refused = "no"
+except RuntimeError as e:
+    refused = str(e)
+hub.publish("t", "still publishing after")
+refused`)
+	if err != nil {
+		t.Fatalf("the script could not catch the refusal and carry on: %v", err)
 	}
-	got, err := listener.EvalWithContext(ctx, `sub.receive(timeout=10).data`)
-	if err != nil || got.Inspect() != "sent by a publish-only client" {
-		t.Fatalf("the publish did not arrive: %v %v", got, err)
+	if !strings.Contains(out, "subscribing is turned off") {
+		t.Fatalf("subscribe was not refused: %s", out)
+	}
+	for _, want := range []string{"sent by a publish-only client", "still publishing after"} {
+		got, err := listener.EvalWithContext(ctx, `sub.receive(timeout=10).data`)
+		if err != nil || got.Inspect() != want {
+			t.Fatalf("want %q to arrive: %v %v", want, got, err)
+		}
 	}
 }
