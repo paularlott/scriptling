@@ -561,7 +561,10 @@ Example:
 					return &object.Error{Message: "return_object() requires an object argument"}
 				}
 
-				goObj := conversion.ToGo(args[0])
+				goObj, limitErr := conversion.ToGoLimited(args[0])
+				if limitErr != nil {
+					return limitErr
+				}
 				jsonBytes, err := json.Marshal(goObj)
 				if err != nil {
 					return &object.Error{Message: fmt.Sprintf("Failed to serialize object to JSON: %v", err)}
@@ -587,7 +590,10 @@ Example:
 					return &object.Error{Message: fmt.Sprintf("return_structured() requires a dict (JSON object) argument, got %s", args[0].Type())}
 				}
 
-				goObj := conversion.ToGo(args[0])
+				goObj, limitErr := conversion.ToGoLimited(args[0])
+				if limitErr != nil {
+					return limitErr
+				}
 				jsonBytes, err := json.Marshal(goObj)
 				if err != nil {
 					return &object.Error{Message: fmt.Sprintf("Failed to serialize object to JSON: %v", err)}
@@ -617,7 +623,10 @@ Example:
 					return &object.Error{Message: "return_toon() requires an object argument"}
 				}
 
-				goObj := conversion.ToGo(args[0])
+				goObj, limitErr := conversion.ToGoLimited(args[0])
+				if limitErr != nil {
+					return limitErr
+				}
 				toonStr, err := mcptoon.Encode(goObj)
 				if err != nil {
 					return &object.Error{Message: fmt.Sprintf("Failed to encode to TOON: %v", err)}
@@ -748,7 +757,14 @@ func RunToolScript(ctx context.Context, sl *scriptling.Scriptling, script string
 			// NULL means no meaningful return value, leave response empty
 		default:
 			// For complex types (list, dict, etc.), convert to JSON
-			goObj := conversion.ToGo(result)
+			// The call has returned: hold the conversion to the script's
+			// limits by binding its interpreter's guard.
+			release := object.BindGuard(sl.ResourceGuard())
+			goObj, limitErr := conversion.ToGoLimited(result)
+			release()
+			if limitErr != nil {
+				return "", 1, fmt.Errorf("%s", limitErr.Message)
+			}
 			if jsonBytes, jsonErr := json.Marshal(goObj); jsonErr == nil {
 				response = string(jsonBytes)
 			}

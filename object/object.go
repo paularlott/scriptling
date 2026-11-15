@@ -3,14 +3,18 @@ package object
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	stderrors "errors"
 	"fmt"
+	"hash"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -63,21 +67,76 @@ func DictKey(obj Object) string {
 		return fmt.Sprintf("%s:%p", obj.Type(), obj)
 	case *Tuple:
 		// Tuples are hashable in Python if all elements are hashable
-		var b strings.Builder
-		b.WriteString("t:(")
-		for i, e := range o.Elements {
-			if i > 0 {
-				b.WriteString(",")
-			}
-			b.WriteString(DictKey(e))
-		}
-		b.WriteString(")")
-		return b.String()
+		var k tupleKeyer
+		return k.key(o)
 	default:
 		// Unhashable types - use type + pointer identity which will rarely collide
 		// In Python, lists, dicts, sets are unhashable and raise TypeError
 		return fmt.Sprintf("%s:%p", obj.Type(), obj)
 	}
+}
+
+// tupleKeyHashAt is the length past which a tuple's key is replaced by a
+// digest of it. A tuple can hold the same tuple many times over, so the
+// spelled-out key of a small tuple can be exponentially long; a digest keeps
+// every key short, and with each distinct tuple keyed once (tupleKeyer's
+// memo) a key costs time in proportion to the tuple's own size.
+const tupleKeyHashAt = 1024
+
+// tupleKeyMemoAfter is how many nested tuples a key visits before it
+// remembers their keys, so ordinary keys allocate no memo.
+const tupleKeyMemoAfter = 64
+
+// tupleKeyer builds tuple dict keys: "t:(" and the element keys, or, past
+// tupleKeyHashAt, "th:" and the SHA-256 of that text. Equal tuples get equal
+// keys either way, and the two forms never collide.
+type tupleKeyer struct {
+	visited int
+	memo    map[*Tuple]string
+}
+
+func (k *tupleKeyer) key(t *Tuple) string {
+	if k.memo != nil {
+		if key, ok := k.memo[t]; ok {
+			return key
+		}
+	}
+	k.visited++
+	var b strings.Builder
+	var h hash.Hash
+	b.WriteString("t:(")
+	for i, e := range t.Elements {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		if et, ok := e.(*Tuple); ok {
+			b.WriteString(k.key(et))
+		} else {
+			b.WriteString(DictKey(e))
+		}
+		if b.Len() > tupleKeyHashAt {
+			if h == nil {
+				h = sha256.New()
+			}
+			h.Write([]byte(b.String()))
+			b.Reset()
+		}
+	}
+	b.WriteByte(')')
+	var key string
+	if h != nil {
+		h.Write([]byte(b.String()))
+		key = "th:" + hex.EncodeToString(h.Sum(nil))
+	} else {
+		key = b.String()
+	}
+	if k.memo == nil && k.visited > tupleKeyMemoAfter {
+		k.memo = make(map[*Tuple]string)
+	}
+	if k.memo != nil {
+		k.memo[t] = key
+	}
+	return key
 }
 
 // DictStringKey returns the canonical dict key for a string key without
@@ -119,12 +178,8 @@ func IsHashable(obj Object) bool {
 		// uniqueness, so identity keys are exactly right.
 		return true
 	case *Tuple:
-		for _, e := range o.Elements {
-			if !IsHashable(e) {
-				return false
-			}
-		}
-		return true
+		var c hashableChecker
+		return c.tuple(o)
 	case *Set:
 		// Frozen sets are immutable, so their content hash is stable (Python
 		// frozenset); mutable sets are unhashable.
@@ -135,6 +190,40 @@ func IsHashable(obj Object) bool {
 	default:
 		return false
 	}
+}
+
+// hashableChecker checks a tuple's elements, remembering (past
+// tupleKeyMemoAfter tuples) the tuples it has found hashable, so a tuple that
+// holds the same tuple many times over is checked in proportion to its own
+// size rather than the size it spells out.
+type hashableChecker struct {
+	visited int
+	ok      map[*Tuple]struct{}
+}
+
+func (c *hashableChecker) tuple(t *Tuple) bool {
+	if c.ok != nil {
+		if _, done := c.ok[t]; done {
+			return true
+		}
+	}
+	c.visited++
+	for _, e := range t.Elements {
+		if et, isTuple := e.(*Tuple); isTuple {
+			if !c.tuple(et) {
+				return false
+			}
+		} else if !IsHashable(e) {
+			return false
+		}
+	}
+	if c.ok == nil && c.visited > tupleKeyMemoAfter {
+		c.ok = make(map[*Tuple]struct{})
+	}
+	if c.ok != nil {
+		c.ok[t] = struct{}{}
+	}
+	return true
 }
 
 // Small integer cache for common values (-5 to 10000)
@@ -1069,6 +1158,7 @@ type Environment struct {
 	store                      map[string]Object
 	slotIndex                  map[string]int
 	slotNames                  []string
+	ownSlots                   bool // slotIndex and slotNames are this environment's own copy
 	slots                      []Object
 	callPoolSlots              uint8
 	outer                      *Environment
@@ -1284,6 +1374,7 @@ func NewEnclosedEnvironmentWithSlots(outer *Environment, slotIndex map[string]in
 	if len(slotIndex) > 0 {
 		env.slotIndex = slotIndex
 		env.slotNames = slotNames
+		env.ownSlots = false
 		env.slots = make([]Object, len(slotNames))
 	}
 	return env
@@ -1489,6 +1580,7 @@ func AcquireCallEnvironment(outer *Environment, slotIndex map[string]int, slotNa
 					fl.buckets[slotCount] = bucket[:n]
 					env.slotIndex = slotIndex
 					env.slotNames = slotNames
+					env.ownSlots = false
 					env.callPoolSlots = uint8(slotCount)
 					env.outer = outer
 					env.root = root
@@ -1538,6 +1630,7 @@ func ReleaseCallEnvironment(env *Environment) {
 	env.root = nil
 	env.slotIndex = nil
 	env.slotNames = nil
+	env.ownSlots = false
 	env.output = nil
 	env.errOutput = nil
 	env.input = nil
@@ -1742,18 +1835,30 @@ func (e *Environment) HasSlots() bool {
 	return e.slotIndex != nil
 }
 
-// SetupSlots configures slot-based variable access on this environment.
+// SetupSlots configures slot-based variable access on this environment. The
+// layout belongs to a parsed program, which the parse cache shares between
+// interpreters, so it is used as is until ExtendSlots needs to grow it.
 func (e *Environment) SetupSlots(slotIndex map[string]int, slotNames []string) {
 	e.slotIndex = slotIndex
 	e.slotNames = slotNames
+	e.ownSlots = false
 	e.slots = make([]Object, len(slotNames))
 }
 
 // ExtendSlots adds new variables to the existing slot layout. Variables
 // already present keep their existing indices. New variables are appended.
+// The first extension copies the layout: it may be a program's or a
+// function's, shared with every other environment it was set up on, and
+// growing it in place let one interpreter's variables move another's slots,
+// so a name could read another variable's value.
 func (e *Environment) ExtendSlots(slotIndex map[string]int, slotNames []string) {
 	for _, name := range slotNames {
 		if _, exists := e.slotIndex[name]; !exists {
+			if !e.ownSlots {
+				e.slotIndex = maps.Clone(e.slotIndex)
+				e.slotNames = slices.Clip(slices.Clone(e.slotNames))
+				e.ownSlots = true
+			}
 			idx := len(e.slotNames)
 			e.slotIndex[name] = idx
 			e.slotNames = append(e.slotNames, name)

@@ -471,7 +471,11 @@ Returns:
 
 				// Check if it's a dict - convert to JSON
 				if dict, ok := msg.(*object.Dict); ok {
-					jsonData, jsonErr := json.Marshal(conversion.ToGo(dict))
+					goVal, limitErr := conversion.ToGoLimited(dict)
+					if limitErr != nil {
+						return limitErr
+					}
+					jsonData, jsonErr := json.Marshal(goVal)
 					if jsonErr != nil {
 						return errors.NewError("failed to encode JSON: %s", jsonErr.Error())
 					}

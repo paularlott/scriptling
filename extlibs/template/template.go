@@ -9,6 +9,7 @@ import (
 	stderrors "errors"
 	htmltemplate "html/template"
 	texttemplate "text/template"
+	"text/template/parse"
 
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
@@ -55,12 +56,24 @@ var errRenderNoRoom = stderrors.New("rendered output exceeds the memory limit")
 // stop at the first write error) when the output passes the interpreter's
 // value limit or the call is cancelled.
 type renderWriter struct {
-	ctx   context.Context
-	limit int64
-	buf   bytes.Buffer
+	ctx         context.Context
+	limit       int64
+	buf         bytes.Buffer
+	checkpoints int
 }
 
+// checkpointEvery is how many checkpoints pass between context checks.
+const checkpointEvery = 64
+
 func (w *renderWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		// A checkpoint (see instrumentTree): one per loop iteration, so
+		// the context is looked at on every checkpointEvery-th.
+		if w.checkpoints++; w.checkpoints%checkpointEvery != 0 {
+			return 0, nil
+		}
+		return 0, w.ctx.Err()
+	}
 	if err := w.ctx.Err(); err != nil {
 		return 0, err
 	}
@@ -80,6 +93,84 @@ func (w *renderWriter) Write(p []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+// checkpointPos marks the empty text nodes instrumentTree inserts, so a tree
+// is never instrumented twice. Real nodes have non-negative positions, and
+// an empty text node never reports an error, so its position is never shown.
+const checkpointPos parse.Pos = -1
+
+// instrumentTree inserts a checkpoint, an empty text node, at the start of
+// every range body and of the template itself, unless it writes literal
+// text anyway. Executing a text node writes
+// it, even when empty, and renderWriter checks the call's context on every
+// write, so loops and template calls that produce no output (nested ranges
+// over large data, recursive {{template}} calls) still stop when the call is
+// cancelled or its deadline passes. Go templates have no other hook into
+// execution.
+func instrumentTree(tree *parse.Tree) {
+	if tree == nil || tree.Root == nil {
+		return
+	}
+	instrumentList(tree.Root, true)
+}
+
+// instrumentList finds the range bodies in list, giving each a checkpoint,
+// and gives list one too when checkpoint is set.
+func instrumentList(list *parse.ListNode, checkpoint bool) {
+	if list == nil {
+		return
+	}
+	for _, n := range list.Nodes {
+		switch n := n.(type) {
+		case *parse.RangeNode:
+			instrumentList(n.List, true)
+			instrumentList(n.ElseList, false)
+		case *parse.IfNode:
+			instrumentList(n.List, false)
+			instrumentList(n.ElseList, false)
+		case *parse.WithNode:
+			instrumentList(n.List, false)
+			instrumentList(n.ElseList, false)
+		case *parse.ListNode:
+			instrumentList(n, false)
+		}
+	}
+	if !checkpoint || writesText(list) {
+		return
+	}
+	if len(list.Nodes) > 0 {
+		if t, ok := list.Nodes[0].(*parse.TextNode); ok && t.Pos == checkpointPos {
+			return
+		}
+	}
+	node := &parse.TextNode{NodeType: parse.NodeText, Pos: checkpointPos, Text: []byte{}}
+	list.Nodes = append([]parse.Node{node}, list.Nodes...)
+}
+
+// writesText reports whether list writes literal text every time it runs:
+// renderWriter already checks the context on every such write, so the
+// list needs no checkpoint.
+func writesText(list *parse.ListNode) bool {
+	for _, n := range list.Nodes {
+		if t, ok := n.(*parse.TextNode); ok && len(t.Text) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// instrumentSet instruments every template in the set (see instrumentTree).
+func instrumentSet(pt *parsedTemplateSet) {
+	if pt.html != nil {
+		for _, t := range pt.html.Templates() {
+			instrumentTree(t.Tree)
+		}
+		return
+	}
+	for _, t := range pt.text.Templates() {
+		instrumentTree(t.Tree)
+	}
 }
 
 func newSetInstance(pt *parsedTemplateSet) *object.Instance {
@@ -116,6 +207,7 @@ var SetClass = &object.Class{
 						return errors.NewError("template parse error: %s", parseErr.Error())
 					}
 				}
+				instrumentSet(pt)
 				return &object.Null{}
 			},
 			HelpText: `add(source) - Add a template source to the set

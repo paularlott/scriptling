@@ -11,6 +11,7 @@ import (
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/evaliface"
+	"github.com/paularlott/scriptling/libutil"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -785,13 +786,22 @@ Flags:
 					return object.NewString(text)
 				}
 
-				// Build result by replacing matches
+				// Build result by replacing matches. Every callback is charged
+				// to a WorkMeter, so a long run of callbacks (each of which may
+				// be a lambda with no loop of its own to check) honours the
+				// call's cancellation, and the result is held to the value
+				// limit as it grows rather than once it is built.
 				var resultBuilder []byte
 				lastEnd := 0
+				meter := libutil.NewWorkMeter(ctx)
+				grownTo := 0
 
 				for _, match := range allMatches {
 					if count > 0 && replaced >= count {
 						break
+					}
+					if errObj := meter.Add(256); errObj != nil {
+						return errObj
 					}
 
 					// Add text before match
@@ -831,6 +841,14 @@ Flags:
 						resultBuilder = append(resultBuilder, text[match[0]:match[1]]...)
 					}
 
+					if len(resultBuilder) > grownTo {
+						// Checked as the buffer grows, which it does by doubling.
+						grownTo = cap(resultBuilder)
+						if errObj := object.CheckAllocFor("substituted string", int64(len(resultBuilder))); errObj != nil {
+							return errObj
+						}
+					}
+
 					lastEnd = match[1]
 					replaced++
 				}
@@ -838,6 +856,8 @@ Flags:
 				// Add remaining text
 				resultBuilder = append(resultBuilder, text[lastEnd:]...)
 				result = string(resultBuilder)
+			} else if errObj := checkSubSize(re, text, pythonReplToGo(replacementStr), count); errObj != nil {
+				return errObj
 			} else if count < 0 {
 				result = re.ReplaceAllString(text, pythonReplToGo(replacementStr))
 			} else {
@@ -1085,6 +1105,28 @@ Flags:
 // pythonReplToGo converts Python replacement-string backreferences to Go's
 // regexp replacement syntax: \1..\99 become $1..$99 and \g<name> becomes
 // ${name}; a literal \\ stays a literal backslash.
+// checkSubSize holds a substitution with a template replacement to the
+// output limit before it is made: each match expands the template, so a
+// long replacement over many matches can make a result far larger than
+// either string. With no limit set it does nothing. count < 0 replaces all.
+func checkSubSize(re *regexp.Regexp, text, template string, count int) object.Object {
+	limit := object.OutputLimit()
+	if limit <= 0 {
+		return nil
+	}
+	matches := re.FindAllStringSubmatchIndex(text, count)
+	size := int64(len(text))
+	var scratch []byte
+	for _, m := range matches {
+		scratch = re.ExpandString(scratch[:0], template, text, m)
+		size += int64(len(scratch)) - int64(m[1]-m[0])
+		if size > limit {
+			return object.NewOutputTooLargeError("substituted string", limit)
+		}
+	}
+	return nil
+}
+
 func pythonReplToGo(repl string) string {
 	var out strings.Builder
 	for i := 0; i < len(repl); i++ {

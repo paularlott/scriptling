@@ -527,17 +527,25 @@ func dequeOrder(op string, keep func(int) bool) *object.Builtin {
 	})
 }
 
-func dequeRepr(self *object.Instance, d *dequeBuf) string {
+func dequeRepr(self *object.Instance, d *dequeBuf) object.Object {
 	name := "deque"
 	if self.Class != dequeClassRef {
 		name = self.Class.Name
 	}
 	// A list renders its elements as Python's repr does.
-	out := name + "(" + (&object.List{Elements: d.elements()}).Inspect()
+	r := newReprBuilder()
+	r.WriteString(name)
+	r.WriteString("(")
+	r.Value(&object.List{Elements: d.elements()})
 	if d.maxlen >= 0 {
-		out += ", maxlen=" + object.NewInteger(d.maxlen).Inspect()
+		r.WriteString(", maxlen=" + object.NewInteger(d.maxlen).Inspect())
 	}
-	return out + ")"
+	r.WriteString(")")
+	out, errObj := r.Result()
+	if errObj != nil {
+		return errObj
+	}
+	return object.NewString(out)
 }
 
 // dequeMethod adapts a method body taking the deque's buffer; nargs < 0
@@ -811,10 +819,10 @@ var DequeClass = &object.Class{
 		"__rmul__": dequeMultiply(false),
 		"__imul__": dequeMultiply(true),
 		"__str__": dequeMethod(0, func(ctx context.Context, d *dequeBuf, self *object.Instance, _ []object.Object) object.Object {
-			return object.NewString(dequeRepr(self, d))
+			return dequeRepr(self, d)
 		}),
 		"__repr__": dequeMethod(0, func(ctx context.Context, d *dequeBuf, self *object.Instance, _ []object.Object) object.Object {
-			return object.NewString(dequeRepr(self, d))
+			return dequeRepr(self, d)
 		}),
 	},
 }

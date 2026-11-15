@@ -189,12 +189,23 @@ Use list(filter(...)) to get a list.`,
 				return NULL
 			}
 			parts := make([]string, len(args))
+			// The line is one output: hold it to the output limit as the
+			// arguments render, since each can be within the limit while
+			// together (the same value passed many times) they are not.
+			limit := object.OutputLimit()
+			var total int64
 			for i, arg := range args {
 				s, raised := stringify(arg)
 				if raised != nil {
 					return raised
 				}
 				parts[i] = s
+				if limit > 0 {
+					total += int64(len(s) + len(sep))
+					if total > limit {
+						return object.NewOutputTooLargeError("printed line", limit)
+					}
+				}
 			}
 			if e := emit(strings.Join(parts, sep) + end); e != nil {
 				return e
@@ -2317,12 +2328,13 @@ func roundHalfEven(v float64) float64 {
 // (__lt__ with reflected __gt__, then __eq__) via compareObjectsCtx.
 // Incomparable values are an error, never a silent no-op.
 func compareForSort(ctx context.Context, left, right object.Object, env *object.Environment) (int, object.Object) {
-	return compareForSortDepth(ctx, left, right, env, 0)
+	// compareElements starts the cancellation budget for a container walk.
+	return compareForSortDepth(ctx, left, right, env, 0, nil)
 }
 
 // compareForSortDepth is compareForSort at a nesting depth; past
 // maxCompareDepth nested sequences it raises RecursionError.
-func compareForSortDepth(ctx context.Context, left, right object.Object, env *object.Environment, depth int) (int, object.Object) {
+func compareForSortDepth(ctx context.Context, left, right object.Object, env *object.Environment, depth int, budget *cmpBudget) (int, object.Object) {
 	switch l := left.(type) {
 	case *object.Integer:
 		if r, ok := right.(*object.Integer); ok {
@@ -2375,14 +2387,14 @@ func compareForSortDepth(ctx context.Context, left, right object.Object, env *ob
 			if l == r {
 				return 0, nil
 			}
-			return compareElements(ctx, l.Elements, r.Elements, env, depth)
+			return compareElements(ctx, l.Elements, r.Elements, env, depth, budget)
 		}
 	case *object.List:
 		if r, ok := right.(*object.List); ok {
 			if l == r {
 				return 0, nil
 			}
-			return compareElements(ctx, l.Elements, r.Elements, env, depth)
+			return compareElements(ctx, l.Elements, r.Elements, env, depth, budget)
 		}
 	}
 	return 0, &object.Exception{
@@ -2407,16 +2419,24 @@ func cmpFloats(a, b float64) int {
 // Python's tuple/list ordering. A sequence compared with itself is equal
 // without walking it (compareForSortDepth checks), so a self-containing list
 // orders against itself instead of recursing forever.
-func compareElements(ctx context.Context, a, b []object.Object, env *object.Environment, depth int) (int, object.Object) {
+func compareElements(ctx context.Context, a, b []object.Object, env *object.Environment, depth int, budget *cmpBudget) (int, object.Object) {
 	if depth >= maxCompareDepth {
 		return 0, errCompareTooDeep()
+	}
+	var local cmpBudget
+	if budget == nil {
+		local.ctx = ctx
+		budget = &local
+	}
+	if errObj := budget.step(); errObj != nil {
+		return 0, errObj
 	}
 	n := len(a)
 	if len(b) < n {
 		n = len(b)
 	}
 	for i := 0; i < n; i++ {
-		c, errObj := compareForSortDepth(ctx, a[i], b[i], env, depth+1)
+		c, errObj := compareForSortDepth(ctx, a[i], b[i], env, depth+1, budget)
 		if errObj != nil {
 			return 0, errObj
 		}
@@ -2679,8 +2699,19 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 		}
 
 		// Sort indices
+		// A comparison that raised ends the sort: later ones are skipped. The
+		// context is checked every cmpCheckEvery comparisons, so a long sort
+		// stops when its call is cancelled.
+		sortBudget := cmpBudget{ctx: ctx}
 		sortEnv := GetEnvFromContext(ctx)
 		sort.SliceStable(indices, func(i, j int) bool {
+			if sortErr != nil {
+				return false
+			}
+			if errObj := sortBudget.step(); errObj != nil {
+				sortErr = errObj
+				return false
+			}
 			var left, right object.Object
 			if keys != nil {
 				left, right = keys[indices[i]], keys[indices[j]]

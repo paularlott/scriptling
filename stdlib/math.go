@@ -6,6 +6,7 @@ import (
 	"math/big"
 
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/libutil"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -727,11 +728,21 @@ a and b must be lists or 1D FloatArrays of numbers with the same length.`,
 				return errors.NewError("matmul: inner dimensions mismatch (%d vs %d)", k, len(bRows))
 			}
 			n := len(bRows[0])
+			// An (M x 1) by (1 x N) product is M*N values from M+N inputs,
+			// and the work is M*K*N: the result is checked before it is
+			// allocated, and the work is charged to a WorkMeter.
+			if errObj := object.CheckAllocFor("matrix", int64(len(aRows))*int64(n)*8); errObj != nil {
+				return errObj
+			}
+			meter := libutil.NewWorkMeter(ctx)
 			result := make([][]float64, len(aRows))
 			for i := range result {
 				result[i] = make([]float64, n)
 			}
 			for i, aRow := range aRows {
+				if errObj := meter.Add(n * k); errObj != nil {
+					return errObj
+				}
 				for j := 0; j < n; j++ {
 					var sum float64
 					for l := 0; l < k; l++ {
@@ -905,6 +916,14 @@ Returns a float.`,
 			}
 			if k > n-k {
 				k = n - k
+			}
+			// With k <= n/2, C(n, k) >= C(2k, k), which passes the int64
+			// range from k = 34 (C(68, 34) is about 2.8e19), so the result
+			// is known to be too large without computing it: big.Binomial
+			// would otherwise build a number of up to n bits first, which
+			// for huge n takes as long as it likes.
+			if k > 33 {
+				return errors.NewError("comb: result too large")
 			}
 			var result big.Int
 			result.Binomial(n, k)

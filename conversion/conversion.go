@@ -270,12 +270,29 @@ const mapEntryBytes = 64
 // ToGoLimited is ToGo held to the limits of the interpreter on the calling
 // goroutine. A value shared by several containers converts once per
 // reference, so a small script value can expand into a huge Go value; the
-// conversion counts what it builds and stops with a MemoryError once that
-// passes the value limit or the memory left. Use it for script data handed
-// to libraries (templates, encoders, request bodies).
+// conversion counts what it builds as it goes, the values and the bytes of
+// the strings and bytes values among them, and stops with a MemoryError as
+// soon as that passes the value limit or the memory left, so the work done
+// is bounded too. Use it for script data handed to libraries (templates,
+// encoders, request bodies). With no limits set it converts as ToGo does.
+//
+// The limits are those of the interpreter bound to the calling goroutine:
+// a host converting a result after the call has returned binds it first
+// with object.BindGuard(p.ResourceGuard()).
 func ToGoLimited(obj object.Object) (interface{}, *object.Error) {
 	var b conversionBudget
-	v := toGo(obj, make(map[object.Object]struct{}), &b, 0)
+	return b.convert(obj)
+}
+
+// ToGoChecked is ToGoLimited for serializers: a value nested more than 10000
+// levels is a RecursionError rather than a MemoryError.
+func ToGoChecked(obj object.Object) (interface{}, *object.Error) {
+	b := conversionBudget{recursionErr: true}
+	return b.convert(obj)
+}
+
+func (b *conversionBudget) convert(obj object.Object) (interface{}, *object.Error) {
+	v := toGo(obj, make(map[object.Object]struct{}), b, 0)
 	if b.err != nil {
 		return nil, b.err
 	}
@@ -286,21 +303,11 @@ func ToGoLimited(obj object.Object) (interface{}, *object.Error) {
 	return v, nil
 }
 
-// ToGoChecked is ToGo for serializers: a value nested more than 10000 levels
-// is a RecursionError rather than silently truncated to a placeholder. It
-// applies no other limit.
-func ToGoChecked(obj object.Object) (interface{}, *object.Error) {
-	b := conversionBudget{depthOnly: true}
-	v := toGo(obj, make(map[object.Object]struct{}), &b, 0)
-	if b.err != nil {
-		return nil, b.err
-	}
-	return v, nil
-}
-
 // Per converted value: the least it encodes to (a digit and a separator),
 // which is what the value limit sees, and about what it holds in Go, which
-// is what the memory left sees.
+// is what the memory left sees. Strings and bytes values also count their
+// length towards the encoded size: the Go value shares their memory, but
+// each reference encodes in full.
 const (
 	convertedValueBytes  = 2
 	convertedMemoryBytes = 16
@@ -312,35 +319,49 @@ const (
 // value past the value limit, while data a script was allowed to build is
 // not refused for its node count.
 func (b *conversionBudget) check(nodes int64) *object.Error {
-	if errObj := object.CheckAllocFor("converted value", nodes*convertedValueBytes); errObj != nil {
+	if errObj := object.CheckAllocFor("converted value", nodes*convertedValueBytes+b.bytes); errObj != nil {
 		return errObj.(*object.Error)
 	}
-	if errObj := object.CheckRoom("converted value", nodes*convertedMemoryBytes); errObj != nil {
+	if errObj := object.CheckRoom("converted value", nodes*convertedMemoryBytes+b.mem); errObj != nil {
 		return errObj.(*object.Error)
 	}
 	return nil
 }
 
-// conversionBudget counts the Go values a conversion has built. Every
-// budgetCheckEvery values it checks the total against the interpreter's
-// limits, as a container of that many elements; once over, the conversion
-// stops building.
+// conversionBudget counts the Go values a conversion has built and the
+// string bytes they encode. Every budgetCheckEvery values, or budgetCheckBytes
+// of strings, it checks the total against the interpreter's limits; once
+// over, the conversion stops building.
 type conversionBudget struct {
-	nodes     int64
-	err       *object.Error
-	depthOnly bool // only the depth limit applies (ToGoChecked)
+	nodes        int64
+	bytes        int64 // string and bytes lengths converted
+	mem          int64 // container memory built, beyond convertedMemoryBytes a value
+	nextBytes    int64 // bytes at which to check next
+	err          *object.Error
+	recursionErr bool // too deep is a RecursionError (ToGoChecked)
 }
 
-const budgetCheckEvery = 1024
+// Go memory per converted container: its boxed header, and per element slot
+// of a slice (an interface) or a map entry.
+const (
+	containerHeaderBytes = 48
+	sliceSlotBytes       = 16
+)
+
+const (
+	budgetCheckEvery = 1024
+	budgetCheckBytes = 64 << 10
+)
 
 // reserve checks a container about to be allocated for n values, when n is
 // large enough to matter on its own, against the limits with what has been
 // built so far.
-func (b *conversionBudget) reserve(n int) bool {
+func (b *conversionBudget) reserve(n int, slotBytes int64) bool {
 	if b.err != nil {
 		return false
 	}
-	if n < budgetCheckEvery || b.depthOnly {
+	b.mem += int64(n)*slotBytes + containerHeaderBytes
+	if n < budgetCheckEvery {
 		return true
 	}
 	// The container itself is a value of n slots; with what was built
@@ -361,13 +382,25 @@ func (b *conversionBudget) ok() bool {
 	if b.err != nil {
 		return false
 	}
-	if b.depthOnly {
-		return true
-	}
 	b.nodes++
 	if b.nodes&(budgetCheckEvery-1) != 0 {
 		return true
 	}
+	if errObj := b.check(b.nodes); errObj != nil {
+		b.err = errObj
+		return false
+	}
+	return true
+}
+
+// addBytes counts a string or bytes value of n bytes and reports whether the
+// conversion may go on.
+func (b *conversionBudget) addBytes(n int) bool {
+	b.bytes += int64(n)
+	if b.bytes < b.nextBytes {
+		return true
+	}
+	b.nextBytes = b.bytes + budgetCheckBytes
 	if errObj := b.check(b.nodes); errObj != nil {
 		b.err = errObj
 		return false
@@ -388,7 +421,7 @@ func toGo(obj object.Object, path map[object.Object]struct{}, b *conversionBudge
 	}
 	if depth > maxToGoDepth {
 		if b != nil {
-			if b.depthOnly {
+			if b.recursionErr {
 				b.err = &object.Error{
 					Message:       fmt.Sprintf("value too deeply nested to serialize (more than %d levels)", maxToGoDepth),
 					ExceptionType: "RecursionError",
@@ -411,15 +444,21 @@ func toGo(obj object.Object, path map[object.Object]struct{}, b *conversionBudge
 	case *object.Float:
 		return o.FloatValue()
 	case *object.String:
+		if b != nil && !b.addBytes(len(o.StringValue())) {
+			return nil
+		}
 		return o.StringValue()
 	case *object.Bytes:
+		if b != nil && !b.addBytes(len(o.BytesValue())) {
+			return nil
+		}
 		return o.BytesValue()
 	case *object.List:
 		if _, cyclic := path[o]; cyclic {
 			return cyclicRefPlaceholder
 		}
 		path[o] = struct{}{}
-		if b != nil && !b.reserve(len(o.Elements)) {
+		if b != nil && !b.reserve(len(o.Elements), sliceSlotBytes) {
 			return nil
 		}
 		result := make([]interface{}, len(o.Elements))
@@ -434,7 +473,7 @@ func toGo(obj object.Object, path map[object.Object]struct{}, b *conversionBudge
 			return cyclicRefPlaceholder
 		}
 		path[o] = struct{}{}
-		if b != nil && !b.reserve(len(o.Elements)) {
+		if b != nil && !b.reserve(len(o.Elements), sliceSlotBytes) {
 			return nil
 		}
 		result := make([]interface{}, len(o.Elements))
@@ -449,13 +488,17 @@ func toGo(obj object.Object, path map[object.Object]struct{}, b *conversionBudge
 			return cyclicRefPlaceholder
 		}
 		path[o] = struct{}{}
-		if b != nil && !b.reserve(len(o.Pairs)) {
+		if b != nil && !b.reserve(len(o.Pairs), mapEntryBytes) {
 			return nil
 		}
 		result := make(map[string]interface{}, len(o.Pairs))
 		object.TrackMap(result, int64(len(o.Pairs))*mapEntryBytes)
 		for _, pair := range o.Pairs {
-			result[pair.StringKey()] = toGo(pair.Value, path, b, depth+1)
+			key := pair.StringKey()
+			if b != nil && !b.addBytes(len(key)) {
+				return nil
+			}
+			result[key] = toGo(pair.Value, path, b, depth+1)
 		}
 		delete(path, o)
 		return result
@@ -473,7 +516,7 @@ func toGo(obj object.Object, path map[object.Object]struct{}, b *conversionBudge
 		if o.Is2D() {
 			rows := o.Rows()
 			cols := o.Cols()
-			if b != nil && !b.reserve(rows*cols) {
+			if b != nil && !b.reserve(rows*cols, sliceSlotBytes) {
 				return nil
 			}
 			result := make([]interface{}, rows)
@@ -489,7 +532,7 @@ func toGo(obj object.Object, path map[object.Object]struct{}, b *conversionBudge
 			}
 			return result
 		}
-		if b != nil && !b.reserve(len(o.Data)) {
+		if b != nil && !b.reserve(len(o.Data), sliceSlotBytes) {
 			return nil
 		}
 		result := make([]interface{}, len(o.Data))
@@ -500,7 +543,11 @@ func toGo(obj object.Object, path map[object.Object]struct{}, b *conversionBudge
 		return result
 	default:
 		// For other types (like ReturnValue, Break, Continue), return string representation
-		return o.Inspect()
+		str := o.Inspect()
+		if b != nil && !b.addBytes(len(str)) {
+			return nil
+		}
+		return str
 	}
 }
 

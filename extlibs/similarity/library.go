@@ -11,6 +11,7 @@ import (
 
 	clifuzzy "github.com/paularlott/cli/fuzzy"
 	"github.com/paularlott/scriptling/conversion"
+	"github.com/paularlott/scriptling/libutil"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -57,7 +58,10 @@ func buildLibrary() *object.Library {
 
 				items := toNamedItems(itemsList, keyField)
 				opts := clifuzzy.Options{MaxResults: int(maxResults), Threshold: threshold}
-				results := clifuzzy.Search(query, items, opts)
+				results, errObj := fuzzySearch(query, items, opts, libutil.NewWorkMeter(ctx))
+				if errObj != nil {
+					return errObj
+				}
 
 				resultList := make([]map[string]any, len(results))
 				for i, r := range results {
@@ -97,8 +101,11 @@ Returns:
 				threshold := kwargs.MustGetFloat("threshold", 0.5)
 
 				items := toNamedItems(itemsList, keyField)
-				opts := clifuzzy.Options{MaxResults: 5, Threshold: threshold}
-				result := clifuzzy.Best(query, items, entityType, opts)
+				_ = threshold // clifuzzy.Best ranks its suggestions at 0.5 whatever is asked
+				result, errObj := fuzzyBest(query, items, entityType, libutil.NewWorkMeter(ctx))
+				if errObj != nil {
+					return errObj
+				}
 
 				resultMap := map[string]any{
 					"found": result.Found,
@@ -153,7 +160,11 @@ Returns:
 					return object.NewFloat(0.0)
 				}
 
-				return object.NewFloat(clifuzzy.Score(s1, s2))
+				score, errObj := fuzzyScore(s1, s2, libutil.NewWorkMeter(ctx))
+				if errObj != nil {
+					return errObj
+				}
+				return object.NewFloat(score)
 			},
 			HelpText: `score(s1, s2) - Calculate fuzzy similarity between two strings
 
@@ -192,7 +203,14 @@ Returns:
 				if numHashes <= 0 {
 					numHashes = defaultHashes
 				}
-				return conversion.FromGo(computeMinHash(text, numHashes))
+				if errObj := object.CheckAllocFor("minhash signature", int64(numHashes)*4); errObj != nil {
+					return errObj
+				}
+				sig, errObj := computeMinHash(text, numHashes, libutil.NewWorkMeter(ctx))
+				if errObj != nil {
+					return errObj
+				}
+				return conversion.FromGo(sig)
 			},
 			HelpText: `minhash(text, num_hashes=64) - Compute a MinHash signature for text
 
@@ -343,7 +361,11 @@ Returns:
 					MaxSentences: int(kwargs.MustGetInt("max_sentences", 0)),
 					Ratio:        kwargs.MustGetFloat("ratio", 0),
 				}
-				return object.NewString(Extract(text, opts))
+				out, errObj := extract(ctx, text, opts)
+				if errObj != nil {
+					return errObj
+				}
+				return object.NewString(out)
 			},
 			HelpText: `extract(text, max_chars=None, max_sentences=None, ratio=None) - Keep the most informative sentences
 
@@ -388,6 +410,9 @@ Example:
 					return err
 				}
 				dims := int(kwargs.MustGetInt("dims", 256))
+				if errObj := object.CheckElements(int64(dims)); errObj != nil {
+					return errObj
+				}
 
 				vec := VectorFromText(text, dims)
 				elements := make([]object.Object, len(vec))
@@ -513,10 +538,10 @@ func tokenize(text string) []string {
 	return tokens
 }
 
-func computeMinHash(text string, numHashes int) []uint32 {
+func computeMinHash(text string, numHashes int, meter *libutil.WorkMeter) ([]uint32, object.Object) {
 	tokens := tokenize(text)
 	if len(tokens) == 0 {
-		return make([]uint32, numHashes)
+		return make([]uint32, numHashes), nil
 	}
 
 	signature := make([]uint32, numHashes)
@@ -527,6 +552,9 @@ func computeMinHash(text string, numHashes int) []uint32 {
 	for _, token := range tokens {
 		if len(token) <= minTokenLength {
 			continue
+		}
+		if errObj := meter.Add(numHashes); errObj != nil {
+			return nil, errObj
 		}
 
 		h := fnv.New128a()
@@ -546,7 +574,7 @@ func computeMinHash(text string, numHashes int) []uint32 {
 		}
 	}
 
-	return signature
+	return signature, nil
 }
 
 func minHashSimilarity(a, b []uint32) float64 {

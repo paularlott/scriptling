@@ -277,11 +277,13 @@ Example:
 					nt.SetField("_fields", fieldsTuple)
 					// Precompute the display form (the __str_repr__ idiom
 					// datetime uses) so print() shows P(x=1, y='hi').
-					parts := make([]string, 0, len(fieldNames))
-					for i, name := range fieldNames {
-						parts = append(parts, name+"="+reprValue(args[i+1]))
+					// A display form past the output limit is left to
+					// __repr__, which reports it when asked.
+					if display, errObj := fieldsRepr(typename.StringValue(), fieldNames, func(name string) (object.Object, bool) {
+						return nt.GetField(name)
+					}); errObj == nil {
+						nt.SetField("__str_repr__", object.NewString(display))
 					}
-					nt.SetField("__str_repr__", object.NewString(typename.StringValue()+"("+strings.Join(parts, ", ")+")"))
 					return &object.Null{}
 				},
 			}
@@ -377,13 +379,11 @@ Example:
 			methods["__repr__"] = &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					nt := args[0].(*object.Instance)
-					parts := make([]string, 0, len(fieldNames))
-					for _, name := range fieldNames {
-						if v, exists := nt.GetField(name); exists {
-							parts = append(parts, name+"="+reprValue(v))
-						}
+					display, errObj := fieldsRepr(typename.StringValue(), fieldNames, nt.GetField)
+					if errObj != nil {
+						return errObj
 					}
-					return object.NewString(typename.StringValue() + "(" + strings.Join(parts, ", ") + ")")
+					return object.NewString(display)
 				},
 			}
 
@@ -407,11 +407,12 @@ Example:
 						fields[name] = v
 					}
 					// Recompute the precomputed display form for the new values.
-					parts := make([]string, 0, len(fieldNames))
-					for _, name := range fieldNames {
-						parts = append(parts, name+"="+reprValue(fields[name]))
+					delete(fields, "__str_repr__")
+					if display, errObj := fieldsRepr(typename.StringValue(), fieldNames, func(name string) (object.Object, bool) {
+						return fields[name], true
+					}); errObj == nil {
+						fields["__str_repr__"] = object.NewString(display)
 					}
-					fields["__str_repr__"] = object.NewString(typename.StringValue() + "(" + strings.Join(parts, ", ") + ")")
 					return object.NewInstanceWithFields(ntClass, fields)
 				},
 				HelpText: `_replace(**changes) - Return a new instance with fields replaced`,
@@ -618,6 +619,77 @@ func init() {
 	copyDequeFn = copyDeque
 	dequeClassRef = DequeClass
 	counterClassRef = CounterClass
+}
+
+// reprBuilder assembles a library type's repr, such as P(x=1, y=[2]), held
+// to object.OutputLimit as it is written: each field can be a container
+// holding the same value many times over, so the repr of a small value can
+// be huge, and it must stop at the limit rather than be built first.
+type reprBuilder struct {
+	b     strings.Builder
+	limit int64
+	err   object.Object
+}
+
+func newReprBuilder() *reprBuilder {
+	return &reprBuilder{limit: object.OutputLimit()}
+}
+
+// WriteString appends s, recording a MemoryError once over the limit.
+func (r *reprBuilder) WriteString(s string) {
+	if r.err != nil {
+		return
+	}
+	r.b.WriteString(s)
+	if r.limit > 0 && int64(r.b.Len()) > r.limit {
+		r.err = object.NewOutputTooLargeError("repr", r.limit)
+	}
+}
+
+// Value appends v as reprValue renders it, with containers rendered within
+// the limit (a raise while rendering is recorded).
+func (r *reprBuilder) Value(v object.Object) {
+	if r.err != nil {
+		return
+	}
+	if object.IsReprContainer(v) {
+		s, errObj := object.InspectRepr(v, nil)
+		if errObj != nil {
+			r.err = errObj
+			return
+		}
+		r.WriteString(s)
+		return
+	}
+	r.WriteString(reprValue(v))
+}
+
+// Result returns the repr, or the error that stopped it.
+func (r *reprBuilder) Result() (string, object.Object) {
+	return r.b.String(), r.err
+}
+
+// fieldsRepr renders Typename(name=value, ...) for the fields get returns.
+func fieldsRepr(typename string, names []string, get func(string) (object.Object, bool)) (string, object.Object) {
+	r := newReprBuilder()
+	r.WriteString(typename)
+	r.WriteString("(")
+	first := true
+	for _, name := range names {
+		v, ok := get(name)
+		if !ok {
+			continue
+		}
+		if !first {
+			r.WriteString(", ")
+		}
+		first = false
+		r.WriteString(name)
+		r.WriteString("=")
+		r.Value(v)
+	}
+	r.WriteString(")")
+	return r.Result()
 }
 
 // reprValue renders a value for a namedtuple repr: strings use Python

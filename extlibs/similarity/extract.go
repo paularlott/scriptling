@@ -1,13 +1,18 @@
 package similarity
 
 import (
+	"context"
 	"math"
 	"runtime"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/paularlott/scriptling/libutil"
+	"github.com/paularlott/scriptling/object"
 )
 
 // Sentences splits text into sentences. A sentence ends at ". ", "! " or
@@ -114,10 +119,19 @@ const (
 // along with the first occurrence of each distinct line, in order, because
 // there the unusual lines are the informative ones.
 func Extract(text string, opts ExtractOptions) string {
+	out, _ := extract(context.Background(), text, opts)
+	return out
+}
+
+// extract is Extract honouring ctx's cancellation and the memory left for
+// the similarity matrix: TextRank is quadratic in the number of distinct
+// sentences, in both time and memory. A non-nil Object is the error that
+// ends the call.
+func extract(ctx context.Context, text string, opts ExtractOptions) (string, object.Object) {
 	sentences := Sentences(text)
 	n := len(sentences)
 	if n == 0 {
-		return strings.TrimSpace(text)
+		return strings.TrimSpace(text), nil
 	}
 
 	if opts.MaxChars <= 0 && opts.MaxSentences <= 0 && opts.Ratio <= 0 {
@@ -134,7 +148,7 @@ func Extract(text string, opts ExtractOptions) string {
 		} else if opts.MaxChars <= 0 || utf8.RuneCountInString(text) <= opts.MaxChars {
 			if opts.MaxSentences <= 0 || n <= opts.MaxSentences {
 				if opts.Ratio <= 0 || opts.Ratio >= 1 || n == 1 {
-					return strings.TrimSpace(text)
+					return strings.TrimSpace(text), nil
 				}
 			}
 		}
@@ -169,7 +183,10 @@ func Extract(text string, opts ExtractOptions) string {
 	if distinctRatio(sentences) < lowVarietyThreshold {
 		order = logModeOrder(sentences)
 	} else {
-		order = textRankOrderOf(sentences, unique)
+		var errObj object.Object
+		if order, errObj = textRankOrderOf(ctx, sentences, unique); errObj != nil {
+			return "", errObj
+		}
 	}
 
 	// Greedy selection by rank within the bounds, then restore original order.
@@ -209,7 +226,7 @@ func Extract(text string, opts ExtractOptions) string {
 			out = append(out, sentences[i])
 		}
 	}
-	return strings.Join(out, joiner)
+	return strings.Join(out, joiner), nil
 }
 
 // fitsBudget reports whether every bound that is set is already satisfied.
@@ -335,31 +352,50 @@ func firstOccurrences(sentences []string) []int {
 
 // textRankOrderOf ranks the given candidate sentence indexes from highest
 // to lowest TextRank score, ties broken by position.
-func textRankOrderOf(sentences []string, candidates []int) []int {
+func textRankOrderOf(ctx context.Context, sentences []string, candidates []int) ([]int, object.Object) {
 	texts := make([]string, len(candidates))
 	for i, idx := range candidates {
 		texts[i] = sentences[idx]
 	}
-	ranked := textRankOrder(texts)
+	ranked, errObj := textRankOrder(ctx, texts)
+	if errObj != nil {
+		return nil, errObj
+	}
 	order := make([]int, len(ranked))
 	for i, r := range ranked {
 		order[i] = candidates[r]
 	}
-	return order
+	return order, nil
 }
 
 // textRankOrder returns sentence indexes from highest to lowest TextRank
 // score, ties broken by position.
-func textRankOrder(sentences []string) []int {
+//
+// The n*n similarity matrix is checked against the memory left before it is
+// built, and ctx is checked once per matrix row (n cells) and per row of
+// each ranking iteration, so a cancelled call stops promptly.
+func textRankOrder(ctx context.Context, sentences []string) ([]int, object.Object) {
 	n := len(sentences)
+	if errObj := object.CheckRoom("similarity matrix", int64(n)*int64(n)*8); errObj != nil {
+		return nil, errObj
+	}
+	var stopped atomic.Bool
 	vectors := make([][]float64, n)
 	parallelFor(n, func(i int) {
 		vectors[i] = VectorFromText(sentences[i], extractVectorDims)
 	})
 
-	// Symmetric similarity matrix; rows computed in parallel.
+	// Symmetric similarity matrix; rows computed in parallel. A worker that
+	// sees the call cancelled stops filling rows.
 	sim := make([][]float64, n)
 	parallelFor(n, func(i int) {
+		if stopped.Load() {
+			return
+		}
+		if ctx.Err() != nil {
+			stopped.Store(true)
+			return
+		}
 		row := make([]float64, n)
 		for j := 0; j < n; j++ {
 			if i == j {
@@ -372,6 +408,10 @@ func textRankOrder(sentences []string) []int {
 		}
 		sim[i] = row
 	})
+	if stopped.Load() {
+		return nil, libutil.CancelledError(ctx)
+	}
+	meter := libutil.NewWorkMeter(ctx)
 
 	rowSums := make([]float64, n)
 	for i := 0; i < n; i++ {
@@ -388,6 +428,9 @@ func textRankOrder(sentences []string) []int {
 	for iter := 0; iter < textRankIterations; iter++ {
 		delta := 0.0
 		for i := 0; i < n; i++ {
+			if errObj := meter.Add(n); errObj != nil {
+				return nil, errObj
+			}
 			sum := 0.0
 			for j := 0; j < n; j++ {
 				if sim[j][i] > 0 && rowSums[j] > 0 {
@@ -413,7 +456,7 @@ func textRankOrder(sentences []string) []int {
 		}
 		return scores[order[a]] > scores[order[b]]
 	})
-	return order
+	return order, nil
 }
 
 // parallelFor runs fn(i) for i in [0, n) across up to GOMAXPROCS goroutines.

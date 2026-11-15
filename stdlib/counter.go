@@ -188,6 +188,23 @@ func counterKeyRepr(k object.Object) string {
 	return r
 }
 
+// counterValue appends a key or count as counterKeyRepr renders it.
+func (r *reprBuilder) counterValue(v object.Object) {
+	if r.err != nil {
+		return
+	}
+	if s, ok := v.(*object.String); ok {
+		r.WriteString(object.ReprString(s.StringValue()))
+		return
+	}
+	out, errObj := object.InspectRepr(v, nil)
+	if errObj != nil {
+		r.err = errObj
+		return
+	}
+	r.WriteString(out)
+}
+
 type counterEntry struct {
 	key   object.Object
 	count object.Object
@@ -427,11 +444,22 @@ var CounterClass = &object.Class{
 			if len(entries) == 0 {
 				return object.NewString("Counter()")
 			}
-			parts := make([]string, len(entries))
+			r := newReprBuilder()
+			r.WriteString("Counter({")
 			for i, e := range entries {
-				parts[i] = counterKeyRepr(e.key) + ": " + counterKeyRepr(e.count)
+				if i > 0 {
+					r.WriteString(", ")
+				}
+				r.counterValue(e.key)
+				r.WriteString(": ")
+				r.counterValue(e.count)
 			}
-			return object.NewString("Counter({" + strings.Join(parts, ", ") + "})")
+			r.WriteString("})")
+			out, errObj := r.Result()
+			if errObj != nil {
+				return errObj
+			}
+			return object.NewString(out)
 		}),
 		"__add__": counterOperator('+'),
 		"__sub__": counterOperator('-'),

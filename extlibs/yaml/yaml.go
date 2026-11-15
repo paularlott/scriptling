@@ -95,15 +95,26 @@ func yamlDumpFunc(ctx context.Context, kwargs object.Kwargs, args ...object.Obje
 		return err
 	}
 
-	goData, depthErr := conversion.ToGoChecked(args[0])
-	if depthErr != nil {
-		return depthErr
+	e := newYAMLEmitter()
+	if e.emitDocument(args[0]) {
+		return object.NewString(e.buf.String())
+	}
+	if e.err != nil {
+		return e.err
 	}
 
+	// A key yaml.v3 writes in the complex form: let yaml.Marshal lay the
+	// document out, from a conversion held to the limits.
+	goData, convErr := conversion.ToGoChecked(args[0])
+	if convErr != nil {
+		return convErr
+	}
 	yamlBytes, marshalErr := yaml.Marshal(goData)
 	if marshalErr != nil {
 		return errors.NewError("yaml dump error: %s", marshalErr.Error())
 	}
-
+	if errObj := object.CheckAllocFor("YAML", int64(len(yamlBytes))); errObj != nil {
+		return errObj
+	}
 	return object.NewString(string(yamlBytes))
 }

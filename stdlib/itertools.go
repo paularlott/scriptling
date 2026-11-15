@@ -8,6 +8,7 @@ import (
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/evaliface"
+	"github.com/paularlott/scriptling/libutil"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -435,10 +436,17 @@ next(), zip(), enumerate() or itertools.islice.`,
 			if iter, isIter := iterTarget.(*object.Iterator); isIter {
 				pos := int64(0)
 				done := false
+				// Skipping to start can pull any number of elements in one
+				// call, so it honours the call's cancellation.
+				meter := libutil.NewWorkMeter(ctx)
 				next := func() (object.Object, bool) {
 					for !done {
 						if stop >= 0 && pos >= stop {
 							break
+						}
+						if errObj := meter.Tick(); errObj != nil {
+							done = true
+							return errObj, true
 						}
 						val, ok := iter.Next()
 						if !ok {
@@ -810,6 +818,12 @@ Example:
 					collected = append(collected, elems)
 				}
 			}
+			if repeatN < 0 {
+				repeatN = 0
+			}
+			if errObj := object.CheckElements(repeatN * int64(len(collected))); errObj != nil {
+				return errObj
+			}
 			iterables := make([][]object.Object, 0, int(repeatN)*len(collected))
 			for rep := int64(0); rep < repeatN; rep++ {
 				iterables = append(iterables, collected...)
@@ -822,8 +836,13 @@ Example:
 				}
 			}
 
-			// Calculate cartesian product
-			result := []object.Object{}
+			// Calculate cartesian product. The result grows as the product
+			// of the input sizes, so it is held to the limits as it grows and
+			// the call's cancellation is checked as it goes.
+			result, errObj := libutil.NewResultList(ctx, 0)
+			if errObj != nil {
+				return errObj
+			}
 			indices := make([]int, len(iterables))
 
 			for {
@@ -832,7 +851,9 @@ Example:
 				for i, idx := range indices {
 					tuple[i] = iterables[i][idx]
 				}
-				result = append(result, newTrackedTuple(tuple))
+				if errObj := result.Add(newTrackedTuple(tuple)); errObj != nil {
+					return errObj
+				}
 
 				// Increment indices
 				carry := true
@@ -848,8 +869,7 @@ Example:
 					break
 				}
 			}
-			object.TrackSlice(result)
-			return &object.List{Elements: result}
+			return result.List()
 		},
 		HelpText: `product(*iterables) - Cartesian product of iterables
 
@@ -904,10 +924,12 @@ Example:
 			}
 
 			// Generate permutations
-			result := []object.Object{}
-			generatePermutations(elements, r, []object.Object{}, make([]bool, len(elements)), &result)
-			object.TrackSlice(result)
-			return &object.List{Elements: result}
+			c, errObj := newCombinator(ctx)
+			if errObj != nil {
+				return errObj
+			}
+			c.permutations(elements, r, []object.Object{}, make([]bool, len(elements)))
+			return c.result()
 		},
 		HelpText: `permutations(iterable[, r]) - Generate permutations
 
@@ -957,10 +979,12 @@ Example:
 			}
 
 			// Generate combinations
-			result := []object.Object{}
-			generateCombinations(elements, r, 0, []object.Object{}, &result)
-			object.TrackSlice(result)
-			return &object.List{Elements: result}
+			c, errObj := newCombinator(ctx)
+			if errObj != nil {
+				return errObj
+			}
+			c.combinations(elements, r, 0, []object.Object{}, false)
+			return c.result()
 		},
 		HelpText: `combinations(iterable, r) - Generate combinations
 
@@ -1012,10 +1036,12 @@ Example:
 			}
 
 			// Generate combinations with replacement
-			result := []object.Object{}
-			generateCombinationsWithReplacement(elements, r, 0, []object.Object{}, &result)
-			object.TrackSlice(result)
-			return &object.List{Elements: result}
+			c, errObj := newCombinator(ctx)
+			if errObj != nil {
+				return errObj
+			}
+			c.combinations(elements, r, 0, []object.Object{}, true)
+			return c.result()
 		},
 		HelpText: `combinations_with_replacement(iterable, r) - Generate combinations with replacement
 
@@ -1475,48 +1501,75 @@ Example:
 
 // Helper functions for permutations and combinations
 
-func generatePermutations(elements []object.Object, r int, current []object.Object, used []bool, result *[]object.Object) {
+// combinator builds the result of permutations, combinations and
+// combinations_with_replacement. Their results grow factorially, so the list
+// is held to the value and memory limits as it grows, and the search itself
+// (which can scan for a long time between results) is charged to a
+// WorkMeter, so a call stops on its limits or its cancellation instead of
+// running to completion first. Once err is set the search unwinds.
+type combinator struct {
+	out   *libutil.ResultList
+	meter *libutil.WorkMeter
+	err   object.Object
+}
+
+func newCombinator(ctx context.Context) (*combinator, object.Object) {
+	out, errObj := libutil.NewResultList(ctx, 0)
+	if errObj != nil {
+		return nil, errObj
+	}
+	return &combinator{out: out, meter: libutil.NewWorkMeter(ctx)}, nil
+}
+
+// emit adds a copy of current as a tuple.
+func (c *combinator) emit(current []object.Object) {
+	tuple := make([]object.Object, len(current))
+	copy(tuple, current)
+	c.err = c.out.Add(newTrackedTuple(tuple))
+}
+
+// result is the built list, or the error that stopped the build.
+func (c *combinator) result() object.Object {
+	if c.err != nil {
+		return c.err
+	}
+	return c.out.List()
+}
+
+func (c *combinator) permutations(elements []object.Object, r int, current []object.Object, used []bool) {
 	if len(current) == r {
-		tuple := make([]object.Object, r)
-		copy(tuple, current)
-		*result = append(*result, newTrackedTuple(tuple))
+		c.emit(current)
 		return
 	}
-	for i := 0; i < len(elements); i++ {
+	if c.err = c.meter.Add(len(elements)); c.err != nil {
+		return
+	}
+	for i := 0; i < len(elements) && c.err == nil; i++ {
 		if !used[i] {
 			used[i] = true
 			current = append(current, elements[i])
-			generatePermutations(elements, r, current, used, result)
+			c.permutations(elements, r, current, used)
 			current = current[:len(current)-1]
 			used[i] = false
 		}
 	}
 }
 
-func generateCombinations(elements []object.Object, r int, start int, current []object.Object, result *[]object.Object) {
+func (c *combinator) combinations(elements []object.Object, r int, start int, current []object.Object, replace bool) {
 	if len(current) == r {
-		tuple := make([]object.Object, r)
-		copy(tuple, current)
-		*result = append(*result, newTrackedTuple(tuple))
+		c.emit(current)
 		return
 	}
-	for i := start; i < len(elements); i++ {
-		current = append(current, elements[i])
-		generateCombinations(elements, r, i+1, current, result)
-		current = current[:len(current)-1]
-	}
-}
-
-func generateCombinationsWithReplacement(elements []object.Object, r int, start int, current []object.Object, result *[]object.Object) {
-	if len(current) == r {
-		tuple := make([]object.Object, r)
-		copy(tuple, current)
-		*result = append(*result, newTrackedTuple(tuple))
+	if c.err = c.meter.Add(len(elements) - start); c.err != nil {
 		return
 	}
-	for i := start; i < len(elements); i++ {
+	for i := start; i < len(elements) && c.err == nil; i++ {
 		current = append(current, elements[i])
-		generateCombinationsWithReplacement(elements, r, i, current, result)
+		next := i + 1
+		if replace {
+			next = i
+		}
+		c.combinations(elements, r, next, current, replace)
 		current = current[:len(current)-1]
 	}
 }

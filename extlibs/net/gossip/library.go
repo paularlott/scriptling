@@ -210,7 +210,10 @@ Returns:
 						return errors.NewError("message_type must be >= 128")
 					}
 
-					payload := conversion.ToGo(args[1])
+					payload, limitErr := conversion.ToGoLimited(args[1])
+					if limitErr != nil {
+						return limitErr
+					}
 					reliable := false
 					if r := kwargs.Get("reliable"); r != nil {
 						if b, e := r.AsBool(); e == nil {
@@ -308,7 +311,10 @@ Returns:
 						return errors.NewError("message_type must be >= 128")
 					}
 
-					payload := conversion.ToGo(args[1])
+					payload, limitErr := conversion.ToGoLimited(args[1])
+					if limitErr != nil {
+						return limitErr
+					}
 					reliable := false
 					if r := kwargs.Get("reliable"); r != nil {
 						if b, e := r.AsBool(); e == nil {
@@ -474,7 +480,10 @@ Parameters:
 						return errors.NewError("message_type must be >= 128 (user messages)")
 					}
 
-					payload := conversion.ToGo(args[1])
+					payload, limitErr := conversion.ToGoLimited(args[1])
+					if limitErr != nil {
+						return limitErr
+					}
 					reliable := false
 					if r := kwargs.Get("reliable"); r != nil {
 						if b, e := r.AsBool(); e == nil {
@@ -517,7 +526,10 @@ Parameters:
 						return errors.NewError("message_type must be >= 128 (user messages)")
 					}
 
-					payload := conversion.ToGo(args[2])
+					payload, limitErr := conversion.ToGoLimited(args[2])
+					if limitErr != nil {
+						return limitErr
+					}
 					reliable := false
 					if r := kwargs.Get("reliable"); r != nil {
 						if b, e := r.AsBool(); e == nil {
@@ -568,7 +580,10 @@ Parameters:
 						return errors.NewError("node not found: %s", nodeIDStr)
 					}
 
-					payload := conversion.ToGo(args[2])
+					payload, limitErr := conversion.ToGoLimited(args[2])
+					if limitErr != nil {
+						return limitErr
+					}
 					reliable := false
 					if r := kwargs.Get("reliable"); r != nil {
 						if b, e := r.AsBool(); e == nil {
@@ -716,7 +731,10 @@ The handler receives the same dict as handle() and must return the reply data.`,
 						return errors.NewError("node not found: %s", nodeIDStr)
 					}
 
-					payload := conversion.ToGo(args[2])
+					payload, limitErr := conversion.ToGoLimited(args[2])
+					if limitErr != nil {
+						return limitErr
+					}
 					var response interface{}
 					var sendErr error
 					object.RunBlocking(ctx, func() { sendErr = c.SendToWithResponse(node, gossip.MessageType(msgType), payload, &response) })

@@ -231,7 +231,11 @@ func newWebSocketLibrary(guard *netsecurity.Guard) *object.Library {
 
 								// Check if it's a dict - convert to JSON
 								if dict, ok := msg.(*object.Dict); ok {
-									jsonData, err := json.Marshal(conversion.ToGo(dict))
+									goVal, limitErr := conversion.ToGoLimited(dict)
+									if limitErr != nil {
+										return limitErr
+									}
+									jsonData, err := json.Marshal(goVal)
 									if err != nil {
 										return errors.NewError("failed to encode JSON: %s", err.Error())
 									}

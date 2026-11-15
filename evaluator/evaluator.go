@@ -49,6 +49,7 @@ const DefaultMaxCallDepth = 1000
 type CallDepth struct {
 	current int32
 	max     int32
+	calls   uint32 // calls entered, for enterCall's periodic check
 }
 
 // NewCallDepth creates a new CallDepth tracker with the specified max depth
@@ -77,6 +78,43 @@ func EnsureCallDepth(ctx context.Context) context.Context {
 		return ctx
 	}
 	return SetCallDepthInContext(ctx, NewCallDepth(DefaultMaxCallDepth))
+}
+
+// callCheckEvery is how many function calls pass between enterCall's
+// context checks.
+const callCheckEvery = 256
+
+// enterCall is Enter for a function call, returning the error that stops
+// it: the depth limit, or every callCheckEvery calls the call's
+// cancellation. A Go builtin that calls back into the script in a loop
+// (functools.reduce, a sort key, re.sub with a callable) runs no statement
+// loop of its own, and a short function or lambda body never reaches the
+// evaluator's batched checks, so without this a loop of callbacks would run
+// to completion whatever the call's deadline. On error the depth is left
+// unchanged.
+func (cd *CallDepth) enterCall(ctx context.Context) object.Object {
+	if !cd.Enter() {
+		return cd.LimitError()
+	}
+	if cd.calls++; cd.calls%callCheckEvery == 0 {
+		if errObj := callCheck(ctx); errObj != nil {
+			cd.current--
+			return errObj
+		}
+	}
+	return nil
+}
+
+// callCheck is enterCall's slow path: the evaluator's batched check,
+// classifying the stop as its loops do.
+//
+//go:noinline
+func callCheck(ctx context.Context) object.Object {
+	if ctx == nil {
+		return nil
+	}
+	cc := newContextChecker(ctx)
+	return cc.checkBatch()
 }
 
 // Exit decrements call depth
@@ -439,7 +477,7 @@ func evalObjectsEqualChecked(ctx context.Context, a, b object.Object, env *objec
 	}
 	// Containers compare by value, as Python's == does (the `in` operator
 	// already used deep equality; count/index/remove agree through here).
-	return objectsDeepEqual(a, b)
+	return objectsDeepEqual(ctx, a, b)
 }
 
 // searchEqual is the equality Python's membership tests and list/tuple
@@ -478,8 +516,14 @@ func errCompareTooDeep() object.Object {
 // objectsDeepEqual compares two objects for deep equality (handles lists,
 // tuples, dicts). The second return is a RecursionError when the values nest
 // deeper than maxCompareDepth.
-func objectsDeepEqual(a, b object.Object) (bool, object.Object) {
-	return deepEqual(a, b, 0)
+func objectsDeepEqual(ctx context.Context, a, b object.Object) (bool, object.Object) {
+	switch a.(type) {
+	case *object.List, *object.Tuple, *object.Dict:
+		// Only container walks need the cancellation budget.
+		budget := cmpBudget{ctx: ctx}
+		return deepEqual(&budget, a, b, 0)
+	}
+	return deepEqual(nil, a, b, 0)
 }
 
 // deepEqual is objectsDeepEqual at a nesting depth. Values that are the same
@@ -488,7 +532,7 @@ func objectsDeepEqual(a, b object.Object) (bool, object.Object) {
 // a container the same float is equal to itself, so [nan] == [nan] when both
 // hold one NaN. The identity checks sit in the type arms as concrete pointer
 // comparisons, which are cheaper than comparing the interfaces.
-func deepEqual(a, b object.Object, depth int) (bool, object.Object) {
+func deepEqual(budget *cmpBudget, a, b object.Object, depth int) (bool, object.Object) {
 	if a.Type() != b.Type() {
 		// Same bridge as objectsEqual: type-name strings and type builtins
 		// ("int" vs int) name the same type.
@@ -545,8 +589,11 @@ func deepEqual(a, b object.Object, depth int) (bool, object.Object) {
 		if depth >= maxCompareDepth {
 			return false, errCompareTooDeep()
 		}
+		if errObj := budget.step(); errObj != nil {
+			return false, errObj
+		}
 		for i, elem := range av.Elements {
-			if eq, err := deepEqual(elem, bv.Elements[i], depth+1); !eq || err != nil {
+			if eq, err := deepEqual(budget, elem, bv.Elements[i], depth+1); !eq || err != nil {
 				return false, err
 			}
 		}
@@ -562,8 +609,11 @@ func deepEqual(a, b object.Object, depth int) (bool, object.Object) {
 		if depth >= maxCompareDepth {
 			return false, errCompareTooDeep()
 		}
+		if errObj := budget.step(); errObj != nil {
+			return false, errObj
+		}
 		for i, elem := range av.Elements {
-			if eq, err := deepEqual(elem, bv.Elements[i], depth+1); !eq || err != nil {
+			if eq, err := deepEqual(budget, elem, bv.Elements[i], depth+1); !eq || err != nil {
 				return false, err
 			}
 		}
@@ -579,12 +629,15 @@ func deepEqual(a, b object.Object, depth int) (bool, object.Object) {
 		if depth >= maxCompareDepth {
 			return false, errCompareTooDeep()
 		}
+		if errObj := budget.step(); errObj != nil {
+			return false, errObj
+		}
 		for key, pairA := range av.Pairs {
 			pairB, ok := bv.Pairs[key]
 			if !ok {
 				return false, nil
 			}
-			if eq, err := deepEqual(pairA.Value, pairB.Value, depth+1); !eq || err != nil {
+			if eq, err := deepEqual(budget, pairA.Value, pairB.Value, depth+1); !eq || err != nil {
 				return false, err
 			}
 		}
@@ -864,7 +917,7 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			}
 			return errors.NewTypeError("int", right.Type().String())
 		case ast.OpEq, ast.OpNeq:
-			eq, rerr := objectsDeepEqual(left, right)
+			eq, rerr := objectsDeepEqual(ctx, left, right)
 			if rerr != nil {
 				return rerr
 			}
@@ -2258,8 +2311,8 @@ func applyUserFunctionDirect(ctx context.Context, fn *object.Function, arg objec
 		return newGenerator(ctx, fn, []object.Object{arg}, nil, fn.Env, plan)
 	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
-		if !cd.Enter() {
-			return cd.LimitError()
+		if errObj := cd.enterCall(ctx); errObj != nil {
+			return errObj
 		}
 		defer cd.Exit()
 	}
@@ -2295,8 +2348,8 @@ func applyUserFunction2(ctx context.Context, fn *object.Function, a0, a1 object.
 		return newGenerator(ctx, fn, []object.Object{a0, a1}, nil, fn.Env, plan)
 	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
-		if !cd.Enter() {
-			return cd.LimitError()
+		if errObj := cd.enterCall(ctx); errObj != nil {
+			return errObj
 		}
 		defer cd.Exit()
 	}
@@ -2334,8 +2387,8 @@ func applyUserFunctionN(ctx context.Context, fn *object.Function, args ...object
 		return newGenerator(ctx, fn, args, nil, fn.Env, plan)
 	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
-		if !cd.Enter() {
-			return cd.LimitError()
+		if errObj := cd.enterCall(ctx); errObj != nil {
+			return errObj
 		}
 		defer cd.Exit()
 	}
@@ -2396,8 +2449,8 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 	}
 	// Check call depth to prevent stack overflow
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
-		if !cd.Enter() {
-			return cd.LimitError()
+		if errObj := cd.enterCall(ctx); errObj != nil {
+			return errObj
 		}
 		defer cd.Exit()
 	}
@@ -2504,8 +2557,8 @@ func applyFunctionWithContext(ctx context.Context, fn object.Object, args []obje
 func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
 	// Check call depth to prevent stack overflow
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
-		if !cd.Enter() {
-			return cd.LimitError()
+		if errObj := cd.enterCall(ctx); errObj != nil {
+			return errObj
 		}
 		defer cd.Exit()
 	}
@@ -3535,7 +3588,7 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 				}
 				continue
 			}
-			eq, rerr := objectsDeepEqual(left, elem)
+			eq, rerr := objectsDeepEqual(ctx, left, elem)
 			if rerr != nil {
 				return rerr
 			}
@@ -3559,7 +3612,7 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 				}
 				continue
 			}
-			eq, rerr := objectsDeepEqual(left, elem)
+			eq, rerr := objectsDeepEqual(ctx, left, elem)
 			if rerr != nil {
 				return rerr
 			}
@@ -3618,7 +3671,7 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 				}
 				continue
 			}
-			eq, rerr := objectsDeepEqual(left, pair.Value)
+			eq, rerr := objectsDeepEqual(ctx, left, pair.Value)
 			if rerr != nil {
 				return rerr
 			}
@@ -3657,7 +3710,7 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 						return TRUE
 					}
 				} else {
-					eq, rerr := objectsDeepEqual(val, pair.Value)
+					eq, rerr := objectsDeepEqual(ctx, val, pair.Value)
 					if rerr != nil {
 						return rerr
 					}

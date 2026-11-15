@@ -93,9 +93,16 @@ type InstanceReprFunc func(*Instance) (string, Object)
 // InspectRepr renders a container as Python's repr() does: nested strings are
 // quoted, and nested instances are rendered by instanceRepr (their default
 // representation when it is nil). Non-containers render via Inspect.
+//
+// Under a value or memory limit the text is held to OutputLimit as it is
+// written: a container can hold the same value many times over, so a small
+// value can stand for an exponentially large text, and rendering stops with
+// a MemoryError as soon as the text passes the limit rather than after it is
+// built. Every element writes at least a byte, so this bounds the work too.
 func InspectRepr(obj Object, instanceRepr InstanceReprFunc) (string, Object) {
-	r := reprRenderer{seen: make(map[Object]struct{}), instanceRepr: instanceRepr}
+	r := reprRenderer{seen: make(map[Object]struct{}), instanceRepr: instanceRepr, limit: OutputLimit()}
 	r.container(obj)
+	r.over()
 	return r.out.String(), r.err
 }
 
@@ -126,7 +133,22 @@ type reprRenderer struct {
 	seen         map[Object]struct{} // containers on the path from the root
 	instanceRepr InstanceReprFunc
 	err          Object
-	depth        int // containers on the path from the root
+	depth        int   // containers on the path from the root
+	limit        int64 // longest text allowed, 0 for no limit (see OutputLimit)
+	used         int64 // text written by enclosing renderers (set elements)
+}
+
+// over reports, once the text has passed the limit, that rendering must stop,
+// recording the MemoryError.
+func (r *reprRenderer) over() bool {
+	if r.err != nil {
+		return true
+	}
+	if r.limit > 0 && r.used+int64(r.out.Len()) > r.limit {
+		r.err = errOutputTooLarge("repr", r.limit)
+		return true
+	}
+	return false
 }
 
 // errReprTooDeep is the RecursionError raised past MaxReprDepth.
@@ -140,7 +162,7 @@ func errReprTooDeep() *Exception {
 
 // element renders a value nested inside a container: repr semantics.
 func (r *reprRenderer) element(obj Object) {
-	if r.err != nil {
+	if r.over() {
 		return
 	}
 	switch o := obj.(type) {
@@ -216,6 +238,9 @@ func (r *reprRenderer) container(obj Object) {
 		r.out.WriteByte('{')
 		i := 0
 		for _, pair := range o.OrderedPairs() {
+			if r.over() {
+				return
+			}
 			if i > 0 {
 				r.out.WriteString(", ")
 			}
@@ -239,13 +264,18 @@ func (r *reprRenderer) container(obj Object) {
 		}
 		// Sorted for deterministic output.
 		parts := make([]string, 0, len(o.Elements))
+		used := r.used + int64(r.out.Len())
 		for _, e := range o.Elements {
-			sub := reprRenderer{seen: r.seen, instanceRepr: r.instanceRepr, depth: r.depth}
+			sub := reprRenderer{seen: r.seen, instanceRepr: r.instanceRepr, depth: r.depth, limit: r.limit, used: used}
 			sub.element(e)
+			if sub.err == nil {
+				sub.over()
+			}
 			if sub.err != nil {
 				r.err = sub.err
 				return
 			}
+			used += int64(sub.out.Len()) + 2
 			parts = append(parts, sub.out.String())
 		}
 		sort.Strings(parts)
@@ -275,6 +305,9 @@ func (r *reprRenderer) container(obj Object) {
 
 func (r *reprRenderer) sequence(elements []Object) {
 	for i, el := range elements {
+		if r.err != nil {
+			return
+		}
 		if i > 0 {
 			r.out.WriteString(", ")
 		}
@@ -288,6 +321,9 @@ func (r *reprRenderer) view(name string, d *Dict, each func(DictPair)) {
 	r.out.WriteString("([")
 	i := 0
 	for _, pair := range d.OrderedPairs() {
+		if r.over() {
+			return
+		}
 		if i > 0 {
 			r.out.WriteString(", ")
 		}
@@ -299,7 +335,15 @@ func (r *reprRenderer) view(name string, d *Dict, each func(DictPair)) {
 
 // inspectContainer is the Inspect of every container type: repr semantics
 // with instances in their default representation.
+//
+// Inspect cannot fail, so under a limit a text that passes it is cut short
+// just past the limit and ends in "...": the work stays bounded, and a
+// caller that makes a value of the text still refuses it for its size.
 func inspectContainer(obj Object) string {
-	s, _ := InspectRepr(obj, nil)
-	return s
+	r := reprRenderer{seen: make(map[Object]struct{}), limit: OutputLimit()}
+	r.container(obj)
+	if r.err != nil && r.limit > 0 && r.used+int64(r.out.Len()) > r.limit {
+		return r.out.String() + "..."
+	}
+	return r.out.String()
 }

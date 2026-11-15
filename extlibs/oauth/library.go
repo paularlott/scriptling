@@ -296,7 +296,11 @@ func dictArg(v object.Object, name string) (map[string]any, object.Object) {
 	}
 	out := make(map[string]any, len(d))
 	for k, val := range d {
-		out[k] = conversion.ToGo(val)
+		g, limitErr := conversion.ToGoLimited(val)
+		if limitErr != nil {
+			return nil, limitErr
+		}
+		out[k] = g
 	}
 	return out, nil
 }

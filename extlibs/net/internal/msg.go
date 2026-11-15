@@ -14,7 +14,11 @@ import (
 // Other types fall back to CoerceString.
 func MsgToBytes(msg object.Object) ([]byte, object.Object) {
 	if dict, ok := msg.(*object.Dict); ok {
-		jsonData, jsonErr := json.Marshal(conversion.ToGo(dict))
+		goVal, limitErr := conversion.ToGoLimited(dict)
+		if limitErr != nil {
+			return nil, limitErr
+		}
+		jsonData, jsonErr := json.Marshal(goVal)
 		if jsonErr != nil {
 			return nil, errors.NewError("failed to encode JSON: %s", jsonErr.Error())
 		}

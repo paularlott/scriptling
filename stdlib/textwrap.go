@@ -151,6 +151,13 @@ Example:
 					add = strings.TrimSpace(line) != ""
 				}
 				if add {
+					// Each prefix can be as long as the text, so the result
+					// is held to the limits whenever the buffer grows.
+					if need := b.Len() + len(prefix.StringValue()) + len(line); need > b.Cap() {
+						if errObj := object.CheckAllocFor("indented text", int64(need)); errObj != nil {
+							return errObj
+						}
+					}
 					b.WriteString(prefix.StringValue())
 				}
 				b.WriteString(line)
@@ -541,7 +548,9 @@ func (w *textWrapper) wrapChunks(chunks []string) ([]string, object.Object) {
 			chunks = chunks[:len(chunks)-1]
 		}
 		for len(chunks) > 0 {
-			l := runesLen(chunks[len(chunks)-1])
+			// Counted only as far as could fit, so a long word is not
+			// recounted in full for every piece broken off it.
+			l := runesUpTo(chunks[len(chunks)-1], max(width-curLen, 0)+1)
 			if curLen+l <= width {
 				curLine = append(curLine, chunks[len(chunks)-1])
 				chunks = chunks[:len(chunks)-1]
@@ -550,7 +559,7 @@ func (w *textWrapper) wrapChunks(chunks []string) ([]string, object.Object) {
 				break
 			}
 		}
-		if len(chunks) > 0 && runesLen(chunks[len(chunks)-1]) > width {
+		if len(chunks) > 0 && runesUpTo(chunks[len(chunks)-1], max(width, 0)+1) > width {
 			chunks, curLine = w.handleLongWord(chunks, curLine, curLen, width)
 			curLen = 0
 			for _, c := range curLine {
@@ -603,7 +612,11 @@ func (w *textWrapper) handleLongWord(chunks, curLine []string, curLen, width int
 		spaceLeft = width - curLen
 	}
 	if w.breakLongWords && spaceLeft > 0 {
-		chunk := []rune(chunks[len(chunks)-1])
+		// Only the first spaceLeft+1 runes matter: decoding the whole chunk
+		// for every piece broken off it would make breaking a long word
+		// quadratic in its length.
+		whole := chunks[len(chunks)-1]
+		chunk := firstRunes(whole, spaceLeft+1)
 		end := spaceLeft
 		if w.breakOnHyphens && len(chunk) > spaceLeft {
 			hyphen := -1
@@ -617,11 +630,49 @@ func (w *textWrapper) handleLongWord(chunks, curLine []string, curLen, width int
 				end = hyphen + 1
 			}
 		}
-		curLine = append(curLine, string(chunk[:end]))
-		chunks[len(chunks)-1] = string(chunk[end:])
+		end = min(end, len(chunk))
+		cut := runeOffset(whole, end)
+		curLine = append(curLine, whole[:cut])
+		chunks[len(chunks)-1] = whole[cut:]
 	} else if len(curLine) == 0 {
 		curLine = append(curLine, chunks[len(chunks)-1])
 		chunks = chunks[:len(chunks)-1]
 	}
 	return chunks, curLine
+}
+
+// firstRunes decodes at most n runes from the start of s.
+func firstRunes(s string, n int) []rune {
+	out := make([]rune, 0, min(n, len(s)))
+	for _, r := range s {
+		if len(out) == n {
+			break
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// runeOffset returns the byte offset of rune n in s (len(s) past the end).
+func runeOffset(s string, n int) int {
+	i := 0
+	for off := range s {
+		if i == n {
+			return off
+		}
+		i++
+	}
+	return len(s)
+}
+
+// runesUpTo counts the runes in s, stopping at limit.
+func runesUpTo(s string, limit int) int {
+	n := 0
+	for range s {
+		if n == limit {
+			break
+		}
+		n++
+	}
+	return n
 }

@@ -593,7 +593,11 @@ func toolsFromKwargs(kwargs object.Kwargs) ([]ai.Tool, *object.Error) {
 	toolsObjs := kwargs.MustGetList("tools", nil)
 	tools := make([]ai.Tool, 0, len(toolsObjs))
 	for i, toolObj := range toolsObjs {
-		toolMap, ok := conversion.ToGo(toolObj).(map[string]any)
+		toolGo, limitErr := conversion.ToGoLimited(toolObj)
+		if limitErr != nil {
+			return nil, limitErr
+		}
+		toolMap, ok := toolGo.(map[string]any)
 		if !ok {
 			return nil, &object.Error{Message: fmt.Sprintf("tools[%d] must be a dict", i)}
 		}
@@ -651,7 +655,10 @@ func extraBodyFromKwargs(kwargs object.Kwargs, method string) (map[string]any, *
 	if extraBodyObj == nil || extraBodyObj.Type() == object.NULL_OBJ {
 		return nil, nil
 	}
-	extraBodyGo := conversion.ToGo(extraBodyObj)
+	extraBodyGo, limitErr := conversion.ToGoLimited(extraBodyObj)
+	if limitErr != nil {
+		return nil, limitErr
+	}
 	extraBody, ok := extraBodyGo.(map[string]any)
 	if !ok {
 		return nil, &object.Error{Message: method + ": extra_body must be a dict"}
@@ -695,7 +702,10 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 		}
 	} else if msgObj, ok := messages.(object.Object); ok {
 		// Convert scriptling object to Go type (for cases where it's still an object)
-		messagesGo := conversion.ToGo(msgObj)
+		messagesGo, limitErr := conversion.ToGoLimited(msgObj)
+		if limitErr != nil {
+			return limitErr
+		}
 		if msgList, ok := messagesGo.([]map[string]any); ok {
 			// Successfully converted to messages array
 			messagesList = msgList
@@ -923,7 +933,10 @@ func responseCreateMethod(self *object.Instance, ctx context.Context, kwargs obj
 		}
 	} else if inputObj, ok := input.(object.Object); ok {
 		// Convert scriptling object to Go type (for cases where it's still an object)
-		inputGo := conversion.ToGo(inputObj)
+		inputGo, limitErr := conversion.ToGoLimited(inputObj)
+		if limitErr != nil {
+			return limitErr
+		}
 		if inputSlice, ok := inputGo.([]any); ok {
 			// Successfully converted to input array
 			inputList = inputSlice
@@ -1049,7 +1062,11 @@ func responseCompactMethod(self *object.Instance, ctx context.Context, kwargs ob
 		Instructions:       kwargs.MustGetString("instructions", ""),
 	}
 	if v := kwargs.Get("input"); v != nil && v.Type() != object.NULL_OBJ {
-		switch input := conversion.ToGo(v).(type) {
+		inputGo, limitErr := conversion.ToGoLimited(v)
+		if limitErr != nil {
+			return limitErr
+		}
+		switch input := inputGo.(type) {
 		case string:
 			req.Input = []any{map[string]any{"type": "message", "role": "user", "content": input}}
 		case []any:
@@ -1208,7 +1225,10 @@ func toSlice(input any) ([]any, error) {
 	case []any:
 		return v, nil
 	case object.Object:
-		goVal := conversion.ToGo(v)
+		goVal, limitErr := conversion.ToGoLimited(v)
+		if limitErr != nil {
+			return nil, fmt.Errorf("%s", limitErr.Message)
+		}
 		if slice, ok := goVal.([]any); ok {
 			return slice, nil
 		}
@@ -1255,7 +1275,10 @@ func responseStreamMethod(self *object.Instance, ctx context.Context, kwargs obj
 			return &object.Error{Message: "response_stream: system_prompt kwarg is only valid when passing a string, not an input array"}
 		}
 	} else if inputObj, ok := input.(object.Object); ok {
-		inputGo := conversion.ToGo(inputObj)
+		inputGo, limitErr := conversion.ToGoLimited(inputObj)
+		if limitErr != nil {
+			return limitErr
+		}
 		if inputSlice, ok := inputGo.([]any); ok {
 			inputList = inputSlice
 			if kwargs.Has("system_prompt") {
@@ -1679,7 +1702,10 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 		}
 	} else if msgObj, ok := messages.(object.Object); ok {
 		// Convert scriptling object to Go type (for cases where it's still an object)
-		messagesGo := conversion.ToGo(msgObj)
+		messagesGo, limitErr := conversion.ToGoLimited(msgObj)
+		if limitErr != nil {
+			return limitErr
+		}
 		if msgList, ok := messagesGo.([]map[string]any); ok {
 			// Successfully converted to messages array
 			messagesList = msgList

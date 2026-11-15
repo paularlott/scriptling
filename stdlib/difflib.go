@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/libutil"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -26,31 +29,56 @@ type opcode struct {
 	i1, i2, j1, j2 int
 }
 
-// lcsTable builds the LCS dynamic programming table.
-func lcsTable(a, b []string) [][]int {
+// lcsRowBatch is how many rows of the LCS table are allocated at once.
+const lcsRowBatch = 256
+
+// lcsTable builds the LCS dynamic programming table. The table takes
+// (len(a)+1)*(len(b)+1) cells, so it is checked against the memory left
+// before it is built, and rows are allocated as the work reaches them so a
+// cancelled call stops allocating too. meter is charged one unit per cell.
+func lcsTable(a, b []string, meter *libutil.WorkMeter) ([][]int, object.Object) {
 	n, m := len(a), len(b)
-	dp := make([][]int, n+1)
-	for i := range dp {
-		dp[i] = make([]int, m+1)
+	cells := (int64(n) + 1) * (int64(m) + 1)
+	if errObj := object.CheckRoom("diff table", cells*int64(strconv.IntSize/8)); errObj != nil {
+		return nil, errObj
 	}
-	for i := 1; i <= n; i++ {
+	dp := make([][]int, n+1)
+	for i := 0; i <= n; i++ {
+		if i%lcsRowBatch == 0 {
+			// Rows are allocated a batch at a time as the work reaches
+			// them (allocating every row with its work runs slower).
+			for k := i; k < min(i+lcsRowBatch, n+1); k++ {
+				dp[k] = make([]int, m+1)
+			}
+		}
+		if i == 0 {
+			continue
+		}
+		if errObj := meter.Add(m + 1); errObj != nil {
+			return nil, errObj
+		}
+		prev, cur := dp[i-1], dp[i]
+		ai := a[i-1]
 		for j := 1; j <= m; j++ {
-			if a[i-1] == b[j-1] {
-				dp[i][j] = dp[i-1][j-1] + 1
-			} else if dp[i-1][j] >= dp[i][j-1] {
-				dp[i][j] = dp[i-1][j]
+			if ai == b[j-1] {
+				cur[j] = prev[j-1] + 1
+			} else if prev[j] >= cur[j-1] {
+				cur[j] = prev[j]
 			} else {
-				dp[i][j] = dp[i][j-1]
+				cur[j] = cur[j-1]
 			}
 		}
 	}
-	return dp
+	return dp, nil
 }
 
 // computeOpcodes returns opcodes describing how to turn a into b.
 // Compatible with Python's SequenceMatcher.get_opcodes().
-func computeOpcodes(a, b []string) []opcode {
-	dp := lcsTable(a, b)
+func computeOpcodes(a, b []string, meter *libutil.WorkMeter) ([]opcode, object.Object) {
+	dp, errObj := lcsTable(a, b, meter)
+	if errObj != nil {
+		return nil, errObj
+	}
 	n, m := len(a), len(b)
 
 	// Walk the DP table backwards to collect raw edit steps
@@ -115,18 +143,22 @@ func computeOpcodes(a, b []string) []opcode {
 			merged = append(merged, ops[k])
 		}
 	}
-	return merged
+	return merged, nil
 }
 
 // lcsLength returns the LCS length (used for ratio).
-func lcsLength(a, b []string) int {
+// meter is charged one unit per cell of the (virtual) table.
+func lcsLength(a, b []string, meter *libutil.WorkMeter) (int, object.Object) {
 	n, m := len(a), len(b)
 	if n == 0 || m == 0 {
-		return 0
+		return 0, nil
 	}
 	prev := make([]int, m+1)
 	curr := make([]int, m+1)
 	for i := 1; i <= n; i++ {
+		if errObj := meter.Add(m); errObj != nil {
+			return 0, errObj
+		}
 		for j := 1; j <= m; j++ {
 			if a[i-1] == b[j-1] {
 				curr[j] = prev[j-1] + 1
@@ -141,7 +173,7 @@ func lcsLength(a, b []string) int {
 			curr[k] = 0
 		}
 	}
-	return prev[m]
+	return prev[m], nil
 }
 
 func splitLines(s string) []string {
@@ -174,8 +206,11 @@ func charSplit(s string) []string {
 
 // --- unified_diff ---
 
-func unifiedDiff(aLines, bLines []string, fromFile, toFile string, n int) string {
-	ops := computeOpcodes(aLines, bLines)
+func unifiedDiff(aLines, bLines []string, fromFile, toFile string, n int, meter *libutil.WorkMeter) (string, object.Object) {
+	ops, errObj := computeOpcodes(aLines, bLines, meter)
+	if errObj != nil {
+		return "", errObj
+	}
 
 	hasChanges := false
 	for _, op := range ops {
@@ -185,7 +220,7 @@ func unifiedDiff(aLines, bLines []string, fromFile, toFile string, n int) string
 		}
 	}
 	if !hasChanges {
-		return ""
+		return "", nil
 	}
 
 	// Group ops into hunks
@@ -292,23 +327,26 @@ func unifiedDiff(aLines, bLines []string, fromFile, toFile string, n int) string
 			}
 		}
 	}
-	return sb.String()
+	return sb.String(), nil
 }
 
 // --- ratio ---
 
-func sequenceRatio(a, b []string) float64 {
+func sequenceRatio(a, b []string, meter *libutil.WorkMeter) (float64, object.Object) {
 	total := len(a) + len(b)
 	if total == 0 {
-		return 1.0
+		return 1.0, nil
 	}
-	matches := lcsLength(a, b)
-	return 2.0 * float64(matches) / float64(total)
+	matches, errObj := lcsLength(a, b, meter)
+	if errObj != nil {
+		return 0, errObj
+	}
+	return 2.0 * float64(matches) / float64(total), nil
 }
 
 // --- get_close_matches ---
 
-func getCloseMatches(word string, possibilities []string, n int, cutoff float64) []string {
+func getCloseMatches(word string, possibilities []string, n int, cutoff float64, meter *libutil.WorkMeter) ([]string, object.Object) {
 	type scored struct {
 		s     string
 		score float64
@@ -316,16 +354,16 @@ func getCloseMatches(word string, possibilities []string, n int, cutoff float64)
 	wordChars := charSplit(word)
 	var results []scored
 	for _, p := range possibilities {
-		r := sequenceRatio(wordChars, charSplit(p))
+		r, errObj := sequenceRatio(wordChars, charSplit(p), meter)
+		if errObj != nil {
+			return nil, errObj
+		}
 		if r >= cutoff {
 			results = append(results, scored{p, r})
 		}
 	}
-	for i := 1; i < len(results); i++ {
-		for j := i; j > 0 && results[j].score > results[j-1].score; j-- {
-			results[j], results[j-1] = results[j-1], results[j]
-		}
-	}
+	// Best first; ties keep the order of possibilities.
+	sort.SliceStable(results, func(i, j int) bool { return results[i].score > results[j].score })
 	if len(results) > n {
 		results = results[:n]
 	}
@@ -333,7 +371,7 @@ func getCloseMatches(word string, possibilities []string, n int, cutoff float64)
 	for i, r := range results {
 		out[i] = r.s
 	}
-	return out
+	return out, nil
 }
 
 // --- Library ---
@@ -355,7 +393,11 @@ var DifflibLibrary = object.NewLibrary(DifflibLibraryName, map[string]*object.Bu
 			fromFile := kwargs.MustGetString("fromfile", "")
 			toFile := kwargs.MustGetString("tofile", "")
 			n := int(kwargs.MustGetInt("n", 3))
-			return object.NewString(unifiedDiff(splitLines(aStr), splitLines(bStr), fromFile, toFile, n))
+			diff, errObj := unifiedDiff(splitLines(aStr), splitLines(bStr), fromFile, toFile, n, libutil.NewWorkMeter(ctx))
+			if errObj != nil {
+				return errObj
+			}
+			return object.NewString(diff)
 		},
 		HelpText: `unified_diff(a, b, fromfile="", tofile="", n=3) - Return a unified format diff string`,
 	},
@@ -372,7 +414,10 @@ var DifflibLibrary = object.NewLibrary(DifflibLibraryName, map[string]*object.Bu
 			if e != nil {
 				return errors.NewTypeError("STRING", args[1].Type().String())
 			}
-			r := sequenceRatio(charSplit(aStr), charSplit(bStr))
+			r, errObj := sequenceRatio(charSplit(aStr), charSplit(bStr), libutil.NewWorkMeter(ctx))
+			if errObj != nil {
+				return errObj
+			}
 			return object.NewFloat(math.Round(r*100) / 100)
 		},
 		HelpText: `ratio(a, b) - Return a similarity ratio between 0.0 and 1.0`,
@@ -390,7 +435,10 @@ var DifflibLibrary = object.NewLibrary(DifflibLibraryName, map[string]*object.Bu
 			if e != nil {
 				return errors.NewTypeError("STRING", args[1].Type().String())
 			}
-			ops := computeOpcodes(splitLines(aStr), splitLines(bStr))
+			ops, errObj := computeOpcodes(splitLines(aStr), splitLines(bStr), libutil.NewWorkMeter(ctx))
+			if errObj != nil {
+				return errObj
+			}
 			result := make([]object.Object, len(ops))
 			for i, op := range ops {
 				result[i] = &object.Tuple{Elements: []object.Object{
@@ -436,7 +484,10 @@ var DifflibLibrary = object.NewLibrary(DifflibLibraryName, map[string]*object.Bu
 					poss = append(poss, s)
 				}
 			}
-			matches := getCloseMatches(word, poss, n, cutoff)
+			matches, errObj := getCloseMatches(word, poss, n, cutoff, libutil.NewWorkMeter(ctx))
+			if errObj != nil {
+				return errObj
+			}
 			elems := make([]object.Object, len(matches))
 			for i, m := range matches {
 				elems[i] = object.NewString(m)

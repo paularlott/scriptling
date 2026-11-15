@@ -1114,3 +1114,37 @@ func checkValueSlow(obj Object) Object {
 	}
 	return nil
 }
+
+// OutputLimit returns the longest text or encoded value one operation may
+// build for the interpreter running on the calling goroutine: its value
+// limit, or its memory limit when that is lower or the only one set. It is 0
+// when neither is set, and costs one atomic load until a limit is configured
+// anywhere.
+//
+// Use it to bound output that is built incrementally from a value: str(),
+// repr(), encoders. A value can hold the same container many times over, so
+// the output of a small value can be exponentially large, and only a check
+// as it is written, rather than of the finished result, keeps the work and
+// memory spent within the limits.
+func OutputLimit() int64 {
+	if !valueLimitsOn.Load() && !accountingOn.Load() {
+		return 0
+	}
+	g := CurrentGuard() // nil-safe: the process defaults apply
+	limit := g.MaxValueBytes()
+	if mem := g.MemoryLimit(); mem > 0 && (limit <= 0 || mem < limit) {
+		limit = mem
+	}
+	return max(limit, 0)
+}
+
+// errOutputTooLarge is the MemoryError for output that passed OutputLimit.
+func errOutputTooLarge(what string, limit int64) *Error {
+	return NewMemoryError("%s too large: output is more than the %d byte limit", what, limit)
+}
+
+// NewOutputTooLargeError returns the MemoryError for output of the kind what
+// (a "JSON" text, a "YAML" document) that passed limit, from OutputLimit.
+func NewOutputTooLargeError(what string, limit int64) *Error {
+	return errOutputTooLarge(what, limit)
+}

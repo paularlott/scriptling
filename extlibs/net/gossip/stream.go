@@ -310,10 +310,15 @@ func streamClusterMethods(c *gossip.Cluster, clusterCtx context.Context, eval ev
 					stopWithCluster()
 					cancelStream()
 				}
+				payload, limitErr := conversion.ToGoLimited(args[2])
+				if limitErr != nil {
+					cancel()
+					return limitErr
+				}
 				var rc io.ReadCloser
 				var openErr error
 				object.RunBlocking(ctx, func() {
-					rc, openErr = c.OpenStream(streamCtx, node, gossip.MessageType(msgType), conversion.ToGo(args[2]))
+					rc, openErr = c.OpenStream(streamCtx, node, gossip.MessageType(msgType), payload)
 				})
 				if openErr != nil {
 					cancel()

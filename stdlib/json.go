@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
@@ -45,10 +46,16 @@ func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 			if v.IntValue() < 0 {
 				return errors.NewError("json.dumps: indent must not be negative")
 			}
+			if errObj := object.CheckAllocFor("JSON indent", v.IntValue()); errObj != nil {
+				return errObj
+			}
 			indent = strings.Repeat(" ", int(v.IntValue()))
 		case *object.Float:
 			if v.FloatValue() < 0 {
 				return errors.NewError("json.dumps: indent must not be negative")
+			}
+			if errObj := object.CheckAllocFor("JSON indent", int64(v.FloatValue())); errObj != nil {
+				return errObj
 			}
 			indent = strings.Repeat(" ", int(v.FloatValue()))
 		default:
@@ -102,34 +109,22 @@ func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 		opts.ensureAscii = b
 	}
 
-	opts.nodes = new(int64)
-	raw, rerr := objectToJSONRaw(args[0], make(map[object.Object]struct{}), opts)
-	if rerr != nil {
-		return rerr
-	}
-	// Check the text before the indented copy and the result string are
-	// made from it.
-	if errObj := object.CheckAllocFor("JSON", int64(len(raw))); errObj != nil {
+	if errObj := object.CheckAllocFor("JSON indent", int64(len(indent))); errObj != nil {
 		return errObj
 	}
-	out := []byte(raw)
+	enc := jsonEncoder{opts: opts}
+	if errObj := enc.value(args[0], make(map[object.Object]struct{}), 0); errObj != nil {
+		return errObj
+	}
+	out := enc.buf.Bytes()
 	// hasIndent distinguishes indent=0 (newline-separated, no spaces, as in
 	// Python) from no indent argument at all (fully compact).
 	if hasIndent {
-		// Indenting grows the text by about one indent per nesting level per
-		// value: a generous estimate of that is the memory needed to build
-		// it, while the value limit applies to the exact result afterwards.
-		if errObj := object.CheckRoom("JSON", int64(len(out))*2+int64(*opts.nodes)*int64(len(indent)+1)); errObj != nil {
+		ind, errObj := indentJSON(out, indent)
+		if errObj != nil {
 			return errObj
 		}
-		var ind bytes.Buffer
-		if err := json.Indent(&ind, out, "", indent); err != nil {
-			return errors.NewError("json serialize error: %s", err.Error())
-		}
-		out = ind.Bytes()
-		if errObj := object.CheckAllocFor("JSON", int64(len(out))); errObj != nil {
-			return errObj
-		}
+		out = ind
 	}
 	return object.NewString(string(out))
 }
@@ -185,24 +180,6 @@ Optional indent parameter for pretty-printing.`,
 	},
 }, "JSON encoding and decoding library")
 
-// pyFloat marshals with Python's json module float spellings: repr-style
-// numbers ("2.0", "1e+20") and Infinity/-Infinity/NaN for non-finites, which
-// encoding/json would reject (it prints "2" and cannot represent inf at all).
-type pyFloat float64
-
-func (p pyFloat) MarshalJSON() ([]byte, error) {
-	f := float64(p)
-	switch {
-	case math.IsInf(f, 1):
-		return []byte("Infinity"), nil
-	case math.IsInf(f, -1):
-		return []byte("-Infinity"), nil
-	case math.IsNaN(f):
-		return []byte("NaN"), nil
-	}
-	return []byte(object.FloatStr(f)), nil
-}
-
 // jsonOpts carries Python dumps() formatting: the item separator (between
 // array elements and object members), the key separator, sort_keys and
 // ensure_ascii.
@@ -211,97 +188,78 @@ type jsonOpts struct {
 	keySep      string
 	sortKeys    bool
 	ensureAscii bool
-	// nodes counts the values rendered so far. A value shared by several
-	// containers renders once per reference, so every jsonBudgetEvery values
-	// the memory the walk is holding is checked against the room left; the
-	// value limit applies to the text itself as it is assembled.
-	nodes *int64
-	// depth is how deeply nested the value being rendered is; past
-	// maxJSONDumpDepth the Go stack is at risk, so rendering stops.
-	depth int
 }
-
-const jsonBudgetEvery = 1024
-
-// jsonNodeBytes estimates the transient memory each rendered value costs.
-const jsonNodeBytes = 48
 
 // maxJSONDumpDepth bounds nesting when rendering, as maxJSONDepth does when
 // parsing.
 const maxJSONDumpDepth = 10000
 
-// objectToJSONRaw renders obj as JSON text. Containers are assembled here —
-// rather than via encoding/json's map/array marshaling — so dict keys keep
-// the dict's insertion order and Python's separators apply at every level.
-// Leaves go through encoding/json with HTML escaping off, matching Python.
-func objectToJSONRaw(obj object.Object, seen map[object.Object]struct{}, opts jsonOpts) (json.RawMessage, object.Object) {
-	if opts.nodes != nil {
-		*opts.nodes++
-		if *opts.nodes&(jsonBudgetEvery-1) == 0 {
-			if errObj := object.CheckRoom("JSON", *opts.nodes*jsonNodeBytes); errObj != nil {
-				return nil, errObj
-			}
-		}
-	}
-	// opts is passed by value, so each level below sees its own depth.
-	opts.depth++
-	if opts.depth > maxJSONDumpDepth {
-		return nil, object.NewMemoryError("value too deeply nested to serialize (more than %d levels)", maxJSONDumpDepth)
-	}
-	encodeLeaf := func(v interface{}) (json.RawMessage, object.Object) {
-		var buf bytes.Buffer
-		enc := json.NewEncoder(&buf)
-		enc.SetEscapeHTML(false)
-		if err := enc.Encode(v); err != nil {
-			return nil, errors.NewError("json serialize error: %s", err.Error())
-		}
-		return json.RawMessage(bytes.TrimSuffix(buf.Bytes(), []byte("\n"))), nil
-	}
+// jsonEncoder renders a value as JSON text into one buffer. Containers are
+// assembled here, rather than via encoding/json's map and array marshaling,
+// so dict keys keep the dict's insertion order and Python's separators apply
+// at every level.
+//
+// The whole text is one value in the making, so after every element its
+// length is held to the value limit and the memory left: a value shared by
+// several containers renders once per reference, and a small script value
+// can stand for an exponentially large text, so the encoder stops as soon as
+// the text outgrows the limits instead of finishing it first. The work done
+// is bounded by the text written, since every value writes at least a byte.
+type jsonEncoder struct {
+	buf  bytes.Buffer
+	opts jsonOpts
+}
 
+// check holds the text written so far to the limits.
+func (e *jsonEncoder) check() object.Object {
+	return object.CheckAllocFor("JSON", int64(e.buf.Len()))
+}
+
+func (e *jsonEncoder) value(obj object.Object, seen map[object.Object]struct{}, depth int) object.Object {
+	depth++
+	if depth > maxJSONDumpDepth {
+		return object.NewMemoryError("value too deeply nested to serialize (more than %d levels)", maxJSONDumpDepth)
+	}
 	switch obj := obj.(type) {
 	case *object.Integer:
-		return encodeLeaf(obj.IntValue())
+		e.buf.Write(strconv.AppendInt(e.buf.AvailableBuffer(), obj.IntValue(), 10))
 	case *object.Float:
 		// Python writes non-finite floats as bare NaN/Infinity/-Infinity
-		// tokens; emit them directly (encoding/json would reject a marshaler
-		// that returns them as invalid JSON).
+		// tokens.
 		f := obj.FloatValue()
 		switch {
 		case math.IsInf(f, 1):
-			return json.RawMessage("Infinity"), nil
+			e.buf.WriteString("Infinity")
 		case math.IsInf(f, -1):
-			return json.RawMessage("-Infinity"), nil
+			e.buf.WriteString("-Infinity")
 		case math.IsNaN(f):
-			return json.RawMessage("NaN"), nil
+			e.buf.WriteString("NaN")
+		default:
+			e.buf.WriteString(object.FloatStr(f))
 		}
-		return encodeLeaf(pyFloat(f))
 	case *object.String:
-		return encodeJSONString(obj.StringValue(), opts.ensureAscii), nil
+		writeJSONString(&e.buf, obj.StringValue(), e.opts.ensureAscii)
 	case *object.Boolean:
-		return encodeLeaf(obj.BoolValue())
-	case *object.List:
-		if _, cyclic := seen[obj]; cyclic {
-			return encodeLeaf("<cyclic reference>")
+		if obj.BoolValue() {
+			e.buf.WriteString("true")
+		} else {
+			e.buf.WriteString("false")
 		}
-		seen[obj] = struct{}{}
-		defer delete(seen, obj)
-		return assembleJSONSeq(obj.Elements, seen, opts, encodeLeaf)
+	case *object.Null:
+		e.buf.WriteString("null")
+	case *object.List:
+		return e.sequence(obj, obj.Elements, seen, depth)
 	case *object.Tuple:
 		// Python serializes tuples as JSON arrays.
-		if _, cyclic := seen[obj]; cyclic {
-			return encodeLeaf("<cyclic reference>")
-		}
-		seen[obj] = struct{}{}
-		defer delete(seen, obj)
-		return assembleJSONSeq(obj.Elements, seen, opts, encodeLeaf)
+		return e.sequence(obj, obj.Elements, seen, depth)
 	case *object.Dict:
 		if _, cyclic := seen[obj]; cyclic {
-			return encodeLeaf("<cyclic reference>")
+			return e.goString("<cyclic reference>")
 		}
 		seen[obj] = struct{}{}
 		defer delete(seen, obj)
 		pairs := obj.OrderedPairs()
-		if opts.sortKeys {
+		if e.opts.sortKeys {
 			sorted := make([]object.DictPair, len(pairs))
 			copy(sorted, pairs)
 			sort.Slice(sorted, func(i, j int) bool {
@@ -309,99 +267,219 @@ func objectToJSONRaw(obj object.Object, seen map[object.Object]struct{}, opts js
 			})
 			pairs = sorted
 		}
-		var buf bytes.Buffer
-		buf.WriteByte('{')
+		e.buf.WriteByte('{')
 		for i, pair := range pairs {
 			if i > 0 {
-				buf.WriteString(opts.itemSep)
+				e.buf.WriteString(e.opts.itemSep)
 			}
-			keyStr := pair.StringKey()
-			keyJSON := encodeJSONString(keyStr, opts.ensureAscii)
-			buf.Write(keyJSON)
-			buf.WriteString(opts.keySep)
-			valJSON, verr := objectToJSONRaw(pair.Value, seen, opts)
-			if verr != nil {
-				return nil, verr
+			writeJSONString(&e.buf, pair.StringKey(), e.opts.ensureAscii)
+			e.buf.WriteString(e.opts.keySep)
+			if errObj := e.value(pair.Value, seen, depth); errObj != nil {
+				return errObj
 			}
-			buf.Write(valJSON)
-			// The text is a value in the making: refuse it as soon as it
-			// outgrows the limit rather than finishing the container.
-			if errObj := object.CheckAllocFor("JSON", int64(buf.Len())); errObj != nil {
+			if errObj := e.check(); errObj != nil {
+				return errObj
+			}
+		}
+		e.buf.WriteByte('}')
+	default:
+		return e.goString(obj.Inspect())
+	}
+	return e.check()
+}
+
+func (e *jsonEncoder) sequence(obj object.Object, elements []object.Object, seen map[object.Object]struct{}, depth int) object.Object {
+	if _, cyclic := seen[obj]; cyclic {
+		return e.goString("<cyclic reference>")
+	}
+	seen[obj] = struct{}{}
+	defer delete(seen, obj)
+	e.buf.WriteByte('[')
+	for i, el := range elements {
+		if i > 0 {
+			e.buf.WriteString(e.opts.itemSep)
+		}
+		if errObj := e.value(el, seen, depth); errObj != nil {
+			return errObj
+		}
+		if errObj := e.check(); errObj != nil {
+			return errObj
+		}
+	}
+	e.buf.WriteByte(']')
+	return nil
+}
+
+// goString writes s as encoding/json does (with HTML escaping off), the
+// spelling used for values JSON has no type for, rendered by Inspect.
+func (e *jsonEncoder) goString(s string) object.Object {
+	enc := json.NewEncoder(&e.buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(s); err != nil {
+		return errors.NewError("json serialize error: %s", err.Error())
+	}
+	e.buf.Truncate(e.buf.Len() - 1) // Encode ends with a newline
+	return e.check()
+}
+
+// writeJSONString renders a Python-compatible JSON string literal: ", \\ and
+// control characters escaped as in CPython's json module, and code points
+// above U+007F written as \uXXXX (surrogate pairs beyond the BMP) when
+// ensure_ascii is set, Python's default. Escaping can grow a string sixfold;
+// the encoder checks the text after each string, which exists already, so
+// one string overshoots the limit by at most that.
+func writeJSONString(b *bytes.Buffer, s string, ensureAscii bool) {
+	b.Grow(len(s) + 2)
+	b.WriteByte('"')
+	start := 0
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c >= 0x20 && c != '"' && c != '\\' && c < utf8.RuneSelf {
+			i++
+			continue
+		}
+		if c >= utf8.RuneSelf && !ensureAscii {
+			// Copied as is, as before (invalid UTF-8 included).
+			r, size := utf8.DecodeRuneInString(s[i:])
+			if r != utf8.RuneError || size != 1 {
+				i += size
+				continue
+			}
+		}
+		b.WriteString(s[start:i])
+		if c < utf8.RuneSelf {
+			switch c {
+			case '"':
+				b.WriteString(`\"`)
+			case '\\':
+				b.WriteString(`\\`)
+			case '\n':
+				b.WriteString(`\n`)
+			case '\r':
+				b.WriteString(`\r`)
+			case '\t':
+				b.WriteString(`\t`)
+			case '\b':
+				b.WriteString(`\b`)
+			case '\f':
+				b.WriteString(`\f`)
+			default:
+				writeUnicodeEscape(b, rune(c))
+			}
+			i++
+			start = i
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		i += size
+		start = i
+		switch {
+		case !ensureAscii:
+			// An invalid byte: WriteRune writes U+FFFD, as the range loop did.
+			b.WriteRune(r)
+		case r > 0xFFFF:
+			writeUnicodeEscape(b, 0xD800+((r-0x10000)>>10))
+			writeUnicodeEscape(b, 0xDC00+((r-0x10000)&0x3FF))
+		default:
+			writeUnicodeEscape(b, r)
+		}
+	}
+	b.WriteString(s[start:])
+	b.WriteByte('"')
+}
+
+func writeUnicodeEscape(b *bytes.Buffer, r rune) {
+	const hex = "0123456789abcdef"
+	b.WriteString(`\u`)
+	b.WriteByte(hex[(r>>12)&0xf])
+	b.WriteByte(hex[(r>>8)&0xf])
+	b.WriteByte(hex[(r>>4)&0xf])
+	b.WriteByte(hex[r&0xf])
+}
+
+// indentJSON lays compact JSON text out as encoding/json's Indent does: a
+// newline and one indent per level after every opening bracket and item
+// separator, ": " after keys, empty containers kept as [] and {}, and other
+// whitespace between tokens dropped. Unlike Indent it is held to the value
+// limit and the memory left as it goes: the indentation grows with nesting
+// depth as well as size, so deeply nested text can indent to many times its
+// compact length.
+func indentJSON(src []byte, indent string) ([]byte, object.Object) {
+	var dst bytes.Buffer
+	if errObj := object.CheckAllocFor("JSON", int64(len(src))); errObj != nil {
+		return nil, errObj
+	}
+	dst.Grow(len(src) + len(src)/4)
+	depth := 0
+	needIndent := false
+	inString := false
+	newline := func() object.Object {
+		if errObj := object.CheckAllocFor("JSON", int64(dst.Len())+1+int64(depth)*int64(len(indent))); errObj != nil {
+			return errObj
+		}
+		dst.WriteByte('\n')
+		for range depth {
+			dst.WriteString(indent)
+		}
+		return nil
+	}
+	start := 0 // start of the pending run of plain bytes
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		if inString {
+			if c == '\\' {
+				i++
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case ' ', '\t', '\n', '\r':
+			dst.Write(src[start:i])
+			start = i + 1
+			continue
+		}
+		if needIndent && c != '}' && c != ']' {
+			dst.Write(src[start:i])
+			start = i
+			needIndent = false
+			depth++
+			if errObj := newline(); errObj != nil {
 				return nil, errObj
 			}
 		}
-		buf.WriteByte('}')
-		return json.RawMessage(buf.Bytes()), nil
-	case *object.Null:
-		return json.RawMessage("null"), nil
-	default:
-		return encodeLeaf(obj.Inspect())
-	}
-}
-
-// encodeJSONString renders a Python-compatible JSON string literal: ", \\ and
-// control characters escaped as in CPython's json module, and code points
-// above U+007F written as \uXXXX (surrogate pairs beyond the BMP) when
-// ensure_ascii is set — Python's default.
-func encodeJSONString(s string, ensureAscii bool) json.RawMessage {
-	var b strings.Builder
-	b.Grow(len(s) + 2)
-	// Escaping can grow a string sixfold (\uXXXX per byte); the builder
-	// below is unchecked, so a string whose escaped form cannot be within the
-	// limit is caught by the caller's checks on the assembled text. Nothing
-	// more to do here when the input itself is small.
-	b.WriteByte('"')
-	for _, r := range s {
-		switch {
-		case r == '"':
-			b.WriteString(`\"`)
-		case r == '\\':
-			b.WriteString(`\\`)
-		case r == '\n':
-			b.WriteString(`\n`)
-		case r == '\r':
-			b.WriteString(`\r`)
-		case r == '\t':
-			b.WriteString(`\t`)
-		case r == '\b':
-			b.WriteString(`\b`)
-		case r == '\f':
-			b.WriteString(`\f`)
-		case r < 0x20:
-			fmt.Fprintf(&b, `\u%04x`, r)
-		case ensureAscii && r > 0x7F:
-			if r > 0xFFFF {
-				hi := 0xD800 + ((r - 0x10000) >> 10)
-				lo := 0xDC00 + ((r - 0x10000) & 0x3FF)
-				fmt.Fprintf(&b, `\u%04x\u%04x`, hi, lo)
-			} else {
-				fmt.Fprintf(&b, `\u%04x`, r)
+		switch c {
+		case '"':
+			inString = true
+		case '{', '[':
+			needIndent = true
+		case ',':
+			dst.Write(src[start : i+1])
+			start = i + 1
+			if errObj := newline(); errObj != nil {
+				return nil, errObj
 			}
-		default:
-			b.WriteRune(r)
+		case ':':
+			dst.Write(src[start : i+1])
+			dst.WriteByte(' ')
+			start = i + 1
+		case '}', ']':
+			if needIndent {
+				needIndent = false
+			} else {
+				dst.Write(src[start:i])
+				start = i
+				depth--
+				if errObj := newline(); errObj != nil {
+					return nil, errObj
+				}
+			}
 		}
 	}
-	b.WriteByte('"')
-	return json.RawMessage(b.String())
-}
-
-// assembleJSONSeq renders a JSON array with the configured item separator.
-func assembleJSONSeq(elements []object.Object, seen map[object.Object]struct{}, opts jsonOpts, encodeLeaf func(interface{}) (json.RawMessage, object.Object)) (json.RawMessage, object.Object) {
-	var buf bytes.Buffer
-	buf.WriteByte('[')
-	for i, el := range elements {
-		if i > 0 {
-			buf.WriteString(opts.itemSep)
-		}
-		elJSON, err := objectToJSONRaw(el, seen, opts)
-		if err != nil {
-			return nil, err
-		}
-		buf.Write(elJSON)
-		if errObj := object.CheckAllocFor("JSON", int64(buf.Len())); errObj != nil {
-			return nil, errObj
-		}
+	dst.Write(src[start:])
+	if errObj := object.CheckAllocFor("JSON", int64(dst.Len())); errObj != nil {
+		return nil, errObj
 	}
-	buf.WriteByte(']')
-	return json.RawMessage(buf.Bytes()), nil
+	return dst.Bytes(), nil
 }

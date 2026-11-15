@@ -816,7 +816,17 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 			// incomparable is an error rather than a silent no-op (which is
 			// what compareObjects' 0-for-incomparable would do here).
 			var sortErr object.Object
+			// A comparison that raised ends the sort: later ones are skipped. The
+			// context is checked every cmpCheckEvery comparisons.
+			sortBudget := cmpBudget{ctx: ctx}
 			sort.SliceStable(indices, func(i, j int) bool {
+				if sortErr != nil {
+					return false
+				}
+				if errObj := sortBudget.step(); errObj != nil {
+					sortErr = errObj
+					return false
+				}
 				var left, right object.Object
 				if keys != nil {
 					left, right = keys[indices[i]], keys[indices[j]]
@@ -1170,6 +1180,8 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return errors.NewTypeError("iterable", args[0].Type().String())
 		}
 		parts := make([]string, len(elements))
+		sepLen := int64(len(str.StringValue()))
+		var total int64
 		for i, elem := range elements {
 			// Elements convert with str() semantics: instances dispatch
 			// __str__ and exceptions use their message (a raise propagates
@@ -1180,21 +1192,22 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 					return rerr
 				}
 				parts[i] = rendered
-				continue
-			}
-			if s, err := elem.AsString(); err == nil {
+			} else if s, err := elem.AsString(); err == nil {
 				parts[i] = s
 			} else {
 				parts[i] = elem.Inspect()
 			}
-		}
-		if len(parts) > 1 {
-			total := int64(len(str.StringValue())) * int64(len(parts)-1)
-			for _, part := range parts {
-				total += int64(len(part))
+			// Check the joined length as the parts are rendered, so parts
+			// rendered from shared references stop at the limit rather
+			// than all being built first.
+			total += int64(len(parts[i]))
+			if i > 0 {
+				total += sepLen
 			}
-			if errObj := checkSize("joined string", total); errObj != nil {
-				return errObj
+			if !object.AllocWithin(total) {
+				if errObj := checkSize("joined string", total); errObj != nil {
+					return errObj
+				}
 			}
 		}
 		return object.NewString(strings.Join(parts, str.StringValue()))

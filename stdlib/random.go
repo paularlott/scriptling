@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"math/rand"
+	"sort"
 	"time"
 
 	"github.com/paularlott/scriptling/errors"
@@ -262,6 +263,9 @@ Returns a random floating-point number N such that a <= N <= b.`,
 				}
 				return i
 			}
+			if errObj := object.CheckElements(k.IntValue()); errObj != nil {
+				return errObj
+			}
 			result := make([]object.Object, k.IntValue())
 			for i := int64(0); i < k.IntValue(); i++ {
 				j := i + rng.Int63n(n-i)
@@ -499,13 +503,16 @@ lambd is 1.0 divided by the desired mean.`,
 				return errors.NewValueError("Total of weights must be greater than zero")
 			}
 
+			if errObj := object.CheckElements(int64(k)); errObj != nil {
+				return errObj
+			}
 			result := make([]object.Object, k)
 			for i := 0; i < k; i++ {
+				// The first index whose cumulative weight passes r (Python's
+				// bisect), the last when none does: a binary search, so k
+				// choices from n items cost O(k log n), not O(k n).
 				r := rng.Float64() * total
-				idx := 0
-				for idx < n-1 && cumWeights[idx] <= r {
-					idx++
-				}
+				idx := sort.Search(n-1, func(j int) bool { return cumWeights[j] > r })
 				result[i] = population[idx]
 			}
 			object.TrackSlice(result)

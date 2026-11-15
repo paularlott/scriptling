@@ -2,13 +2,15 @@
 package toml
 
 import (
+	"bytes"
 	"context"
-	"github.com/paularlott/scriptling/tomllimit"
+	stderrors "errors"
 
 	"github.com/BurntSushi/toml"
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
+	"github.com/paularlott/scriptling/tomllimit"
 )
 
 // LibraryName is the script-visible name of the toml library.
@@ -83,12 +85,31 @@ func tomlDumpsFunc(ctx context.Context, kwargs object.Kwargs, args ...object.Obj
 		return depthErr
 	}
 
-	var buf []byte
-	var marshalErr error
-	buf, marshalErr = toml.Marshal(goData)
-	if marshalErr != nil {
+	// The conversion is held to the limits, but a string shared by several
+	// tables encodes in full each time: the encoder writes into a buffer
+	// that refuses to grow past them.
+	w := &limitedBuffer{}
+	if marshalErr := toml.NewEncoder(w).Encode(goData); marshalErr != nil {
+		if w.err != nil {
+			return w.err
+		}
 		return errors.NewError("toml dump error: %s", marshalErr.Error())
 	}
 
-	return object.NewString(string(buf))
+	return object.NewString(w.buf.String())
+}
+
+// limitedBuffer collects encoder output, failing a write that would take it
+// past the value limit or the memory left.
+type limitedBuffer struct {
+	buf bytes.Buffer
+	err object.Object
+}
+
+func (w *limitedBuffer) Write(p []byte) (int, error) {
+	if errObj := object.CheckAllocFor("TOML", int64(w.buf.Len())+int64(len(p))); errObj != nil {
+		w.err = errObj
+		return 0, stderrors.New("output too large")
+	}
+	return w.buf.Write(p)
 }

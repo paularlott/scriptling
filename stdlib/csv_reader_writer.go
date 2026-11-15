@@ -3,6 +3,7 @@ package stdlib
 import (
 	"context"
 	"encoding/csv"
+	stderrors "errors"
 	"fmt"
 	"strings"
 
@@ -107,8 +108,10 @@ func csvWriteRows(ctx context.Context, self *object.Instance, rows []object.Obje
 		comma = []rune(delimiter.StringValue())[0]
 	}
 
-	var buf strings.Builder
-	w := csv.NewWriter(&buf)
+	// The rows are one write: hold the text to the limits as it is
+	// encoded, since the rows can repeat the same list many times over.
+	buf := &limitedBuilder{what: "CSV text"}
+	w := csv.NewWriter(buf)
 	w.Comma = comma
 	for _, rowObj := range rows {
 		row, ok := rowObj.(*object.List)
@@ -124,12 +127,21 @@ func csvWriteRows(ctx context.Context, self *object.Instance, rows []object.Obje
 			strs[i] = s
 		}
 		if e := w.Write(strs); e != nil {
+			if buf.err != nil {
+				return buf.err
+			}
 			return csvSimpleError("csv write: %s", e.Error())
 		}
 	}
 	w.Flush()
+	if buf.err != nil {
+		return buf.err
+	}
+	if errObj := object.CheckAllocFor("CSV text", int64(buf.b.Len())+int64(strings.Count(buf.b.String(), "\n"))); errObj != nil {
+		return errObj
+	}
 	// Go's csv.Writer ends records with \n; Python's default is \r\n.
-	out := strings.ReplaceAll(buf.String(), "\n", "\r\n")
+	out := strings.ReplaceAll(buf.b.String(), "\n", "\r\n")
 
 	if isBuiltin && writeBuiltin.Fn != nil {
 		return writeBuiltin.Fn(ctx, object.Kwargs{}, target, object.NewString(out))
@@ -366,3 +378,22 @@ func csvDictWriterRow(self *object.Instance, rowObj object.Object) (object.Objec
 	}
 	return &object.List{Elements: elems}, nil
 }
+
+// limitedBuilder is a strings.Builder for an encoder's output that fails a
+// write taking it past the value limit or the memory left, recording the
+// MemoryError, so encoding stops at the limit rather than after.
+type limitedBuilder struct {
+	b    strings.Builder
+	what string
+	err  object.Object
+}
+
+func (l *limitedBuilder) Write(p []byte) (int, error) {
+	if errObj := object.CheckAllocFor(l.what, int64(l.b.Len())+int64(len(p))); errObj != nil {
+		l.err = errObj
+		return 0, errOutputLimit
+	}
+	return l.b.Write(p)
+}
+
+var errOutputLimit = stderrors.New("output over the limit")
