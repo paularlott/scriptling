@@ -66,6 +66,18 @@ x < y
 `)
 }
 
+// A sort counts no comparisons itself; the nested walk of each comparison is
+// what stops it.
+func TestSortOfSharedReferenceValuesHonoursDeadline(t *testing.T) {
+	expectLongCallDeadline(t, `x = (0,)
+y = (0,)
+for i in range(60):
+    x = (x, x)
+    y = (y, y)
+sorted([x, y, x])
+`)
+}
+
 func TestSharedReferenceMembershipHonoursDeadline(t *testing.T) {
 	expectLongCallDeadline(t, `x = [0]
 y = [0]

@@ -6,7 +6,7 @@ go 1.27.4
 replace github.com/paularlott/scriptling => ../..
 
 require (
-	github.com/paularlott/scriptling v0.40.0
+	github.com/paularlott/scriptling v0.41.0
 	github.com/paularlott/scriptling-onepassword v0.1.1
 )
 
@@ -71,7 +71,7 @@ require (
 	golang.org/x/text v0.44.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	modernc.org/libc v1.81.0 // indirect
+	modernc.org/libc v1.81.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 	modernc.org/sqlite v1.62.0 // indirect

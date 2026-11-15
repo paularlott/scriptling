@@ -84,23 +84,40 @@ func EnsureCallDepth(ctx context.Context) context.Context {
 // context checks.
 const callCheckEvery = 256
 
-// enterCall is Enter for a function call, returning the error that stops
-// it: the depth limit, or every callCheckEvery calls the call's
-// cancellation. A Go builtin that calls back into the script in a loop
-// (functools.reduce, a sort key, re.sub with a callable) runs no statement
-// loop of its own, and a short function or lambda body never reaches the
-// evaluator's batched checks, so without this a loop of callbacks would run
-// to completion whatever the call's deadline. On error the depth is left
-// unchanged.
-func (cd *CallDepth) enterCall(ctx context.Context) object.Object {
-	if !cd.Enter() {
+// enterCall is Enter for a function call. It returns true when the call
+// may go ahead with nothing more to do; on false the caller must call
+// enterCallSlow, which returns the error that stops the call (the depth
+// limit, or every callCheckEvery calls the call's cancellation). A Go
+// builtin that calls back into the script in a loop (functools.reduce, a
+// sort key, re.sub with a callable) runs no statement loop of its own, and
+// a short function or lambda body never reaches the evaluator's batched
+// checks, so without this a loop of callbacks would run to completion
+// whatever the call's deadline. It is split this way so the common case
+// inlines into every call site:
+//
+//	if !cd.enterCall() {
+//		if errObj := cd.enterCallSlow(ctx); errObj != nil {
+//			return errObj
+//		}
+//	}
+func (cd *CallDepth) enterCall() bool {
+	cd.current++
+	cd.calls++
+	return cd.current <= cd.max && cd.calls&(callCheckEvery-1) != 0
+}
+
+// enterCallSlow finishes enterCall for a call past the depth limit or one
+// that checks the context. The depth and call count are already counted;
+// on error the depth is restored.
+//
+//go:noinline
+func (cd *CallDepth) enterCallSlow(ctx context.Context) object.Object {
+	if cd.current > cd.max {
 		return cd.LimitError()
 	}
-	if cd.calls++; cd.calls%callCheckEvery == 0 {
-		if errObj := callCheck(ctx); errObj != nil {
-			cd.current--
-			return errObj
-		}
+	if errObj := callCheck(ctx); errObj != nil {
+		cd.current--
+		return errObj
 	}
 	return nil
 }
@@ -2311,8 +2328,10 @@ func applyUserFunctionDirect(ctx context.Context, fn *object.Function, arg objec
 		return newGenerator(ctx, fn, []object.Object{arg}, nil, fn.Env, plan)
 	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
-		if errObj := cd.enterCall(ctx); errObj != nil {
-			return errObj
+		if !cd.enterCall() {
+			if errObj := cd.enterCallSlow(ctx); errObj != nil {
+				return errObj
+			}
 		}
 		defer cd.Exit()
 	}
@@ -2348,8 +2367,10 @@ func applyUserFunction2(ctx context.Context, fn *object.Function, a0, a1 object.
 		return newGenerator(ctx, fn, []object.Object{a0, a1}, nil, fn.Env, plan)
 	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
-		if errObj := cd.enterCall(ctx); errObj != nil {
-			return errObj
+		if !cd.enterCall() {
+			if errObj := cd.enterCallSlow(ctx); errObj != nil {
+				return errObj
+			}
 		}
 		defer cd.Exit()
 	}
@@ -2387,8 +2408,10 @@ func applyUserFunctionN(ctx context.Context, fn *object.Function, args ...object
 		return newGenerator(ctx, fn, args, nil, fn.Env, plan)
 	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
-		if errObj := cd.enterCall(ctx); errObj != nil {
-			return errObj
+		if !cd.enterCall() {
+			if errObj := cd.enterCallSlow(ctx); errObj != nil {
+				return errObj
+			}
 		}
 		defer cd.Exit()
 	}
@@ -2449,8 +2472,10 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 	}
 	// Check call depth to prevent stack overflow
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
-		if errObj := cd.enterCall(ctx); errObj != nil {
-			return errObj
+		if !cd.enterCall() {
+			if errObj := cd.enterCallSlow(ctx); errObj != nil {
+				return errObj
+			}
 		}
 		defer cd.Exit()
 	}
@@ -2557,8 +2582,10 @@ func applyFunctionWithContext(ctx context.Context, fn object.Object, args []obje
 func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
 	// Check call depth to prevent stack overflow
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
-		if errObj := cd.enterCall(ctx); errObj != nil {
-			return errObj
+		if !cd.enterCall() {
+			if errObj := cd.enterCallSlow(ctx); errObj != nil {
+				return errObj
+			}
 		}
 		defer cd.Exit()
 	}

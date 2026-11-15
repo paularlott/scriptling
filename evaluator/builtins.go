@@ -2428,8 +2428,13 @@ func compareElements(ctx context.Context, a, b []object.Object, env *object.Envi
 		local.ctx = ctx
 		budget = &local
 	}
-	if errObj := budget.step(); errObj != nil {
-		return 0, errObj
+	// The top level is not counted: a sort counts each comparison itself,
+	// and a walk only grows past its values' size through nesting, which
+	// is counted, so ordinary rows of scalars compare at no extra cost.
+	if depth > 0 {
+		if errObj := budget.step(); errObj != nil {
+			return 0, errObj
+		}
 	}
 	n := len(a)
 	if len(b) < n {
@@ -2700,16 +2705,14 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 
 		// Sort indices
 		// A comparison that raised ends the sort: later ones are skipped. The
-		// context is checked every cmpCheckEvery comparisons, so a long sort
-		// stops when its call is cancelled.
+		// sort needs no cancellation check of its own: comparisons that call
+		// script code (__lt__) are checked as function calls, nested values
+		// are checked as they are walked (sortBudget), and a sort of plain
+		// values is bounded by the memory limit on the list.
 		sortBudget := cmpBudget{ctx: ctx}
 		sortEnv := GetEnvFromContext(ctx)
 		sort.SliceStable(indices, func(i, j int) bool {
 			if sortErr != nil {
-				return false
-			}
-			if errObj := sortBudget.step(); errObj != nil {
-				sortErr = errObj
 				return false
 			}
 			var left, right object.Object
@@ -2718,7 +2721,7 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 			} else {
 				left, right = elements[indices[i]], elements[indices[j]]
 			}
-			cmp, cerr := compareForSort(ctx, left, right, sortEnv)
+			cmp, cerr := compareForSortDepth(ctx, left, right, sortEnv, 0, &sortBudget)
 			if cerr != nil {
 				sortErr = cerr
 				return false

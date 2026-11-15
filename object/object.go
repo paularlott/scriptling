@@ -1158,9 +1158,9 @@ type Environment struct {
 	store                      map[string]Object
 	slotIndex                  map[string]int
 	slotNames                  []string
-	ownSlots                   bool // slotIndex and slotNames are this environment's own copy
 	slots                      []Object
 	callPoolSlots              uint8
+	ownSlots                   bool // slotIndex and slotNames are this environment's own copy
 	outer                      *Environment
 	root                       *Environment
 	globals                    map[string]bool

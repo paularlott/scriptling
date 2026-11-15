@@ -816,15 +816,12 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 			// incomparable is an error rather than a silent no-op (which is
 			// what compareObjects' 0-for-incomparable would do here).
 			var sortErr object.Object
-			// A comparison that raised ends the sort: later ones are skipped. The
-			// context is checked every cmpCheckEvery comparisons.
+			// A comparison that raised ends the sort: later ones are skipped.
+			// Cancellation is checked as for sorted(): in script calls and
+			// nested walks, not per comparison.
 			sortBudget := cmpBudget{ctx: ctx}
 			sort.SliceStable(indices, func(i, j int) bool {
 				if sortErr != nil {
-					return false
-				}
-				if errObj := sortBudget.step(); errObj != nil {
-					sortErr = errObj
 					return false
 				}
 				var left, right object.Object
@@ -833,7 +830,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 				} else {
 					left, right = list.Elements[indices[i]], list.Elements[indices[j]]
 				}
-				cmp, cerr := compareForSort(ctx, left, right, env)
+				cmp, cerr := compareForSortDepth(ctx, left, right, env, 0, &sortBudget)
 				if cerr != nil {
 					sortErr = cerr
 					return false
