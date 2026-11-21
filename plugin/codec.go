@@ -90,8 +90,8 @@ func objectToValueWithCallbacks(obj object.Object, callbacks *callbackSet) (Valu
 		}
 		return Value{Type: valueList, Items: items}, nil
 	case *object.Dict:
-		entries := make(map[string]Value, len(v.Pairs))
-		for _, pair := range v.Pairs {
+		entries := make(map[string]Value, v.Len())
+		for _, pair := range v.All() {
 			key, ok := pair.Key.(*object.String)
 			if !ok {
 				return Value{}, fmt.Errorf("plugin transport only supports dicts with string keys")

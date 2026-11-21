@@ -120,32 +120,15 @@ func TestYAMLConversionRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a dict to test round-trip
-	original := &object.Dict{
-		Pairs: map[string]object.DictPair{
-			object.DictKey(object.NewString("name")): {
-				Key:   object.NewString("name"),
-				Value: object.NewString("Test"),
-			},
-			object.DictKey(object.NewString("count")): {
-				Key:   object.NewString("count"),
-				Value: object.NewInteger(123),
-			},
-			object.DictKey(object.NewString("active")): {
-				Key:   object.NewString("active"),
-				Value: object.NewBoolean(true),
-			},
-			object.DictKey(object.NewString("items")): {
-				Key: object.NewString("items"),
-				Value: &object.List{
-					Elements: []object.Object{
-						object.NewString("a"),
-						object.NewString("b"),
-						object.NewString("c"),
-					},
-				},
-			},
-		},
-	}
+	original := object.NewDict()
+	original.SetByString("name", object.NewString("Test"))
+	original.SetByString("count", object.NewInteger(123))
+	original.SetByString("active", object.NewBoolean(true))
+	original.SetByString("items", &object.List{Elements: []object.Object{
+		object.NewString("a"),
+		object.NewString("b"),
+		object.NewString("c"),
+	}})
 
 	// Dump to YAML
 	yamlResult := yamlDumpFunc(ctx, object.NewKwargs(nil), original)

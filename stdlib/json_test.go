@@ -142,9 +142,9 @@ func TestJSONDumpsHandlesCyclicStructures(t *testing.T) {
 	}
 
 	t.Run("direct dict self-reference", func(t *testing.T) {
-		d := &object.Dict{Pairs: map[string]object.DictPair{}}
+		d := object.NewDict()
 		key := object.NewString("self")
-		d.Pairs[object.DictKey(key)] = object.DictPair{Key: key, Value: d}
+		d.Store(object.DictKey(key), key, d)
 		got := call(d)
 		want := `{"self": "<cyclic reference>"}`
 		if got != want {
@@ -153,10 +153,10 @@ func TestJSONDumpsHandlesCyclicStructures(t *testing.T) {
 	})
 
 	t.Run("indirect dict-list-dict cycle", func(t *testing.T) {
-		d := &object.Dict{Pairs: map[string]object.DictPair{}}
+		d := object.NewDict()
 		l := &object.List{Elements: []object.Object{d}}
 		key := object.NewString("k")
-		d.Pairs[object.DictKey(key)] = object.DictPair{Key: key, Value: l}
+		d.Store(object.DictKey(key), key, l)
 		got := call(d)
 		want := `{"k": ["<cyclic reference>"]}`
 		if got != want {

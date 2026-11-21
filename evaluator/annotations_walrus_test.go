@@ -146,8 +146,8 @@ d`, map[string]int64{"a": 1}},
 		if !ok {
 			t.Fatalf("object is not Dict. got=%T (%+v)", result, result)
 		}
-		if len(dict.Pairs) != len(tt.want) {
-			t.Fatalf("wrong size. expected=%d, got=%d (%s)", len(tt.want), len(dict.Pairs), dict.Inspect())
+		if dict.Len() != len(tt.want) {
+			t.Fatalf("wrong size. expected=%d, got=%d (%s)", len(tt.want), dict.Len(), dict.Inspect())
 		}
 		for key, expected := range tt.want {
 			pair, found := dict.GetByString(key)

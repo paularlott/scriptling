@@ -422,7 +422,7 @@ Example:
 			methods["_asdict"] = &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					nt := args[0].(*object.Instance)
-					d := &object.Dict{Pairs: make(map[string]object.DictPair, len(fieldNames))}
+					d := object.NewDictSized(len(fieldNames))
 					for _, name := range fieldNames {
 						if v, exists := nt.GetField(name); exists {
 							d.SetByString(name, v)
@@ -574,7 +574,7 @@ Example:
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// ChainMap(*maps) - Group multiple dicts for single lookup
 			// Returns a special dict that chains lookups
-			chainMap := &object.Dict{Pairs: make(map[string]object.DictPair)}
+			chainMap := object.NewDict()
 
 			// Store the chain of maps
 			maps := make([]object.Object, len(args))

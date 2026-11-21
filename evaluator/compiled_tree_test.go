@@ -192,7 +192,7 @@ func TestBareStatementAssignTargetCompiledOnce(t *testing.T) {
 
 	for round := 0; round < 2; round++ {
 		env := object.NewEnvironment()
-		d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+		d := object.NewDict()
 		env.Set("d", d)
 		if obj := EvalWithContext(context.Background(), stmt, env); object.IsError(obj) {
 			t.Fatalf("round %d: evaluation error: %s", round, obj.Inspect())

@@ -75,7 +75,7 @@ func buildEnumMembers(class *object.Class) object.Object {
 	class.EnumMembers = members
 
 	// __members__ maps names to members, Python-style.
-	d := &object.Dict{Pairs: make(map[string]object.DictPair, len(members))}
+	d := object.NewDictSized(len(members))
 	for _, m := range members {
 		member := m.(*object.Instance)
 		name, _ := member.Field("name").(*object.String)

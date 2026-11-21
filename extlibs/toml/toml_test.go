@@ -135,37 +135,14 @@ func TestTOMLConversionRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a dict to test round-trip
-	original := &object.Dict{
-		Pairs: map[string]object.DictPair{
-			object.DictKey(object.NewString("title")): {
-				Key:   object.NewString("title"),
-				Value: object.NewString("My App"),
-			},
-			object.DictKey(object.NewString("count")): {
-				Key:   object.NewString("count"),
-				Value: object.NewInteger(123),
-			},
-			object.DictKey(object.NewString("active")): {
-				Key:   object.NewString("active"),
-				Value: object.NewBoolean(true),
-			},
-			object.DictKey(object.NewString("database")): {
-				Key: object.NewString("database"),
-				Value: &object.Dict{
-					Pairs: map[string]object.DictPair{
-						object.DictKey(object.NewString("host")): {
-							Key:   object.NewString("host"),
-							Value: object.NewString("localhost"),
-						},
-						object.DictKey(object.NewString("port")): {
-							Key:   object.NewString("port"),
-							Value: object.NewInteger(5432),
-						},
-					},
-				},
-			},
-		},
-	}
+	database := object.NewDict()
+	database.SetByString("host", object.NewString("localhost"))
+	database.SetByString("port", object.NewInteger(5432))
+	original := object.NewDict()
+	original.SetByString("title", object.NewString("My App"))
+	original.SetByString("count", object.NewInteger(123))
+	original.SetByString("active", object.NewBoolean(true))
+	original.SetByString("database", database)
 
 	// Dump to TOML
 	tomlResult := tomlDumpsFunc(ctx, object.NewKwargs(nil), original)

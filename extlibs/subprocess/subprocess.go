@@ -166,7 +166,7 @@ var Library = object.NewLibrary(LibraryName, map[string]*object.Builtin{
 			}
 			if envDict, exists := kwargs.Kwargs["env"]; exists {
 				if d, ok := envDict.(*object.Dict); ok {
-					for _, pair := range d.Pairs {
+					for _, pair := range d.All() {
 						if valStr, ok := pair.Value.(*object.String); ok {
 							env[pair.StringKey()] = valStr.StringValue()
 						}

@@ -227,7 +227,7 @@ func matchesToList(ctx context.Context, matches []matchResult) object.Object {
 		return errObj
 	}
 	for _, m := range matches {
-		d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+		d := object.NewDict()
 		d.SetByString("file", object.NewString(m.File))
 		d.SetByString("line", object.NewInteger(int64(m.Line)))
 		d.SetByString("text", object.NewString(m.Text))

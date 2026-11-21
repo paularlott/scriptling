@@ -76,7 +76,14 @@ func convertArgsAndKwargs(args []interface{}, prependSelf object.Object) ([]obje
 
 type scriptLibrary struct {
 	source string
-	store  map[string]object.Object
+	store  *libMembers // nil until the library has been evaluated
+}
+
+// libMembers holds the names a script library defines and their values, in
+// definition order.
+type libMembers struct {
+	names  []string
+	values []object.Object
 }
 
 const (
@@ -200,11 +207,11 @@ func setNestedDictPath(env *object.Environment, name string, libDict *object.Dic
 		if d, ok := existing.(*object.Dict); ok {
 			rootDict = d
 		} else {
-			rootDict = &object.Dict{Pairs: make(map[string]object.DictPair), Module: rootName}
+			rootDict = &object.Dict{Module: rootName}
 			env.Set(rootName, rootDict)
 		}
 	} else {
-		rootDict = &object.Dict{Pairs: make(map[string]object.DictPair), Module: rootName}
+		rootDict = &object.Dict{Module: rootName}
 		env.Set(rootName, rootDict)
 		env.MarkImportedBinding(rootName)
 	}
@@ -216,12 +223,12 @@ func setNestedDictPath(env *object.Environment, name string, libDict *object.Dic
 			if d, ok := pair.Value.(*object.Dict); ok {
 				current = d
 			} else {
-				newDict := &object.Dict{Pairs: make(map[string]object.DictPair), Module: strings.Join(parts[:i+1], ".")}
+				newDict := &object.Dict{Module: strings.Join(parts[:i+1], ".")}
 				current.SetByString(part, newDict)
 				current = newDict
 			}
 		} else {
-			newDict := &object.Dict{Pairs: make(map[string]object.DictPair), Module: strings.Join(parts[:i+1], ".")}
+			newDict := &object.Dict{Module: strings.Join(parts[:i+1], ".")}
 			current.SetByString(part, newDict)
 			current = newDict
 		}
@@ -298,7 +305,7 @@ func (p *Scriptling) needsParentMerge(name string, existingDict *object.Dict) bo
 	}
 
 	// Check if dict has any library functions (not just sub-libraries)
-	for _, pair := range existingDict.Pairs {
+	for _, pair := range existingDict.All() {
 		keyStr := pair.StringKey()
 		if keyStr != "__doc__" && funcs[keyStr] != nil {
 			return false // Already has functions
@@ -350,8 +357,8 @@ func (p *Scriptling) loadLibraryWithDepth(ctx context.Context, name string, dept
 					// Merge parent library functions
 					lib := p.registeredLibraries[name]
 					libDict := lib.GetDict()
-					for k, v := range libDict.Pairs {
-						if _, exists := existingDict.Pairs[k]; !exists {
+					for k, v := range libDict.All() {
+						if _, exists := existingDict.Lookup(k); !exists {
 							existingDict.Store(k, v.Key, v.Value)
 						}
 					}
@@ -1218,14 +1225,7 @@ func (p *Scriptling) loadLibraryIntoEnv(ctx context.Context, name string, env *o
 			}
 			lib.store = store
 		}
-		pairs := make(map[string]object.DictPair, len(lib.store))
-		for fname, obj := range lib.store {
-			pairs[object.DictKey(object.NewString(fname))] = object.DictPair{
-				Key:   object.NewString(fname),
-				Value: obj,
-			}
-		}
-		libDict = &object.Dict{Pairs: pairs, Module: name}
+		libDict = object.NewModuleDict(name, lib.store.names, lib.store.values)
 	} else if lib, ok := p.registeredLibraries[name]; ok {
 		// Try from registered libraries
 		libDict = lib.GetDict()
@@ -1248,8 +1248,8 @@ func (p *Scriptling) loadLibraryIntoEnv(ctx context.Context, name string, env *o
 	if parentObj, ok := env.Get(parts[0]); ok {
 		if existing, err := traverseDictPath(parentObj, parts[1:], maxLibraryNestingDepth); err == nil {
 			if existingDict, ok := existing.(*object.Dict); ok {
-				for k, v := range existingDict.Pairs {
-					if _, exists := libDict.Pairs[k]; !exists {
+				for k, v := range existingDict.All() {
+					if _, exists := libDict.Lookup(k); !exists {
 						libDict.Store(k, v.Key, v.Value)
 					}
 				}
@@ -1265,7 +1265,7 @@ func (p *Scriptling) loadLibraryIntoEnv(ctx context.Context, name string, env *o
 // import path; a name already in it is a circular import, which without the
 // check re-evaluates modules forever (a module's exported names only exist
 // once its evaluation completes, so a cycle never sees a "already imported").
-func (p *Scriptling) evaluateScriptLibrary(ctx context.Context, name string, script string, chain []string) (map[string]object.Object, error) {
+func (p *Scriptling) evaluateScriptLibrary(ctx context.Context, name string, script string, chain []string) (*libMembers, error) {
 	for _, inFlight := range chain {
 		if inFlight == name {
 			return nil, fmt.Errorf("circular import: %s", strings.Join(append(append([]string{}, chain...), name), " -> "))
@@ -1389,39 +1389,39 @@ func (p *Scriptling) evaluateScriptLibrary(ctx context.Context, name string, scr
 		return nil, fmt.Errorf("%s", msg)
 	}
 
-	// Extract all defined names from the library environment
-	store := libEnv.GetStore()
-
-	// Filter out the import builtin and any imported libraries
-	libStore := make(map[string]object.Object)
-	for k, v := range store {
-		// Skip import builtin and imported libraries (which are Dicts)
+	// Extract all defined names from the library environment, in definition
+	// order, leaving out the import builtin.
+	names, values := libEnv.Bindings()
+	members := &libMembers{names: names[:0], values: values[:0]}
+	docAt := -1
+	for i, k := range names {
 		if k == "import" {
 			continue
 		}
-		// Include everything else (functions, constants, etc.)
-		libStore[k] = v
+		if k == "__doc__" {
+			docAt = len(members.names)
+		}
+		members.names = append(members.names, k)
+		members.values = append(members.values, values[i])
 	}
 
 	// Add module docstring if found
 	if moduleDocstring != nil {
-		libStore["__doc__"] = moduleDocstring
+		if docAt >= 0 {
+			members.values[docAt] = moduleDocstring
+		} else {
+			members.names = append(members.names, "__doc__")
+			members.values = append(members.values, moduleDocstring)
+		}
 	}
 
-	return libStore, nil
+	return members, nil
 }
 
 // registerScriptLibrary loads a script library into the current environment as a dict
 // Supports nested paths like "scriptling.ai.agent" - will create parent dicts as needed
-func (p *Scriptling) registerScriptLibrary(name string, store map[string]object.Object) {
-	lib := make(map[string]object.DictPair, len(store))
-	for fname, obj := range store {
-		lib[object.DictKey(object.NewString(fname))] = object.DictPair{
-			Key:   object.NewString(fname),
-			Value: obj,
-		}
-	}
-	setNestedDictPath(p.env, name, &object.Dict{Pairs: lib, Module: name})
+func (p *Scriptling) registerScriptLibrary(name string, store *libMembers) {
+	setNestedDictPath(p.env, name, object.NewModuleDict(name, store.names, store.values))
 }
 
 // EnableOutputCapture enables capturing print output instead of sending to stdout

@@ -244,10 +244,10 @@ Returns:
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					before := store.Count()
 					remaining := store.Compact()
-					return &object.Dict{Pairs: map[string]object.DictPair{
-						"removed":   {Key: object.NewString("removed"), Value: object.NewInteger(int64(before - remaining))},
-						"remaining": {Key: object.NewString("remaining"), Value: object.NewInteger(int64(remaining))},
-					}}
+					return object.NewStringDict(map[string]object.Object{
+						"removed":   object.NewInteger(int64(before - remaining)),
+						"remaining": object.NewInteger(int64(remaining)),
+					})
 				},
 				HelpText: `compact() - Manually trigger compaction; returns removed and remaining counts`,
 			},
@@ -258,7 +258,7 @@ Returns:
 
 // memoryToDict converts a Memory to a Scriptling dict.
 func memoryToDict(m *Memory) *object.Dict {
-	d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+	d := object.NewDict()
 	d.SetByString("id", object.NewString(m.ID))
 	d.SetByString("content", object.NewString(m.Content))
 	d.SetByString("type", object.NewString(m.Type))

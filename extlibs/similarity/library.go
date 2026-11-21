@@ -311,7 +311,7 @@ with vectors produced by vectorize().`,
 				results := MostSimilar(query, vectors, topK)
 				elements := make([]object.Object, len(results))
 				for i, r := range results {
-					d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+					d := object.NewDict()
 					d.SetByString("index", object.NewInteger(int64(r.Index)))
 					d.SetByString("score", object.NewFloat(r.Score))
 					elements[i] = d

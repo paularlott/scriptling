@@ -355,18 +355,18 @@ Returns the parsed JSON as a dict or list, or None if body is empty.`,
 // request fields (path_params, remote_addr). The context field starts as an
 // empty dict for middleware to populate — see WithRequestContext.
 func CreateRequestInstance(method, path, body string, headers, query, pathParams map[string]string, remoteAddr string) *object.Instance {
-	headerDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+	headerDict := object.NewDict()
 	for k, v := range headers {
 		lk := strings.ToLower(k)
 		headerDict.SetByString(lk, object.NewString(v))
 	}
 
-	queryDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+	queryDict := object.NewDict()
 	for k, v := range query {
 		queryDict.SetByString(k, object.NewString(v))
 	}
 
-	paramsDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+	paramsDict := object.NewDict()
 	for k, v := range pathParams {
 		paramsDict.SetByString(k, object.NewString(v))
 	}
@@ -379,7 +379,7 @@ func CreateRequestInstance(method, path, body string, headers, query, pathParams
 		"query":       queryDict,
 		"path_params": paramsDict,
 		"remote_addr": object.NewString(remoteAddr),
-		"context":     &object.Dict{Pairs: make(map[string]object.DictPair)},
+		"context":     object.NewDict(),
 		// auth is the authenticated caller (subject, audience, scopes, expiry,
 		// claims) when the server checks a bearer token or identity-provider
 		// token, else None; the server fills it in.
@@ -1024,28 +1024,20 @@ Example:
 					return errors.NewError("failed to parse query string: %s", parseErr.Error())
 				}
 
-				pairs := make(map[string]object.DictPair)
+				entries := make(map[string]object.Object, len(values))
 				for key, vals := range values {
-					keyObj := object.NewString(key)
-					dk := object.DictKey(keyObj)
 					if len(vals) == 1 {
-						pairs[dk] = object.DictPair{
-							Key:   keyObj,
-							Value: object.NewString(vals[0]),
-						}
+						entries[key] = object.NewString(vals[0])
 					} else {
 						elements := make([]object.Object, len(vals))
 						for i, v := range vals {
 							elements[i] = object.NewString(v)
 						}
-						pairs[dk] = object.DictPair{
-							Key:   keyObj,
-							Value: &object.List{Elements: elements},
-						}
+						entries[key] = &object.List{Elements: elements}
 					}
 				}
 
-				return &object.Dict{Pairs: pairs}
+				return object.NewStringDict(entries)
 			},
 			HelpText: `parse_query(query_string) - Parse a URL query string
 

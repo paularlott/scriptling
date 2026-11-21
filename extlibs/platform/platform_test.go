@@ -97,8 +97,8 @@ func TestPlatformLibrary(t *testing.T) {
 		t.Errorf("uname() returned %v, want dict", result.Type())
 	}
 	dict := result.(*object.Dict)
-	if len(dict.Pairs) < 5 {
-		t.Errorf("uname() dict length = %d, want >= 5", len(dict.Pairs))
+	if dict.Len() < 5 {
+		t.Errorf("uname() dict length = %d, want >= 5", dict.Len())
 	}
 
 	// Test with args (should error)

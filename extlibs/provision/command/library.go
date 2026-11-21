@@ -187,7 +187,7 @@ func run(ctx context.Context, inst *libraryInstance, kwargs object.Kwargs, args 
 			if !ok {
 				return &object.Error{Message: "run: env must be a dict"}
 			}
-			for _, pair := range d.Pairs {
+			for _, pair := range d.All() {
 				val, errObj := pair.Value.AsString()
 				if errObj != nil {
 					val = pair.Value.Inspect()

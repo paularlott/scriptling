@@ -488,12 +488,12 @@ func toGo(obj object.Object, path map[object.Object]struct{}, b *conversionBudge
 			return cyclicRefPlaceholder
 		}
 		path[o] = struct{}{}
-		if b != nil && !b.reserve(len(o.Pairs), mapEntryBytes) {
+		if b != nil && !b.reserve(o.Len(), mapEntryBytes) {
 			return nil
 		}
-		result := make(map[string]interface{}, len(o.Pairs))
-		object.TrackMap(result, int64(len(o.Pairs))*mapEntryBytes)
-		for _, pair := range o.Pairs {
+		result := make(map[string]interface{}, o.Len())
+		object.TrackMap(result, int64(o.Len())*mapEntryBytes)
+		for _, pair := range o.All() {
 			key := pair.StringKey()
 			if b != nil && !b.addBytes(len(key)) {
 				return nil
@@ -609,7 +609,7 @@ func ToGoWithError(obj object.Object) (interface{}, *object.Error) {
 		return result, nil
 	case *object.Dict:
 		result := make(map[string]interface{})
-		for _, pair := range v.Pairs {
+		for _, pair := range v.All() {
 			converted, err := ToGoWithError(pair.Value)
 			if err != nil {
 				return nil, err

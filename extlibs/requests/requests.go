@@ -154,7 +154,7 @@ func newResponseInstance(statusCode int, headers map[string]string, body []byte,
 	}
 	text := object.NewString(string(body))
 	// Convert headers to object.Dict
-	headerDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+	headerDict := object.NewDict()
 	for k, v := range headers {
 		headerDict.SetByString(k, object.NewString(v))
 	}
@@ -378,7 +378,7 @@ func extractRequestArgs(kwargs object.Kwargs, args []object.Object, hasData bool
 			data = string(jsonBytes)
 			// Set Content-Type header if not already set
 			if _, hasHeaders := options["headers"]; !hasHeaders {
-				contentTypeDict := &object.Dict{Pairs: make(map[string]object.DictPair)}
+				contentTypeDict := object.NewDict()
 				contentTypeDict.SetByString("Content-Type", object.NewString("application/json"))
 				options["headers"] = contentTypeDict
 			}
@@ -751,7 +751,7 @@ Returns:
 				batchBytes := int64(len(requestList)) * parallelRequestOverhead
 				for _, reqObj := range requestList {
 					if d, ok := reqObj.(*object.Dict); ok {
-						batchBytes += int64(len(d.Pairs)) * parallelRequestEntryBytes
+						batchBytes += int64(d.Len()) * parallelRequestEntryBytes
 					}
 				}
 				// The result list is a value: its slots are checked above and

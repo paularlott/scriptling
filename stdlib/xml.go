@@ -116,7 +116,7 @@ func xmlLoads(content string) (object.Object, error) {
 			if err != nil {
 				return nil, err
 			}
-			d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+			d := object.NewDict()
 			d.SetByString(start.Name.Local, val)
 			return d, nil
 		}
@@ -161,7 +161,7 @@ func buildElementResult(start xml.StartElement, rawText string, children []xmlCh
 		return object.NewString(textStr), nil
 	}
 
-	d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+	d := object.NewDict()
 
 	// Attributes → @-prefixed keys.
 	for _, attr := range start.Attr {
@@ -208,7 +208,7 @@ type xmlChildOut struct {
 
 func xmlDumps(data *object.Dict, indent string) (string, error) {
 	var buf bytes.Buffer
-	for _, pair := range data.Pairs {
+	for _, pair := range data.All() {
 		name, _ := pair.Key.AsString()
 		if err := emitXML(&buf, name, pair.Value, indent, 0, 1); err != nil {
 			return "", err
@@ -232,7 +232,7 @@ func emitXML(buf *bytes.Buffer, name string, val object.Object, indent string, d
 		var text string
 		hasText := false
 
-		for _, pair := range v.Pairs {
+		for _, pair := range v.All() {
 			key, _ := pair.Key.AsString()
 			if strings.HasPrefix(key, "@") {
 				s, _ := pair.Value.AsString()

@@ -298,8 +298,8 @@ func parseHeaderKwarg(kwargs object.Kwargs) (map[string]string, object.Object) {
 	if !ok {
 		return nil, pluginErr("load() headers must be a dict of strings")
 	}
-	headers := make(map[string]string, len(dict.Pairs))
-	for _, pair := range dict.Pairs {
+	headers := make(map[string]string, dict.Len())
+	for _, pair := range dict.All() {
 		value, errObj := pair.Value.AsString()
 		if errObj != nil {
 			return nil, pluginErr("load() headers must be a dict of strings")
@@ -339,7 +339,7 @@ func parseBatchCallSpecs(items []object.Object) ([]batchCallSpec, object.Object)
 			if !ok {
 				return nil, pluginErrf("batch_call() call %d kwargs must be a dict", i)
 			}
-			for _, pair := range kwargsDict.Pairs {
+			for _, pair := range kwargsDict.All() {
 				key, ok := pair.Key.(*object.String)
 				if !ok {
 					return nil, pluginErrf("batch_call() call %d kwargs keys must be strings", i)

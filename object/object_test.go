@@ -80,16 +80,12 @@ func TestListInspect(t *testing.T) {
 }
 
 func TestDictInspect(t *testing.T) {
-	dict := &Dict{
-		Pairs: map[string]DictPair{
-			"name": {Key: NewString("name"), Value: NewString("Alice")},
-			"age":  {Key: NewString("age"), Value: NewInteger(30)},
-		},
-	}
+	dict := NewDict()
+	dict.SetByString("name", NewString("Alice"))
+	dict.SetByString("age", NewInteger(30))
 	result := dict.Inspect()
-	// Dict order is not guaranteed, so check both possibilities
-	if result != "{'name': 'Alice', 'age': 30}" && result != "{'age': 30, 'name': 'Alice'}" {
-		t.Errorf("dict.Inspect() = %q, want either order", result)
+	if result != "{'name': 'Alice', 'age': 30}" {
+		t.Errorf("dict.Inspect() = %q, want insertion order", result)
 	}
 }
 
@@ -151,20 +147,12 @@ func TestEnvironmentCopyCallableBindingsTo(t *testing.T) {
 	source.Set("helper", lambda)
 	sourceVal := NewInteger(42)
 	source.Set("value", sourceVal)
-	module := &Dict{Pairs: map[string]DictPair{
-		DictKey(NewString("answer")): {
-			Key:   NewString("answer"),
-			Value: NewInteger(42),
-		},
-	}}
+	module := NewDict()
+	module.SetByString("answer", NewInteger(42))
 	source.Set("module", module)
 	source.MarkImportedBinding("module")
-	userDict := &Dict{Pairs: map[string]DictPair{
-		DictKey(NewString("secret")): {
-			Key:   NewString("secret"),
-			Value: NewString("do-not-copy"),
-		},
-	}}
+	userDict := NewDict()
+	userDict.SetByString("secret", NewString("do-not-copy"))
 	source.Set("user_data", userDict)
 
 	source.CopyCallableBindingsTo(target)
@@ -280,9 +268,9 @@ func TestEnvironmentCopyCallableBindingsToWithSlots(t *testing.T) {
 
 func TestEnvironmentSetClearsImportedBindingMark(t *testing.T) {
 	env := NewEnvironment()
-	env.Set("module", &Dict{Pairs: map[string]DictPair{}})
+	env.Set("module", NewDict())
 	env.MarkImportedBinding("module")
-	env.Set("module", &Dict{Pairs: map[string]DictPair{}})
+	env.Set("module", NewDict())
 
 	if env.IsImportedBinding("module") {
 		t.Fatal("expected normal assignment to clear imported binding mark")
@@ -987,9 +975,8 @@ func TestIterableToSlice(t *testing.T) {
 	}
 
 	// Test Dict
-	dict := &Dict{Pairs: map[string]DictPair{
-		"a": {Key: NewString("a"), Value: NewInteger(1)},
-	}}
+	dict := NewDict()
+	dict.SetByString("a", NewInteger(1))
 	slice, ok = IterableToSlice(dict)
 	if !ok || len(slice) != 1 {
 		t.Error("IterableToSlice(Dict) should return keys")
@@ -1004,10 +991,9 @@ func TestIterableToSlice(t *testing.T) {
 }
 
 func TestDictKeys(t *testing.T) {
-	dict := &Dict{Pairs: map[string]DictPair{
-		"a": {Key: NewString("a"), Value: NewInteger(1)},
-		"b": {Key: NewString("b"), Value: NewInteger(2)},
-	}}
+	dict := NewDict()
+	dict.SetByString("a", NewInteger(1))
+	dict.SetByString("b", NewInteger(2))
 
 	keys := &DictKeys{Dict: dict}
 
@@ -1032,9 +1018,8 @@ func TestDictKeys(t *testing.T) {
 }
 
 func TestDictValues(t *testing.T) {
-	dict := &Dict{Pairs: map[string]DictPair{
-		"a": {Key: NewString("a"), Value: NewInteger(1)},
-	}}
+	dict := NewDict()
+	dict.SetByString("a", NewInteger(1))
 
 	values := &DictValues{Dict: dict}
 
@@ -1051,9 +1036,8 @@ func TestDictValues(t *testing.T) {
 }
 
 func TestDictItems(t *testing.T) {
-	dict := &Dict{Pairs: map[string]DictPair{
-		"a": {Key: NewString("a"), Value: NewInteger(1)},
-	}}
+	dict := NewDict()
+	dict.SetByString("a", NewInteger(1))
 
 	items := &DictItems{Dict: dict}
 
@@ -1624,9 +1608,9 @@ func TestInspectHandlesCyclicContainers(t *testing.T) {
 	})
 
 	t.Run("dict", func(t *testing.T) {
-		d := &Dict{Pairs: map[string]DictPair{}}
+		d := NewDict()
 		key := NewString("self")
-		d.Pairs[DictKey(key)] = DictPair{Key: key, Value: d}
+		d.Store(DictKey(key), key, d)
 		want := "{'self': <cyclic reference>}"
 		if got := d.Inspect(); got != want {
 			t.Fatalf("Inspect() = %q, want %q", got, want)
@@ -1648,10 +1632,10 @@ func TestInspectHandlesCyclicContainers(t *testing.T) {
 	})
 
 	t.Run("indirect dict-list-dict cycle", func(t *testing.T) {
-		d := &Dict{Pairs: map[string]DictPair{}}
+		d := NewDict()
 		l := &List{Elements: []Object{d}}
 		key := NewString("k")
-		d.Pairs[DictKey(key)] = DictPair{Key: key, Value: l}
+		d.Store(DictKey(key), key, l)
 		want := "{'k': [<cyclic reference>]}"
 		if got := d.Inspect(); got != want {
 			t.Fatalf("Inspect() = %q, want %q", got, want)

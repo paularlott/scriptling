@@ -57,7 +57,7 @@ func runHandlerRef(ctx context.Context, cfg HandlerConfig, handlerRef string, kw
 	// Seed __mcp_params so tool.get_string() also works inside ref-based
 	// handlers, mirroring what RunToolScript does for script-backed tools.
 	if len(kwargs) > 0 {
-		paramsDict := &object.Dict{Pairs: make(map[string]object.DictPair, len(kwargs))}
+		paramsDict := object.NewDictSized(len(kwargs))
 		for k, v := range kwargs {
 			paramsDict.SetByString(k, object.NewString(fmt.Sprintf("%v", v)))
 		}
@@ -166,7 +166,7 @@ func requestToolParams(paramsObj object.Object) ([]toolmetadata.ToolParameter, e
 		return nil, fmt.Errorf("params must be a dict, got %s", paramsObj.Type())
 	}
 	var out []toolmetadata.ToolParameter
-	for _, pair := range dict.Pairs {
+	for _, pair := range dict.All() {
 		key, err := pair.Key.AsString()
 		if err != nil || key == "" {
 			return nil, fmt.Errorf("params keys must be non-empty strings")

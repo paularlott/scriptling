@@ -66,8 +66,8 @@ func TestFromGo_NestedStructures(t *testing.T) {
 	if !ok {
 		t.Fatalf("conversion.FromGo(map[string]interface{}) returned %T, want *object.Dict", result)
 	}
-	if len(resultDict.Pairs) != 3 {
-		t.Errorf("conversion.FromGo(map[string]interface{}) returned %d pairs, want 3", len(resultDict.Pairs))
+	if resultDict.Len() != 3 {
+		t.Errorf("conversion.FromGo(map[string]interface{}) returned %d pairs, want 3", resultDict.Len())
 	}
 }
 
@@ -87,8 +87,8 @@ func TestFromGo_UnknownTypes(t *testing.T) {
 		t.Fatalf("conversion.FromGo(customStruct) returned %T, want *object.Dict", result)
 	}
 
-	if len(resultDict.Pairs) != 2 {
-		t.Errorf("conversion.FromGo(customStruct) returned %d pairs, want 2", len(resultDict.Pairs))
+	if resultDict.Len() != 2 {
+		t.Errorf("conversion.FromGo(customStruct) returned %d pairs, want 2", resultDict.Len())
 	}
 }
 

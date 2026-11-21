@@ -14,7 +14,7 @@ func TestBuiltinMethodTablesMatchDispatch(t *testing.T) {
 	samples := map[object.ObjectType]object.Object{
 		object.STRING_OBJ:      object.NewString("ab"),
 		object.LIST_OBJ:        &object.List{Elements: []object.Object{object.NewInteger(1)}},
-		object.DICT_OBJ:        &object.Dict{Pairs: map[string]object.DictPair{}},
+		object.DICT_OBJ:        object.NewDict(),
 		object.TUPLE_OBJ:       &object.Tuple{Elements: []object.Object{object.NewInteger(1)}},
 		object.SET_OBJ:         object.NewSet(),
 		object.BYTES_OBJ:       object.NewBytes([]byte("ab")),

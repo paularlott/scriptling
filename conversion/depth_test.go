@@ -77,7 +77,8 @@ func TestFromGoDepthBoundary(t *testing.T) {
 			case *object.List:
 				obj = o.Elements[0]
 			case *object.Dict:
-				obj = o.Pairs[object.DictStringKey("a")].Value
+				next, _ := o.GetByString("a")
+				obj = next.Value
 			default:
 				goto done
 			}

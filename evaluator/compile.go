@@ -741,7 +741,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 			keys := di.Dict.OrderedKeys()
 			cc := newContextChecker(ctx)
 			for _, key := range keys {
-				pair, ok := di.Dict.Pairs[key]
+				pair, ok := di.Dict.Lookup(key)
 				if !ok {
 					continue // key deleted during iteration — view skips it
 				}
@@ -1422,11 +1422,11 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 			if !ok {
 				return errors.NewError("argument after ** must be a dictionary, not %s", kwargsVal.Type())
 			}
-			keywords = make(map[string]object.Object, len(kwVals)+len(dict.Pairs))
+			keywords = make(map[string]object.Object, len(kwVals)+dict.Len())
 			for i, name := range kwNames {
 				keywords[name] = kwVals[i]
 			}
-			for _, pair := range dict.Pairs {
+			for _, pair := range dict.All() {
 				keywords[pair.StringKey()] = pair.Value
 			}
 		} else if len(kwVals) > 0 {
@@ -1634,9 +1634,9 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 			}
 			if dict, ok := kwargsVal.(*object.Dict); ok {
 				if keywords == nil {
-					keywords = make(map[string]object.Object, len(dict.Pairs))
+					keywords = make(map[string]object.Object, dict.Len())
 				}
-				for _, pair := range dict.Pairs {
+				for _, pair := range dict.All() {
 					if str, ok := pair.Key.(*object.String); ok {
 						keywords[str.StringValue()] = pair.Value
 					} else {
@@ -1669,7 +1669,7 @@ func evalFastDictGetCompiled(ctx context.Context, dict *object.Dict, argFns []ob
 	}
 
 	if keyStr, ok := keyObj.(*object.String); ok {
-		if pair, exists := dict.Pairs[object.DictStringKey(keyStr.StringValue())]; exists {
+		if pair, exists := dict.Lookup(object.DictStringKey(keyStr.StringValue())); exists {
 			return pair.Value
 		}
 		return defaultObj
@@ -1679,7 +1679,7 @@ func evalFastDictGetCompiled(ctx context.Context, dict *object.Dict, argFns []ob
 	if rerr != nil {
 		return rerr
 	}
-	if pair, exists := dict.Pairs[key]; exists {
+	if pair, exists := dict.Lookup(key); exists {
 		return pair.Value
 	}
 	return defaultObj

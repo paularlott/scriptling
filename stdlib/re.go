@@ -233,7 +233,7 @@ var MatchClass = &object.Class{
 				match := args[0].(*object.Instance)
 				groups := match.Field("_groups").(*object.List).Elements
 				names := match.Field("_group_names").(*object.List).Elements
-				result := &object.Dict{Pairs: make(map[string]object.DictPair)}
+				result := object.NewDict()
 				for i, n := range names {
 					ns, ok := n.(*object.String)
 					if !ok || ns.StringValue() == "" || i >= len(groups) {

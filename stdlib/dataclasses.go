@@ -397,7 +397,7 @@ func dataclassesAsDict(obj object.Object) object.Object {
 	switch v := obj.(type) {
 	case *object.Instance:
 		if v.Class != nil && v.Class.FieldNames != nil {
-			d := &object.Dict{Pairs: make(map[string]object.DictPair, len(v.Class.FieldNames))}
+			d := object.NewDictSized(len(v.Class.FieldNames))
 			for _, name := range v.Class.FieldNames {
 				if fv, has := v.GetField(name); has {
 					d.SetByString(name, dataclassesAsDict(fv))

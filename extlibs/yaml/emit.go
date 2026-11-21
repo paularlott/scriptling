@@ -282,8 +282,8 @@ func (e *yamlEmitter) mapping(d *object.Dict, indent int, state emitState, depth
 		key   string
 		value object.Object
 	}
-	index := make(map[string]int, len(d.Pairs))
-	entries := make([]entry, 0, len(d.Pairs))
+	index := make(map[string]int, d.Len())
+	entries := make([]entry, 0, d.Len())
 	for _, pair := range d.OrderedPairs() {
 		key := pair.StringKey()
 		if i, dup := index[key]; dup {

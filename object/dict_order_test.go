@@ -3,6 +3,7 @@ package object
 import (
 	"fmt"
 	"math/rand"
+	"sort"
 	"testing"
 	"time"
 )
@@ -43,8 +44,8 @@ func TestDictInsertionOrder(t *testing.T) {
 	// Re-storing an existing key keeps its position and updates the value.
 	d.Store(DictKey(NewString("apple")), NewString("apple"), NewInteger(99))
 	keysEqual(t, d, []string{"zebra", "apple", "mango"})
-	if v := d.Pairs[DictKey(NewString("apple"))].Value; v.Inspect() != "99" {
-		t.Fatalf("apple value = %s, want 99", v.Inspect())
+	if pair, _ := d.Lookup(DictKey(NewString("apple"))); pair.Value.Inspect() != "99" {
+		t.Fatalf("apple value = %s, want 99", pair.Value.Inspect())
 	}
 
 	// Deletion leaves a tombstone; remaining keys keep their order and new
@@ -70,13 +71,6 @@ func TestDictLastInserted(t *testing.T) {
 	empty := NewDict()
 	if _, _, ok := empty.LastInserted(); ok {
 		t.Fatal("LastInserted on empty dict should fail")
-	}
-
-	// A dict assembled directly from a Go map has unknown order but still
-	// yields a pair.
-	loose := &Dict{Pairs: map[string]DictPair{"k": {Key: NewString("k"), Value: NewInteger(1)}}}
-	if _, _, ok := loose.LastInserted(); !ok {
-		t.Fatal("LastInserted on unknown-order dict should find a pair")
 	}
 }
 
@@ -121,27 +115,6 @@ func TestDictOrderUnderChurn(t *testing.T) {
 	}
 }
 
-func TestDictUnknownOrderFallback(t *testing.T) {
-	// A dict built directly from a Go map (no Store) has no order, but every
-	// pair must still be visible exactly once.
-	d := &Dict{Pairs: make(map[string]DictPair)}
-	for _, name := range []string{"a", "b", "c", "d", "e"} {
-		k := NewString(name)
-		d.Pairs[DictKey(k)] = DictPair{Key: k, Value: NewInteger(1)}
-	}
-	keys := keyNames(d)
-	if len(keys) != 5 {
-		t.Fatalf("fallback iteration lost pairs: %v", keys)
-	}
-	seen := map[string]bool{}
-	for _, k := range keys {
-		if seen[k] {
-			t.Fatalf("duplicate key %s in fallback iteration", k)
-		}
-		seen[k] = true
-	}
-}
-
 func TestDictOrderPreservedByStoreFrom(t *testing.T) {
 	src := filledDict()
 	dst := NewDict()
@@ -152,8 +125,8 @@ func TestDictOrderPreservedByStoreFrom(t *testing.T) {
 	dst.Store(DictKey(NewString("apple")), NewString("apple"), NewInteger(9))
 	dst.StoreFrom(filledDict())
 	keysEqual(t, dst, []string{"zebra", "apple", "mango"})
-	if v := dst.Pairs[DictKey(NewString("apple"))].Value; v.Inspect() != "2" {
-		t.Fatalf("apple value after merge = %s, want 2", v.Inspect())
+	if pair, _ := dst.Lookup(DictKey(NewString("apple"))); pair.Value.Inspect() != "2" {
+		t.Fatalf("apple value after merge = %s, want 2", pair.Value.Inspect())
 	}
 }
 
@@ -255,14 +228,18 @@ func TestDictRandomOpsMatchModel(t *testing.T) {
 				}
 			}
 			got := d.OrderedKeys()
-			if len(got) != len(m.keys) || len(d.Pairs) != len(m.keys) {
-				t.Fatalf("seed %d step %d: len = %d/%d, want %d", seed, step, len(got), len(d.Pairs), len(m.keys))
+			if len(got) != len(m.keys) || d.Len() != len(m.keys) {
+				t.Fatalf("seed %d step %d: len = %d/%d, want %d", seed, step, len(got), d.Len(), len(m.keys))
 			}
 			for i, ck := range got {
 				if ck != DictStringKey(m.keys[i]) {
 					t.Fatalf("seed %d step %d: order[%d] = %q, want %q", seed, step, i, ck, m.keys[i])
 				}
-				if v := d.Pairs[ck].Value.(*Integer).IntValue(); int(v) != m.vals[m.keys[i]] {
+				pair, ok := d.Lookup(ck)
+				if !ok {
+					t.Fatalf("seed %d step %d: key %s listed but not found by Lookup", seed, step, m.keys[i])
+				}
+				if v := pair.Value.(*Integer).IntValue(); int(v) != m.vals[m.keys[i]] {
 					t.Fatalf("seed %d step %d: value for %s = %d, want %d", seed, step, m.keys[i], v, m.vals[m.keys[i]])
 				}
 			}
@@ -292,7 +269,7 @@ func TestDictDeleteIsNotQuadratic(t *testing.T) {
 		d.Delete(DictStringKey(fmt.Sprintf("k%d", i)))
 	}
 	d = build()
-	for len(d.Pairs) > 0 {
+	for d.Len() > 0 {
 		c, _, _ := d.LastInserted()
 		d.Delete(c)
 	}
@@ -301,39 +278,142 @@ func TestDictDeleteIsNotQuadratic(t *testing.T) {
 	}
 }
 
-// TestDictUnknownOrderKeysComeFirstSorted: pairs written straight into Pairs
-// (Go code that bypasses Store) have no recorded position. They read back
-// first, sorted, so mutating such a dict appends new keys after the old ones
-// instead of ahead of them, and the result is deterministic.
-func TestDictUnknownOrderKeysComeFirstSorted(t *testing.T) {
-	d := &Dict{Pairs: map[string]DictPair{}}
-	for _, k := range []string{"zeta", "alpha", "mid"} {
-		d.Pairs[DictStringKey(k)] = DictPair{Key: NewString(k), Value: NewInteger(1)}
+// TestDictSortKeys: SortKeys reorders by canonical key, keeps every pair
+// findable (small and indexed dicts), and later stores append.
+func TestDictSortKeys(t *testing.T) {
+	for _, n := range []int{3, 40} {
+		d := NewDict()
+		for i := 0; i < n; i++ {
+			k := fmt.Sprintf("k%03d", (i*7)%n)
+			d.Store(DictStringKey(k), NewString(k), NewInteger(int64(i)))
+		}
+		d.Delete(DictStringKey("k001")) // leave a hole before sorting
+		want := d.OrderedKeys()
+		sort.Strings(want)
+		d.SortKeys()
+		if got := d.OrderedKeys(); fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("n=%d: sorted order = %v, want %v", n, got, want)
+		}
+		for _, c := range want {
+			if !d.Has(c) {
+				t.Fatalf("n=%d: %q lost after SortKeys", n, c)
+			}
+		}
+		d.Store(DictStringKey("late"), NewString("late"), NewInteger(0))
+		if c, _, ok := d.LastInserted(); !ok || c != DictStringKey("late") {
+			t.Fatalf("n=%d: LastInserted = %q, want late", n, c)
+		}
 	}
-	d.Store(DictStringKey("late"), NewString("late"), NewInteger(2))
-	d.Store(DictStringKey("beta"), NewString("beta"), NewInteger(3))
+}
 
-	want := []string{"alpha", "mid", "zeta", "late", "beta"}
-	for run := 0; run < 20; run++ { // map iteration is random; the result must not be
-		var got []string
-		for _, p := range d.OrderedPairs() {
-			got = append(got, p.Key.(*String).StringValue())
+// TestDictInternalsStayConsistent: after every kind of delete and a compaction
+// the invariants hold: live matches the live entries, both ends of
+// entries[head:] are live, the index agrees with positions, and ordered reads
+// neither lose nor repeat a pair.
+func TestDictInternalsStayConsistent(t *testing.T) {
+	check := func(label string, d *Dict, want []string) {
+		t.Helper()
+		if got := d.OrderedKeys(); fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("%s: order = %v, want %v", label, got, want)
 		}
-		if fmt.Sprint(got) != fmt.Sprint(want) {
-			t.Fatalf("run %d: order = %v, want %v", run, got, want)
+		if int(d.live) != len(want) || d.Len() != len(want) {
+			t.Fatalf("%s: live = %d, want %d", label, d.live, len(want))
+		}
+		if d.holes() < 0 {
+			t.Fatalf("%s: negative holes", label)
+		}
+		if len(want) > 0 {
+			if d.entries[d.head].Key == nil || d.entries[len(d.entries)-1].Key == nil {
+				t.Fatalf("%s: an end of entries[head:] is a hole", label)
+			}
+		}
+		if d.index != nil {
+			if len(d.index) != len(want) {
+				t.Fatalf("%s: index has %d keys, want %d", label, len(d.index), len(want))
+			}
+			for c, pos := range d.index {
+				if d.entries[pos].Key == nil || d.entries[pos].canonical != c {
+					t.Fatalf("%s: index[%q] = %d points at the wrong entry", label, c, pos)
+				}
+			}
+		}
+		seen := map[string]bool{}
+		for c := range d.All() {
+			if seen[c] {
+				t.Fatalf("%s: All repeated %q", label, c)
+			}
+			seen[c] = true
+		}
+		if len(seen) != len(want) {
+			t.Fatalf("%s: All produced %d pairs, want %d", label, len(seen), len(want))
 		}
 	}
-	if c, _, ok := d.LastInserted(); !ok || c != DictStringKey("beta") {
-		t.Fatalf("LastInserted = %q, want beta", c)
+	for _, n := range []int{5, 100} { // linear and indexed
+		build := func() (*Dict, []string) {
+			d := NewDict()
+			var keys []string
+			for i := 0; i < n; i++ {
+				k := fmt.Sprintf("k%03d", i)
+				d.Store(DictStringKey(k), NewString(k), NewInteger(int64(i)))
+				keys = append(keys, DictStringKey(k))
+			}
+			return d, keys
+		}
+		del := func(d *Dict, keys []string, i int) []string {
+			d.Delete(keys[i])
+			return append(append([]string{}, keys[:i]...), keys[i+1:]...)
+		}
+		d, keys := build()
+		check("full", d, keys)
+		keys = del(d, keys, 0) // head
+		check("delete head", d, keys)
+		keys = del(d, keys, len(keys)-1) // tail
+		check("delete tail", d, keys)
+		keys = del(d, keys, len(keys)/2) // middle: leaves a hole
+		check("delete middle", d, keys)
+		if d.holes() != 1 {
+			t.Fatalf("n=%d: holes = %d after a middle delete, want 1", n, d.holes())
+		}
+		d.compact()
+		if d.holes() != 0 || d.head != 0 {
+			t.Fatalf("n=%d: compact left holes=%d head=%d", n, d.holes(), d.head)
+		}
+		check("after compact", d, keys)
+		// Delete down to empty from alternating ends.
+		for len(keys) > 0 {
+			if len(keys)%2 == 0 {
+				keys = del(d, keys, 0)
+			} else {
+				keys = del(d, keys, len(keys)-1)
+			}
+			check("drain", d, keys)
+		}
+		if len(d.entries) != 0 || d.head != 0 {
+			t.Fatalf("n=%d: emptied dict kept entries=%d head=%d", n, len(d.entries), d.head)
+		}
+		d.Store(DictStringKey("again"), NewString("again"), NewInteger(1))
+		check("reuse after empty", d, []string{DictStringKey("again")})
 	}
-	d.Delete(DictStringKey("alpha"))
-	d.Delete(DictStringKey("beta"))
-	d.Delete(DictStringKey("late"))
-	if c, _, ok := d.LastInserted(); !ok || c != DictStringKey("zeta") {
-		t.Fatalf("after deletes LastInserted = %q, want zeta (sorted-last unknown key)", c)
+
+	// Many middle deletes trigger the automatic sweep and keep contents.
+	d := NewDict()
+	var keys []string
+	for i := 0; i < 400; i++ {
+		k := fmt.Sprintf("k%03d", i)
+		d.Store(DictStringKey(k), NewString(k), NewInteger(int64(i)))
+		keys = append(keys, DictStringKey(k))
 	}
-	if got := d.OrderedKeys(); fmt.Sprint(got) != fmt.Sprint([]string{DictStringKey("mid"), DictStringKey("zeta")}) {
-		t.Fatalf("keys after deletes = %v", got)
+	var kept []string
+	for i, c := range keys {
+		if i == 0 || i == len(keys)-1 || i%10 == 0 {
+			kept = append(kept, c)
+			continue
+		}
+		d.Delete(c)
+	}
+	check("bulk middle deletes", d, kept)
+	if d.holes() > 32 && d.holes() > int(d.live) {
+		t.Fatalf("holes = %d with live = %d: compaction never ran", d.holes(), d.live)
 	}
 }
 

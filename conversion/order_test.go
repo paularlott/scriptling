@@ -29,11 +29,13 @@ func TestParseJSONKeepsDocumentOrder(t *testing.T) {
 		if got := fmt.Sprint(keyNames(d)); got != want {
 			t.Fatalf("run %d: top-level order = %s, want %s", run, got, want)
 		}
-		inner := d.Pairs[object.DictStringKey("alpha")].Value.(*object.Dict)
+		alpha, _ := d.GetByString("alpha")
+		inner := alpha.Value.(*object.Dict)
 		if got := fmt.Sprint(keyNames(inner)); got != "[y b]" {
 			t.Fatalf("nested order = %s", got)
 		}
-		leaf := inner.Pairs[object.DictStringKey("b")].Value.(*object.List).Elements[0].(*object.Dict)
+		b, _ := inner.GetByString("b")
+		leaf := b.Value.(*object.List).Elements[0].(*object.Dict)
 		if got := fmt.Sprint(keyNames(leaf)); got != "[q a]" {
 			t.Fatalf("list-nested order = %s", got)
 		}
@@ -54,7 +56,8 @@ func TestParseJSONDuplicateKeys(t *testing.T) {
 	if got := fmt.Sprint(keyNames(d)); got != "[a b]" {
 		t.Fatalf("order = %s", got)
 	}
-	if v := d.Pairs[object.DictStringKey("a")].Value.(*object.Integer).IntValue(); v != 3 {
+	pa, _ := d.GetByString("a")
+	if v := pa.Value.(*object.Integer).IntValue(); v != 3 {
 		t.Fatalf("a = %d, want last value 3", v)
 	}
 }

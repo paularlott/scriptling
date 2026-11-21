@@ -151,7 +151,7 @@ var errDenied = fmt.Errorf("denied")
 // BuildCtxDict builds the Scriptling dict passed to handlers.
 func BuildCtxDict(c *Ctx) *object.Dict {
 	u := c.Update
-	d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+	d := object.NewDict()
 	d.SetByString("dest", object.NewString(u.Dest))
 	d.SetByString("message_id", object.NewString(u.MessageID))
 	d.SetByString("text", object.NewString(u.Text))
@@ -169,14 +169,14 @@ func BuildCtxDict(c *Ctx) *object.Dict {
 	d.SetByString("args", &object.List{Elements: args})
 
 	// user dict
-	user := &object.Dict{Pairs: make(map[string]object.DictPair)}
+	user := object.NewDict()
 	user.SetByString("id", object.NewString(u.UserID))
 	user.SetByString("name", object.NewString(u.UserName))
 	user.SetByString("platform", object.NewString(c.Sender.Platform()))
 	d.SetByString("user", user)
 
 	if u.File != nil {
-		fd := &object.Dict{Pairs: make(map[string]object.DictPair)}
+		fd := object.NewDict()
 		fd.SetByString("id", object.NewString(u.File.ID))
 		fd.SetByString("name", object.NewString(u.File.Name))
 		fd.SetByString("mime", object.NewString(u.File.MimeType))

@@ -126,9 +126,9 @@ func TestObjectToValueNested(t *testing.T) {
 
 func TestObjectToValueErrors(t *testing.T) {
 	t.Run("non-string dict key", func(t *testing.T) {
-		dict := &object.Dict{Pairs: map[string]object.DictPair{
-			"i": {Key: object.NewInteger(1), Value: object.NewString("v")},
-		}}
+		dict := object.NewDict()
+		one := object.NewInteger(1)
+		dict.Store(object.DictKey(one), one, object.NewString("v"))
 		_, err := objectToValue(dict)
 		if err == nil {
 			t.Fatal("expected error for non-string dict key")
@@ -243,8 +243,8 @@ func TestValueToObject(t *testing.T) {
 			if !ok {
 				t.Fatalf("expected Dict, got %T", obj)
 			}
-			if len(d.Pairs) != 1 {
-				t.Errorf("len = %d, want 1", len(d.Pairs))
+			if d.Len() != 1 {
+				t.Errorf("len = %d, want 1", d.Len())
 			}
 		}},
 	}

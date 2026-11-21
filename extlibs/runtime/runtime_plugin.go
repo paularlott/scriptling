@@ -55,8 +55,8 @@ var PluginSubLibrary = object.NewLibrary(RuntimePluginLibraryName, map[string]*o
 				if !ok {
 					return errors.NewError("serve: metadata must be a dict")
 				}
-				metadata = make(map[string]any, len(dict.Pairs))
-				for _, pair := range dict.Pairs {
+				metadata = make(map[string]any, dict.Len())
+				for _, pair := range dict.All() {
 					key, e := pair.Key.AsString()
 					if e != nil {
 						return errors.NewError("serve: metadata keys must be strings")
@@ -384,8 +384,8 @@ func pluginMetadataValue(v object.Object) any {
 		}
 		return out
 	case *object.Dict:
-		out := make(map[string]any, len(t.Pairs))
-		for _, pair := range t.Pairs {
+		out := make(map[string]any, t.Len())
+		for _, pair := range t.All() {
 			if key, err := pair.Key.AsString(); err == nil {
 				out[key] = pluginMetadataValue(pair.Value)
 			}

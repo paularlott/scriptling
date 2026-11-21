@@ -164,7 +164,7 @@ func deepCopyDepth(ctx context.Context, obj object.Object, memo map[object.Objec
 		// Keys are hashable, hence immutable; values may nest arbitrarily.
 		// The copy preserves the dict's insertion order.
 		for _, k := range v.OrderedKeys() {
-			p := v.Pairs[k]
+			p, _ := v.Lookup(k)
 			copied := deepCopyDepth(ctx, p.Value, memo, depth-1)
 			if isCopyFailure(copied) {
 				return copied
@@ -207,11 +207,11 @@ func deepCopyDepth(ctx context.Context, obj object.Object, memo map[object.Objec
 				switch f := fn.(type) {
 				case *object.Function:
 					if len(f.Parameters) == 2 {
-						callArgs = append(callArgs, &object.Dict{Pairs: make(map[string]object.DictPair)})
+						callArgs = append(callArgs, object.NewDict())
 					}
 				case *object.LambdaFunction:
 					if len(f.Parameters) == 2 {
-						callArgs = append(callArgs, &object.Dict{Pairs: make(map[string]object.DictPair)})
+						callArgs = append(callArgs, object.NewDict())
 					}
 				}
 				result := ev.CallObjectFunction(ctx, fn, callArgs, nil, nil)

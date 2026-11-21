@@ -623,7 +623,7 @@ func (s *Server) runHandler(ctx context.Context, handlerRef string, reqObj *obje
 		Log.Error("Handler error", "error", err)
 		return object.NewStringDict(map[string]object.Object{
 			"status":  object.NewInteger(500),
-			"headers": &object.Dict{Pairs: map[string]object.DictPair{}},
+			"headers": object.NewDict(),
 			"body":    object.NewString(libutil.ErrorJSONBody(err.Error())),
 		})
 	}
@@ -639,7 +639,7 @@ func (s *Server) runHandler(ctx context.Context, handlerRef string, reqObj *obje
 
 	return object.NewStringDict(map[string]object.Object{
 		"status":  object.NewInteger(200),
-		"headers": &object.Dict{Pairs: map[string]object.DictPair{}},
+		"headers": object.NewDict(),
 		"body":    result,
 	})
 }
@@ -730,7 +730,7 @@ func (s *Server) scriptProtocolMiddleware(next http.Handler) http.Handler {
 				Log.Error("Request MCP registration failed", "error", err)
 				s.writeResponse(w, object.NewStringDict(map[string]object.Object{
 					"status":  object.NewInteger(500),
-					"headers": &object.Dict{Pairs: map[string]object.DictPair{}},
+					"headers": object.NewDict(),
 					"body":    object.NewString(libutil.ErrorJSONBody(err.Error())),
 				}))
 				return

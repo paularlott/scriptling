@@ -243,15 +243,15 @@ Examples:
 			case *object.List:
 				return object.NewInteger(int64(len(arg.Elements)))
 			case *object.Dict:
-				return object.NewInteger(int64(len(arg.Pairs)))
+				return object.NewInteger(int64(arg.Len()))
 			case *object.Tuple:
 				return object.NewInteger(int64(len(arg.Elements)))
 			case *object.DictKeys:
-				return object.NewInteger(int64(len(arg.Dict.Pairs)))
+				return object.NewInteger(int64(arg.Dict.Len()))
 			case *object.DictValues:
-				return object.NewInteger(int64(len(arg.Dict.Pairs)))
+				return object.NewInteger(int64(arg.Dict.Len()))
 			case *object.DictItems:
-				return object.NewInteger(int64(len(arg.Dict.Pairs)))
+				return object.NewInteger(int64(arg.Dict.Len()))
 			case *object.Set:
 				return object.NewInteger(int64(len(arg.Elements)))
 			case *object.Iterator:
@@ -1619,9 +1619,9 @@ Returns an integer hash value for the object using FNV-1a algorithm.`,
 			}
 			env := GetEnvFromContext(ctx)
 			if env == nil {
-				return &object.Dict{Pairs: make(map[string]object.DictPair)}
+				return object.NewDict()
 			}
-			d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+			d := object.NewDict()
 			env.EachLocal(func(name string, v object.Object) {
 				if v != nil && !strings.HasPrefix(name, "__") {
 					d.SetByString(name, v)
@@ -1769,7 +1769,7 @@ Only works on dict-like objects.`,
 				return attributeError(obj, name)
 			case *object.Dict:
 				dictKey := object.DictKey(object.NewString(name))
-				if _, ok := obj.Pairs[dictKey]; ok {
+				if _, ok := obj.Lookup(dictKey); ok {
 					obj.Delete(dictKey)
 					return NULL
 				}
@@ -1950,7 +1950,7 @@ Checks the full inheritance chain. issubclass(C, C) is True.`,
 				object.TrackSlice(newElems)
 				return &object.List{Elements: newElems}
 			case *object.Dict:
-				copied := object.NewDictSized(len(o.Pairs))
+				copied := object.NewDictSized(o.Len())
 				copied.SetFactory(o.Factory())
 				copied.StoreFrom(o)
 				return copied
@@ -3046,7 +3046,7 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 					if dict, ok := obj.(*object.Dict); ok {
 						// Check if it's a library (has functions)
 						hasBuiltins := false
-						for _, pair := range dict.Pairs {
+						for _, pair := range dict.All() {
 							if _, ok := pair.Value.(*object.Builtin); ok {
 								hasBuiltins = true
 								break
@@ -3138,7 +3138,7 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 			// Try to get the library from environment
 			if libObj, ok := env.Get(libName); ok {
 				if dict, ok := libObj.(*object.Dict); ok {
-					if pair, ok := dict.Pairs[object.DictKey(object.NewString(funcName))]; ok {
+					if pair, ok := dict.Lookup(object.DictKey(object.NewString(funcName))); ok {
 						// Sub-library (nested dict) — treat topic as a library name
 						if subDict, ok := pair.Value.(*object.Dict); ok {
 							printLibraryHelp(writer, fmt.Sprintf("%s.%s", libName, funcName), subDict)
@@ -3240,7 +3240,7 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 		fmt.Fprintln(writer, "Available keys:")
 		// Collect and sort keys
 		var names []string
-		for _, pair := range obj.Pairs {
+		for _, pair := range obj.All() {
 			keyStr, _ := pair.Key.AsString()
 			names = append(names, keyStr)
 		}
@@ -3293,7 +3293,7 @@ func helpFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 // Helper to extract and print docstrings from functions
 func printLibraryHelp(writer io.Writer, name string, dict *object.Dict) {
 	fmt.Fprintf(writer, "%s functions:\n", name)
-	if docPair, ok := dict.Pairs[object.DictKey(object.NewString("__doc__"))]; ok {
+	if docPair, ok := dict.Lookup(object.DictKey(object.NewString("__doc__"))); ok {
 		if docStr, ok := docPair.Value.(*object.String); ok {
 			fmt.Fprintln(writer, "")
 			fmt.Fprintln(writer, "Description:")
@@ -3306,7 +3306,7 @@ func printLibraryHelp(writer io.Writer, name string, dict *object.Dict) {
 	fmt.Fprintln(writer, "Available functions:")
 	var names []string
 	docKey := object.DictKey(object.NewString("__doc__"))
-	for k, pair := range dict.Pairs {
+	for k, pair := range dict.All() {
 		if k != docKey {
 			keyStr, _ := pair.Key.AsString()
 			names = append(names, keyStr)
@@ -3465,7 +3465,7 @@ func dirFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 				names = builtinMethodDir(object.DICT_OBJ)
 				break
 			}
-			for _, p := range o.Pairs {
+			for _, p := range o.All() {
 				if s, err := p.Key.AsString(); err == nil {
 					names = append(names, s)
 				}

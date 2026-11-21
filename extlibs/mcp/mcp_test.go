@@ -133,8 +133,8 @@ func TestDecodeToolResponse_SingleJSONContent(t *testing.T) {
 	result := DecodeToolResponse(response)
 
 	if dict, ok := result.(*object.Dict); ok {
-		if len(dict.Pairs) != 2 {
-			t.Errorf("Dict pairs count = %d, want 2", len(dict.Pairs))
+		if dict.Len() != 2 {
+			t.Errorf("Dict pairs count = %d, want 2", dict.Len())
 		}
 	} else {
 		t.Errorf("DecodeToolResponse() with JSON should return Dict, got %T", result)
@@ -172,8 +172,8 @@ func TestParseToolSearchResultsNormalizesInputSchema(t *testing.T) {
 	if !ok {
 		t.Fatalf("result type = %T, want *object.Dict", results.Elements[0])
 	}
-	if _, ok := tool.Pairs[object.DictKey(object.NewString("inputSchema"))]; !ok {
-		t.Fatalf("legacy input_schema was not normalized: %+v", tool.Pairs)
+	if _, ok := tool.Lookup(object.DictKey(object.NewString("inputSchema"))); !ok {
+		t.Fatalf("legacy input_schema was not normalized: %+v", tool.OrderedPairs())
 	}
 }
 
@@ -186,8 +186,8 @@ func TestDecodeToolContent_Image(t *testing.T) {
 	result := DecodeToolContent(content)
 
 	if dict, ok := result.(*object.Dict); ok {
-		if len(dict.Pairs) != 3 {
-			t.Errorf("Dict pairs count = %d, want 3", len(dict.Pairs))
+		if dict.Len() != 3 {
+			t.Errorf("Dict pairs count = %d, want 3", dict.Len())
 		}
 	} else {
 		t.Errorf("DecodeToolContent(image) should return Dict, got %T", result)
@@ -203,8 +203,8 @@ func TestDecodeToolContent_Audio(t *testing.T) {
 	result := DecodeToolContent(content)
 
 	if dict, ok := result.(*object.Dict); ok {
-		if len(dict.Pairs) != 3 {
-			t.Errorf("Dict pairs count = %d, want 3", len(dict.Pairs))
+		if dict.Len() != 3 {
+			t.Errorf("Dict pairs count = %d, want 3", dict.Len())
 		}
 	} else {
 		t.Errorf("DecodeToolContent(audio) should return Dict, got %T", result)
@@ -322,7 +322,7 @@ func TestDictToMap(t *testing.T) {
 		},
 		{
 			name: "empty dict",
-			dict: &object.Dict{Pairs: map[string]object.DictPair{}},
+			dict: object.NewDict(),
 		},
 		{
 			name: "simple dict",

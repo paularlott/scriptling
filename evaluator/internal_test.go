@@ -147,8 +147,8 @@ func TestObjectsDeepEqual(t *testing.T) {
 		},
 		{
 			name: "equal empty dicts",
-			a:    &object.Dict{Pairs: map[string]object.DictPair{}},
-			b:    &object.Dict{Pairs: map[string]object.DictPair{}},
+			a:    object.NewDict(),
+			b:    object.NewDict(),
 			want: true,
 		},
 		{

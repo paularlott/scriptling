@@ -173,7 +173,7 @@ func TestNormalise_CommandParsed(t *testing.T) {
 }
 
 func TestConversionToGo(t *testing.T) {
-	d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+	d := object.NewDict()
 	d.SetByString("label", object.NewString("Click"))
 	d.SetByString("style", object.NewInteger(1))
 	native := conversion.ToGo(d)

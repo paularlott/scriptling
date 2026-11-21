@@ -229,7 +229,7 @@ var csvDictReaderClass = &object.Class{
 				}
 				names, _ := self.Field("_fieldnames").(*object.List)
 				restval, hasRestval := self.GetField("_restval")
-				d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+				d := object.NewDict()
 				for i, cell := range record {
 					var key object.Object
 					if names != nil && i < len(names.Elements) {

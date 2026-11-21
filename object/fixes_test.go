@@ -97,13 +97,13 @@ func TestNewStringDict(t *testing.T) {
 
 	// Verify keys are stored with DictKey format
 	nameKey := DictKey(NewString("name"))
-	if _, ok := d.Pairs[nameKey]; !ok {
-		t.Errorf("Expected key %q in Pairs map", nameKey)
+	if !d.Has(nameKey) {
+		t.Errorf("Expected key %q in the dict", nameKey)
 	}
 
 	ageKey := DictKey(NewString("age"))
-	if _, ok := d.Pairs[ageKey]; !ok {
-		t.Errorf("Expected key %q in Pairs map", ageKey)
+	if !d.Has(ageKey) {
+		t.Errorf("Expected key %q in the dict", ageKey)
 	}
 
 	// Test GetByString
@@ -346,8 +346,8 @@ func TestLibraryGetDict(t *testing.T) {
 
 	dict := lib.GetDict()
 
-	// All keys should use DictKey format in the Pairs map
-	for mapKey, pair := range dict.Pairs {
+	// All keys should use DictKey format in the dict
+	for mapKey, pair := range dict.All() {
 		keyStr, _ := pair.Key.AsString()
 		expectedMapKey := DictKey(NewString(keyStr))
 		if mapKey != expectedMapKey {

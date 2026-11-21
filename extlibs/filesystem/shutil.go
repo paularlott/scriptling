@@ -180,7 +180,7 @@ path.`,
 					return errors.NewError("cannot get disk usage: %s", duErr.Error())
 				}
 
-				d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+				d := object.NewDict()
 				d.SetByString("total", object.NewInteger(total))
 				d.SetByString("used", object.NewInteger(used))
 				d.SetByString("free", object.NewInteger(free))

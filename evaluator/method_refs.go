@@ -56,7 +56,7 @@ var builtinMethodSet = func() map[object.ObjectType]map[string]bool {
 // staticTypeMethods are called through the type without an instance, as in
 // Python: dict.fromkeys(keys), str.maketrans(x, y).
 var staticTypeMethods = map[object.ObjectType]map[string]object.Object{
-	object.DICT_OBJ:   {"fromkeys": &object.Dict{Pairs: map[string]object.DictPair{}}},
+	object.DICT_OBJ:   {"fromkeys": object.NewDict()},
 	object.STRING_OBJ: {"maketrans": object.NewString("")},
 	object.FLOAT_OBJ:  {"fromhex": object.NewFloat(0)},
 	object.INTEGER_OBJ: {

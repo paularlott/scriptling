@@ -263,7 +263,7 @@ func buildParamsFromRegistry(entry *object.Dict, funcName string, p *scriptling.
 
 	// Cross-check: params dict keys must match signature params.
 	if paramsDict != nil {
-		for _, pair := range paramsDict.Pairs {
+		for _, pair := range paramsDict.All() {
 			keyStr, _ := pair.Key.AsString()
 			if keyStr == "" {
 				continue
@@ -976,7 +976,7 @@ func decodeSkillEntry(entry *object.Dict, src []byte, p *scriptling.Scriptling, 
 		if !ok {
 			return nil, fmt.Errorf("skill %q: files must be a dict", name)
 		}
-		for _, fp := range filesDict.Pairs {
+		for _, fp := range filesDict.All() {
 			fileName, _ := fp.Key.AsString()
 			content, e := fp.Value.AsString()
 			if e != nil || fileName == "" {

@@ -1651,7 +1651,7 @@ func isTruthy(obj object.Object) bool {
 	case *object.List:
 		return len(v.Elements) > 0
 	case *object.Dict:
-		return len(v.Pairs) > 0
+		return v.Len() > 0
 	default:
 		return true
 	}

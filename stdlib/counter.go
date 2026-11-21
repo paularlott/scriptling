@@ -21,7 +21,7 @@ func counterData(inst *object.Instance) *object.Dict {
 			return d
 		}
 	}
-	d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+	d := object.NewDict()
 	inst.SetField(counterField, d)
 	return d
 }
@@ -37,7 +37,7 @@ func newCounter() *object.Instance {
 var counterZero = object.NewInteger(0)
 
 func counterCount(d *object.Dict, key object.Object) object.Object {
-	if pair, ok := d.Pairs[object.DictKey(key)]; ok {
+	if pair, ok := d.Lookup(object.DictKey(key)); ok {
 		return pair.Value
 	}
 	return counterZero
@@ -102,7 +102,7 @@ func counterApply(ctx context.Context, d *object.Dict, src object.Object, sign i
 		return nil
 	case *object.Instance:
 		if s.Class == counterClassRef {
-			for _, pair := range counterData(s).Pairs {
+			for _, pair := range counterData(s).All() {
 				if err := counterAdd(d, pair.Key, pair.Value, sign); err != nil {
 					return err
 				}
@@ -215,7 +215,7 @@ type counterEntry struct {
 // insertion order, so iteration walks the dict's insertion order and the
 // stable sort keeps ties there.
 func counterSorted(d *object.Dict) []counterEntry {
-	entries := make([]counterEntry, 0, len(d.Pairs))
+	entries := make([]counterEntry, 0, d.Len())
 	for _, pair := range d.OrderedPairs() {
 		v, _ := countValue(pair.Value)
 		entries = append(entries, counterEntry{pair.Key, pair.Value, v})
@@ -273,7 +273,8 @@ func counterArithmetic(op byte, a, b *object.Instance) object.Object {
 		for _, c := range d.OrderedKeys() {
 			if !seen[c] {
 				seen[c] = true
-				keys = append(keys, operandKey{c, d.Pairs[c].Key})
+				pair, _ := d.Lookup(c)
+				keys = append(keys, operandKey{c, pair.Key})
 			}
 		}
 	}
@@ -381,18 +382,18 @@ var CounterClass = &object.Class{
 		}),
 		"__len__": counterMethod("len(c)", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			_, d := counterSelf(args)
-			return object.NewInteger(int64(len(d.Pairs)))
+			return object.NewInteger(int64(d.Len()))
 		}),
 		"__bool__": counterMethod("bool(c)", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			_, d := counterSelf(args)
-			return object.NewBoolean(len(d.Pairs) > 0)
+			return object.NewBoolean(d.Len() > 0)
 		}),
 		"__contains__": counterMethod("key in c", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
 			_, d := counterSelf(args)
-			_, ok := d.Pairs[object.DictKey(args[1])]
+			_, ok := d.Lookup(object.DictKey(args[1]))
 			return object.NewBoolean(ok)
 		}),
 		"__iter__": counterMethod("iter(c) - the keys", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -419,9 +420,9 @@ var CounterClass = &object.Class{
 			// Python 3.10+: a missing element counts as zero, and counts
 			// compare as numbers (1 == 1.0).
 			same := func(a, b *object.Dict) bool {
-				for k, p := range a.Pairs {
+				for k, p := range a.All() {
 					var q object.Object = counterZero
-					if pair, ok := b.Pairs[k]; ok {
+					if pair, ok := b.Lookup(k); ok {
 						q = pair.Value
 					}
 					x, xOK := countValue(p.Value)
@@ -482,7 +483,7 @@ var CounterClass = &object.Class{
 				return err
 			}
 			_, d := counterSelf(args)
-			if pair, ok := d.Pairs[object.DictKey(args[1])]; ok {
+			if pair, ok := d.Lookup(object.DictKey(args[1])); ok {
 				return pair.Value
 			}
 			if len(args) == 3 {
@@ -496,7 +497,7 @@ var CounterClass = &object.Class{
 			}
 			_, d := counterSelf(args)
 			k := object.DictKey(args[1])
-			if pair, ok := d.Pairs[k]; ok {
+			if pair, ok := d.Lookup(k); ok {
 				d.Delete(k)
 				return pair.Value
 			}

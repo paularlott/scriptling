@@ -640,7 +640,7 @@ func deepEqual(budget *cmpBudget, a, b object.Object, depth int) (bool, object.O
 		if av == bv {
 			return true, nil
 		}
-		if len(av.Pairs) != len(bv.Pairs) {
+		if av.Len() != bv.Len() {
 			return false, nil
 		}
 		if depth >= maxCompareDepth {
@@ -649,8 +649,8 @@ func deepEqual(budget *cmpBudget, a, b object.Object, depth int) (bool, object.O
 		if errObj := budget.step(); errObj != nil {
 			return false, errObj
 		}
-		for key, pairA := range av.Pairs {
-			pairB, ok := bv.Pairs[key]
+		for key, pairA := range av.All() {
+			pairB, ok := bv.Lookup(key)
 			if !ok {
 				return false, nil
 			}
@@ -974,7 +974,7 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			if errObj := checkDictMerge(l, r); errObj != nil {
 				return errObj
 			}
-			merged := object.NewDictSized(len(l.Pairs) + len(r.Pairs))
+			merged := object.NewDictSized(l.Len() + r.Len())
 			merged.StoreFrom(l)
 			merged.StoreFrom(r)
 			return merged
@@ -2983,15 +2983,15 @@ func isTruthy(obj object.Object) bool {
 		case *object.Tuple:
 			return len(v.Elements) > 0
 		case *object.Dict:
-			return len(v.Pairs) > 0
+			return v.Len() > 0
 		case *object.Set:
 			return len(v.Elements) > 0
 		case *object.DictKeys:
-			return len(v.Dict.Pairs) > 0
+			return v.Dict.Len() > 0
 		case *object.DictValues:
-			return len(v.Dict.Pairs) > 0
+			return v.Dict.Len() > 0
 		case *object.DictItems:
-			return len(v.Dict.Pairs) > 0
+			return v.Dict.Len() > 0
 		case *object.FloatArray:
 			return len(v.Data) > 0
 		case *object.Instance:
@@ -3667,7 +3667,7 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 		if rerr != nil {
 			return rerr
 		}
-		_, ok := container.Pairs[key]
+		_, ok := container.Lookup(key)
 		return nativeBoolToBooleanObject(ok)
 	case *object.String:
 		if needle, ok := left.(*object.String); ok {
@@ -3695,10 +3695,10 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 		if rerr != nil {
 			return rerr
 		}
-		_, ok := container.Dict.Pairs[key]
+		_, ok := container.Dict.Lookup(key)
 		return nativeBoolToBooleanObject(ok)
 	case *object.DictValues:
-		for _, pair := range container.Dict.Pairs {
+		for _, pair := range container.Dict.All() {
 			if left == pair.Value {
 				return TRUE
 			}
@@ -3738,7 +3738,7 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 			if rerr != nil {
 				return rerr
 			}
-			if pair, ok := container.Dict.Pairs[keyStr]; ok {
+			if pair, ok := container.Dict.Lookup(keyStr); ok {
 				if val == pair.Value {
 					return TRUE
 				}
@@ -4412,7 +4412,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			if rerr != nil {
 				return hashKeyAssignError(rerr)
 			}
-			if _, ok := o.Pairs[key]; !ok {
+			if _, ok := o.Lookup(key); !ok {
 				return raisedAssignmentError(object.ExceptionTypeKeyError, index.Inspect())
 			}
 			o.Delete(key)
@@ -5913,7 +5913,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 			if rerr != nil {
 				return rerr, NULL
 			}
-			dictPair, exists := dictObj.Pairs[keyStr]
+			dictPair, exists := dictObj.Lookup(keyStr)
 			if !exists {
 				return FALSE, NULL
 			}

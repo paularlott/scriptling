@@ -609,7 +609,7 @@ func convertObjectToValue(obj Object, targetType reflect.Type) (reflect.Value, O
 		case *Dict:
 			// Convert to map[string]any
 			m := make(map[string]interface{})
-			for _, pair := range v.Pairs {
+			for _, pair := range v.All() {
 				m[pair.StringKey()] = objectToAny(pair.Value)
 			}
 			return reflect.ValueOf(m), nil
@@ -732,14 +732,11 @@ func convertValueToObject(v interface{}) Object {
 		}
 		return &List{Elements: elements}
 	case map[string]interface{}:
-		pairs := make(map[string]DictPair)
+		entries := make(map[string]Object, len(val))
 		for key, item := range val {
-			pairs[DictKey(NewString(key))] = DictPair{
-				Key:   NewString(key),
-				Value: convertValueToObject(item),
-			}
+			entries[key] = convertValueToObject(item)
 		}
-		return &Dict{Pairs: pairs}
+		return NewStringDict(entries)
 	default:
 		return newError("unsupported constant type: %T", v)
 	}
@@ -768,7 +765,7 @@ func objectToAny(obj Object) interface{} {
 		return items
 	case *Dict:
 		m := make(map[string]interface{})
-		for _, pair := range v.Pairs {
+		for _, pair := range v.All() {
 			m[pair.StringKey()] = objectToAny(pair.Value)
 		}
 		return m

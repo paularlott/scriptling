@@ -444,20 +444,16 @@ Constructs a URL string from a 5-tuple of URL components.`,
 			}
 
 			// Convert to dict with lists of values
-			pairs := make(map[string]object.DictPair)
+			entries := make(map[string]object.Object, len(values))
 			for key, vals := range values {
 				elements := make([]object.Object, len(vals))
 				for i, val := range vals {
 					elements[i] = object.NewString(val)
 				}
-				keyObj := object.NewString(key)
-				pairs[object.DictKey(keyObj)] = object.DictPair{
-					Key:   keyObj,
-					Value: &object.List{Elements: elements},
-				}
+				entries[key] = &object.List{Elements: elements}
 			}
 
-			return &object.Dict{Pairs: pairs}
+			return object.NewStringDict(entries)
 		},
 		HelpText: `parse_qs(qs, keep_blank_values=False) - Parse query string
 
@@ -509,7 +505,7 @@ Parses a URL query string and returns a list of (key, value) tuples.`,
 
 			switch arg := args[0].(type) {
 			case *object.Dict:
-				for _, pair := range arg.Pairs {
+				for _, pair := range arg.All() {
 					keyStr, keyErr := pair.Key.AsString()
 					if keyErr != nil {
 						continue

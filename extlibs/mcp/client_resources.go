@@ -269,8 +269,8 @@ func completeMethod(self *object.Instance, ctx context.Context, kwargs object.Kw
 		switch d := c.(type) {
 		case *object.Null:
 		case *object.Dict:
-			contextArgs = make(map[string]string, len(d.Pairs))
-			for _, pair := range d.Pairs {
+			contextArgs = make(map[string]string, d.Len())
+			for _, pair := range d.All() {
 				k, kerr := pair.Key.AsString()
 				if kerr != nil {
 					return &object.Error{Message: "complete: context keys must be strings"}

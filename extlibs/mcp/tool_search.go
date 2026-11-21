@@ -88,9 +88,7 @@ func parseToolSearchJSON(toolsJSON string) (*object.List, error) {
 			}
 		}
 		delete(tool, "input_schema")
-		toolDict := &object.Dict{
-			Pairs: map[string]object.DictPair{},
-		}
+		toolDict := object.NewDict()
 		for k, v := range tool {
 			toolDict.SetByString(k, conversion.FromGo(v))
 		}

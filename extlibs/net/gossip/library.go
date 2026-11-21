@@ -141,8 +141,8 @@ func extractStringMap(raw object.Object) (map[string]string, error) {
 	if !ok {
 		return nil, fmt.Errorf("expected a dict")
 	}
-	result := make(map[string]string, len(dict.Pairs))
-	for _, pair := range dict.Pairs {
+	result := make(map[string]string, dict.Len())
+	for _, pair := range dict.All() {
 		key := pair.Key.Inspect()
 		val, ok := pair.Value.(*object.String)
 		if !ok {

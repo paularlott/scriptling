@@ -209,7 +209,7 @@ Returns:
 				headers := records[0]
 				elements := make([]object.Object, 0, len(records)-1)
 				for _, row := range records[1:] {
-					d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+					d := object.NewDict()
 					for i, header := range headers {
 						val := ""
 						if i < len(row) {
@@ -316,8 +316,8 @@ Returns:
 						headers = append(headers, s)
 					}
 				} else {
-					headers = make([]string, 0, len(first.Pairs))
-					for _, pair := range first.Pairs {
+					headers = make([]string, 0, first.Len())
+					for _, pair := range first.All() {
 						s, _ := pair.Key.AsString()
 						headers = append(headers, s)
 					}

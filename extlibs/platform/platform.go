@@ -180,7 +180,7 @@ Returns the system version (Scriptling version for compatibility).`,
 				systemName = runtime.GOOS
 			}
 
-			result := &object.Dict{Pairs: make(map[string]object.DictPair)}
+			result := object.NewDict()
 			result.SetByString("system", object.NewString(systemName))
 			result.SetByString("machine", object.NewString(runtime.GOARCH))
 			result.SetByString("processor", object.NewString(runtime.GOARCH))

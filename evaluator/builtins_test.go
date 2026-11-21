@@ -139,7 +139,7 @@ func TestBuiltinType(t *testing.T) {
 		{object.NewString("hello"), "str"},
 		{object.NewBoolean(true), "bool"},
 		{&object.List{Elements: []object.Object{}}, "list"},
-		{&object.Dict{Pairs: make(map[string]object.DictPair)}, "dict"},
+		{object.NewDict(), "dict"},
 	}
 
 	for _, tt := range tests {

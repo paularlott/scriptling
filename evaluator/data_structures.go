@@ -492,7 +492,7 @@ func evalDictIndexExpression(ctx context.Context, dict, index object.Object) obj
 		return rerr
 	}
 
-	pair, ok := dictObject.Pairs[key]
+	pair, ok := dictObject.Lookup(key)
 	if !ok {
 		// defaultdict: call the factory, store the result, return it.
 		if f := dictObject.Factory(); f != nil {

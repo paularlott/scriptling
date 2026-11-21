@@ -387,7 +387,7 @@ func extractToList(ctx context.Context, results []extractResult) object.Object {
 		return errObj
 	}
 	for _, r := range results {
-		d := &object.Dict{Pairs: make(map[string]object.DictPair)}
+		d := object.NewDict()
 		d.SetByString("file", object.NewString(r.File))
 		d.SetByString("line", object.NewInteger(int64(r.Line)))
 		d.SetByString("text", object.NewString(r.Text))

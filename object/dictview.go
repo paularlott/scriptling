@@ -15,7 +15,7 @@ func (d *Dict) CreateIterator() *Iterator {
 			for index < len(keys) {
 				key := keys[index]
 				index++
-				if pair, ok := d.Pairs[key]; ok {
+				if pair, ok := d.Lookup(key); ok {
 					return pair.Key, true
 				}
 			}
@@ -35,7 +35,7 @@ func (dk *DictKeys) Inspect() string  { return inspectContainer(dk) }
 func (dk *DictKeys) AsString() (string, Object)          { return dk.Inspect(), nil }
 func (dk *DictKeys) AsInt() (int64, Object)              { return 0, errMustBeInteger }
 func (dk *DictKeys) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
-func (dk *DictKeys) AsBool() (bool, Object)              { return len(dk.Dict.Pairs) > 0, nil }
+func (dk *DictKeys) AsBool() (bool, Object)              { return dk.Dict.Len() > 0, nil }
 func (dk *DictKeys) AsList() ([]Object, Object)          { return nil, errMustBeList }
 func (dk *DictKeys) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
 
@@ -64,7 +64,7 @@ func (dk *DictKeys) CreateIterator() *Iterator {
 				index++
 
 				// Check if key still exists (view behavior)
-				if pair, ok := dk.Dict.Pairs[key]; ok {
+				if pair, ok := dk.Dict.Lookup(key); ok {
 					return pair.Key, true
 				}
 				// If key deleted, loop continues to next key in snapshot
@@ -85,7 +85,7 @@ func (dv *DictValues) Inspect() string  { return inspectContainer(dv) }
 func (dv *DictValues) AsString() (string, Object)          { return dv.Inspect(), nil }
 func (dv *DictValues) AsInt() (int64, Object)              { return 0, errMustBeInteger }
 func (dv *DictValues) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
-func (dv *DictValues) AsBool() (bool, Object)              { return len(dv.Dict.Pairs) > 0, nil }
+func (dv *DictValues) AsBool() (bool, Object)              { return dv.Dict.Len() > 0, nil }
 func (dv *DictValues) AsList() ([]Object, Object)          { return nil, errMustBeList }
 func (dv *DictValues) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
 
@@ -103,7 +103,7 @@ func (dv *DictValues) CreateIterator() *Iterator {
 				key := keys[index]
 				index++
 
-				if pair, ok := dv.Dict.Pairs[key]; ok {
+				if pair, ok := dv.Dict.Lookup(key); ok {
 					return pair.Value, true
 				}
 				// If key deleted, loop to next
@@ -124,7 +124,7 @@ func (di *DictItems) Inspect() string  { return inspectContainer(di) }
 func (di *DictItems) AsString() (string, Object)          { return di.Inspect(), nil }
 func (di *DictItems) AsInt() (int64, Object)              { return 0, errMustBeInteger }
 func (di *DictItems) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
-func (di *DictItems) AsBool() (bool, Object)              { return len(di.Dict.Pairs) > 0, nil }
+func (di *DictItems) AsBool() (bool, Object)              { return di.Dict.Len() > 0, nil }
 func (di *DictItems) AsList() ([]Object, Object)          { return nil, errMustBeList }
 func (di *DictItems) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
 
@@ -142,7 +142,7 @@ func (di *DictItems) CreateIterator() *Iterator {
 				key := keys[index]
 				index++
 
-				if pair, ok := di.Dict.Pairs[key]; ok {
+				if pair, ok := di.Dict.Lookup(key); ok {
 					return NewPair(pair.Key, pair.Value), true
 				}
 			}

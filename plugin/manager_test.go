@@ -448,7 +448,7 @@ func TestComprehensivePlugin(t *testing.T) {
 				}
 			}},
 			{`import plugin.comprehensive; plugin.comprehensive.echo_dict({"a": 1, "b": "two"})`, func(t *testing.T, r object.Object) {
-				if d, ok := r.(*object.Dict); !ok || len(d.Pairs) != 2 {
+				if d, ok := r.(*object.Dict); !ok || d.Len() != 2 {
 					t.Fatalf("expected 2 pairs, got %v", r)
 				}
 			}},
@@ -1150,15 +1150,11 @@ func runComprehensivePluginHelper() {
 		}).
 		Method("set", func(self *object.Instance, key, val string) {
 			dict := self.Field("data").(*object.Dict)
-			dict.Pairs[object.DictKey(object.NewString(key))] = object.DictPair{
-				Key:   object.NewString(key),
-				Value: object.NewString(val),
-			}
+			dict.SetByString(key, object.NewString(val))
 		}).
 		Method("get", func(self *object.Instance, key string) string {
 			dict := self.Field("data").(*object.Dict)
-			k := object.DictKey(object.NewString(key))
-			if pair, ok := dict.Pairs[k]; ok {
+			if pair, ok := dict.GetByString(key); ok {
 				s, _ := pair.Value.AsString()
 				return s
 			}

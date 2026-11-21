@@ -136,8 +136,8 @@ func completersFromObject(v object.Object, allowed []string) (map[string]string,
 		return nil, fmt.Errorf("\"complete\" must be a dict of argument name to completer, got %s", v.Type())
 	}
 	dict := v.(*object.Dict)
-	out := make(map[string]string, len(dict.Pairs))
-	for _, pair := range dict.Pairs {
+	out := make(map[string]string, dict.Len())
+	for _, pair := range dict.All() {
 		key, err := pair.Key.AsString()
 		if err != nil || key == "" {
 			return nil, fmt.Errorf("\"complete\" keys must be non-empty strings")

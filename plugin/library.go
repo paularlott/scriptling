@@ -592,7 +592,7 @@ func containsCallable(obj object.Object) bool {
 			}
 		}
 	case *object.Dict:
-		for _, pair := range v.Pairs {
+		for _, pair := range v.All() {
 			if containsCallable(pair.Value) {
 				return true
 			}

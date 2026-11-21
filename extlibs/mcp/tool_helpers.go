@@ -697,9 +697,7 @@ func RunToolScript(ctx context.Context, sl *scriptling.Scriptling, script string
 	// Enable output capture so print() output is available as fallback
 	sl.EnableOutputCapture()
 	// Convert params map to scriptling Dict
-	paramsDict := &object.Dict{
-		Pairs: make(map[string]object.DictPair),
-	}
+	paramsDict := object.NewDict()
 	switch p := params.(type) {
 	case map[string]object.Object:
 		for key, value := range p {

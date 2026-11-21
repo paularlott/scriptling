@@ -362,7 +362,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if rerr != nil {
 			return rerr
 		}
-		if pair, ok := dict.Pairs[key]; ok {
+		if pair, ok := dict.Lookup(key); ok {
 			return pair.Value
 		}
 		if len(args) == 2 {
@@ -380,7 +380,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if rerr != nil {
 			return rerr
 		}
-		if pair, ok := dict.Pairs[key]; ok {
+		if pair, ok := dict.Lookup(key); ok {
 			dict.Delete(key)
 			return pair.Value
 		}
@@ -457,7 +457,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(keywords) > 0 {
 			return errors.NewError("copy() does not accept keyword arguments")
 		}
-		copied := object.NewDictSized(len(dict.Pairs))
+		copied := object.NewDictSized(dict.Len())
 		copied.SetFactory(dict.Factory())
 		copied.StoreFrom(dict)
 		return copied
@@ -472,7 +472,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if rerr != nil {
 			return rerr
 		}
-		if pair, ok := dict.Pairs[key]; ok {
+		if pair, ok := dict.Lookup(key); ok {
 			return pair.Value
 		}
 		var defaultVal object.Object = NULL
@@ -542,7 +542,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(args) == 2 {
 			defaultVal = args[1]
 		}
-		newPairs := make(map[string]object.DictPair)
+		newDict := object.NewDict()
 		switch iter := args[0].(type) {
 		case *object.List:
 			for _, elem := range iter.Elements {
@@ -550,7 +550,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 				if rerr != nil {
 					return rerr
 				}
-				newPairs[key] = object.DictPair{Key: elem, Value: defaultVal}
+				newDict.Store(key, elem, defaultVal)
 			}
 		case *object.Tuple:
 			for _, elem := range iter.Elements {
@@ -558,23 +558,23 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 				if rerr != nil {
 					return rerr
 				}
-				newPairs[key] = object.DictPair{Key: elem, Value: defaultVal}
+				newDict.Store(key, elem, defaultVal)
 			}
 		case *object.String:
 			for _, ch := range iter.StringValue() {
 				s := string(ch)
 				key := object.DictKey(object.NewString(s))
-				newPairs[key] = object.DictPair{Key: object.NewString(s), Value: defaultVal}
+				newDict.Store(key, object.NewString(s), defaultVal)
 			}
 		default:
 			return errors.NewTypeError("iterable (LIST, TUPLE, STRING)", args[0].Type().String())
 		}
-		return &object.Dict{Pairs: newPairs}
+		return newDict
 	}
 
 	// Check for non-callable dict values (for accessing dict attributes)
 	dictKey := object.DictKey(object.NewString(method))
-	if pair, ok := dict.Pairs[dictKey]; ok {
+	if pair, ok := dict.Lookup(dictKey); ok {
 		// If it's not a callable, just return the value
 		if len(args) == 0 && len(keywords) == 0 {
 			return pair.Value
@@ -1911,7 +1911,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if len(args) < 1 || len(args) > 3 {
 			return errors.NewError("maketrans() takes 1, 2, or 3 arguments (%d given)", len(args))
 		}
-		transMap := &object.Dict{Pairs: make(map[string]object.DictPair)}
+		transMap := object.NewDict()
 		if len(args) == 1 {
 			// Single argument: must be a dict
 			d, err := args[0].AsDict()
@@ -1919,7 +1919,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				return errors.ParameterError("table", err)
 			}
 			for k, v := range d {
-				transMap.Pairs[object.DictKey(object.NewString(k))] = object.DictPair{Key: object.NewString(k), Value: v}
+				transMap.Store(object.DictKey(object.NewString(k)), object.NewString(k), v)
 			}
 			return transMap
 		}
@@ -1939,10 +1939,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		for i, ch := range fromRunes {
 			key := object.DictKey(object.NewString(string(ch)))
-			transMap.Pairs[key] = object.DictPair{
-				Key:   object.NewString(string(ch)),
-				Value: object.NewString(string(toRunes[i])),
-			}
+			transMap.Store(key, object.NewString(string(ch)), object.NewString(string(toRunes[i])))
 		}
 		// Third argument: characters to delete
 		if len(args) == 3 {
@@ -1952,10 +1949,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}
 			for _, ch := range del {
 				key := object.DictKey(object.NewString(string(ch)))
-				transMap.Pairs[key] = object.DictPair{
-					Key:   object.NewString(string(ch)),
-					Value: NULL,
-				}
+				transMap.Store(key, object.NewString(string(ch)), NULL)
 			}
 		}
 		return transMap
@@ -1970,7 +1964,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		var result strings.Builder
 		for _, ch := range str.StringValue() {
 			key := object.DictKey(object.NewString(string(ch)))
-			if pair, exists := transMap.Pairs[key]; exists {
+			if pair, exists := transMap.Lookup(key); exists {
 				if pair.Value == NULL || pair.Value.Type() == object.NULL_OBJ {
 					// Delete character
 					continue

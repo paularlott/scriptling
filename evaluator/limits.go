@@ -263,11 +263,11 @@ func checkBytesSplit(dataLen int, bound int64, exact func() int) object.Object {
 // the dict grows by one entry, held to the value limit like a list of the
 // same length. The inlined fast path skips the membership test.
 func checkDictGrowth(d *object.Dict, hk string) object.Object {
-	n := len(d.Pairs) + 1
+	n := d.Len() + 1
 	if object.AllocWithin(int64(n) * objectSlotBytes) {
 		return nil
 	}
-	if _, exists := d.Pairs[hk]; exists {
+	if _, exists := d.Lookup(hk); exists {
 		return nil
 	}
 	return checkGrowthTo("dict", n, object.DictEntryWeight)
@@ -302,12 +302,12 @@ func checkDictSize(n int) object.Object {
 
 // checkDictMerge checks merging other into d.
 func checkDictMerge(d, other *object.Dict) object.Object {
-	if object.CheckElements(int64(len(d.Pairs)+len(other.Pairs))) == nil {
+	if object.CheckElements(int64(d.Len()+other.Len())) == nil {
 		return nil
 	}
-	n := len(d.Pairs)
-	for k := range other.Pairs {
-		if _, exists := d.Pairs[k]; !exists {
+	n := d.Len()
+	for k := range other.All() {
+		if _, exists := d.Lookup(k); !exists {
 			n++
 		}
 	}

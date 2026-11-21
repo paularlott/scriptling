@@ -217,7 +217,7 @@ It is None when the server has no credential configured.`,
 						return copyDict(dict)
 					}
 				}
-				return &object.Dict{Pairs: make(map[string]object.DictPair)}
+				return object.NewDict()
 			},
 			HelpText: `request_context() - Get the context dict set by the middleware
 

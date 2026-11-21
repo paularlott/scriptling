@@ -29,10 +29,8 @@ func TestToGoCyclicContainers(t *testing.T) {
 	}
 
 	// A dict referencing itself through a value.
-	selfDict := &object.Dict{Pairs: map[string]object.DictPair{}}
-	selfDict.Pairs["loop"] = object.DictPair{
-		Key: object.NewString("loop"), Value: selfDict,
-	}
+	selfDict := object.NewDict()
+	selfDict.SetByString("loop", selfDict)
 	got = ToGo(selfDict)
 	m, ok := got.(map[string]interface{})
 	if !ok {
