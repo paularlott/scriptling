@@ -379,6 +379,11 @@ func getCloseMatches(word string, possibilities []string, n int, cutoff float64,
 var DifflibLibrary = object.NewLibrary(DifflibLibraryName, map[string]*object.Builtin{
 	"unified_diff": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if len(args) >= 2 && args[0].Type() != object.STRING_OBJ {
+				// Python's form: two sequences of lines in, a list of diff
+				// lines out.
+				return pythonUnifiedDiff(ctx, args, kwargs)
+			}
 			if kwargs.Len() > 0 {
 				if err := errors.CheckKwargs("unified_diff", kwargs, "fromfile", "tofile", "n"); err != nil {
 					return err
@@ -404,7 +409,11 @@ var DifflibLibrary = object.NewLibrary(DifflibLibraryName, map[string]*object.Bu
 			}
 			return object.NewString(diff)
 		},
-		HelpText: `unified_diff(a, b, fromfile="", tofile="", n=3) - Return a unified format diff string`,
+		HelpText: `unified_diff(a, b, fromfile="", tofile="", n=3) - Return a unified format diff string
+
+As in Python, a and b may instead be lists of lines; the diff is then a
+list of lines: unified_diff(a, b, fromfile='', tofile='', fromfiledate='',
+tofiledate='', n=3, lineterm='\n').`,
 	},
 	"ratio": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -519,3 +528,179 @@ var DifflibLibrary = object.NewLibrary(DifflibLibraryName, map[string]*object.Bu
 		HelpText: `get_close_matches(word, possibilities, n=3, cutoff=0.6) - Return list of best matches from possibilities`,
 	},
 }, nil, "Helpers for computing deltas between sequences")
+
+// pythonUnifiedDiff is Python's unified_diff(a, b, fromfile=”, tofile=”,
+// fromfiledate=”, tofiledate=”, n=3, lineterm='\n') over sequences of
+// lines, returning the diff lines as a list.
+func pythonUnifiedDiff(ctx context.Context, args []object.Object, kwargs object.Kwargs) object.Object {
+	names := []string{"a", "b", "fromfile", "tofile", "fromfiledate", "tofiledate", "n", "lineterm"}
+	if kwargs.Len() > 0 {
+		if err := errors.CheckKwargs("unified_diff", kwargs, names[2:]...); err != nil {
+			return err
+		}
+	}
+	if len(args) > len(names) {
+		return errors.NewTypeErrorTagged("unified_diff() takes at most %d arguments (%d given)", len(names), len(args))
+	}
+	vals := map[string]object.Object{}
+	for i, a := range args {
+		vals[names[i]] = a
+	}
+	for k, v := range kwargs.All() {
+		if _, dup := vals[k]; dup {
+			return errors.NewTypeErrorTagged("unified_diff() got multiple values for argument '%s'", k)
+		}
+		vals[k] = v
+	}
+	lines := func(o object.Object) ([]string, object.Object) {
+		elems, errObj := iterableElements(ctx, o)
+		if errObj != nil {
+			return nil, errObj
+		}
+		out := make([]string, len(elems))
+		for i, e := range elems {
+			s, ok := e.(*object.String)
+			if !ok {
+				return nil, errors.NewTypeErrorTagged("lines to compare must be str, not %s", object.PythonTypeName(e))
+			}
+			out[i] = s.StringValue()
+		}
+		return out, nil
+	}
+	a, errObj := lines(vals["a"])
+	if errObj != nil {
+		return errObj
+	}
+	b, errObj := lines(vals["b"])
+	if errObj != nil {
+		return errObj
+	}
+	str := func(k, dflt string) (string, object.Object) {
+		v, ok := vals[k]
+		if !ok {
+			return dflt, nil
+		}
+		s, isStr := v.(*object.String)
+		if !isStr {
+			return "", errors.NewTypeErrorTagged("%s must be str, not %s", k, object.PythonTypeName(v))
+		}
+		return s.StringValue(), nil
+	}
+	fromFile, errObj := str("fromfile", "")
+	if errObj != nil {
+		return errObj
+	}
+	toFile, errObj := str("tofile", "")
+	if errObj != nil {
+		return errObj
+	}
+	fromDate, errObj := str("fromfiledate", "")
+	if errObj != nil {
+		return errObj
+	}
+	toDate, errObj := str("tofiledate", "")
+	if errObj != nil {
+		return errObj
+	}
+	lineterm, errObj := str("lineterm", "\n")
+	if errObj != nil {
+		return errObj
+	}
+	n := 3
+	if v, ok := vals["n"]; ok {
+		i, err := v.AsInt()
+		if err != nil {
+			return err
+		}
+		n = int(i)
+	}
+	codes, errObj := computeOpcodes(a, b, libutil.NewWorkMeter(ctx))
+	if errObj != nil {
+		return errObj
+	}
+	var out []object.Object
+	emit := func(s string) { out = append(out, object.NewString(s)) }
+	started := false
+	for _, group := range groupedOpcodes(codes, n) {
+		if !started {
+			started = true
+			if fromDate != "" {
+				fromDate = "\t" + fromDate
+			}
+			if toDate != "" {
+				toDate = "\t" + toDate
+			}
+			emit("--- " + fromFile + fromDate + lineterm)
+			emit("+++ " + toFile + toDate + lineterm)
+		}
+		first, last := group[0], group[len(group)-1]
+		emit("@@ -" + unifiedRange(first.i1, last.i2) + " +" + unifiedRange(first.j1, last.j2) + " @@" + lineterm)
+		for _, op := range group {
+			if op.tag == opEqual {
+				for _, l := range a[op.i1:op.i2] {
+					emit(" " + l)
+				}
+				continue
+			}
+			if op.tag == opReplace || op.tag == opDelete {
+				for _, l := range a[op.i1:op.i2] {
+					emit("-" + l)
+				}
+			}
+			if op.tag == opReplace || op.tag == opInsert {
+				for _, l := range b[op.j1:op.j2] {
+					emit("+" + l)
+				}
+			}
+		}
+	}
+	if out == nil {
+		out = []object.Object{}
+	}
+	object.TrackSlice(out)
+	return &object.List{Elements: out}
+}
+
+// groupedOpcodes is SequenceMatcher.get_grouped_opcodes(n): the changes
+// with up to n lines of context, split where n*2 unchanged lines separate
+// them.
+func groupedOpcodes(codes []opcode, n int) [][]opcode {
+	if len(codes) == 0 {
+		codes = []opcode{{tag: opEqual, i1: 0, i2: 1, j1: 0, j2: 1}}
+	}
+	codes = append([]opcode(nil), codes...)
+	if c := &codes[0]; c.tag == opEqual {
+		c.i1, c.j1 = max(c.i1, c.i2-n), max(c.j1, c.j2-n)
+	}
+	if c := &codes[len(codes)-1]; c.tag == opEqual {
+		c.i2, c.j2 = min(c.i2, c.i1+n), min(c.j2, c.j1+n)
+	}
+	var groups [][]opcode
+	var group []opcode
+	for _, c := range codes {
+		if c.tag == opEqual && c.i2-c.i1 > 2*n {
+			group = append(group, opcode{tag: opEqual, i1: c.i1, i2: min(c.i2, c.i1+n), j1: c.j1, j2: min(c.j2, c.j1+n)})
+			groups = append(groups, group)
+			group = nil
+			c.i1, c.j1 = max(c.i1, c.i2-n), max(c.j1, c.j2-n)
+		}
+		group = append(group, c)
+	}
+	if len(group) > 0 && !(len(group) == 1 && group[0].tag == opEqual) {
+		groups = append(groups, group)
+	}
+	return groups
+}
+
+// unifiedRange is a unified diff hunk range: start,length (1-based), the
+// line alone for one line, start-1,0 for none.
+func unifiedRange(start, stop int) string {
+	beginning, length := start+1, stop-start
+	if length == 1 {
+		return strconv.Itoa(beginning)
+	}
+	if length == 0 {
+		beginning--
+	}
+	return strconv.Itoa(beginning) + "," + strconv.Itoa(length)
+}

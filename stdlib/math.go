@@ -295,22 +295,50 @@ var MathLibrary = object.NewLibrary(MathLibraryName, map[string]*object.Builtin{
 			if errObj != nil {
 				return errObj
 			}
-			acc := new(big.Float).SetPrec(128)
+			// 2300 bits hold any sum of doubles exactly (they span 2^-1074
+			// to 2^1024), so the one rounding is the final one, as in
+			// Python: fsum([1e100, 1.0, -1e100]) is 1.0.
+			acc := new(big.Float).SetPrec(2300)
+			special := 0.0 // the sum of any infinities and NaNs
+			hasSpecial := false
 			for _, e := range elements {
+				var f float64
 				switch v := e.(type) {
 				case *object.Float:
-					acc.Add(acc, big.NewFloat(v.FloatValue()))
+					f = v.FloatValue()
 				case *object.Integer:
-					acc.Add(acc, big.NewFloat(float64(v.IntValue())))
+					acc.Add(acc, new(big.Float).SetInt64(v.IntValue()))
+					continue
 				case *object.Boolean:
 					if v.BoolValue() {
 						acc.Add(acc, big.NewFloat(1))
 					}
+					continue
 				default:
 					return errors.NewTypeError("iterable of numbers", e.Type().String())
 				}
+				if math.IsInf(f, 0) || math.IsNaN(f) {
+					special += f
+					hasSpecial = true
+					continue
+				}
+				acc.Add(acc, big.NewFloat(f))
+			}
+			if hasSpecial {
+				if math.IsNaN(special) {
+					for _, e := range elements {
+						if f, ok := e.(*object.Float); ok && math.IsNaN(f.FloatValue()) {
+							return object.NewFloat(math.NaN())
+						}
+					}
+					return errors.NewValueError("-inf + inf in fsum")
+				}
+				return object.NewFloat(special)
 			}
 			out, _ := acc.Float64()
+			if math.IsInf(out, 0) {
+				return errors.NewOverflowError("intermediate overflow in fsum")
+			}
 			return object.NewFloat(out)
 		},
 		HelpText: `fsum(iterable) - Exact floating-point summation`,
@@ -1150,14 +1178,10 @@ Returns a float.`,
 			if math.IsInf(val, 1) && !math.IsInf(x, 0) {
 				return mathDomainError() // a pole: lgamma(0), lgamma(-1), ...
 			}
-			return &object.List{Elements: []object.Object{
-				object.NewFloat(val),
-				object.NewInteger(int64(sign)),
-			}}
+			_ = sign
+			return object.NewFloat(val)
 		},
-		HelpText: `lgamma(x) - Return the natural log of the absolute value of the gamma function
-
-Returns a list [log_abs_gamma, sign].`,
+		HelpText: `lgamma(x) - Return the natural log of the absolute value of the gamma function`,
 	},
 	"nextafter": {
 		Fn: twoFloatFunc("nextafter", math.Nextafter),
@@ -1299,7 +1323,34 @@ n and k must be non-negative integers. If k is omitted, returns n!.`,
 				return object.NewInteger(1)
 			}
 			if kwargs.Has("start") && kwargs.Get("start") != nil {
-				result, err := kwargs.Get("start").AsFloat()
+				// An int start keeps an all-int product an int.
+				start := kwargs.Get("start")
+				if b, ok := start.(*object.Boolean); ok {
+					start = object.NewInteger(0)
+					if b.BoolValue() {
+						start = object.NewInteger(1)
+					}
+				}
+				if s, ok := start.(*object.Integer); ok {
+					acc := s.IntValue()
+					allInt := true
+					for _, el := range list.Elements {
+						v, ok := el.(*object.Integer)
+						if !ok {
+							allInt = false
+							break
+						}
+						p := acc * v.IntValue()
+						if v.IntValue() != 0 && (p/v.IntValue() != acc || (acc == -1 && v.IntValue() == math.MinInt64)) {
+							return errors.NewOverflowError("integer overflow in product")
+						}
+						acc = p
+					}
+					if allInt {
+						return object.NewInteger(acc)
+					}
+				}
+				result, err := start.AsFloat()
 				if err != nil {
 					return err
 				}

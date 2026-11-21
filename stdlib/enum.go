@@ -14,6 +14,9 @@ import (
 
 var enumBaseClass = &object.Class{Name: "Enum"}
 var intEnumBaseClass = &object.Class{Name: "IntEnum"}
+var strEnumBaseClass = &object.Class{Name: "StrEnum"}
+var flagBaseClass = &object.Class{Name: "Flag"}
+var intFlagBaseClass = &object.Class{Name: "IntFlag"}
 
 // AutoMarker is the sentinel returned by auto(); the class compiler
 // replaces it with a sequential value.
@@ -22,6 +25,9 @@ var AutoMarker = object.NewSentinel("auto", "auto")
 var EnumLibrary = object.NewLibrary(EnumLibraryName, nil, map[string]object.Object{
 	"Enum":    enumBaseClass,
 	"IntEnum": intEnumBaseClass,
+	"StrEnum": strEnumBaseClass,
+	"Flag":    flagBaseClass,
+	"IntFlag": intFlagBaseClass,
 	"auto": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.NoKwargs("auto", kwargs); err != nil {
@@ -33,4 +39,4 @@ var EnumLibrary = object.NewLibrary(EnumLibraryName, nil, map[string]object.Obje
 
 Valid only inside an enum class body: RED = auto(), BLUE = auto().`,
 	},
-}, "Enumeration support (enum.Enum, enum.IntEnum, enum.auto)")
+}, "Enumeration support (enum.Enum, enum.IntEnum, enum.StrEnum, enum.Flag, enum.IntFlag, enum.auto)")

@@ -300,6 +300,12 @@ Examples:
 					return object.NewInteger(n)
 				}
 				return errors.NewTypeError("object with __len__", "INSTANCE")
+			case *object.Class:
+				// len(Color) is the number of members of an enum.
+				if arg.IsEnum {
+					return object.NewInteger(int64(len(arg.EnumMembers)))
+				}
+				return errors.NewTypeError("STRING, LIST, DICT, TUPLE, SET, BYTES, or VIEW", args[0].Type().String())
 			default:
 				return errors.NewTypeError("STRING, LIST, DICT, TUPLE, SET, BYTES, or VIEW", args[0].Type().String())
 			}
@@ -423,6 +429,19 @@ For exceptions, returns just the exception message.`,
 				return parseIntLiteral(arg.StringValue(), base)
 			case *object.Bytes:
 				return parseIntLiteral(string(arg.BytesValue()), base)
+			case *object.Instance:
+				// int(obj) calls __int__, then __index__, as in Python.
+				if !hasBase {
+					for _, name := range []string{"__int__", "__index__"} {
+						if _, ok := arg.Class.LookupMember(name); ok {
+							r := callDunderMethodFn(ctx, arg, name, nil, GetEnvFromContext(ctx))
+							if r != nil {
+								return r
+							}
+						}
+					}
+				}
+				return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
 			default:
 				return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
 			}
@@ -456,6 +475,20 @@ Examples: int("ff", 16) == 255, int("0b1010", 2) == 10, int("77", 8) == 63`,
 				return parseFloatLiteral(arg.StringValue())
 			case *object.Bytes:
 				return parseFloatLiteral(string(arg.BytesValue()))
+			case *object.Instance:
+				// float(obj) calls __float__, then __index__.
+				for _, name := range []string{"__float__", "__index__"} {
+					if _, ok := arg.Class.LookupMember(name); ok {
+						r := callDunderMethodFn(ctx, arg, name, nil, GetEnvFromContext(ctx))
+						if i, ok := r.(*object.Integer); ok {
+							return object.NewFloat(float64(i.IntValue()))
+						}
+						if r != nil {
+							return r
+						}
+					}
+				}
+				return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
 			default:
 				return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
 			}
@@ -534,6 +567,24 @@ Converts an integer, string, or float to a float.`,
 
 			intSum := startInt
 			floatSum := startFloat
+			// Floats are summed with Neumaier compensation, as Python 3.12+
+			// does, so sum([0.1] * 10) is 1.0.
+			var comp float64
+			addFloat := func(x float64) {
+				t := floatSum + x
+				if math.Abs(floatSum) >= math.Abs(x) {
+					comp += (floatSum - t) + x
+				} else {
+					comp += (x - t) + floatSum
+				}
+				floatSum = t
+			}
+			compensated := func() float64 {
+				if comp != 0 && !math.IsInf(comp, 0) && !math.IsNaN(comp) {
+					return floatSum + comp
+				}
+				return floatSum
+			}
 
 			for i, elem := range elements {
 				if b, isBool := elem.(*object.Boolean); isBool {
@@ -543,7 +594,7 @@ Converts an integer, string, or float to a float.`,
 				switch v := elem.(type) {
 				case *object.Integer:
 					if hasFloat {
-						floatSum += float64(v.IntValue())
+						addFloat(float64(v.IntValue()))
 					} else {
 						intSum += v.IntValue()
 					}
@@ -552,20 +603,20 @@ Converts an integer, string, or float to a float.`,
 						floatSum = float64(intSum)
 						hasFloat = true
 					}
-					floatSum += v.FloatValue()
+					addFloat(v.FloatValue())
 				default:
 					// A non-number: carry on with +, which raises
 					// Python's TypeError or calls __add__/__radd__.
 					var acc object.Object = object.NewInteger(intSum)
 					if hasFloat {
-						acc = object.NewFloat(floatSum)
+						acc = object.NewFloat(compensated())
 					}
 					return sumGenericFn(ctx, acc, &object.List{Elements: elements[i:]})
 				}
 			}
 
 			if hasFloat {
-				return object.NewFloat(floatSum)
+				return object.NewFloat(compensated())
 			}
 			return object.NewInteger(intSum)
 		},
@@ -1028,6 +1079,10 @@ Example:
 				if ndigits >= 0 {
 					return num
 				}
+				// Exact integer rounding, ties to even: round(2**62, -1).
+				if ndigits >= -18 {
+					return roundIntDigits(num.IntValue(), -ndigits)
+				}
 				wasInt = true
 				value = float64(num.IntValue())
 			case *object.Float:
@@ -1056,6 +1111,9 @@ Example:
 			// out; float in, float out).
 			if wasInt {
 				return object.NewInteger(int64(rounded))
+			}
+			if rounded == 0 {
+				rounded = math.Copysign(0, value)
 			}
 			return object.NewFloat(rounded)
 		},
@@ -1177,8 +1235,7 @@ Equivalent to base**exp or base**exp % mod if mod is given.`,
 			if bf == 0 {
 				return errors.NewZeroDivisionError()
 			}
-			quotient := math.Floor(af / bf)
-			remainder := af - quotient*bf
+			quotient, remainder := pyFloatDivmod(af, bf)
 			return &object.Tuple{Elements: []object.Object{
 				object.NewFloat(quotient),
 				object.NewFloat(remainder),
@@ -3878,7 +3935,7 @@ func iterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 			return o // iter(g) is g
 		}
 		env := GetEnvFromContext(ctx)
-		if fn, ok := findDunderMethod(o, "__iter__"); ok {
+		if fn, ok := findIterMethod(o); ok {
 			iter, errObj := callIter(ctx, o, fn, env)
 			if errObj != nil {
 				return errObj
@@ -4223,4 +4280,26 @@ func boolToInt64(b bool) int64 {
 		return 1
 	}
 	return 0
+}
+
+// roundIntDigits rounds n to a multiple of 10**digits (digits in 1..18),
+// exact ties going to the even multiple, as Python's round(int, -digits).
+func roundIntDigits(n int64, digits int) object.Object {
+	p := int64(1)
+	for range digits {
+		p *= 10
+	}
+	q, r := n/p, n%p
+	if r < 0 {
+		q--
+		r += p
+	}
+	if 2*uint64(r) > uint64(p) || (2*uint64(r) == uint64(p) && q%2 != 0) {
+		q++
+	}
+	res, ok := mulOv(q, p)
+	if !ok {
+		return intOverflowError("round")
+	}
+	return object.NewInteger(res)
 }

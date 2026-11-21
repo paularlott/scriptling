@@ -600,6 +600,73 @@ Example:
 				HelpText: `__hash__() - Hash by field values`,
 			}
 
+			// P._field_defaults, P._make(iterable), and the tuple methods
+			// count and index.
+			fieldDefaults := object.NewDict()
+			for i, d := range defaults {
+				k := object.NewString(fieldNames[len(fieldNames)-len(defaults)+i])
+				fieldDefaults.Store(object.DictKey(k), k, d)
+			}
+			methods["_field_defaults"] = fieldDefaults
+			methods["_make"] = &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("_make", kwargs); err != nil {
+						return err
+					}
+					if err := errors.ExactArgs(args, 1); err != nil {
+						return err
+					}
+					vals, errObj := iterableElements(ctx, args[0])
+					if errObj != nil {
+						return errObj
+					}
+					if len(vals) != len(fieldNames) {
+						return errors.NewTypeErrorTagged("Expected %d arguments, got %d", len(fieldNames), len(vals))
+					}
+					inst := object.NewInstance(ntClass)
+					if r := methods["__init__"].(*object.Builtin).Fn(ctx, object.NewKwargs(nil), append([]object.Object{inst}, vals...)...); object.IsError(r) || r.Type() == object.EXCEPTION_OBJ {
+						return r
+					}
+					return inst
+				},
+				HelpText: "_make(iterable) - A new instance from the values of an iterable",
+			}
+			methods["count"] = &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("count", kwargs); err != nil {
+						return err
+					}
+					if err := errors.ExactArgs(args, 2); err != nil {
+						return err
+					}
+					n := 0
+					for _, v := range fieldValues(args[0].(*object.Instance)) {
+						if objectsEqual(v, args[1]) {
+							n++
+						}
+					}
+					return object.NewInteger(int64(n))
+				},
+				HelpText: "count(value) - How many fields equal value",
+			}
+			methods["index"] = &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("index", kwargs); err != nil {
+						return err
+					}
+					if err := errors.ExactArgs(args, 2); err != nil {
+						return err
+					}
+					for i, v := range fieldValues(args[0].(*object.Instance)) {
+						if objectsEqual(v, args[1]) {
+							return object.NewInteger(int64(i))
+						}
+					}
+					return errors.NewValueError("tuple.index(x): x not in tuple")
+				},
+				HelpText: "index(value) - Position of the first field equal to value",
+			}
+
 			ntClass = &object.Class{
 				Name:    typename.StringValue(),
 				Methods: methods,

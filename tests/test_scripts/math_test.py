@@ -149,7 +149,7 @@ assert math.gamma(1) == 1.0
 
 # Test math.lgamma
 lg = math.lgamma(5)
-assert lg[0] > 3.17 and lg[0] < 3.19
+assert lg > 3.17 and lg < 3.19
 
 # Test math.cbrt
 assert math.cbrt(27.0) == 3.0

@@ -10,7 +10,10 @@ import (
 // TypingLibrary is a placeholder module, not a type system: annotations are
 // parsed and discarded by scriptling, so typing names exist only to make
 // annotated code run. Each name subscripting (List[int], Optional[List[int]])
-// returns itself, so arbitrary annotation expressions resolve.
+// returns itself, so arbitrary annotation expressions resolve. Generic and
+// Protocol (and TypedDict) are classes to derive from (class
+// Box(Generic[T])), cast and the decorators return their argument, and
+// NamedTuple called as a function builds a namedtuple class.
 
 var typingAliasClass = &object.Class{
 	Name: "typing-alias",
@@ -24,16 +27,150 @@ var typingAliasClass = &object.Class{
 			},
 			HelpText: "__getitem__(item) - Typing aliases accept any subscript",
 		},
+		"__call__": &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				return args[0]
+			},
+			HelpText: "__call__(...) - TypeVar('T'), NewType('Id', int) and the like make an alias",
+		},
 	},
 }
 
 func typingAlias(name string) *object.Instance {
 	inst := object.NewInstance(typingAliasClass)
 	inst.SetField("__alias_name__", object.NewString(name))
+	inst.SetField("__name__", object.NewString(name))
 	return inst
 }
 
-var TypingLibrary = object.NewLibrary(TypingLibraryName, nil, map[string]object.Object{
+// selfSubscript is __class_getitem__ returning the class: Generic[T].
+var selfSubscript = &object.Builtin{
+	Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		if err := errors.NoKwargs("__class_getitem__", kwargs); err != nil {
+			return err
+		}
+		if err := errors.ExactArgs(args, 2); err != nil {
+			return err
+		}
+		return args[0]
+	},
+	HelpText: "__class_getitem__(params) - The class itself",
+}
+
+func typingBaseClass(name string) *object.Class {
+	return &object.Class{Name: name, Methods: map[string]object.Object{"__class_getitem__": selfSubscript}}
+}
+
+// identity returns its first argument: cast(T, x) is x is handled apart;
+// overload, final, runtime_checkable and no_type_check decorate as no-ops.
+func identityBuiltin(name, help string) *object.Builtin {
+	return &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs(name, kwargs); err != nil {
+				return err
+			}
+			if len(args) != 1 {
+				return errors.NewTypeErrorTagged("%s() takes exactly one argument (%d given)", name, len(args))
+			}
+			return args[0]
+		},
+		HelpText: help,
+	}
+}
+
+func init() {
+	fns := TypingLibrary.Functions()
+	fns["cast"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("cast", kwargs, "typ", "val"); err != nil {
+					return err
+				}
+				if v := kwargs.Get("val"); v != nil {
+					return v
+				}
+			}
+			if len(args) != 2 {
+				return errors.NewTypeErrorTagged("cast() takes exactly 2 arguments (%d given)", len(args))
+			}
+			return args[1]
+		},
+		HelpText: "cast(typ, val) - val, unchanged",
+	}
+	for _, n := range []string{"overload", "final", "runtime_checkable", "no_type_check", "override"} {
+		fns[n] = identityBuiltin(n, n+"(f) - Returns f unchanged")
+	}
+	fns["assert_never"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("assert_never", kwargs); err != nil {
+				return err
+			}
+			return errors.NewTypeErrorTagged("Expected code to be unreachable")
+		},
+		HelpText: "assert_never(arg) - Raises: the code should be unreachable",
+	}
+	fns["reveal_type"] = identityBuiltin("reveal_type", "reveal_type(obj) - Returns obj")
+	fns["get_type_hints"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("get_type_hints", kwargs, "globalns", "localns", "include_extras"); err != nil {
+					return err
+				}
+			}
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			return object.NewDict()
+		},
+		HelpText: "get_type_hints(obj) - {}: annotations are not kept",
+	}
+	fns["NamedTuple"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			// NamedTuple('P', [('x', int), ('y', int)]) is namedtuple('P', ['x', 'y']).
+			if err := errors.NoKwargs("NamedTuple", kwargs); err != nil {
+				return err
+			}
+			if len(args) < 1 {
+				return errors.NewTypeErrorTagged("NamedTuple() missing required argument: 'typename'")
+			}
+			var names []object.Object
+			if len(args) > 1 {
+				fields, errObj := iterableElements(ctx, args[1])
+				if errObj != nil {
+					return errObj
+				}
+				for _, f := range fields {
+					pair, errObj := iterableElements(ctx, f)
+					if errObj != nil || len(pair) != 2 {
+						return errors.NewTypeErrorTagged("NamedTuple fields must be (name, type) pairs")
+					}
+					names = append(names, pair[0])
+				}
+			}
+			return CollectionsLibrary.Functions()["namedtuple"].Fn(ctx, object.NewKwargs(nil), args[0], &object.List{Elements: names})
+		},
+		HelpText: "NamedTuple(typename, [(name, type), ...]) - A namedtuple class",
+	}
+	consts := TypingLibrary.Constants()
+	for _, n := range []string{"Generic", "Protocol", "TypedDict"} {
+		consts[n] = typingBaseClass(n)
+	}
+	consts["TYPE_CHECKING"] = object.NewBoolean(false)
+	for _, n := range []string{"TypeVar", "NewType", "ParamSpec", "TypeVarTuple", "Final", "ClassVar", "Annotated",
+		"NoReturn", "Never", "Self", "FrozenSet", "DefaultDict", "Deque", "Counter", "OrderedDict", "ChainMap",
+		"Generator", "AsyncGenerator", "AsyncIterator", "AsyncIterable", "Awaitable", "Coroutine", "Hashable", "Sized",
+		"Collection", "Container", "Reversible", "MutableMapping", "MutableSequence", "MutableSet", "AbstractSet",
+		"KeysView", "ValuesView", "ItemsView", "ContextManager", "AbstractContextManager", "AnyStr", "Text",
+		"Pattern", "Match", "IO", "TextIO", "BinaryIO", "SupportsInt", "SupportsFloat", "SupportsIndex", "SupportsAbs",
+		"SupportsRound", "Concatenate", "TypeAlias", "TypeGuard", "TypeIs", "Required", "NotRequired", "ReadOnly",
+		"Unpack", "LiteralString", "ByteString", "NamedTupleMeta"} {
+		if _, taken := consts[n]; !taken {
+			consts[n] = typingAlias(n)
+		}
+	}
+}
+
+var TypingLibrary = object.NewLibrary(TypingLibraryName, map[string]*object.Builtin{}, map[string]object.Object{
 	"Any":      typingAlias("Any"),
 	"Callable": typingAlias("Callable"),
 	"Dict":     typingAlias("Dict"),
@@ -49,6 +186,3 @@ var TypingLibrary = object.NewLibrary(TypingLibraryName, nil, map[string]object.
 	"Type":     typingAlias("Type"),
 	"Union":    typingAlias("Union"),
 }, "Typing placeholders: annotations are accepted and discarded, as always")
-
-var _ = errors.NewError
-var _ = context.Background

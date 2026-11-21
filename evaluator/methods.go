@@ -14,8 +14,6 @@ import (
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 )
 
 func dictCallableMethodExists(dict *object.Dict, method string) bool {
@@ -38,9 +36,8 @@ func fastStringUpper(s string) string {
 	// correctly even when they appear after an ASCII lowercase letter.
 	for i := 0; i < len(s); i++ {
 		if s[i] >= 0x80 {
-			// Go maps case 1:1, so ß stays ß; Python's full case mapping
-			// uppercases it to SS.
-			return strings.ReplaceAll(strings.ToUpper(s), "ß", "SS")
+			// Python's full case mapping: ß uppercases to SS, ﬁ to FI.
+			return unicodeUpper(s)
 		}
 	}
 	// Pure ASCII fast path.
@@ -70,7 +67,8 @@ func fastStringLower(s string) string {
 	// correctly even when they appear after an ASCII uppercase letter.
 	for i := 0; i < len(s); i++ {
 		if s[i] >= 0x80 {
-			return strings.ToLower(s)
+			// Full mapping, with a final Σ lowercased to ς.
+			return unicodeLower(s)
 		}
 	}
 	// Pure ASCII fast path.
@@ -660,7 +658,15 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		}
 		elements, err := args[0].AsList()
 		if err != nil {
-			return errors.ParameterError("iterable", err)
+			// Any other iterable: a str extends by its characters.
+			elems, ok, rerr := iterableToSliceChecked(ctx, args[0], env)
+			if rerr != nil {
+				return rerr
+			}
+			if !ok {
+				return errors.ParameterError("iterable", err)
+			}
+			elements = elems
 		}
 		grown, errObj := appendElements(list.Elements, elements...)
 		if errObj != nil {
@@ -1048,13 +1054,28 @@ func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args [
 		}
 		return object.NewString(decoded)
 	case "hex":
-		if err := errors.ExactArgs(args, 0); err != nil {
-			return err
+		if len(args) > 0 || keywords.Len() > 0 {
+			return bytesHex(b.BytesValue(), args, keywords)
 		}
 		if errObj := checkSize("hex string", int64(len(b.BytesValue()))*2); errObj != nil {
 			return errObj
 		}
 		return object.NewString(hex.EncodeToString(b.BytesValue()))
+	case "splitlines":
+		keepends := false
+		if len(args) > 1 {
+			return errors.NewTypeErrorTagged("splitlines() takes at most 1 argument (%d given)", len(args))
+		}
+		if len(args) == 1 {
+			keepends = isTruthy(args[0])
+		} else if kw, ok := keywords.Lookup("keepends"); ok {
+			keepends = isTruthy(kw)
+		}
+		return bytesSplitlines(b.BytesValue(), keepends)
+	case "translate":
+		return bytesTranslate(b.BytesValue(), args, keywords)
+	case "maketrans":
+		return bytesMaketrans(args)
 	case "base64":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
@@ -1068,6 +1089,9 @@ func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args [
 			return err
 		}
 		return object.NewInteger(int64(b.Len()))
+	}
+	if bytesViaStrMethods[method] {
+		return callBytesViaStr(ctx, b, method, args, keywords, env)
 	}
 	return attributeError(b, method)
 }
@@ -1430,20 +1454,12 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if len(str.StringValue()) == 0 {
 			return str
 		}
-		runes := []rune(str.StringValue())
-		// Use strings.Builder for efficient string building
-		var builder strings.Builder
-		builder.Grow(len(runes))
-		builder.WriteRune(unicode.ToUpper(runes[0]))
-		for _, r := range runes[1:] {
-			builder.WriteRune(unicode.ToLower(r))
-		}
-		return object.NewString(builder.String())
+		return object.NewString(pyCapitalize(str.StringValue()))
 	case "title":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		return object.NewString(cases.Title(language.Und).String(str.StringValue()))
+		return object.NewString(pyTitle(str.StringValue()))
 	case "strip":
 		if len(args) > 1 {
 			return errors.NewTypeErrorTagged("strip() takes at most 1 argument (%d given)", len(args))
@@ -1590,11 +1606,16 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return FALSE
 		}
 		for _, ch := range str.StringValue() {
-			if !unicode.IsDigit(ch) {
+			if !isDigitRune(ch) {
 				return FALSE
 			}
 		}
 		return TRUE
+	case "isascii":
+		if err := errors.ExactArgs(args, 0); err != nil {
+			return err
+		}
+		return nativeBoolToBooleanObject(isASCII(str.StringValue()))
 	case "isalpha":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
@@ -1638,36 +1659,12 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		hasUpper := false
-		for _, ch := range str.StringValue() {
-			if ch >= 'a' && ch <= 'z' {
-				return FALSE
-			}
-			if ch >= 'A' && ch <= 'Z' {
-				hasUpper = true
-			}
-		}
-		if hasUpper {
-			return TRUE
-		}
-		return FALSE
+		return nativeBoolToBooleanObject(pyIsUpper(str.StringValue()))
 	case "islower":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		hasLower := false
-		for _, ch := range str.StringValue() {
-			if ch >= 'A' && ch <= 'Z' {
-				return FALSE
-			}
-			if ch >= 'a' && ch <= 'z' {
-				hasLower = true
-			}
-		}
-		if hasLower {
-			return TRUE
-		}
-		return FALSE
+		return nativeBoolToBooleanObject(pyIsLower(str.StringValue()))
 	case "zfill":
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
@@ -1775,6 +1772,15 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 					lines = append(lines, object.NewSubstring(text[start:i], text))
 				}
 				start = i + 1
+			} else if n := otherLineBreak(text, i); n > 0 {
+				// \v \f \x1c-\x1e \x85 \u2028 \u2029 end lines too.
+				if keepends {
+					lines = append(lines, object.NewSubstring(text[start:i+n], text))
+				} else {
+					lines = append(lines, object.NewSubstring(text[start:i], text))
+				}
+				i += n - 1
+				start = i + 1
 			} else if text[i] == '\r' {
 				end := i
 				if i+1 < len(text) && text[i+1] == '\n' {
@@ -1797,17 +1803,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if len(args) != 0 {
 			return errors.NewTypeErrorTagged("swapcase() takes no arguments (%d given)", len(args))
 		}
-		result := make([]rune, len(str.StringValue()))
-		for i, r := range str.StringValue() {
-			if r >= 'A' && r <= 'Z' {
-				result[i] = r + 32
-			} else if r >= 'a' && r <= 'z' {
-				result[i] = r - 32
-			} else {
-				result[i] = r
-			}
-		}
-		return object.NewString(string(result))
+		return object.NewString(pySwapcase(str.StringValue()))
 	case "partition":
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
@@ -1922,8 +1918,10 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				errorsMode = em
 			}
 		}
-		if errorsMode != "strict" && errorsMode != "ignore" && errorsMode != "replace" {
-			return errors.NewLookupError("encode: unknown error handler %q (use strict, ignore or replace)", errorsMode)
+		switch errorsMode {
+		case "strict", "ignore", "replace", "xmlcharrefreplace", "backslashreplace":
+		default:
+			return errors.NewLookupError("encode: unknown error handler %q (use strict, ignore, replace, xmlcharrefreplace or backslashreplace)", errorsMode)
 		}
 		out, errObj := encodeStr(str.StringValue(), encoding, errorsMode)
 		if errObj != nil {
@@ -1982,9 +1980,8 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		// casefold is more aggressive than lower() for Unicode
-		// For ASCII, it's equivalent to lower()
-		return object.NewString(strings.ToLower(str.StringValue()))
+		// Unicode full case folding: ß folds to ss.
+		return object.NewString(pyCasefold(str.StringValue()))
 	case "maketrans":
 		if len(args) < 1 || len(args) > 3 {
 			return errors.NewTypeErrorTagged("maketrans() takes 1, 2, or 3 arguments (%d given)", len(args))
@@ -1996,8 +1993,18 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			if err != nil {
 				return errors.ParameterError("table", err)
 			}
-			for k, v := range d {
-				transMap.Store(object.DictKey(object.NewString(k)), object.NewString(k), v)
+			// Keys become ordinals, as in Python: {'a': 'b'} is {97: 'b'}.
+			src, _ := args[0].(*object.Dict)
+			if src == nil {
+				for k, v := range d {
+					storeTransKey(transMap, object.NewString(k), v)
+				}
+				return transMap
+			}
+			for _, pair := range src.All() {
+				if errObj := storeTransKey(transMap, pair.Key, pair.Value); errObj != nil {
+					return errObj
+				}
 			}
 			return transMap
 		}
@@ -2016,8 +2023,8 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return errors.NewValueError("maketrans() arguments must have equal length")
 		}
 		for i, ch := range fromRunes {
-			key := object.DictKey(object.NewString(string(ch)))
-			transMap.Store(key, object.NewString(string(ch)), object.NewString(string(toRunes[i])))
+			k := object.NewInteger(int64(ch))
+			transMap.Store(object.DictKey(k), k, object.NewInteger(int64(toRunes[i])))
 		}
 		// Third argument: characters to delete
 		if len(args) == 3 {
@@ -2026,8 +2033,8 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				return errors.ParameterError("deletechars", errDel)
 			}
 			for _, ch := range del {
-				key := object.DictKey(object.NewString(string(ch)))
-				transMap.Store(key, object.NewString(string(ch)), NULL)
+				k := object.NewInteger(int64(ch))
+				transMap.Store(object.DictKey(k), k, NULL)
 			}
 		}
 		return transMap
@@ -2041,19 +2048,25 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		var result strings.Builder
 		for _, ch := range str.StringValue() {
-			key := object.DictKey(object.NewString(string(ch)))
-			if pair, exists := transMap.Lookup(key); exists {
-				if pair.Value == NULL || pair.Value.Type() == object.NULL_OBJ {
-					// Delete character
-					continue
-				}
-				if s, err := pair.Value.AsString(); err == nil {
-					result.WriteString(s)
-				} else {
-					result.WriteRune(ch)
-				}
-			} else {
+			// Python looks characters up by ordinal; a one-character str
+			// key is accepted too.
+			pair, exists := transMap.Lookup(object.DictKey(object.NewInteger(int64(ch))))
+			if !exists {
+				pair, exists = transMap.Lookup(object.DictKey(object.NewString(string(ch))))
+			}
+			if !exists {
 				result.WriteRune(ch)
+				continue
+			}
+			switch v := pair.Value.(type) {
+			case *object.Null:
+				// Delete character
+			case *object.String:
+				result.WriteString(v.StringValue())
+			case *object.Integer:
+				result.WriteRune(rune(v.IntValue()))
+			default:
+				return errors.NewTypeErrorTagged("character mapping must return integer, None or str")
 			}
 		}
 		return object.NewString(result.String())
@@ -2067,8 +2080,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return FALSE
 		}
 		for _, ch := range str.StringValue() {
-			// Check if character is in Unicode numeric categories
-			if !unicode.IsNumber(ch) {
+			if !isNumericRune(ch) {
 				return FALSE
 			}
 		}
@@ -2088,62 +2100,15 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		return TRUE
 	case "istitle":
-		// Returns True if string is titlecased
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(str.StringValue()) == 0 {
-			return FALSE
-		}
-		// Title case: first char of each word is uppercase, rest are lowercase
-		prevCased := false
-		hasCased := false
-		for _, ch := range str.StringValue() {
-			isUpper := ch >= 'A' && ch <= 'Z'
-			isLower := ch >= 'a' && ch <= 'z'
-			isCased := isUpper || isLower
-			if isCased {
-				hasCased = true
-				if prevCased {
-					// Previous char was cased, this one should be lowercase
-					if !isLower {
-						return FALSE
-					}
-				} else {
-					// Previous char was not cased, this one should be uppercase
-					if !isUpper {
-						return FALSE
-					}
-				}
-			}
-			prevCased = isCased
-		}
-		if hasCased {
-			return TRUE
-		}
-		return FALSE
+		return nativeBoolToBooleanObject(pyIsTitle(str.StringValue()))
 	case "isidentifier":
-		// Returns True if string is a valid identifier
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(str.StringValue()) == 0 {
-			return FALSE
-		}
-		for i, ch := range str.StringValue() {
-			if i == 0 {
-				// First character must be letter or underscore
-				if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_') {
-					return FALSE
-				}
-			} else {
-				// Subsequent characters can also be digits
-				if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') {
-					return FALSE
-				}
-			}
-		}
-		return TRUE
+		return nativeBoolToBooleanObject(pyIsIdentifier(str.StringValue()))
 	case "isprintable":
 		// Returns True if all characters are printable
 		if err := errors.ExactArgs(args, 0); err != nil {
@@ -2839,4 +2804,37 @@ func formatIndexError(idx int) object.Object {
 		ExceptionType: object.ExceptionTypeIndexError,
 		Raised:        true,
 	}
+}
+
+// otherLineBreak reports the byte length of a line boundary other than \n
+// and \r starting at text[i] (\v, \f, \x1c, \x1d, \x1e, \x85, \u2028,
+// \u2029), 0 when there is none.
+func otherLineBreak(text string, i int) int {
+	switch c := text[i]; {
+	case c == '\v' || c == '\f' || c == 0x1c || c == 0x1d || c == 0x1e:
+		return 1
+	case c == 0xc2 && i+1 < len(text) && text[i+1] == 0x85:
+		return 2
+	case c == 0xe2 && i+2 < len(text) && text[i+1] == 0x80 && (text[i+2] == 0xa8 || text[i+2] == 0xa9):
+		return 3
+	}
+	return 0
+}
+
+// storeTransKey adds a str.maketrans() dict entry: a one-character str key
+// becomes its ordinal, an int key stays.
+func storeTransKey(m *object.Dict, key, value object.Object) object.Object {
+	switch k := key.(type) {
+	case *object.String:
+		r := []rune(k.StringValue())
+		if len(r) != 1 {
+			return errors.NewValueError("string keys in translate table must be of length 1")
+		}
+		key = object.NewInteger(int64(r[0]))
+	case *object.Integer:
+	default:
+		return errors.NewTypeErrorTagged("keys in translate table must be strings or integers")
+	}
+	m.Store(object.DictKey(key), key, value)
+	return nil
 }

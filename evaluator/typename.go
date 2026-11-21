@@ -139,6 +139,9 @@ func typeOf(obj object.Object) object.Object {
 		if obj == ellipsisValue {
 			return typeNameEllipsis
 		}
+		if obj == notImplementedValue {
+			return object.NewString("NotImplementedType")
+		}
 		return typeNameSentinel
 	}
 	return object.NewString(obj.Type().String())

@@ -88,7 +88,7 @@ assert german.lower() == "straße"
 
 turkish = "İstanbul"
 assert turkish.upper() == "İSTANBUL"  # dotted I
-assert turkish.lower() == "istanbul"
+assert turkish.lower() == "i\u0307stanbul"  # İ lowercases to i + combining dot, as in Python
 
 # Test 11: Unicode in sets
 print("Testing Unicode in sets...")

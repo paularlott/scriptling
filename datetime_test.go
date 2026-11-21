@@ -196,9 +196,11 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 		{"strptime isoformat keeps fields", `
 			result = datetime.datetime.strptime("1970-01-01T00:30:00", "%Y-%m-%dT%H:%M:%S").isoformat()
 		`, "1970-01-01T00:30:00"},
-		{"strptime timestamp is UTC fields", `
+		// A naive datetime's timestamp reads its fields as local time, as
+		// in Python, whether it came from strptime or the constructor.
+		{"strptime timestamp is local fields", `
 			result = datetime.datetime.strptime("1970-01-01T00:30:00", "%Y-%m-%dT%H:%M:%S").timestamp()
-		`, 1800.0},
+		`, -27000.0},
 		{"strptime field accessors", `
 			s = datetime.datetime.strptime("1970-01-01T00:30:00", "%Y-%m-%dT%H:%M:%S")
 			result = s.year == 1970 and s.hour == 0 and s.minute == 30
@@ -221,10 +223,10 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 			s = datetime.datetime.strptime("1970-01-01T00:30:00", "%Y-%m-%dT%H:%M:%S")
 			result = s.replace(hour=9).isoformat()
 		`, "1970-01-01T09:30:00"},
-		{"replace on utc instance keeps utc timestamp", `
+		{"replace on strptime instance keeps local timestamp", `
 			s = datetime.datetime.strptime("1970-01-01T00:30:00", "%Y-%m-%dT%H:%M:%S")
 			result = s.replace(hour=9).timestamp()
-		`, 34200.0},
+		`, 5400.0},
 		{"replace on local instance stays local", `
 			f = datetime.datetime.fromtimestamp(0)
 			result = f.replace(hour=9).strftime("%Y-%m-%dT%H:%M:%S")
@@ -263,10 +265,12 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 			s -= 3600
 			result = s.isoformat()
 		`, "2024-01-15T09:00:00"},
-		{"datetime comparison across zones", `
-			a = datetime.datetime.strptime("1970-01-01T00:00:00", "%Y-%m-%dT%H:%M:%S")
+		// Naive datetimes compare by their fields: 00:00 is not the 08:00
+		// local time of timestamp 0.
+		{"naive datetimes compare by fields", `
+			a = datetime.datetime.strptime("1970-01-01T08:00:00", "%Y-%m-%dT%H:%M:%S")
 			b = datetime.datetime.fromtimestamp(0)
-			result = a == b
+			result = a == b and datetime.datetime.strptime("1970-01-01T00:00:00", "%Y-%m-%dT%H:%M:%S") != b
 		`, true},
 		{"datetime ordering", `
 			a = datetime.datetime.strptime("2024-01-15T10:00:00", "%Y-%m-%dT%H:%M:%S")

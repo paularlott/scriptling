@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
@@ -663,6 +664,12 @@ func instanceDictView(inst *object.Instance) *object.Dict {
 
 func evalClassIndexExpression(class, index object.Object) object.Object {
 	if index.Type() != object.STRING_OBJ {
+		// Generic classes subscript to themselves: Box[int] is Box.
+		if fn, ok := class.(*object.Class).LookupMember("__class_getitem__"); ok {
+			if b, ok := fn.(*object.Builtin); ok {
+				return b.Fn(context.Background(), object.Kwargs{}, class, index)
+			}
+		}
 		return errors.NewTypeErrorTagged("'type' object is not subscriptable")
 	}
 	field, err := index.AsString()
@@ -741,8 +748,58 @@ func evalBuiltinIndexExpression(builtin, index object.Object) object.Object {
 		if name, ok := typeBuiltins[b]; ok {
 			return object.NewString(name)
 		}
+		if name := builtinFunctionName(b); name != "" {
+			return object.NewString(name)
+		}
 	}
 	return attributeError(b, field)
+}
+
+// builtinFunctionName recovers a builtin function's or method's __name__:
+// its builtins entry (len), the name in its repr (str.upper is "<method
+// 'upper' of 'str' objects>"), or the name its help text opens with
+// ("sqrt(x) - ..."). "" when none is known.
+func builtinFunctionName(b *object.Builtin) string {
+	for name, entry := range builtins {
+		if entry == b {
+			return name
+		}
+	}
+	if r := b.Repr; r != "" {
+		for _, prefix := range []string{"<method '", "<built-in method ", "<bound method "} {
+			if rest, ok := strings.CutPrefix(r, prefix); ok {
+				if i := strings.IndexAny(rest, "' >"); i > 0 {
+					name := rest[:i]
+					if j := strings.LastIndexByte(name, '.'); j >= 0 {
+						name = name[j+1:]
+					}
+					return name
+				}
+			}
+		}
+	}
+	if i := strings.IndexByte(b.HelpText, '('); i > 0 {
+		name := b.HelpText[:i]
+		if j := strings.LastIndexByte(name, '.'); j >= 0 {
+			name = name[j+1:]
+		}
+		if isIdentifierName(name) {
+			return name
+		}
+	}
+	return ""
+}
+
+func isIdentifierName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if r != '_' && !unicode.IsLetter(r) && (i == 0 || !unicode.IsDigit(r)) {
+			return false
+		}
+	}
+	return true
 }
 
 func sliceList(elements []object.Object, start, end, step int64, hasStart, hasEnd bool) object.Object {

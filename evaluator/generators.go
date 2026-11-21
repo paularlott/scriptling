@@ -1528,7 +1528,7 @@ func generatorIterFor(ctx context.Context, val object.Object, env *object.Enviro
 	case *object.FloatArray:
 		return sliceIterator(o.ToList().Elements), nil
 	case *object.Instance:
-		if fn, ok := findDunderMethod(o, "__iter__"); ok {
+		if fn, ok := findIterMethod(o); ok {
 			return callIter(ctx, o, fn, env)
 		}
 	}

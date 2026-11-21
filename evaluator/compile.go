@@ -793,7 +793,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 		case *object.Set:
 			iter = o.CreateIterator()
 		case *object.Instance:
-			if fn, ok := findDunderMethod(o, "__iter__"); ok {
+			if fn, ok := findIterMethod(o); ok {
 				var errObj object.Object
 				if iter, errObj = callIter(ctx, o, fn, env); errObj != nil {
 					return errObj
@@ -3994,6 +3994,11 @@ func compileMatchSelect(n *ast.MatchStatement) func(ctx context.Context, env *ob
 				for name, val := range capturedVars {
 					env.Set(name, val)
 				}
+				// The as-capture is bound before the guard runs, as in
+				// Python: case str() as s if len(s) > 3.
+				if caseClause.CaptureAs != nil {
+					env.Set(caseClause.CaptureAs.Value(), capturedValue)
+				}
 
 				// Check guard condition if present
 				if guards[i] != nil {
@@ -4011,10 +4016,6 @@ func compileMatchSelect(n *ast.MatchStatement) func(ctx context.Context, env *ob
 					}
 				}
 
-				// Bind explicit capture variable if present
-				if caseClause.CaptureAs != nil {
-					env.Set(caseClause.CaptureAs.Value(), capturedValue)
-				}
 				return i, nil
 			}
 		}
@@ -4198,9 +4199,9 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 
 		// enum.Enum derivation: promote the class's plain assignments to
 		// singleton member instances, in source order.
-		if class.BaseClass != nil && (class.BaseClass.Name == "Enum" || class.BaseClass.Name == "IntEnum") {
+		if class.BaseClass != nil && isEnumBaseName(class.BaseClass.Name) {
 			class.IsEnum = true
-			class.IsIntEnum = class.BaseClass.Name == "IntEnum"
+			class.IsIntEnum = class.BaseClass.Name == "IntEnum" || class.BaseClass.Name == "IntFlag"
 			if err := buildEnumMembers(class); err != nil {
 				return err
 			}

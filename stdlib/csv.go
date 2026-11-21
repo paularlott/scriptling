@@ -21,139 +21,15 @@ var CSVLibrary = newCSVLibrary()
 var CSVAliasLibrary = libutil.NewAliasedLibrary(CSVLibrary, CSVAliasLibraryName)
 
 func newCSVLibrary() *object.Library {
-	return object.NewLibrary(CSVLibraryName, map[string]*object.Builtin{
-		"writer": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if kwargs.Len() > 0 {
-					if err := errors.CheckKwargs("writer", kwargs, "delimiter"); err != nil {
-						return err
-					}
-				}
-				if err := minOneInstanceArg(args, "writer"); err != nil {
-					return err
-				}
-				delimiter, _ := csvDelimiter(kwargs)
-				inst := object.NewInstanceWithFields(csvWriterClass, map[string]object.Object{
-					"_target":    args[0],
-					"_delimiter": object.NewString(string(delimiter)),
-				})
-				return inst
-			},
-			HelpText: `writer(fileobj, delimiter=",") - CSV writer over a write()-able object
+	fns := csvLibraryFunctions()
+	for name, fn := range csvPythonFunctions() {
+		fns[name] = fn
+	}
+	return object.NewLibrary(CSVLibraryName, fns, csvConstants, "CSV parsing and formatting (string-based)")
+}
 
-writerow(row) writes one row; writerows(rows) writes many.`,
-		},
-		"reader": &object.Builtin{
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if kwargs.Len() > 0 {
-					if err := errors.CheckKwargs("reader", kwargs, "delimiter"); err != nil {
-						return err
-					}
-				}
-				if err := minOneInstanceArg(args, "reader"); err != nil {
-					return err
-				}
-				lines := readAllLinesFromSource(ctx, args[0].(*object.Instance))
-				if lines == nil {
-					return csvSimpleError("csv.reader source must have read(), getvalue() or readline()")
-				}
-				delimiter, _ := csvDelimiter(kwargs)
-				inst := object.NewInstanceWithFields(csvReaderClass, map[string]object.Object{
-					"_lines":     &object.List{Elements: lines},
-					"_pos":       object.NewInteger(0),
-					"_delimiter": object.NewString(string(delimiter)),
-				})
-				return inst
-			},
-			HelpText: `reader(fileobj, delimiter=",") - CSV reader over line content
-
-Iterating yields rows (lists of strings).`,
-		},
-		"DictReader": {
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if kwargs.Len() > 0 {
-					if err := errors.CheckKwargs("DictReader", kwargs, "fieldnames", "restval", "delimiter"); err != nil {
-						return err
-					}
-				}
-				if err := minOneInstanceArg(args, "DictReader"); err != nil {
-					return err
-				}
-				lines := readAllLinesFromSource(ctx, args[0].(*object.Instance))
-				if lines == nil {
-					return csvSimpleError("csv.DictReader source must have read(), getvalue() or readline()")
-				}
-				delimiter, _ := csvDelimiter(kwargs)
-				fields := map[string]object.Object{
-					"_lines":     &object.List{Elements: lines},
-					"_pos":       object.NewInteger(0),
-					"_delimiter": object.NewString(string(delimiter)),
-					"fieldnames": &object.Null{},
-				}
-				// Positional or keyword fieldnames; restval fills short rows.
-				if len(args) > 1 {
-					names, errObj := args[1].AsList()
-					if errObj != nil {
-						return errObj
-					}
-					list := &object.List{Elements: append([]object.Object{}, names...)}
-					fields["_fieldnames"] = list
-					fields["fieldnames"] = list
-				}
-				if names, ok := kwargs.Lookup("fieldnames"); ok {
-					nl, errObj := names.AsList()
-					if errObj != nil {
-						return errObj
-					}
-					list := &object.List{Elements: append([]object.Object{}, nl...)}
-					fields["_fieldnames"] = list
-					fields["fieldnames"] = list
-				}
-				if rv, ok := kwargs.Lookup("restval"); ok {
-					fields["_restval"] = rv
-				}
-				return object.NewInstanceWithFields(csvDictReaderClass, fields)
-			},
-			HelpText: `DictReader(fileobj, fieldnames=None, restval=None) - CSV reader yielding dicts
-
-The first row is the header unless fieldnames is given.`,
-		},
-		"DictWriter": {
-			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if kwargs.Len() > 0 {
-					if err := errors.CheckKwargs("DictWriter", kwargs, "fieldnames", "restval", "delimiter", "extrasaction"); err != nil {
-						return err
-					}
-				}
-				if err := minOneInstanceArg(args, "DictWriter"); err != nil {
-					return err
-				}
-				if len(args) < 2 {
-					if fn, ok := kwargs.Lookup("fieldnames"); ok {
-						args = append(args[:1:1], fn)
-					} else {
-						return csvSimpleError("csv.DictWriter requires fieldnames")
-					}
-				}
-				names, errObj := args[1].AsList()
-				if errObj != nil {
-					return errObj
-				}
-				delimiter, _ := csvDelimiter(kwargs)
-				fields := map[string]object.Object{
-					"_target":     args[0],
-					"_delimiter":  object.NewString(string(delimiter)),
-					"_fieldnames": &object.List{Elements: append([]object.Object{}, names...)},
-				}
-				if rv, ok := kwargs.Lookup("restval"); ok {
-					fields["_restval"] = rv
-				}
-				return object.NewInstanceWithFields(csvDictWriterClass, fields)
-			},
-			HelpText: `DictWriter(fileobj, fieldnames, restval="", delimiter=",")
-
-writerow(dict) writes rows ordered by fieldnames; writeheader() writes the header.`,
-		},
+func csvLibraryFunctions() map[string]*object.Builtin {
+	return map[string]*object.Builtin{
 		"loads": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if kwargs.Len() > 0 {
@@ -406,7 +282,7 @@ Parameters:
 Returns:
   str - CSV-formatted text with a header row`,
 		},
-	}, nil, "CSV parsing and formatting (string-based)")
+	}
 }
 
 // csvDelimiter reads the optional delimiter kwarg (default ',').
@@ -421,16 +297,6 @@ func csvDelimiter(kwargs object.Kwargs) (rune, object.Object) {
 		}
 	}
 	return ',', nil
-}
-
-func minOneInstanceArg(args []object.Object, what string) object.Object {
-	if len(args) < 1 {
-		return csvSimpleError("%s() requires a file object", what)
-	}
-	if _, ok := args[0].(*object.Instance); !ok {
-		return csvSimpleError("%s() requires a file-like object", what)
-	}
-	return nil
 }
 
 // readAllLinesFromSource pulls the full text from an object exposing one of

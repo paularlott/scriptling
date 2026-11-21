@@ -16,7 +16,7 @@ import (
 var builtinMethodNames = map[object.ObjectType][]string{
 	object.STRING_OBJ: {
 		"capitalize", "casefold", "center", "count", "encode", "endswith", "expandtabs", "find",
-		"format", "index", "isalnum", "isalpha", "isdecimal", "isdigit", "isidentifier", "islower",
+		"format", "index", "isalnum", "isalpha", "isascii", "isdecimal", "isdigit", "isidentifier", "islower",
 		"isnumeric", "isprintable", "isspace", "istitle", "isupper", "join", "ljust", "lower",
 		"lstrip", "maketrans", "partition", "removeprefix", "removesuffix", "replace", "rfind",
 		"rindex", "rjust", "rpartition", "rsplit", "rstrip", "split", "splitlines", "startswith",
@@ -34,7 +34,13 @@ var builtinMethodNames = map[object.ObjectType][]string{
 		"intersection_update", "isdisjoint", "issubset", "issuperset", "pop", "remove",
 		"symmetric_difference", "symmetric_difference_update", "union", "update",
 	},
-	object.BYTES_OBJ:       {"base64", "decode", "hex", "join", "length", "rsplit", "split"},
+	object.BYTES_OBJ: {
+		"base64", "capitalize", "center", "count", "decode", "endswith", "expandtabs", "find", "hex", "index",
+		"isalnum", "isalpha", "isascii", "isdigit", "islower", "isspace", "istitle", "isupper", "join", "length",
+		"ljust", "lower", "lstrip", "maketrans", "partition", "removeprefix", "removesuffix", "replace", "rfind",
+		"rindex", "rjust", "rpartition", "rsplit", "rstrip", "split", "splitlines", "startswith", "strip",
+		"swapcase", "title", "translate", "upper", "zfill",
+	},
 	object.FLOAT_ARRAY_OBJ: {"shape", "tolist"},
 	object.INTEGER_OBJ:     {"as_integer_ratio", "bit_count", "bit_length", "conjugate", "from_bytes", "is_integer", "to_bytes"},
 	object.BOOLEAN_OBJ:     {"as_integer_ratio", "bit_count", "bit_length", "conjugate", "is_integer", "to_bytes"},
@@ -59,6 +65,7 @@ var builtinMethodSet = func() map[object.ObjectType]map[string]bool {
 var staticTypeMethods = map[object.ObjectType]map[string]object.Object{
 	object.DICT_OBJ:   {"fromkeys": object.NewDict()},
 	object.STRING_OBJ: {"maketrans": object.NewString("")},
+	object.BYTES_OBJ:  {"maketrans": object.NewBytes(nil)},
 	object.FLOAT_OBJ:  {"fromhex": object.NewFloat(0)},
 	object.INTEGER_OBJ: {
 		"from_bytes": object.NewInteger(0), // static: int.from_bytes(data, "big")
@@ -74,6 +81,14 @@ func hasBuiltinMethod(t object.ObjectType, name string) bool {
 // has no such method.
 func builtinMethodRef(obj object.Object, name string) object.Object {
 	if !hasBuiltinMethod(obj.Type(), name) {
+		// x.__class__ is the value's type: (1).__class__.__name__ is 'int'.
+		if name == "__class__" {
+			if t, ok := builtins[getTypeName(obj)]; ok {
+				if _, isType := typeBuiltins[t]; isType {
+					return t
+				}
+			}
+		}
 		return nil
 	}
 	return &object.Builtin{

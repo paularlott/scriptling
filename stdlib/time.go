@@ -3,7 +3,6 @@ package stdlib
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/paularlott/scriptling/errors"
@@ -216,14 +215,7 @@ Converts a time tuple (9 elements) to a Unix timestamp.`,
 
 				t = time.Date(int(year), time.Month(month), int(day), int(hour), int(minute), int(second), 0, time.Local)
 			}
-
-			result := t.Format(pythonToGoFormat(format))
-			// %j (day of year) has no Go layout token: it survives the
-			// mapping literally, so substitute it in the output.
-			if strings.Contains(format, "%j") {
-				result = strings.ReplaceAll(result, "%j", fmt.Sprintf("%03d", t.YearDay()))
-			}
-			return object.NewString(result)
+			return object.NewString(pyStrftime(t, format, zoneLocal))
 		},
 		HelpText: `strftime(format[, tuple]) - Format time as string
 
@@ -248,12 +240,20 @@ Formats a time according to the given format string. If tuple is omitted, uses c
 				return err
 			}
 
-			t, parseErr := time.Parse(pythonToGoFormat(format), str)
-			if parseErr != nil {
-				return errors.NewValueError("strptime() parse error: %s", parseErr.Error())
+			r, errObj := pyStrptime(str, format)
+			if errObj != nil {
+				return errObj
 			}
-
-			return timeToTuple(t, false)
+			// struct_time holds the fields as parsed (a leap second
+			// included), whatever the zone.
+			sec := min(r.second, 59)
+			if _, errObj := (&datetimeFields{r.year, r.month, r.day, r.hour, r.minute, sec, 0}).time(time.UTC); errObj != nil {
+				return errObj
+			}
+			tt := timeToTuple(time.Date(r.year, time.Month(r.month), r.day, r.hour, r.minute, sec, 0, time.UTC), false)
+			setStructTimeField(tt, "tm_sec", 5, int64(r.second))
+			setStructTimeField(tt, "tm_isdst", 8, -1)
+			return tt
 		},
 		HelpText: `strptime(string, format) - Parse time from string
 
@@ -351,12 +351,19 @@ func timeToTuple(t time.Time, utc bool) *object.Instance {
 // timeTupleValues accepts a time tuple as a List (legacy) or a struct_time
 // instance (gmtime/localtime output) and returns its 9 integer components.
 func timeTupleValues(obj object.Object) ([]int64, object.Object) {
-	if l, ok := obj.(*object.List); ok {
-		if len(l.Elements) != 9 {
+	var elems []object.Object
+	switch l := obj.(type) {
+	case *object.List:
+		elems = l.Elements
+	case *object.Tuple:
+		elems = l.Elements
+	}
+	if elems != nil {
+		if len(elems) != 9 {
 			return nil, errors.NewTypeErrorTagged("time tuple must have exactly 9 elements")
 		}
 		out := make([]int64, 9)
-		for i, e := range l.Elements {
+		for i, e := range elems {
 			v, err := e.AsInt()
 			if err != nil {
 				return nil, err
@@ -429,20 +436,11 @@ var StructTimeClass = &object.Class{
 	},
 }
 
-func pythonToGoFormat(pyFormat string) string {
-	goFormat := pyFormat
-	goFormat = strings.ReplaceAll(goFormat, "%Y", "2006")
-	goFormat = strings.ReplaceAll(goFormat, "%m", "01")
-	goFormat = strings.ReplaceAll(goFormat, "%d", "02")
-	goFormat = strings.ReplaceAll(goFormat, "%H", "15")
-	goFormat = strings.ReplaceAll(goFormat, "%M", "04")
-	goFormat = strings.ReplaceAll(goFormat, "%S", "05")
-	goFormat = strings.ReplaceAll(goFormat, "%A", "Monday")
-	goFormat = strings.ReplaceAll(goFormat, "%a", "Mon")
-	goFormat = strings.ReplaceAll(goFormat, "%B", "January")
-	goFormat = strings.ReplaceAll(goFormat, "%b", "Jan")
-	goFormat = strings.ReplaceAll(goFormat, "%p", "PM")
-	goFormat = strings.ReplaceAll(goFormat, "%I", "3")
-	goFormat = strings.ReplaceAll(goFormat, "%y", "06")
-	return goFormat
+// setStructTimeField sets a struct_time field by name and position.
+func setStructTimeField(tt *object.Instance, name string, idx int, v int64) {
+	val := object.NewInteger(v)
+	tt.SetField(name, val)
+	if order, ok := tt.Field("_order").(*object.List); ok {
+		order.Elements[idx] = val
+	}
 }

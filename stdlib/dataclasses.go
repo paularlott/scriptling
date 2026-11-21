@@ -2,6 +2,7 @@ package stdlib
 
 import (
 	"context"
+	"slices"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
@@ -70,7 +71,7 @@ defaults, and field(default=..., default_factory=...) customises them.`,
 	"field": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if kwargs.Len() > 0 {
-				if err := errors.CheckKwargs("field", kwargs, "default", "default_factory", "repr", "hash", "metadata", "kw_only"); err != nil {
+				if err := errors.CheckKwargs("field", kwargs, "default", "default_factory", "init", "repr", "hash", "compare", "metadata", "kw_only"); err != nil {
 					return err
 				}
 			}
@@ -88,6 +89,15 @@ defaults, and field(default=..., default_factory=...) customises them.`,
 				factory = &object.Null{}
 			}
 			inst.SetField("default_factory", factory)
+			// init=False leaves the field out of __init__, repr=False out of
+			// repr(), compare=False out of == and ordering.
+			for _, opt := range []string{"init", "repr", "compare"} {
+				v := object.Object(object.NewBoolean(true))
+				if o, ok := kwargs.Lookup(opt); ok {
+					v = object.NewBoolean(isTruthy(o))
+				}
+				inst.SetField(opt, v)
+			}
 			return inst
 		},
 		HelpText: `field(default=..., default_factory=...) - Describe a dataclass field
@@ -144,7 +154,10 @@ type dcField struct {
 	name    string
 	hasDef  bool
 	def     object.Object
-	factory *object.Builtin
+	factory object.Object // a zero-argument callable, or nil
+	noInit  bool
+	noRepr  bool
+	noCmp   bool
 }
 
 // buildDataclass generates the methods on cls per the class's annotated
@@ -159,14 +172,37 @@ func buildDataclass(cls *object.Class, kwargs object.Kwargs) object.Object {
 		return true
 	}
 
+	// A dataclass subclass has its bases' fields first, as in Python; a
+	// field it redeclares keeps its place.
+	var allNames []string
+	var chain []*object.Class
+	for c := cls; c != nil; c = c.BaseClass {
+		chain = append([]*object.Class{c}, chain...)
+	}
+	for _, c := range chain {
+		if c != cls {
+			if _, isDC := c.Methods["__dataclass_fields__"]; !isDC {
+				continue
+			}
+		}
+		for _, n := range c.FieldNames {
+			if !slices.Contains(allNames, n) {
+				allNames = append(allNames, n)
+			}
+		}
+	}
+	cls.FieldNames = allNames
+	cls.Methods["__dataclass_fields__"] = object.NewBoolean(true)
+
 	fields := make([]dcField, 0, len(cls.FieldNames))
 	for _, name := range cls.FieldNames {
 		f := dcField{name: name}
-		if attr, ok := cls.Methods[name]; ok {
+		if attr, ok := cls.LookupMember(name); ok {
 			if spec, isSpec := attr.(*object.Instance); isSpec && spec.Class == fieldSpecClass {
 				if d, isSent := spec.Field("default").(*object.Sentinel); isSent && d.Name == "MISSING" {
-					// default_factory path
-					if fac, isFn := spec.Field("default_factory").(*object.Builtin); isFn {
+					// default_factory path: any zero-argument callable
+					// (list, a lambda, a class).
+					if fac := spec.Field("default_factory"); fac != nil && fac.Type() != object.NULL_OBJ {
 						f.hasDef = true
 						f.factory = fac
 					}
@@ -174,6 +210,11 @@ func buildDataclass(cls *object.Class, kwargs object.Kwargs) object.Object {
 					f.hasDef = true
 					f.def = spec.Field("default")
 				}
+				off := func(name string) bool {
+					b, ok := spec.Field(name).(*object.Boolean)
+					return ok && !b.BoolValue()
+				}
+				f.noInit, f.noRepr, f.noCmp = off("init"), off("repr"), off("compare")
 			} else {
 				f.hasDef = true
 				f.def = attr
@@ -217,9 +258,13 @@ func buildDataclass(cls *object.Class, kwargs object.Kwargs) object.Object {
 	}
 
 	if opt("init") {
-		names := make([]string, len(fields))
-		for i, f := range fields {
-			names[i] = f.name
+		var names []string
+		var initFields []dcField
+		for _, f := range fields {
+			if !f.noInit {
+				names = append(names, f.name)
+				initFields = append(initFields, f)
+			}
 		}
 		cls.Methods["__init__"] = &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -231,6 +276,9 @@ func buildDataclass(cls *object.Class, kwargs object.Kwargs) object.Object {
 					return errors.NewTypeErrorTagged("__init__ requires instance as first argument")
 				}
 				positional := args[1:]
+				if len(positional) > len(initFields) {
+					return errors.NewTypeErrorTagged("%s.__init__() takes %d positional arguments but %d were given", cls.Name, len(initFields)+1, len(positional)+1)
+				}
 				byName := map[string]object.Object{}
 				for k, v := range kwargs.All() {
 					known := false
@@ -249,7 +297,7 @@ func buildDataclass(cls *object.Class, kwargs object.Kwargs) object.Object {
 					}
 					byName[k] = v
 				}
-				for i, f := range fields {
+				for i, f := range initFields {
 					if i < len(positional) {
 						if _, dup := byName[f.name]; dup {
 							return &object.Exception{
@@ -273,13 +321,34 @@ func buildDataclass(cls *object.Class, kwargs object.Kwargs) object.Object {
 						}
 					}
 					if f.factory != nil {
-						res := f.factory.Fn(ctx, object.NewKwargs(nil))
+						res := callCallable(ctx, f.factory)
 						if object.IsError(res) || res.Type() == object.EXCEPTION_OBJ {
 							return res
 						}
 						self.SetField(f.name, res)
 					} else {
 						self.SetField(f.name, f.def)
+					}
+				}
+				// init=False fields take their default, if any.
+				for _, f := range fields {
+					if !f.noInit || !f.hasDef {
+						continue
+					}
+					if f.factory != nil {
+						res := callCallable(ctx, f.factory)
+						if object.IsError(res) || res.Type() == object.EXCEPTION_OBJ {
+							return res
+						}
+						self.SetField(f.name, res)
+					} else {
+						self.SetField(f.name, f.def)
+					}
+				}
+				// __post_init__ runs last, as in Python.
+				if post, ok := cls.LookupMember("__post_init__"); ok {
+					if res := callCallable(ctx, post, self); object.IsError(res) || res.Type() == object.EXCEPTION_OBJ {
+						return res
 					}
 				}
 				return &object.Null{}
@@ -298,9 +367,11 @@ func buildDataclass(cls *object.Class, kwargs object.Kwargs) object.Object {
 				if !ok {
 					return errors.NewTypeErrorTagged("__repr__ requires an instance")
 				}
-				names := make([]string, len(fields))
-				for i, f := range fields {
-					names[i] = f.name
+				var names []string
+				for _, f := range fields {
+					if !f.noRepr {
+						names = append(names, f.name)
+					}
 				}
 				display, errObj := fieldsRepr(cls.Name, names, self.GetField)
 				if errObj != nil {
@@ -317,6 +388,9 @@ func buildDataclass(cls *object.Class, kwargs object.Kwargs) object.Object {
 		// methods. compareFields returns -1/0/1 field-lexicographically.
 		compareFields := func(a, b *object.Instance) (int, object.Object) {
 			for _, f := range fields {
+				if f.noCmp {
+					continue
+				}
 				av, aok := a.GetField(f.name)
 				bv, bok := b.GetField(f.name)
 				if !aok || !bok {
@@ -402,7 +476,13 @@ func buildDataclass(cls *object.Class, kwargs object.Kwargs) object.Object {
 				if !okA || !okB {
 					return object.NewBoolean(false)
 				}
+				if a.Class != b.Class {
+					return object.NewBoolean(false)
+				}
 				for _, f := range fields {
+					if f.noCmp {
+						continue
+					}
 					av, aok := a.GetField(f.name)
 					bv, bok := b.GetField(f.name)
 					if !aok || !bok || av.Inspect() != bv.Inspect() {
@@ -464,4 +544,132 @@ func dataclassesAsDict(obj object.Object) object.Object {
 		return d
 	}
 	return obj
+}
+
+// dataclasses.fields, is_dataclass and replace.
+func init() {
+	fns := DataclassesLibrary.Functions()
+	classOf := func(o object.Object) *object.Class {
+		switch v := o.(type) {
+		case *object.Class:
+			return v
+		case *object.Instance:
+			return v.Class
+		}
+		return nil
+	}
+	isDC := func(o object.Object) bool {
+		c := classOf(o)
+		if c == nil {
+			return false
+		}
+		_, ok := c.Methods["__dataclass_fields__"]
+		return ok
+	}
+	fns["is_dataclass"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("is_dataclass", kwargs); err != nil {
+				return err
+			}
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			return object.NewBoolean(isDC(args[0]))
+		},
+		HelpText: "is_dataclass(obj) - Whether obj is a dataclass or an instance of one",
+	}
+	fns["fields"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("fields", kwargs); err != nil {
+				return err
+			}
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			if !isDC(args[0]) {
+				return errors.NewTypeErrorTagged("must be called with a dataclass type or instance")
+			}
+			c := classOf(args[0])
+			out := make([]object.Object, 0, len(c.FieldNames))
+			for _, n := range c.FieldNames {
+				f := object.NewInstance(fieldSpecClass)
+				f.SetField("name", object.NewString(n))
+				def := object.Object(dataclassesMissing)
+				factory := object.Object(dataclassesMissing)
+				if attr, ok := c.LookupMember(n); ok {
+					if spec, isSpec := attr.(*object.Instance); isSpec && spec.Class == fieldSpecClass {
+						def = spec.Field("default")
+						if fac := spec.Field("default_factory"); fac != nil && fac.Type() != object.NULL_OBJ {
+							factory = fac
+						}
+					} else {
+						def = attr
+					}
+				}
+				f.SetField("default", def)
+				f.SetField("default_factory", factory)
+				out = append(out, f)
+			}
+			return &object.Tuple{Elements: out}
+		},
+		HelpText: "fields(dataclass) - The dataclass's fields, each with .name, .default and .default_factory",
+	}
+	fns["replace"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			var inst *object.Instance
+			ok := false
+			if len(args) == 1 {
+				inst, ok = args[0].(*object.Instance)
+			}
+			if !ok || !isDC(inst) {
+				for k := range kwargs.All() {
+					return errors.NewTypeErrorTagged("replace() got an unexpected keyword argument '%s'", k)
+				}
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				return errors.NewTypeErrorTagged("replace() should be called on dataclass instances")
+			}
+			c := inst.Class
+			vals := map[string]object.Object{}
+			for _, n := range c.FieldNames {
+				if v, has := inst.GetField(n); has {
+					vals[n] = v
+				}
+			}
+			for k, v := range kwargs.All() {
+				if _, known := vals[k]; !known && !slices.Contains(c.FieldNames, k) {
+					return errors.NewTypeErrorTagged("%s.__init__() got an unexpected keyword argument '%s'", c.Name, k)
+				}
+				vals[k] = v
+			}
+			// A new instance through the generated __init__ (init=False
+			// fields are left to it).
+			initFn, ok := c.Methods["__init__"].(*object.Builtin)
+			if !ok {
+				return errors.NewTypeErrorTagged("replace() needs a dataclass with a generated __init__")
+			}
+			fresh := object.NewInstance(c)
+			var names []string
+			var values []object.Object
+			for _, n := range c.FieldNames {
+				if attr, ok := c.LookupMember(n); ok {
+					if spec, isSpec := attr.(*object.Instance); isSpec && spec.Class == fieldSpecClass {
+						if b, ok := spec.Field("init").(*object.Boolean); ok && !b.BoolValue() {
+							continue
+						}
+					}
+				}
+				if v, ok := vals[n]; ok {
+					names = append(names, n)
+					values = append(values, v)
+				}
+			}
+			if r := initFn.Fn(ctx, object.NewKwargsFrom(names, values), fresh); object.IsError(r) || r.Type() == object.EXCEPTION_OBJ {
+				return r
+			}
+			return fresh
+		},
+		HelpText: "replace(obj, **changes) - A copy of a dataclass instance with some fields changed",
+	}
 }

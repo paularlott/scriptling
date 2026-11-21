@@ -308,6 +308,17 @@ Example:
 				},
 				HelpText: "Partial function application",
 			}
+			// p.func, p.args and p.keywords, as in Python.
+			kw := object.NewDict()
+			for k, v := range partialKwargs.All() {
+				key := object.NewString(k)
+				kw.Store(object.DictKey(key), key, v)
+			}
+			partial.Attributes = map[string]object.Object{
+				"func":     args[0],
+				"args":     &object.Tuple{Elements: append([]object.Object(nil), partialArgs...)},
+				"keywords": kw,
+			}
 			object.TrackAlloc(partial, partialObjectSize+int64(len(partialArgs)+partialKwargs.Len())*16)
 			return partial
 		},

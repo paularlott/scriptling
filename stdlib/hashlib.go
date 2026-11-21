@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/sha3"
 	"crypto/sha512"
 	"encoding/hex"
 	"hash"
@@ -38,6 +39,14 @@ func hashConstructor(alg string) func() hash.Hash {
 		return sha1.New
 	case "md5":
 		return md5.New
+	case "sha3_224":
+		return func() hash.Hash { return sha3.New224() }
+	case "sha3_256":
+		return func() hash.Hash { return sha3.New256() }
+	case "sha3_384":
+		return func() hash.Hash { return sha3.New384() }
+	case "sha3_512":
+		return func() hash.Hash { return sha3.New512() }
 	}
 	return nil
 }
@@ -48,14 +57,28 @@ func hashBlockSize(alg string) int {
 		return 128
 	case "sha256", "sha224", "sha1", "md5":
 		return 64
+	case "sha3_224":
+		return 144
+	case "sha3_256":
+		return 136
+	case "sha3_384":
+		return 104
+	case "sha3_512":
+		return 72
 	}
 	return 0
 }
 
 func hashDigestSize(alg string) int {
 	switch alg {
-	case "sha256":
+	case "sha256", "sha3_256":
 		return 32
+	case "sha224", "sha3_224":
+		return 28
+	case "sha384", "sha3_384":
+		return 48
+	case "sha512", "sha3_512":
+		return 64
 	case "sha1":
 		return 20
 	case "md5":
@@ -290,8 +313,12 @@ With data, hashes it immediately; without, call .update() then .hexdigest().`),
 	"sha224": makeHashBuiltin("sha224", `sha224([data]) - Create a SHA-224 hash object
 
 With data, hashes it immediately; without, call .update() then .hexdigest().`),
-	"sha1": HashlibSHA1Builtin,
-	"md5":  HashlibMD5Builtin,
+	"sha1":     HashlibSHA1Builtin,
+	"md5":      HashlibMD5Builtin,
+	"sha3_224": makeHashBuiltin("sha3_224", "sha3_224([data]) - Create a SHA3-224 hash object"),
+	"sha3_256": makeHashBuiltin("sha3_256", "sha3_256([data]) - Create a SHA3-256 hash object"),
+	"sha3_384": makeHashBuiltin("sha3_384", "sha3_384([data]) - Create a SHA3-384 hash object"),
+	"sha3_512": makeHashBuiltin("sha3_512", "sha3_512([data]) - Create a SHA3-512 hash object"),
 	"new": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if kwargs.Len() > 0 {
@@ -327,7 +354,8 @@ With data, hashes it immediately; without, call .update() then .hexdigest().`),
 		},
 		HelpText: `new(name[, data]) - Create a hash object for the named algorithm
 
-name is one of "md5", "sha1", "sha224", "sha256", "sha384" or "sha512";
+name is one of "md5", "sha1", "sha224", "sha256", "sha384", "sha512" or
+"sha3_224", "sha3_256", "sha3_384", "sha3_512";
 any other name raises ValueError.`,
 	},
 }, nil, "Cryptographic hash functions library")
@@ -339,7 +367,7 @@ var hashConstructors map[string]*object.Builtin
 func init() {
 	fns := HashlibLibrary.Functions()
 	hashConstructors = make(map[string]*object.Builtin)
-	for _, alg := range []string{"md5", "sha1", "sha224", "sha256", "sha384", "sha512"} {
+	for _, alg := range []string{"md5", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3_224", "sha3_256", "sha3_384", "sha3_512"} {
 		hashConstructors[alg] = fns[alg]
 	}
 }

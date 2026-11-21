@@ -404,7 +404,14 @@ materialized list of n repetitions.`,
 				}
 				curF, _ := startObj.AsFloat()
 				stepF, _ := stepObj.AsFloat()
+				// The first value is start as given: count(1, 0.5) is 1, 1.5, ...
+				first := true
 				return object.NewInfiniteIterator(func() (object.Object, bool) {
+					if first {
+						first = false
+						curF += stepF
+						return startObj, true
+					}
 					v := object.NewFloat(curF)
 					curF += stepF
 					return v, true

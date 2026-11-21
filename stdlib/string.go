@@ -18,7 +18,7 @@ const (
 )
 
 var StringLibrary = object.NewLibrary(StringLibraryName,
-	nil, // No functions, only constants
+	map[string]*object.Builtin{}, // capwords is added in stats_more.go
 	map[string]object.Object{
 		"ascii_letters":   object.NewString(asciiLetters),
 		"ascii_lowercase": object.NewString(asciiLowercase),

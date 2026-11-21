@@ -1035,18 +1035,27 @@ substitutions made.`,
 				return reCompileError(err)
 			}
 
-			// Go's Split n is a result count; Python's maxsplit counts the
-			// splits themselves, so maxsplit m yields m+1 parts.
-			splitN := maxsplit
-			if maxsplit > 0 {
-				splitN = maxsplit + 1
+			// The text between matches, with each match's groups in
+			// between when the pattern has any (None for a group that did
+			// not take part), as in Python: re.split(r'(,)', 'a,b') is
+			// ['a', ',', 'b']. An empty match splits too: re.split('', 'ab')
+			// is ['', 'a', 'b', ''].
+			matches := re.FindAllStringSubmatchIndex(text, maxsplit)
+			elements := make([]object.Object, 0, len(matches)*(1+re.NumSubexp())+1)
+			last := 0
+			for _, m := range matches {
+				elements = append(elements, object.NewSubstring(text[last:m[0]], text))
+				for g := 1; g <= re.NumSubexp(); g++ {
+					if s, e := m[2*g], m[2*g+1]; s >= 0 {
+						elements = append(elements, object.NewSubstring(text[s:e], text))
+					} else {
+						elements = append(elements, &object.Null{})
+					}
+				}
+				last = m[1]
 			}
-			parts := re.Split(text, splitN)
-			elements := make([]object.Object, len(parts))
+			elements = append(elements, object.NewSubstring(text[last:], text))
 			object.TrackSlice(elements)
-			for i, part := range parts {
-				elements[i] = object.NewSubstring(part, text)
-			}
 			return &object.List{Elements: elements}
 		},
 		HelpText: `split(pattern, string, maxsplit=0, flags=0) - Split string by pattern

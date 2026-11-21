@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"strings"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
@@ -152,6 +153,14 @@ Example:
 				if err != nil {
 					return err
 				}
+				// Whitespace between the byte pairs is allowed, as in
+				// Python: bytes.fromhex('de ad be ef').
+				s = strings.Map(func(r rune) rune {
+					if r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\v' || r == '\f' {
+						return -1
+					}
+					return r
+				}, s)
 				decoded, decodeErr := hex.DecodeString(s)
 				if decodeErr != nil {
 					return errors.NewValueError("bytes.fromhex: %s", decodeErr.Error())

@@ -708,18 +708,14 @@ func TestMathLgamma(t *testing.T) {
 	lib := MathLibrary
 	fn := lib.Functions()["lgamma"]
 
+	// Python's lgamma returns the float log|gamma(x)| alone.
 	result := fn.Fn(context.Background(), object.NewKwargs(nil), object.NewInteger(5))
-	list, ok := result.(*object.List)
+	f, ok := result.(*object.Float)
 	if !ok {
-		t.Fatalf("lgamma() returned %T, want List", result)
+		t.Fatalf("lgamma() returned %T, want Float", result)
 	}
-	val := list.Elements[0].(*object.Float).FloatValue()
-	if math.Abs(val-math.Log(24.0)) > 1e-10 {
-		t.Errorf("lgamma(5)[0] = %v, want %v", val, math.Log(24.0))
-	}
-	sign := list.Elements[1].(*object.Integer).IntValue()
-	if sign != 1 {
-		t.Errorf("lgamma(5)[1] = %d, want 1", sign)
+	if val := f.FloatValue(); math.Abs(val-math.Log(24.0)) > 1e-10 {
+		t.Errorf("lgamma(5) = %v, want %v", val, math.Log(24.0))
 	}
 }
 

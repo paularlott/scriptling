@@ -44,7 +44,8 @@ assert "2023-01-01" in datetime_fstring
 
 # Test f-string with method calls on datetime
 timestamp_fstring = f"Timestamp: {dt.timestamp()}"
-assert "Timestamp: 1672531200.0" in timestamp_fstring
+# A naive datetime's timestamp reads its fields as local time, as in Python.
+assert f"Timestamp: {datetime.datetime(2023, 1, 1).timestamp()}" in timestamp_fstring
 
 # Test f-string with no format specifiers (should work like before)
 simple = f"Value: {x}"

@@ -122,6 +122,8 @@ func encodeStr(s string, encoding, errorsMode string) ([]byte, object.Object) {
 			case "ignore":
 			case "replace":
 				out = append(out, '?')
+			case "xmlcharrefreplace", "backslashreplace":
+				out = appendEncodeReplacement(out, r, errorsMode)
 			default:
 				return nil, codecTypedError(object.ExceptionTypeUnicodeEncodeError, "'ascii' codec can't encode character %s in position %d: ordinal not in range(128)", escapeRune(r), i)
 			}
@@ -138,6 +140,8 @@ func encodeStr(s string, encoding, errorsMode string) ([]byte, object.Object) {
 			case "ignore":
 			case "replace":
 				out = append(out, '?')
+			case "xmlcharrefreplace", "backslashreplace":
+				out = appendEncodeReplacement(out, r, errorsMode)
 			default:
 				return nil, codecTypedError(object.ExceptionTypeUnicodeEncodeError, "'latin-1' codec can't encode character %s in position %d: ordinal not in range(256)", escapeRune(r), i)
 			}
@@ -195,4 +199,20 @@ func codecTypedError(exceptionType, format string, a ...any) object.Object {
 
 func codecErrValue(format string, a ...any) *object.Exception {
 	return &object.Exception{Message: fmt.Sprintf(format, a...), Raised: true}
+}
+
+// appendEncodeReplacement writes the replacement Python's xmlcharrefreplace
+// (&#233;) or backslashreplace (\xe9, \u20ac, \U0001f600) error handler
+// gives for a character the codec cannot encode.
+func appendEncodeReplacement(out []byte, r rune, mode string) []byte {
+	if mode == "xmlcharrefreplace" {
+		return fmt.Appendf(out, "&#%d;", r)
+	}
+	switch {
+	case r <= 0xff:
+		return fmt.Appendf(out, "\\x%02x", r)
+	case r <= 0xffff:
+		return fmt.Appendf(out, "\\u%04x", r)
+	}
+	return fmt.Appendf(out, "\\U%08x", r)
 }

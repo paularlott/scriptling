@@ -526,7 +526,9 @@ func evalObjectsEqualChecked(ctx context.Context, a, b object.Object, env *objec
 			if bl, ok := result.(*object.Boolean); ok {
 				return bl.BoolValue(), nil
 			}
-			return false, nil
+			if result != notImplementedValue {
+				return false, nil
+			}
 		}
 	}
 	if bInst, ok := b.(*object.Instance); ok {
@@ -538,7 +540,9 @@ func evalObjectsEqualChecked(ctx context.Context, a, b object.Object, env *objec
 			if bl, ok := result.(*object.Boolean); ok {
 				return bl.BoolValue(), nil
 			}
-			return false, nil
+			if result != notImplementedValue {
+				return false, nil
+			}
 		}
 	}
 	// Containers compare by value, as Python's == does (the `in` operator
@@ -1059,7 +1063,28 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			merged.StoreFrom(r)
 			return merged
 		}
+	case *object.DictKeys, *object.DictItems:
+		// Keys and items views are set-like: & | - ^ give sets.
+		if isSetAlgebraOp(operator) {
+			if ls, rs, errObj := setAlgebraOperands(ctx, left, right, env); errObj != nil || ls != nil {
+				if errObj != nil {
+					return errObj
+				}
+				return evalInfixExpression(ctx, operator, ls, rs, env)
+			}
+		}
 	case *object.Set:
+		// A keys or items view on the right acts as a set: s & d.keys().
+		switch right.(type) {
+		case *object.DictKeys, *object.DictItems:
+			if isSetAlgebraOp(operator) {
+				ls, rs, errObj := setAlgebraOperands(ctx, left, right, env)
+				if errObj != nil {
+					return errObj
+				}
+				return evalInfixExpression(ctx, operator, ls, rs, env)
+			}
+		}
 		// Set algebra operators. Both operands must be sets (matching Python);
 		// for iterable operands use the .intersection()/.union()/etc. methods.
 		switch operator {
@@ -1454,7 +1479,8 @@ func evalFloatInfixValues(operator ast.Op, leftVal, rightVal float64) object.Obj
 		if rightVal == 0 {
 			return errors.NewZeroDivisionError()
 		}
-		return object.NewFloat(math.Floor(leftVal / rightVal))
+		q, _ := pyFloatDivmod(leftVal, rightVal)
+		return object.NewFloat(q)
 	case ast.OpMod:
 		if rightVal == 0 {
 			return errors.NewZeroDivisionError()
@@ -1463,13 +1489,21 @@ func evalFloatInfixValues(operator ast.Op, leftVal, rightVal float64) object.Obj
 		m := math.Mod(leftVal, rightVal)
 		if m != 0 && (m < 0) != (rightVal < 0) {
 			m += rightVal
+		} else if m == 0 {
+			// A zero result takes the divisor's sign too: 7 % -0.5 is -0.0.
+			m = math.Copysign(0, rightVal)
 		}
 		return object.NewFloat(m)
 	case ast.OpPow:
 		if leftVal == 0 && rightVal < 0 {
 			return &object.Error{Message: "zero to a negative power", ExceptionType: object.ExceptionTypeZeroDivisionError}
 		}
-		return object.NewFloat(math.Pow(leftVal, rightVal))
+		r := math.Pow(leftVal, rightVal)
+		if math.IsInf(r, 0) && !math.IsInf(leftVal, 0) && !math.IsInf(rightVal, 0) {
+			// A finite power too large for a float: Python's OverflowError.
+			return errors.NewOverflowError("(34, 'Result too large')")
+		}
+		return object.NewFloat(r)
 	case ast.OpLt:
 		return nativeBoolToBooleanObject(leftVal < rightVal)
 	case ast.OpGt:
@@ -1587,9 +1621,34 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 			for i < len(format) && (format[i] == '-' || format[i] == '+' || format[i] == ' ' || format[i] == '#' || format[i] == '0') {
 				i++
 			}
+			// A * width or precision takes its value from the arguments,
+			// ahead of the value formatted.
+			var starVals []int64
+			takeStar := func() object.Object {
+				if hasKey {
+					return errors.NewTypeErrorTagged("* wants int")
+				}
+				if valueIdx >= len(values) {
+					return errors.NewTypeErrorTagged("not enough arguments for format string")
+				}
+				n, ok := boolAsInt(values[valueIdx]).(*object.Integer)
+				if !ok {
+					return errors.NewTypeErrorTagged("* wants int")
+				}
+				valueIdx++
+				starVals = append(starVals, n.IntValue())
+				return nil
+			}
 			// Width (number or *) and precision, each bounded by the value
 			// limit since either can size the result.
 			specSize := int64(0)
+			if i < len(format) && format[i] == '*' {
+				if errObj := takeStar(); errObj != nil {
+					return errObj
+				}
+				specSize = min(max(starVals[0], -starVals[0]), absoluteMaxBytes+1)
+				i++
+			}
 			for i < len(format) && format[i] >= '0' && format[i] <= '9' {
 				specSize = min(specSize*10+int64(format[i]-'0'), absoluteMaxBytes+1)
 				i++
@@ -1598,6 +1657,13 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 			if i < len(format) && format[i] == '.' {
 				i++
 				precision := int64(0)
+				if i < len(format) && format[i] == '*' {
+					if errObj := takeStar(); errObj != nil {
+						return errObj
+					}
+					precision = min(max(starVals[len(starVals)-1], 0), absoluteMaxBytes+1)
+					i++
+				}
 				for i < len(format) && format[i] >= '0' && format[i] <= '9' {
 					precision = min(precision*10+int64(format[i]-'0'), absoluteMaxBytes+1)
 					i++
@@ -1619,6 +1685,10 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 			spec := format[specStart : i+1]
 			if hasKey {
 				spec = "%" + spec
+			}
+			for _, n := range starVals {
+				// A negative * width left-justifies, as in Python.
+				spec = strings.Replace(spec, "*", strconv.FormatInt(n, 10), 1)
 			}
 			conversion := format[i]
 			i++
@@ -1687,7 +1757,24 @@ func applyStringSpec(spec string, body string) string {
 // formatPercentValue formats a single value according to a Python % format specifier.
 func formatPercentValue(ctx context.Context, spec string, conversion byte, val object.Object, env *object.Environment) (string, object.Object) {
 	switch conversion {
-	case 's', 'r':
+	case 'f', 'F', 'e', 'E', 'g', 'G':
+		// inf and nan read as Python spells them, not Go's +Inf and NaN.
+		if f, ok := val.(*object.Float); ok && (math.IsInf(f.FloatValue(), 0) || math.IsNaN(f.FloatValue())) {
+			v := f.FloatValue()
+			s := nonFiniteStr(v, conversion == 'F' || conversion == 'E' || conversion == 'G')
+			if !(v < 0) && strings.IndexByte(spec, '+') >= 0 {
+				s = "+" + s
+			} else if !(v < 0) && strings.IndexByte(spec, ' ') >= 0 {
+				s = " " + s
+			}
+			if dot := strings.IndexByte(spec, '.'); dot >= 0 {
+				spec = spec[:dot] + spec[len(spec)-1:]
+			}
+			return applyStringSpec(spec, s), nil
+		}
+	}
+	switch conversion {
+	case 's', 'r', 'a':
 		// %s and %r convert exactly like str() and repr(); a raise from a
 		// dunder propagates, and the width/precision spec applies after.
 		rendered, rerr := renderConvertedValue(ctx, val, string(conversion), env)
@@ -1695,6 +1782,12 @@ func formatPercentValue(ctx context.Context, spec string, conversion byte, val o
 			return "", rerr
 		}
 		return applyStringSpec(spec, rendered), nil
+	case 'F':
+		floatVal, err := percentFloatArg(val)
+		if err != nil {
+			return "", errors.NewTypeErrorTagged("%%%c format: a number is required, not %s", conversion, val.Type().String())
+		}
+		return fmt.Sprintf(spec[:len(spec)-1]+"f", floatVal), nil
 	case 'd', 'i', 'u':
 		var intVal int64
 		switch v := val.(type) {
@@ -1948,7 +2041,10 @@ func evalReflectedArithmetic(ctx context.Context, operator ast.Op, left object.O
 	if !has {
 		return nil
 	}
-	return applyFunctionWithContext(ctx, method, []object.Object{right, left}, object.Kwargs{}, env)
+	if r := applyFunctionWithContext(ctx, method, []object.Object{right, left}, object.Kwargs{}, env); r != notImplementedValue {
+		return r
+	}
+	return nil
 }
 
 // mirroredComparisonDunder maps a comparison operator to the dunder that
@@ -1985,7 +2081,10 @@ func evalReflectedInstanceComparison(ctx context.Context, operator ast.Op, left,
 		}
 		return nil
 	}
-	return applyFunctionWithContext(ctx, method, []object.Object{right, left}, object.Kwargs{}, env)
+	if r := applyFunctionWithContext(ctx, method, []object.Object{right, left}, object.Kwargs{}, env); r != notImplementedValue {
+		return r
+	}
+	return nil
 }
 
 // negateEquality implements != for a class that defines __eq__ but not
@@ -1994,6 +2093,9 @@ func negateEquality(ctx context.Context, eq object.Object, args []object.Object,
 	result := applyFunctionWithContext(ctx, eq, args, object.Kwargs{}, env)
 	if propagates(result) {
 		return result
+	}
+	if result == notImplementedValue {
+		return nil
 	}
 	truthy, errObj := evalTruthyFn(ctx, result, env)
 	if errObj != nil {
@@ -2023,7 +2125,10 @@ func evalInstanceInfixExpression(ctx context.Context, operator ast.Op, left *obj
 
 	// Call the dunder method with self and the right operand
 	args := []object.Object{left, right}
-	return applyFunctionWithContext(ctx, method, args, object.Kwargs{}, env)
+	if r := applyFunctionWithContext(ctx, method, args, object.Kwargs{}, env); r != notImplementedValue {
+		return r
+	}
+	return nil
 }
 
 func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object {
@@ -2053,6 +2158,9 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 	}
 	if node.Value() == "Ellipsis" {
 		return ellipsisValue
+	}
+	if node.Value() == "NotImplemented" {
+		return notImplementedValue
 	}
 	// A function's local slot that holds no value yet: read before
 	// assignment, Python's UnboundLocalError (a NameError).
@@ -3316,6 +3424,14 @@ func reprInstanceChecked(ctx context.Context, inst *object.Instance, env *object
 			Raised:        true,
 		}
 	}
+	// An exception instance with no __repr__ of its own reads as its class
+	// and arguments, as in Python: MyError('boom', 3).
+	if inst.Class.ExceptionBase != "" {
+		if exc, _, args := exceptionFromClassInstance(ctx, inst, env); exc != nil {
+			exc.Args = args
+			return object.ReprException(exc), nil
+		}
+	}
 	return inst.Inspect(), nil
 }
 
@@ -3505,6 +3621,63 @@ func checkLenResult(result object.Object) (int64, object.Object) {
 // findDunderMethod looks up a dunder method in the instance's class hierarchy
 func findDunderMethod(inst *object.Instance, method string) (object.Object, bool) {
 	return inst.Class.LookupMember(method)
+}
+
+// findIterMethod finds what iterates an instance: its __iter__, or, under
+// Python's sequence protocol, a __getitem__ called with 0, 1, 2, ... until it
+// raises IndexError (getitemIterBuiltin, called with the instance as self).
+func findIterMethod(inst *object.Instance) (object.Object, bool) {
+	if fn, ok := inst.Class.LookupMember("__iter__"); ok {
+		return fn, true
+	}
+	if _, ok := inst.Class.LookupMember("__getitem__"); ok {
+		return getitemIterBuiltin, true
+	}
+	return nil, false
+}
+
+// getitemIterBuiltin is iter(obj) for an instance with __getitem__ and no
+// __iter__: an iterator over obj[0], obj[1], ... ending at IndexError (or
+// StopIteration); any other raise is yielded for the consumer to propagate.
+var getitemIterBuiltin = &object.Builtin{HelpText: "iterate an instance through __getitem__"}
+
+func init() { getitemIterBuiltin.Fn = getitemIter }
+
+func getitemIter(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	inst, ok := args[0].(*object.Instance)
+	if !ok {
+		return errors.NewTypeErrorTagged("'%s' object is not iterable", getTypeName(args[0]))
+	}
+	env := GetEnvFromContext(ctx)
+	if env == nil {
+		env = inst.Class.Env
+	}
+	var i int64
+	done := false
+	return object.NewIterator(func() (object.Object, bool) {
+		if done {
+			return nil, false
+		}
+		r := callDunderMethod(ctx, inst, "__getitem__", []object.Object{object.NewInteger(i)}, env)
+		if r == nil {
+			done = true
+			return nil, false
+		}
+		end := false
+		switch e := r.(type) {
+		case *object.Exception:
+			end = e.ExceptionType == object.ExceptionTypeIndexError || e.ExceptionType == object.ExceptionTypeStopIteration ||
+				slices.Contains(e.TypeChain, object.ExceptionTypeIndexError)
+		case *object.Error:
+			end = e.ExceptionType == object.ExceptionTypeIndexError
+		}
+		if end {
+			done = true
+			return nil, false
+		}
+		i++
+		return r, true
+	})
 }
 
 // evalInfixFn is evalInfixExpression, set in init to break the
@@ -5429,7 +5602,7 @@ func acceptInstanceIterable(ctx context.Context, obj object.Object) (object.Obje
 		*object.Bytes, *object.Set, *object.Dict, *object.DictKeys, *object.DictValues, *object.DictItems:
 		return obj, nil
 	case *object.Instance:
-		if fn, has := findDunderMethod(o, "__iter__"); has {
+		if fn, has := findIterMethod(o); has {
 			env := GetEnvFromContext(ctx)
 			iter, errObj := callIter(ctx, o, fn, env)
 			if errObj != nil {
@@ -5517,7 +5690,7 @@ func iterableToSliceChecked(ctx context.Context, obj object.Object, env *object.
 			return elems, true, nil
 		}
 	}
-	fn, has := findDunderMethod(inst, "__iter__")
+	fn, has := findIterMethod(inst)
 	if !has {
 		return nil, false, nil
 	}
@@ -5701,7 +5874,7 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 			}
 		}
 	case *object.Instance:
-		if iterFn, ok := findDunderMethod(o, "__iter__"); ok {
+		if iterFn, ok := findIterMethod(o); ok {
 			iter, errObj := callIter(ctx, o, iterFn, nil)
 			if errObj != nil {
 				return errObj
@@ -5932,13 +6105,26 @@ func formatWithSpec(obj object.Object, spec string) (string, object.Object) {
 
 	// Format the value
 	var formatted string
-	switch typeChar {
+	effType := typeChar
+	if fv, ok := obj.(*object.Float); ok && strings.IndexByte("fFeEgG%", typeChar) >= 0 {
+		// inf and nan read as Python spells them (INF and NAN for the
+		// upper-case types), not Go's +Inf and NaN.
+		if v := fv.FloatValue(); math.IsInf(v, 0) || math.IsNaN(v) {
+			formatted = applySign(nonFiniteStr(v, typeChar == 'F' || typeChar == 'E' || typeChar == 'G'), !(v < 0), sign)
+			if typeChar == '%' {
+				formatted += "%"
+			}
+			effType = 0xFF
+		}
+	}
+	switch effType {
+	case 0xFF:
 	case 'd', 0:
 		if typeChar == 0 && obj.Type() == object.FLOAT_OBJ {
 			// No type char with float: use 'g' or precision
 			if floatVal, ok := numericFloatValue(obj); ok {
 				if precision >= 0 {
-					formatted = strconv.FormatFloat(floatVal, 'f', precision, 64)
+					formatted = pyFormatGeneral(floatVal, precision, false, alt, true)
 				} else {
 					formatted = object.FloatStr(floatVal)
 				}
@@ -6010,19 +6196,12 @@ func formatWithSpec(obj object.Object, spec string) (string, object.Object) {
 		}
 	case 'g', 'G':
 		if floatVal, ok := numericFloatValue(obj); ok {
-			if precision >= 0 {
-				if typeChar == 'G' {
-					formatted = strings.ToUpper(strconv.FormatFloat(floatVal, 'g', precision, 64))
-				} else {
-					formatted = strconv.FormatFloat(floatVal, 'g', precision, 64)
-				}
-			} else {
-				// No precision: Python's default of 6 significant digits.
-				formatted = strconv.FormatFloat(floatVal, 'g', 6, 64)
-				if typeChar == 'G' {
-					formatted = strings.ToUpper(formatted)
-				}
+			prec := precision
+			if prec < 0 {
+				// Python's default of 6 significant digits.
+				prec = 6
 			}
+			formatted = pyFormatGeneral(floatVal, prec, typeChar == 'G', alt, false)
 			formatted = applySign(formatted, floatVal >= 0, sign)
 		} else {
 			formatted = obj.Inspect()
@@ -6101,6 +6280,13 @@ func formatWithSpec(obj object.Object, spec string) (string, object.Object) {
 		switch align {
 		case '<':
 			formatted = formatted + strings.Repeat(string(fill), padding)
+		case '=':
+			// Padding goes between the sign and the digits: +   2.00.
+			if len(formatted) > 0 && (formatted[0] == '+' || formatted[0] == '-' || formatted[0] == ' ') {
+				formatted = formatted[:1] + strings.Repeat(string(fill), padding) + formatted[1:]
+			} else {
+				formatted = strings.Repeat(string(fill), padding) + formatted
+			}
 		case '>':
 			formatted = strings.Repeat(string(fill), padding) + formatted
 		case '^':
@@ -6118,6 +6304,9 @@ func formatWithSpec(obj object.Object, spec string) (string, object.Object) {
 					} else {
 						formatted = strings.Repeat("0", padding) + formatted
 					}
+				} else if obj.Type() == object.STRING_OBJ || typeChar == 's' {
+					// A 0 flag on a string fills with zeros, left-aligned.
+					formatted = formatted + strings.Repeat("0", padding)
 				} else {
 					formatted = strings.Repeat(" ", padding) + formatted
 				}
@@ -6650,4 +6839,129 @@ func percentFloatArg(val object.Object) (float64, object.Object) {
 		return float64(boolToInt64(b.BoolValue())), nil
 	}
 	return val.AsFloat()
+}
+
+// nonFiniteStr is how Python formats an infinity or NaN: inf, -inf, nan (in
+// capitals for the upper-case format types).
+func nonFiniteStr(v float64, upper bool) string {
+	s := "nan"
+	if math.IsInf(v, 1) {
+		s = "inf"
+	} else if math.IsInf(v, -1) {
+		s = "-inf"
+	}
+	if upper {
+		s = strings.ToUpper(s)
+	}
+	return s
+}
+
+// pyFormatGeneral formats v with Python's 'g' rules at prec significant
+// digits: fixed notation when the exponent is in [-4, prec), else
+// scientific, trailing zeros removed unless alt ('#'). noType is the format
+// with a precision and no type letter, which switches to scientific one
+// exponent sooner and keeps at least one fractional digit (format(3.0,
+// '.3') is 3.0).
+func pyFormatGeneral(v float64, prec int, upper, alt, noType bool) string {
+	if math.IsInf(v, 0) || math.IsNaN(v) {
+		return nonFiniteStr(v, upper)
+	}
+	if prec == 0 {
+		prec = 1
+	}
+	sci := strconv.FormatFloat(v, 'e', prec-1, 64)
+	exp, _ := strconv.Atoi(sci[strings.IndexByte(sci, 'e')+1:])
+	limit := prec
+	if noType {
+		limit = prec - 1
+	}
+	var out string
+	if exp >= -4 && exp < limit {
+		out = strconv.FormatFloat(v, 'f', max(prec-1-exp, 0), 64)
+		if !alt {
+			if strings.IndexByte(out, '.') >= 0 {
+				out = strings.TrimRight(strings.TrimRight(out, "0"), ".")
+			}
+			if noType && strings.IndexByte(out, '.') < 0 {
+				out += ".0"
+			}
+		} else if strings.IndexByte(out, '.') < 0 {
+			out += "."
+		}
+	} else {
+		mant, e := sci[:strings.IndexByte(sci, 'e')], sci[strings.IndexByte(sci, 'e'):]
+		if !alt {
+			if strings.IndexByte(mant, '.') >= 0 {
+				mant = strings.TrimRight(strings.TrimRight(mant, "0"), ".")
+			}
+		} else if strings.IndexByte(mant, '.') < 0 {
+			mant += "."
+		}
+		out = mant + e
+	}
+	if upper {
+		out = strings.ToUpper(out)
+	}
+	return out
+}
+
+func isSetAlgebraOp(op ast.Op) bool {
+	return op == ast.OpBitAnd || op == ast.OpBitOr || op == ast.OpSub || op == ast.OpBitXor
+}
+
+// setAlgebraOperands converts the operands of a set operator on a dict keys
+// or items view to sets; nil sets (and no error) when the other operand is
+// not iterable, leaving the caller's unsupported-operand error.
+func setAlgebraOperands(ctx context.Context, left, right object.Object, env *object.Environment) (*object.Set, *object.Set, object.Object) {
+	toSet := func(o object.Object) (*object.Set, object.Object) {
+		if s, ok := o.(*object.Set); ok {
+			return s, nil
+		}
+		elems, ok, rerr := iterableToSliceChecked(ctx, o, env)
+		if rerr != nil || !ok {
+			return nil, rerr
+		}
+		s := object.NewSetSized(min(len(elems), object.SetSmallMax))
+		for _, e := range elems {
+			if err := evalSetAdd(ctx, s, e); err != nil {
+				return nil, err
+			}
+		}
+		return s, nil
+	}
+	ls, errObj := toSet(left)
+	if errObj != nil || ls == nil {
+		return nil, nil, errObj
+	}
+	rs, errObj := toSet(right)
+	if errObj != nil || rs == nil {
+		return nil, nil, errObj
+	}
+	return ls, rs, nil
+}
+
+// pyFloatDivmod is Python's float divmod: the floor quotient and the
+// remainder with the divisor's sign, computed from fmod so that 1 // 0.1 is
+// 9.0 and divmod(1e22, 3) has a remainder of 1.0. b must not be zero.
+func pyFloatDivmod(a, b float64) (float64, float64) {
+	mod := math.Mod(a, b)
+	div := (a - mod) / b
+	if mod != 0 {
+		if (b < 0) != (mod < 0) {
+			mod += b
+			div -= 1
+		}
+	} else {
+		mod = math.Copysign(0, b)
+	}
+	var floordiv float64
+	if div != 0 {
+		floordiv = math.Floor(div)
+		if div-floordiv > 0.5 {
+			floordiv++
+		}
+	} else {
+		floordiv = math.Copysign(0, a/b)
+	}
+	return floordiv, mod
 }

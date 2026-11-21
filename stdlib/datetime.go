@@ -30,7 +30,9 @@ var pythonToGoReplacer = strings.NewReplacer(
 	"%z", "-0700",
 )
 
-// PythonToGoDateFormat converts Python datetime format codes to Go format
+// PythonToGoDateFormat converts Python datetime format codes to Go format.
+// strftime and strptime no longer use it: they handle every directive
+// themselves (see strftime.go).
 func PythonToGoDateFormat(pyFormat string) string {
 	return pythonToGoReplacer.Replace(pyFormat)
 }
@@ -155,8 +157,7 @@ func init() {
 					if err != nil {
 						return err
 					}
-					goFormat := PythonToGoDateFormat(format)
-					return object.NewString(t.Format(goFormat))
+					return object.NewString(pyStrftime(t, format, strftimeZone(t)))
 				},
 				HelpText: "strftime(format) - Format datetime as string",
 			},
@@ -1121,8 +1122,7 @@ datetime.timezone) the datetime is aware and isoformat() shows its offset.`,
 				default:
 					return errors.NewTypeError("INTEGER, FLOAT, or datetime instance", args[1].Type().String())
 				}
-				goFormat := PythonToGoDateFormat(format)
-				return object.NewString(t.Format(goFormat))
+				return object.NewString(pyStrftime(t, format, strftimeZone(t)))
 			},
 			HelpText: "strftime(format, timestamp_or_datetime) - Format timestamp or datetime as string",
 		},
@@ -1142,10 +1142,13 @@ datetime.timezone) the datetime is aware and isoformat() shows its offset.`,
 				if err != nil {
 					return err
 				}
-				goFormat := PythonToGoDateFormat(format)
-				t, parseErr := time.Parse(goFormat, dateStr)
-				if parseErr != nil {
-					return errors.NewValueError("time data '%s' does not match format '%s'", dateStr, format)
+				r, errObj := pyStrptime(dateStr, format)
+				if errObj != nil {
+					return errObj
+				}
+				t, errObj := strptimeDatetime(r)
+				if errObj != nil {
+					return errObj
 				}
 				return createDatetimeInstance(t)
 			},
@@ -1170,7 +1173,10 @@ datetime.timezone) the datetime is aware and isoformat() shows its offset.`,
 				default:
 					return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 				}
-				t := time.Unix(int64(timestamp), 0)
+				if math.IsNaN(timestamp) || math.Abs(timestamp) > 2.5e11 {
+					return errors.NewValueError("year is out of range")
+				}
+				t := time.UnixMicro(int64(math.Round(timestamp * 1e6)))
 				tz := kwargs.Get("tz")
 				if len(args) > 1 {
 					tz = args[1]
@@ -1424,9 +1430,12 @@ var DatetimeLibrary = object.NewLibrary(DatetimeLibraryName,
 		"datetime":  datetimeConstructorBuiltin,
 		"date":      dateConstructorBuiltin,
 		"timezone":  timezoneConstructorBuiltin,
+		"time":      timeConstructorBuiltin,
 	},
 	map[string]object.Object{
-		"UTC": utcTimezone,
+		"UTC":     utcTimezone,
+		"MINYEAR": object.NewInteger(1),
+		"MAXYEAR": object.NewInteger(9999),
 	},
 	"Date and time manipulation library.",
 )

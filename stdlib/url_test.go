@@ -126,22 +126,16 @@ func TestURLLibrary(t *testing.T) {
 		urlsplit := lib.Functions()["urlsplit"]
 		result := urlsplit.Fn(context.Background(), object.NewKwargs(nil), object.NewString("https://example.com/path?query=value#fragment"))
 
-		if list, ok := result.(*object.List); ok {
-			expected := []string{"https", "example.com", "/path", "query=value", "fragment"}
-			if len(list.Elements) != len(expected) {
-				t.Errorf("Expected %d elements, got %d", len(expected), len(list.Elements))
-			}
-			for i, exp := range expected {
-				if str, ok := list.Elements[i].(*object.String); ok {
-					if str.StringValue() != exp {
-						t.Errorf("Element %d: expected %q, got %q", i, exp, str.StringValue())
-					}
-				} else {
-					t.Errorf("Element %d: expected string, got %T", i, list.Elements[i])
+		// A SplitResult, as in Python: a named tuple of the five parts.
+		if inst, ok := result.(*object.Instance); ok && inst.Class == SplitResultClass {
+			expected := map[string]string{"scheme": "https", "netloc": "example.com", "path": "/path", "query": "query=value", "fragment": "fragment"}
+			for name, exp := range expected {
+				if str, ok := inst.Field(name).(*object.String); !ok || str.StringValue() != exp {
+					t.Errorf("%s: expected %q, got %v", name, exp, inst.Field(name))
 				}
 			}
 		} else {
-			t.Errorf("Expected list, got %T", result)
+			t.Errorf("Expected SplitResult, got %T", result)
 		}
 	})
 

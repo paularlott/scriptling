@@ -107,8 +107,10 @@ var stringIOClass = &object.Class{
 					if errObj := data.write(s); errObj != nil {
 						return errObj
 					}
+					data.pos = 0
 				}
 				inst.SetField(sioKey, &stringIOHolder{data: data})
+				inst.SetField("closed", object.NewBoolean(false))
 				return &object.Null{}
 			},
 		},
@@ -194,6 +196,23 @@ var stringIOClass = &object.Class{
 					return object.NewString("")
 				}
 				rest := content[data.pos:]
+				// readline(size) reads at most size characters.
+				if len(args) > 1 && args[1].Type() != object.NULL_OBJ {
+					n, err := args[1].AsInt()
+					if err != nil {
+						return err
+					}
+					if n >= 0 {
+						if i := strings.Index(rest, "\n"); i >= 0 {
+							rest = rest[:i+1]
+						}
+						if r := []rune(rest); int64(len(r)) > n {
+							rest = string(r[:n])
+						}
+						data.pos += len(rest)
+						return object.NewString(rest)
+					}
+				}
 				idx := strings.Index(rest, "\n")
 				if idx == -1 {
 					data.pos = len(content)
@@ -327,6 +346,7 @@ var stringIOClass = &object.Class{
 					return errors.NewTypeErrorTagged("close(): invalid StringIO instance")
 				}
 				data.closed = true
+				inst.SetField("closed", object.NewBoolean(true))
 				return &object.Null{}
 			},
 			HelpText: `close() - Close the buffer`,
@@ -354,6 +374,7 @@ var stringIOClass = &object.Class{
 				if ok {
 					if data, ok := sioGet(inst); ok {
 						data.closed = true
+						inst.SetField("closed", object.NewBoolean(true))
 					}
 				}
 				return object.NewBoolean(false)
@@ -382,8 +403,10 @@ func stringIONew(ctx context.Context, kwargs object.Kwargs, args ...object.Objec
 		if errObj := data.write(s); errObj != nil {
 			return errObj
 		}
+		data.pos = 0
 	}
 	inst.SetField(sioKey, &stringIOHolder{data: data})
+	inst.SetField("closed", object.NewBoolean(false))
 	return inst
 }
 
@@ -413,14 +436,41 @@ func (w *StringIOWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// write appends s to the buffer within the interpreter's limits.
+// write writes s at the current position, as Python's StringIO does:
+// appended at the end (the usual case), else over the text there; the
+// position moves past it.
 func (d *stringIOData) write(s string) object.Object {
-	return d.grow(len(s), func() { d.buf.WriteString(s) })
+	if d.pos >= d.buf.Len() {
+		if errObj := d.grow(len(s), func() { d.buf.WriteString(s) }); errObj != nil {
+			return errObj
+		}
+		d.pos = d.buf.Len()
+		return nil
+	}
+	content := d.buf.String()
+	end := d.pos + len(s)
+	next := content[:d.pos] + s
+	if end < len(content) {
+		next += content[end:]
+	}
+	d.buf.Reset()
+	if errObj := d.grow(len(next), func() { d.buf.WriteString(next) }); errObj != nil {
+		return errObj
+	}
+	d.pos = end
+	return nil
 }
 
-// writeBytes appends p to the buffer within the interpreter's limits.
+// writeBytes writes p as write does.
 func (d *stringIOData) writeBytes(p []byte) object.Object {
-	return d.grow(len(p), func() { d.buf.Write(p) })
+	if d.pos >= d.buf.Len() {
+		if errObj := d.grow(len(p), func() { d.buf.Write(p) }); errObj != nil {
+			return errObj
+		}
+		d.pos = d.buf.Len()
+		return nil
+	}
+	return d.write(string(p))
 }
 
 // grow checks that n more bytes keep the buffer within the interpreter's
@@ -459,3 +509,71 @@ Methods: write(s), getvalue(), read([n]), readline(), seek(pos), tell(), truncat
 Supports the with statement: with io.StringIO() as buf: ...`,
 	},
 }, nil, "In-memory I/O streams")
+
+func init() {
+	m := stringIOClass.Methods
+	for _, name := range []string{"readable", "writable", "seekable"} {
+		name := name
+		m[name] = &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs(name, kwargs); err != nil {
+					return err
+				}
+				if _, _, errObj := sioSelf(args, name); errObj != nil {
+					return errObj
+				}
+				return object.NewBoolean(true)
+			},
+			HelpText: name + "() - True: a StringIO can be read, written and seeked",
+		}
+	}
+	m["writelines"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("writelines", kwargs); err != nil {
+				return err
+			}
+			_, data, errObj := sioSelf(args, "writelines")
+			if errObj != nil {
+				return errObj
+			}
+			if len(args) != 2 {
+				return errors.NewTypeErrorTagged("writelines() takes exactly one argument (%d given)", len(args)-1)
+			}
+			lines, errObj := collectIterable(ctx, args[1])
+			if errObj != nil {
+				return errObj
+			}
+			for _, l := range lines {
+				s, ok := l.(*object.String)
+				if !ok {
+					return errors.NewTypeErrorTagged("string argument expected, got '%s'", object.PythonTypeName(l))
+				}
+				if errObj := data.write(s.StringValue()); errObj != nil {
+					return errObj
+				}
+			}
+			return &object.Null{}
+		},
+		HelpText: "writelines(lines) - Write each string of an iterable (no newlines are added)",
+	}
+	m["__iter__"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if _, _, errObj := sioSelf(args, "__iter__"); errObj != nil {
+				return errObj
+			}
+			return args[0]
+		},
+		HelpText: "__iter__() - A StringIO iterates over its lines",
+	}
+	readline := m["readline"].(*object.Builtin)
+	m["__next__"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			line := readline.Fn(ctx, kwargs, args[:1]...)
+			if s, ok := line.(*object.String); ok && s.StringValue() == "" {
+				return &object.Exception{Message: "StopIteration", ExceptionType: object.ExceptionTypeStopIteration, Raised: true}
+			}
+			return line
+		},
+		HelpText: "__next__() - The next line, StopIteration at the end",
+	}
+}

@@ -63,6 +63,11 @@ __setattr__ the class defines.`,
 // evalIdentifier resolves the name after a builtins miss.
 var ellipsisValue = object.NewSentinel("Ellipsis", "Ellipsis")
 
+// notImplementedValue is the builtin NotImplemented: a binary dunder that
+// returns it declines the operation, so the reflected dunder on the other
+// operand is tried, then the default (identity for ==, else TypeError).
+var notImplementedValue = object.NewSentinel("NotImplemented", "NotImplemented")
+
 func init() {
 	builtins["object"] = objectBuiltin
 	typeBuiltins[objectBuiltin] = "object"

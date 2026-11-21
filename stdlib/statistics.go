@@ -459,6 +459,9 @@ func numbersOf(elems []object.Object) ([]float64, object.Object) {
 			values = append(values, float64(v.IntValue()))
 		case *object.Float:
 			values = append(values, v.FloatValue())
+		case *object.Boolean:
+			// bool is an int subclass: mean([True, False]) is 0.5.
+			values = append(values, float64(boolInt(v.BoolValue())))
 		default:
 			return nil, errors.NewTypeError("INTEGER or FLOAT", elem.Type().String())
 		}
@@ -576,6 +579,13 @@ func numericOf(v object.Object) float64 {
 		return float64(t.IntValue())
 	case *object.Float:
 		return t.FloatValue()
+	}
+	return 0
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
 	}
 	return 0
 }
