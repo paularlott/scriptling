@@ -37,6 +37,25 @@ _MCP_SKILLS_INSTRUCTIONS = """
 Skills from the connected MCP servers are listed below. To use a skill, call the get_skill tool with the skill's URI, read the instructions it returns and follow them.
 """
 
+_SUMMARY_MARKER = "[Previous conversation summary]"
+
+_SUMMARY_PROMPT = """Summarise the conversation below so the work can continue from the summary alone: the original messages are about to be discarded. Include:
+- what the user asked for, and any constraints or preferences they gave
+- what has been done so far, including files changed and commands run
+- what was learned: concrete facts with file paths, line numbers, names, values and error messages, quoted exactly where they will be needed again
+- what is still to be done
+Be specific rather than brief: anything left out will have to be looked up again. Do not add commentary.
+
+"""
+
+_LIMIT_PROMPT = "You have reached the limit on tool calls for this request, so no more tools can be called. Answer now from what you have found so far, and say plainly what is unfinished or unverified."
+
+_REPEAT_NOTE = "\n\n[Note: this exact call has returned this same result {count} times. Repeating it will not change anything: try a different approach, or give your answer.]"
+
+# The share of the compaction threshold that the most recent messages may
+# occupy and still be kept word for word when the history is compacted.
+_KEEP_RECENT = 0.5
+
 # _make_mcp_tool_handler returns a handler that forwards a tool call to an MCP
 # server. A factory (rather than a lambda in the loop) binds server and tool
 # name at creation time; default arguments and closures over loop variables
@@ -91,6 +110,10 @@ class Agent:
         self.request_timeout = request_timeout
         self.extra_body = extra_body
         self.mcp_servers = mcp_servers if mcp_servers is not None else []
+        # Why the last trigger() stopped: "done" (the model answered),
+        # "max_iterations" (the tool-call limit was reached and the model was
+        # asked for a final answer) or "no_response".
+        self.stop_reason = ""
 
         # Wire MCP servers into the tool registry and system prompt: every
         # remote tool is registered under its namespaced name (the client's
@@ -195,6 +218,9 @@ class Agent:
         self.tools = tools
         # Build and store tool schemas if tools provided
         self.tool_schemas = tools.build() if tools is not None else []
+        # The tool schemas are sent with every request, so they count against
+        # the context budget alongside the messages.
+        self._tool_schema_tokens = int(len(json.dumps(self.tool_schemas)) / 4) if self.tool_schemas else 0
 
     def _completion_kwargs(self, include_tools=True):
         kwargs = {}
@@ -251,7 +277,7 @@ class Agent:
             result.append(self._normalise_tool_call(tool_calls[idx], idx))
         return result
 
-    def _tool_summary(self, tool_call):
+    def _tool_summary(self, tool_call, arg_limit=40):
         function = self._field(tool_call, "function", {})
         name = self._field(function, "name", "tool")
         arguments = self._field(function, "arguments", "{}")
@@ -264,8 +290,8 @@ class Agent:
                 parts = []
                 for key, value in parsed.items():
                     text = str(value)
-                    if len(text) > 40:
-                        text = text[:37] + "..."
+                    if len(text) > arg_limit:
+                        text = text[:arg_limit - 3] + "..."
                     parts.append(str(key) + "=" + text)
                 return name + "(" + ", ".join(parts) + ")"
         except:
@@ -273,66 +299,149 @@ class Agent:
 
         return name
 
+    def _clip(self, text, limit, hint=""):
+        """Shorten text to about limit characters, keeping the start and the end."""
+        if limit <= 0 or len(text) <= limit:
+            return text
+        head = int(limit * 2 / 3)
+        tail = limit - head
+        return text[:head] + "\n[... " + str(len(text) - limit) + " characters omitted" + hint + " ...]\n" + text[len(text) - tail:]
+
+    def _estimate(self, messages):
+        return ai.estimate_tokens(messages, {}).prompt_tokens
+
+    def _threshold_tokens(self):
+        return int(self.max_tokens * self.compaction_threshold / 100)
+
+    def _run_tools(self, calls, seen):
+        """Execute tool calls and return their result messages.
+
+        A result too large for the context budget is cut down, keeping its
+        start and end, so one oversized output cannot crowd out the rest of
+        the conversation. seen carries, across the iterations of one request,
+        the last result of each distinct call: a call repeated with the same
+        arguments and the same result is flagged to the model, which
+        otherwise can spend every remaining iteration on it.
+        """
+        tool_results = ai.execute_tool_calls(self.tools, calls)
+        if self._is_error_result(tool_results):
+            return tool_results
+
+        # A single result may take up to a quarter of the budget (about four
+        # characters per token, so max_tokens characters).
+        limit = max(400, self.max_tokens) if self.max_tokens > 0 else 0
+
+        for idx in range(len(tool_results)):
+            result = tool_results[idx]
+            content = self._clip(str(result.get("content", "")), limit, hint=": the output was too long, ask for a narrower range or a more specific search to see the rest")
+
+            if idx < len(calls):
+                function = self._field(calls[idx], "function", {})
+                key = str(self._field(function, "name", "")) + "\n" + str(self._field(function, "arguments", ""))
+                previous = seen.get(key)
+                if previous is not None and previous[0] == content:
+                    previous[1] = previous[1] + 1
+                else:
+                    previous = [content, 1]
+                    seen[key] = previous
+                if previous[1] >= 3:
+                    content = content + _REPEAT_NOTE.replace("{count}", str(previous[1]))
+
+            result["content"] = content
+        return tool_results
+
+    def _message_units(self, conversation):
+        """Split a conversation into [start, end) index pairs that must stay together.
+
+        An assistant message that calls tools and the tool results answering
+        it form one unit: an API rejects a history holding one without the
+        other. Every other message is a unit on its own.
+        """
+        units = []
+        idx = 0
+        while idx < len(conversation):
+            msg = conversation[idx]
+            end = idx + 1
+            if msg.get("role", "") == "assistant" and msg.get("tool_calls"):
+                while end < len(conversation) and conversation[end].get("role", "") == "tool":
+                    end = end + 1
+            units.append([idx, end])
+            idx = end
+        return units
+
     def _compact_safe_suffix_start(self, conversation):
-        if not conversation:
+        """Index of the first message kept word for word when compacting.
+
+        The most recent messages stay as they are, up to _KEEP_RECENT of the
+        compaction threshold: they are what the model is working from right
+        now, and summarising them makes it fetch the same things again. The
+        last unit is always kept, whatever its size.
+        """
+        units = self._message_units(conversation)
+        if len(units) == 0:
             return 0
 
-        last = conversation[-1]
-        last_role = last.get("role", "")
+        budget = int(self._threshold_tokens() * _KEEP_RECENT)
+        start = units[-1][0]
+        used = self._estimate(conversation[start:])
+        idx = len(units) - 2
+        while idx >= 0:
+            unit = units[idx]
+            cost = self._estimate(conversation[unit[0]:unit[1]])
+            if used + cost > budget:
+                break
+            used = used + cost
+            start = unit[0]
+            idx = idx - 1
+        return start
 
-        if last_role == "user":
-            return len(conversation) - 1
-
-        if last_role == "tool":
-            idx = len(conversation) - 1
-            while idx >= 0 and conversation[idx].get("role", "") == "tool":
-                idx = idx - 1
-            if idx >= 0:
-                msg = conversation[idx]
-                if msg.get("role", "") == "assistant" and msg.get("tool_calls"):
-                    return idx
-            return len(conversation) - 1
-
-        if last_role == "assistant" and last.get("tool_calls"):
-            return len(conversation) - 1
-
-        return max(0, len(conversation) - 1)
+    def _is_summary_message(self, msg):
+        content = msg.get("content", "")
+        return msg.get("role", "") == "user" and isinstance(content, str) and content.startswith(_SUMMARY_MARKER)
 
     def _summary_text_for_message(self, msg):
         role = msg.get("role", "?")
-        content = str(msg.get("content", ""))
+        content = msg.get("content", "")
+        if content is None:
+            content = ""
+        content = str(content)
+
+        # An earlier summary is carried over whole: it is all that is left of
+        # everything before it.
+        if self._is_summary_message(msg):
+            return content
+
+        if role == "tool":
+            tool_text = self._clip(content.strip(), 2000)
+            if tool_text:
+                return "[tool result]: " + tool_text
+            return ""
+
+        parts = []
+        if content:
+            parts.append("[" + role + "]: " + self._clip(content, 4000))
 
         if role == "assistant" and msg.get("tool_calls"):
             calls = self._normalise_tool_calls(msg.get("tool_calls", []))
             if len(calls) > 0:
-                summaries = [self._tool_summary(tc) for tc in calls]
-                return "[assistant tool calls]: " + ", ".join(summaries)
+                summaries = [self._tool_summary(tc, arg_limit=300) for tc in calls]
+                parts.append("[assistant tool calls]: " + ", ".join(summaries))
 
-        if role == "tool":
-            tool_text = content.strip()
-            if len(tool_text) > 500:
-                tool_text = tool_text[:497] + "..."
-            if tool_text:
-                return "[tool]: " + tool_text
-            return ""
-
-        if content:
-            if len(content) > 1000:
-                content = content[:997] + "..."
-            return "[" + role + "]: " + content
-
-        return ""
+        return "\n".join(parts)
 
     def _should_compact(self):
         """Check if the conversation history should be compacted."""
         if self.max_tokens <= 0 or self.compaction_threshold <= 0:
             return False
-        threshold_tokens = int(self.max_tokens * self.compaction_threshold / 100)
-        usage = ai.estimate_tokens(self.messages, {})
-        return usage.prompt_tokens >= threshold_tokens
+        # The tool schemas use part of the budget, but never more than half
+        # of it for this purpose: a large tool set must not make every
+        # request look over the threshold.
+        threshold_tokens = self._threshold_tokens()
+        threshold_tokens = max(threshold_tokens - self._tool_schema_tokens, int(threshold_tokens / 2))
+        return self._estimate(self.messages) >= threshold_tokens
 
     def _compact_messages(self):
-        """Compact the conversation history by asking the AI to summarize it."""
+        """Compact the conversation history by asking the AI to summarize the older part of it."""
         if len(self.messages) <= 3:
             return
 
@@ -355,6 +464,11 @@ class Agent:
         if len(summary_source) == 0:
             return
 
+        # Nothing but an earlier summary (and its acknowledgement) to fold
+        # in: summarising a summary again loses detail and frees nothing.
+        if len(summary_source) <= 2 and self._is_summary_message(summary_source[0]):
+            return
+
         # Build a summary of the compactable part of the conversation only
         summary_parts = []
         for msg in summary_source:
@@ -365,7 +479,7 @@ class Agent:
         if not summary_parts:
             return
 
-        summary_prompt = "Summarize the following conversation concisely, preserving all key facts, decisions, code, and context needed to continue. Do not add commentary or filler:\n\n" + "\n".join(summary_parts)
+        summary_prompt = _SUMMARY_PROMPT + "\n".join(summary_parts)
 
         # Ask the AI to summarize
         summary_messages = []
@@ -379,22 +493,72 @@ class Agent:
         if choices and len(choices) > 0:
             msg = self._field(choices[0], "message", {})
             summary = self._field(msg, "content", "")
+        if summary:
+            summary = ai.extract_thinking(summary)["content"]
 
         if not summary:
             return
+
+        # The request being worked on must survive word for word: a summary
+        # of the instructions is not the instructions. When the latest user
+        # message is in the part being summarised, repeat it after the summary.
+        current_request = ""
+        for msg in summary_source:
+            if msg.get("role", "") == "user" and not self._is_summary_message(msg):
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    current_request = content
+        for msg in protected_suffix:
+            if msg.get("role", "") == "user":
+                current_request = ""
+        summary_text = _SUMMARY_MARKER + "\n" + summary
+        if current_request:
+            summary_text = summary_text + "\n\n[The user's most recent request, word for word]\n" + current_request
 
         # Rebuild: system prompt + summary as context + protected live suffix
         new_messages = []
         if system_msg:
             new_messages.append(system_msg)
-        new_messages.append({"role": "user", "content": "[Previous conversation summary]\n" + summary})
-        new_messages.append({"role": "assistant", "content": "Understood. I have the context from our previous conversation and am ready to continue."})
+        new_messages.append({"role": "user", "content": summary_text})
+        # The acknowledgement keeps user and assistant turns alternating; it
+        # is left out when the kept messages already open with the assistant.
+        if len(protected_suffix) == 0 or protected_suffix[0].get("role", "") != "assistant":
+            new_messages.append({"role": "assistant", "content": "Understood. I have the context from our previous conversation and am ready to continue."})
         for msg in protected_suffix:
             new_messages.append(msg)
 
         self.messages = new_messages
 
-    def trigger(self, message, max_iterations=1):
+    def _final_answer(self):
+        """Ask the model for an answer, with no tools, after the tool-call limit.
+
+        Returns the assistant message, or None when the request fails or
+        comes back empty, leaving the history as it was.
+        """
+        self.messages.append({"role": "user", "content": _LIMIT_PROMPT})
+        try:
+            response = self.client.completion(self.model, self.messages, **self._completion_kwargs(include_tools=False))
+        except Exception as e:
+            self.messages.pop()
+            return None
+
+        choices = self._field(response, "choices", [])
+        message = self._field(choices[0], "message", {}) if choices and len(choices) > 0 else None
+        content = self._field(message, "content", "")
+        if content:
+            content = ai.extract_thinking(content)["content"]
+        if not content:
+            self.messages.pop()
+            return None
+
+        if isinstance(message, dict):
+            message["content"] = content
+        else:
+            message.content = content
+        self.messages.append({"role": "assistant", "content": content})
+        return message
+
+    def trigger(self, message, max_iterations=25):
         # Convert message to dict if string
         if type(message) == type(""):
             msg_dict = {"role": "user", "content": message}
@@ -409,7 +573,10 @@ class Agent:
         self.messages.append(msg_dict)
 
         # Agentic loop
+        self.stop_reason = ""
         last_response = None
+        seen_calls = {}
+        tools_pending = False
         for i in range(max_iterations):
             # Auto-compact if conversation exceeds threshold
             if self._should_compact():
@@ -421,6 +588,8 @@ class Agent:
             # Get message from response
             choices = self._field(response, "choices", [])
             if not choices or len(choices) == 0:
+                self.stop_reason = "no_response"
+                tools_pending = False
                 break
 
             choice = choices[0]
@@ -442,10 +611,12 @@ class Agent:
             if len(calls) == 0:
                 # No tool calls — add assistant message and break
                 self.messages.append({"role": "assistant", "content": self._field(message, "content", "")})
+                self.stop_reason = "done"
+                tools_pending = False
                 break
 
             # Execute tool calls via the registry
-            tool_results = ai.execute_tool_calls(self.tools, calls)
+            tool_results = self._run_tools(calls, seen_calls)
             if self._is_error_result(tool_results):
                 return tool_results
 
@@ -459,8 +630,18 @@ class Agent:
             # Add tool results
             for tr in tool_results:
                 self.messages.append(tr)
+            tools_pending = True
 
-        # If we hit max iterations and last_response has no content, create a summary
+        # The loop ran out of iterations with tool results the model has not
+        # answered from yet: ask it for an answer rather than handing the
+        # caller raw tool output.
+        if tools_pending:
+            self.stop_reason = "max_iterations"
+            final = self._final_answer()
+            if final is not None:
+                return final
+
+        # If that produced nothing and last_response has no content, fall back to the last tool results
         if last_response and (not self._field(last_response, "content", "")):
             # Collect the last tool results
             tool_result_contents = []

@@ -1082,6 +1082,18 @@ func executeToolCalls(ctx context.Context, registry *object.Instance, toolCalls 
 				argsMap[key[1:len(key)-1]] = value
 			}
 		}
+		// A call missing a required parameter never reaches the handler:
+		// the model gets a result naming what is missing and what the tool
+		// accepts, rather than whatever the handler raises on the lookup
+		// (often just the bare key), which it cannot act on.
+		if problem := tools.CheckArguments(registry, name, argsMap); problem != "" {
+			results = append(results, map[string]any{
+				"role":         "tool",
+				"tool_call_id": stringValue(toolCall["id"]),
+				"content":      "Error: " + problem,
+			})
+			continue
+		}
 		callArg := conversion.FromGo(argsMap)
 		resultObj := eval.CallObjectFunction(ctx, handler, []object.Object{callArg}, nil, env)
 

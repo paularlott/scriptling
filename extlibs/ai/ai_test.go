@@ -1336,12 +1336,52 @@ results[0]["content"]
 			},
 		},
 		{
+			"missing required parameter is reported to the model",
+			`
+import scriptling.ai as ai
+tools = ai.ToolRegistry()
+called = [False]
+def run(args):
+    called[0] = True
+    return "ran"
+tools.add("bash", "Run", {"cmd": "string", "timeout": "int?"}, run)
+tool_calls = [{"id": "c1", "type": "function", "function": {"name": "bash", "arguments": {"command": "ls"}}}]
+results = ai.execute_tool_calls(tools, tool_calls)
+results[0]["content"] + "|" + str(called[0])
+`,
+			false,
+			func(t *testing.T, result string) {
+				for _, want := range []string{"Error: missing required parameter", "cmd", "does not have: command", "timeout (optional)", "|False"} {
+					if !strings.Contains(result, want) {
+						t.Fatalf("expected %q in %q", want, result)
+					}
+				}
+			},
+		},
+		{
+			"missing required parameter from an add_schema tool",
+			`
+import scriptling.ai as ai
+tools = ai.ToolRegistry()
+tools.add_schema("find", "Find", {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["query"]}, lambda args: "ran")
+a = ai.execute_tool_calls(tools, [{"id": "c1", "type": "function", "function": {"name": "find", "arguments": {"limit": 3}}}])
+b = ai.execute_tool_calls(tools, [{"id": "c2", "type": "function", "function": {"name": "find", "arguments": {"query": "x", "extra": 1}}}])
+a[0]["content"] + "|" + b[0]["content"]
+`,
+			false,
+			func(t *testing.T, result string) {
+				if !strings.Contains(result, "missing required parameter(s) for tool \"find\": query") || !strings.HasSuffix(result, "|ran") {
+					t.Fatalf("unexpected result %q", result)
+				}
+			},
+		},
+		{
 			"{namespace:name} wrapper stripped",
 			`
 import scriptling.ai as ai
 tools = ai.ToolRegistry()
 tools.add("echo", "Echo", {"msg": "string"}, lambda args: "ok")
-tool_calls = [{"id": "c1", "type": "function", "function": {"name": "{mcp:echo}", "arguments": {}}}]
+tool_calls = [{"id": "c1", "type": "function", "function": {"name": "{mcp:echo}", "arguments": {"msg": "hi"}}}]
 results = ai.execute_tool_calls(tools, tool_calls)
 results[0]["content"]
 `,
@@ -1358,7 +1398,7 @@ results[0]["content"]
 import scriptling.ai as ai
 tools = ai.ToolRegistry()
 tools.add("echo", "Echo", {"msg": "string"}, lambda args: "ok")
-tool_calls = [{"id": "c1", "type": "function", "function": {"name": "function_name_echo", "arguments": {}}}]
+tool_calls = [{"id": "c1", "type": "function", "function": {"name": "function_name_echo", "arguments": {"msg": "hi"}}}]
 results = ai.execute_tool_calls(tools, tool_calls)
 results[0]["content"]
 `,

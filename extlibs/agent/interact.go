@@ -63,6 +63,21 @@ class Agent(_OriginalAgent):
     def _tool_message(self, tool_call, tool_result):
         return "Calling " + self._tool_summary(tool_call) + "\n" + self._tool_result_summary(tool_call, tool_result)
 
+    def _abandon_turn(self, rounds_done, note):
+        """Tidy the history after a turn that stopped early.
+
+        A turn that got nowhere is dropped, so the user can simply ask again.
+        Once any tools have run, though, their calls and results stay: they
+        may have changed files or other state, and a model that has
+        forgotten doing so will do it again or contradict it. A closing note
+        records that the turn was cut short.
+        """
+        if rounds_done == 0:
+            if len(self.messages) > 0 and self.messages[-1].get("role", "") == "user":
+                self.messages.pop()
+            return
+        self.messages.append({"role": "assistant", "content": note})
+
     def interact(self, max_iterations=25):
         main = console.main_panel()
         console.set_status("scriptling", self.model if self.model else "default")
@@ -103,12 +118,20 @@ class Agent(_OriginalAgent):
 
             if len(self.messages) == 0 and self.system_prompt:
                 self.messages.append({"role": "system", "content": self.system_prompt})
-            msg_index = len(self.messages)
             self.messages.append({"role": "user", "content": user_input})
 
             console.spinner_start("Working")
 
+            # The model may need longer than the default to produce its first
+            # token when the prompt is large or the model is still loading.
+            first_chunk_timeout = 120
+            if self.request_timeout and self.request_timeout > first_chunk_timeout:
+                first_chunk_timeout = self.request_timeout
+
             hit_limit = False
+            abandoned = ""
+            rounds_done = 0
+            seen_calls = {}
             for i in range(max_iterations):
                 if cancelled[0]:
                     break
@@ -123,7 +146,7 @@ class Agent(_OriginalAgent):
                     stream = self.client.completion_stream(self.model, self.messages, **self._completion_kwargs())
                 except Exception as e:
                     self._show_error(main, e)
-                    self.messages = self.messages[:msg_index]
+                    abandoned = "[The request failed before I could finish: " + str(e) + "]"
                     break
 
                 reasoning_state = {"open": False}
@@ -156,7 +179,7 @@ class Agent(_OriginalAgent):
                                 content_state["open"] = False
                             pending_tool_calls.append(tc)
 
-                result = ai.collect_stream(stream, first_chunk_timeout=120, chunk_timeout=60, on_event=on_event)
+                result = ai.collect_stream(stream, first_chunk_timeout=first_chunk_timeout, chunk_timeout=60, on_event=on_event)
 
                 # Close any open streams
                 if reasoning_state["open"]:
@@ -165,24 +188,23 @@ class Agent(_OriginalAgent):
                     main.stream_end()
 
                 if cancelled[0]:
-                    self.messages = self.messages[:msg_index]
                     break
 
                 if result["timed_out"]:
                     self._show_error(main, "Streaming stalled before completion")
-                    self.messages = self.messages[:msg_index]
+                    abandoned = "[The response stalled before I could finish.]"
                     break
 
                 # Execute tool calls if present
                 calls = result["tool_calls"]
                 if len(calls) > 0:
                     console.spinner_start("Running tools")
-                    tool_results = ai.execute_tool_calls(self.tools, calls)
+                    tool_results = self._run_tools(calls, seen_calls)
                     if self._is_error_result(tool_results):
                         if len(calls) > 0:
                             main.add_message(self._tool_message(calls[0], {"content": str(tool_results)}), label="Tool", role="tool")
                         self._show_error(main, tool_results)
-                        self.messages = self.messages[:msg_index]
+                        abandoned = "[A tool call failed before I could finish: " + str(tool_results) + "]"
                         break
 
                     for idx in range(min(len(calls), len(tool_results))):
@@ -192,6 +214,7 @@ class Agent(_OriginalAgent):
                     self.messages.append(result["assistant_message"])
                     for tr in tool_results:
                         self.messages.append(tr)
+                    rounds_done = rounds_done + 1
 
                     console.spinner_start("Working")
                     if i == max_iterations - 1:
@@ -208,7 +231,9 @@ class Agent(_OriginalAgent):
                 main.add_message("[Reached max iterations (" + str(max_iterations) + "). Type 'continue' or ask me to proceed.]", label="System")
 
             if cancelled[0]:
-                self.messages = self.messages[:msg_index]
+                self._abandon_turn(rounds_done, "[The user interrupted me before I finished.]")
+            elif abandoned:
+                self._abandon_turn(rounds_done, abandoned)
 
         console.on_submit(on_submit)
         console.run()

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/paularlott/scriptling/conversion"
@@ -173,6 +174,98 @@ func GetHandlerObject(self *object.Instance, name string) (object.Object, *objec
 	}
 
 	return handler, nil
+}
+
+// CheckArguments compares the arguments a model sent for a tool with the
+// parameters the tool declares. It returns "" when every required parameter
+// is present, otherwise a message written for the model: which parameters are
+// missing, which names it sent that the tool does not have, and what the tool
+// accepts, so it can correct the call on its next turn. Only presence is
+// checked; types are left to the handler, since models routinely send "5"
+// for 5 and handlers cope.
+func CheckArguments(self *object.Instance, name string, args map[string]any) string {
+	data, err := getRegistryData(self)
+	if err != nil {
+		return ""
+	}
+	for i := range data.tools {
+		if data.tools[i].name == name {
+			return data.tools[i].checkArguments(args)
+		}
+	}
+	return ""
+}
+
+// parameters returns the tool's parameter names (sorted) and which of them
+// are required, from either the flat add() map or an add_schema schema.
+func (t *toolDef) parameters() (names []string, required map[string]bool) {
+	required = map[string]bool{}
+	if t.schema != nil {
+		if props, ok := t.schema["properties"].(map[string]any); ok {
+			for paramName := range props {
+				names = append(names, paramName)
+			}
+		}
+		if req, ok := t.schema["required"].([]any); ok {
+			for _, r := range req {
+				if s, ok := r.(string); ok {
+					required[s] = true
+				}
+			}
+		}
+	} else {
+		for paramName, paramType := range t.params {
+			names = append(names, paramName)
+			if !strings.HasSuffix(paramType, "?") {
+				required[paramName] = true
+			}
+		}
+	}
+	sort.Strings(names)
+	return names, required
+}
+
+func (t *toolDef) checkArguments(args map[string]any) string {
+	names, required := t.parameters()
+
+	var missing []string
+	for paramName := range required {
+		if _, ok := args[paramName]; !ok {
+			missing = append(missing, paramName)
+		}
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	sort.Strings(missing)
+
+	known := map[string]bool{}
+	for _, paramName := range names {
+		known[paramName] = true
+	}
+	var unknown []string
+	for argName := range args {
+		if !known[argName] {
+			unknown = append(unknown, argName)
+		}
+	}
+	sort.Strings(unknown)
+
+	accepted := make([]string, 0, len(names))
+	for _, paramName := range names {
+		if required[paramName] {
+			accepted = append(accepted, paramName+" (required)")
+		} else {
+			accepted = append(accepted, paramName+" (optional)")
+		}
+	}
+
+	msg := fmt.Sprintf("missing required parameter(s) for tool %q: %s.", t.name, strings.Join(missing, ", "))
+	if len(unknown) > 0 {
+		msg += fmt.Sprintf(" The call sent parameter(s) this tool does not have: %s.", strings.Join(unknown, ", "))
+	}
+	msg += fmt.Sprintf(" This tool accepts: %s. Call it again with the correct parameter names.", strings.Join(accepted, ", "))
+	return msg
 }
 
 func registryAddMethod(self *object.Instance, ctx context.Context, name string, description string, params map[string]string, handler object.Object) object.Object {
