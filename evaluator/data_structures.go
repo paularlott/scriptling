@@ -146,6 +146,9 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 					if method := builtinMethodRef(left, name.StringValue()); method != nil {
 						return method
 					}
+					if method := builtinDunderMethod(left, name.StringValue()); method != nil {
+						return method
+					}
 				}
 				return attributeError(left, name.StringValue())
 			}
@@ -170,6 +173,15 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 	case object.CLASS_OBJ:
 		return evalClassIndexExpression(left, index)
 	case object.BUILTIN_OBJ:
+		if !isDotAccess {
+			// list[int], dict[str, int]: a type subscripted, as annotations do.
+			if name, isType := typeBuiltins[left.(*object.Builtin)]; isType {
+				return object.NewGenericAlias(left.(*object.Builtin), name, index)
+			}
+			if left == typeTypeBuiltin {
+				return object.NewGenericAlias(typeTypeBuiltin, "type", index)
+			}
+		}
 		return evalBuiltinIndexExpression(left, index)
 	case object.PROPERTY_OBJ:
 		return evalPropertyIndexExpression(left, index)
@@ -278,6 +290,13 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 					return exc.Cause
 				}
 				return NULL
+			case "__context__":
+				if exc.Context != nil {
+					return exc.Context
+				}
+				return NULL
+			case "__suppress_context__":
+				return object.NewBoolean(exc.SuppressContext)
 			case "__traceback__":
 				return NULL
 			}
@@ -290,6 +309,9 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 			}
 		}
 		if method := builtinMethodRef(left, attr); method != nil {
+			return method
+		}
+		if method := builtinDunderMethod(left, attr); method != nil {
 			return method
 		}
 		return attributeError(left, attr)
@@ -751,6 +773,9 @@ func evalBuiltinIndexExpression(builtin, index object.Object) object.Object {
 		if name := builtinFunctionName(b); name != "" {
 			return object.NewString(name)
 		}
+	}
+	if method := typeDunderMethod(b, field); method != nil {
+		return method
 	}
 	return attributeError(b, field)
 }

@@ -259,6 +259,13 @@ func (r *reprRenderer) container(obj Object) {
 				r.out.WriteString(o.Factory().Inspect())
 			}
 			r.out.WriteString(", ")
+		} else if o.IsOrderedDict() {
+			// Python 3.12+: OrderedDict({'a': 1}), OrderedDict() when empty.
+			if o.Len() == 0 {
+				r.out.WriteString("OrderedDict()")
+				return
+			}
+			r.out.WriteString("OrderedDict(")
 		}
 		r.out.WriteByte('{')
 		i := 0
@@ -275,7 +282,7 @@ func (r *reprRenderer) container(obj Object) {
 			i++
 		}
 		r.out.WriteByte('}')
-		if o.Factory() != nil {
+		if o.Factory() != nil || o.IsOrderedDict() {
 			r.out.WriteByte(')')
 		}
 	case *Set:

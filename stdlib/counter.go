@@ -330,10 +330,73 @@ func counterOperator(name string, op byte) *object.Builtin {
 		a := args[0].(*object.Instance)
 		b, ok := args[1].(*object.Instance)
 		if !ok || b.Class != counterClassRef {
-			return errors.NewTypeError("Counter", args[1].Type().String())
+			return errors.NewTypeErrorTagged("unsupported operand type(s) for %c: 'Counter' and '%s'", op, object.PythonTypeName(args[1]))
 		}
 		return counterArithmetic(op, a, b)
 	}}
+}
+
+// counterUnary is +c (sign 1: the positive counts) and -c (sign -1: the
+// negative counts, negated), as in Python.
+func counterUnary(name string, sign int64) *object.Builtin {
+	return &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		if err := errors.NoKwargs(name, kwargs); err != nil {
+			return err
+		}
+		if err := errors.ExactArgs(args, 1); err != nil {
+			return err
+		}
+		_, d := counterSelf(args)
+		out := newCounter()
+		od := counterData(out)
+		for _, p := range d.OrderedPairs() {
+			f, ok := countValue(p.Value)
+			if !ok || f*float64(sign) <= 0 {
+				continue
+			}
+			v := p.Value
+			if sign < 0 {
+				neg, err := addCounts(counterZero, p.Value, -1)
+				if err != nil {
+					return err
+				}
+				v = neg
+			}
+			od.Store(object.DictKey(p.Key), p.Key, v)
+		}
+		return out
+	}, HelpText: name + "() - " + map[bool]string{true: "+c: the positive counts", false: "-c: the negative counts, negated"}[sign > 0]}
+}
+
+// counterCompare is Python's multiset inclusion: c <= d when no count in c
+// exceeds its count in d (missing counts 0); strict also needs them to
+// differ; reverse swaps the operands (>=, >).
+func counterCompare(name, op string, reverse, strict bool) *object.Builtin {
+	return &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		if err := errors.NoKwargs(name, kwargs); err != nil {
+			return err
+		}
+		if err := errors.ExactArgs(args, 2); err != nil {
+			return err
+		}
+		other, ok := args[1].(*object.Instance)
+		if !ok || other.Class != counterClassRef {
+			return errors.NewTypeErrorTagged("'%s' not supported between instances of 'Counter' and '%s'", op, object.PythonTypeName(args[1]))
+		}
+		a, b := counterData(args[0].(*object.Instance)), counterData(other)
+		if reverse {
+			a, b = b, a
+		}
+		le, equal := true, true
+		for _, d := range []*object.Dict{a, b} {
+			for _, p := range d.All() {
+				x, _ := countValue(counterCount(a, p.Key))
+				y, _ := countValue(counterCount(b, p.Key))
+				le, equal = le && x <= y, equal && x == y
+			}
+		}
+		return object.NewBoolean(le && !(strict && equal))
+	}, HelpText: name + "(other) - multiset inclusion: c " + op + " other"}
 }
 
 func counterMethod(help string, fn object.BuiltinFunction) *object.Builtin {
@@ -494,6 +557,12 @@ var CounterClass = &object.Class{
 			return object.NewString(out)
 		}),
 		"__add__": counterOperator("__add__", '+'),
+		"__pos__": counterUnary("__pos__", 1),
+		"__neg__": counterUnary("__neg__", -1),
+		"__le__":  counterCompare("__le__", "<=", false, false),
+		"__lt__":  counterCompare("__lt__", "<", false, true),
+		"__ge__":  counterCompare("__ge__", ">=", true, false),
+		"__gt__":  counterCompare("__gt__", ">", true, true),
 		"__sub__": counterOperator("__sub__", '-'),
 		"__or__":  counterOperator("__or__", '|'),
 		"__and__": counterOperator("__and__", '&'),
@@ -624,16 +693,17 @@ var CounterClass = &object.Class{
 			}
 			_, d := counterSelf(args)
 			var out []object.Object
-			for _, e := range counterSorted(d) {
-				n, isInt := e.count.(*object.Integer)
+			// Python yields elements in the order first encountered.
+			for _, e := range d.OrderedPairs() {
+				n, isInt := e.Value.(*object.Integer)
 				if !isInt {
-					if _, isFloat := e.count.(*object.Float); isFloat {
+					if _, isFloat := e.Value.(*object.Float); isFloat {
 						return &object.Exception{Message: "'float' object cannot be interpreted as an integer", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
 					}
 					continue
 				}
 				for i := int64(0); i < n.IntValue(); i++ {
-					out = append(out, e.key)
+					out = append(out, e.Key)
 				}
 			}
 			object.TrackSlice(out)

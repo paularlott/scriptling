@@ -211,7 +211,8 @@ type strptimeResult struct {
 	weekU, weekW, isoYear, isoWeek                int // -1 when not given
 	hour12, ampm                                  int // hour12 -1 when not given; ampm 0 none, 1 AM, 2 PM
 	hasOffset                                     bool
-	offset                                        int // seconds east of UTC
+	leapFix                                       bool // 29 February with no year: computed in 1904, reported as 1900
+	offset                                        int  // seconds east of UTC
 	tzname                                        string
 }
 
@@ -225,11 +226,6 @@ func pyStrptime(text, format string) (*strptimeResult, object.Object) {
 	r := &strptimeResult{year: 1900, month: 1, day: 1, yday: -1, wday: -1, weekU: -1, weekW: -1, isoYear: -1, isoWeek: -1, hour12: -1}
 	noMatch := func() object.Object {
 		return errors.NewValueError("time data %s does not match format %s", object.ReprString(text), object.ReprString(format))
-	}
-	// A day of the month needs a year (else 29 February cannot parse), as
-	// Python 3.15 requires.
-	if dirs := strptimeDirectives(format); dirs['d'] && !dirs['Y'] && !dirs['y'] && !dirs['G'] && !dirs['c'] && !dirs['x'] {
-		return nil, errors.NewValueError("Day of month directive '%%d' may not be used without a year directive. Parsing dates involving a day of month without a year is ambiguous and fails to parse leap day. Add a year to the input and format.")
 	}
 	pos, errObj := strptimeInto(r, text, 0, format, format, noMatch)
 	if errObj != nil {
@@ -249,6 +245,15 @@ func pyStrptime(text, format string) (*strptimeResult, object.Object) {
 			if r.hour == 12 {
 				r.hour = 0
 			}
+		}
+	}
+	// Without a year the date is in 1900, as up to Python 3.14; 29 February
+	// is worked out in 1904 and reported in 1900 (time.strptime keeps it,
+	// datetime.strptime rejects it as out of range for the month).
+	if r.month == 2 && r.day == 29 {
+		if dirs := strptimeDirectives(format); !dirs['Y'] && !dirs['y'] && !dirs['G'] && !dirs['c'] && !dirs['x'] {
+			r.year, r.leapFix = 1904, true
+			defer func() { r.year = 1900 }()
 		}
 	}
 	// A day of the year, or a week and weekday, fixes the date.
@@ -536,7 +541,7 @@ func parseStrptimeOffset(text string, pos *int, r *strptimeResult) bool {
 // strptimeDatetime builds the datetime strptime returns: aware (a fixed
 // offset zone) when %z was parsed, naive otherwise.
 func strptimeDatetime(r *strptimeResult) (time.Time, object.Object) {
-	loc := time.Local
+	loc := time.UTC
 	if r.hasOffset {
 		if r.offset <= -86400 || r.offset >= 86400 {
 			return time.Time{}, errors.NewValueError("offset must be a timedelta strictly between -timedelta(hours=24) and timedelta(hours=24)")

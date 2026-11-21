@@ -1,6 +1,7 @@
 package evaluator
 
 import (
+	"context"
 	"math"
 	"math/big"
 	"math/bits"
@@ -13,7 +14,7 @@ import (
 
 // callIntegerMethod dispatches int methods: bit_length (Python 3.1),
 // bit_count (3.10) and is_integer (3.12).
-func callIntegerMethod(i *object.Integer, method string, args []object.Object, keywords object.Kwargs) object.Object {
+func callIntegerMethod(ctx context.Context, recv object.Object, i *object.Integer, method string, args []object.Object, keywords object.Kwargs) object.Object {
 	signed := false
 	if keywords.Len() > 0 && (method == "to_bytes" || method == "from_bytes") {
 		// length/bytes and byteorder may be given by name; signed is
@@ -172,7 +173,7 @@ func callIntegerMethod(i *object.Integer, method string, args []object.Object, k
 		}
 		return errors.NewTypeError("bytes or iterable of ints", args[0].Type().String())
 	}
-	return attributeError(i, method)
+	return missingBuiltinMethod(ctx, recv, method, args, keywords)
 }
 
 // kwargsToBytesOrder validates a byteorder argument, accepting the case
@@ -218,7 +219,7 @@ func intFromBytesValue(raw []byte, args []object.Object, signed bool) object.Obj
 
 // callFloatMethod dispatches float methods: is_integer, hex, fromhex and
 // as_integer_ratio.
-func callFloatMethod(f *object.Float, method string, args []object.Object) object.Object {
+func callFloatMethod(ctx context.Context, f *object.Float, method string, args []object.Object, keywords object.Kwargs) object.Object {
 	switch method {
 	case "is_integer":
 		if err := errors.ExactArgs(args, 0); err != nil {
@@ -282,7 +283,7 @@ func callFloatMethod(f *object.Float, method string, args []object.Object) objec
 		}
 		return object.NewPair(object.NewInteger(r.Num().Int64()), object.NewInteger(r.Denom().Int64()))
 	}
-	return attributeError(f, method)
+	return missingBuiltinMethod(ctx, f, method, args, keywords)
 }
 
 // floatHex renders f in Python's float.hex() form: a full 13-hex-digit

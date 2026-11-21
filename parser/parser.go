@@ -1418,26 +1418,22 @@ func (p *Parser) parseFStringContent(content string, raw bool) ([]string, []ast.
 			// (x[1:3]), dict literals, lambdas, x != y and quoted braces
 			// ('{}'.format(v)) stay inside the expression, as in Python.
 			depth := 0
-			var quote byte
+			topComma := false
 		scan:
 			for i < len(content) {
 				c := content[i]
-				if quote != 0 {
-					exprStr.WriteByte(c)
-					if c == '\\' && i+1 < len(content) {
-						exprStr.WriteByte(content[i+1])
-						i += 2
-						continue
-					}
-					if c == quote {
-						quote = 0
-					}
-					i++
-					continue
-				}
 				switch c {
+				case ',':
+					if depth == 0 {
+						topComma = true
+					}
 				case '\'', '"':
-					quote = c
+					// A whole string literal, nested f-strings and quotes
+					// like the enclosing f-string's included (PEP 701).
+					end := lexer.SkipStringLiteral(content, i)
+					exprStr.WriteString(content[i:end])
+					i = end
+					continue
 				case '(', '[', '{':
 					depth++
 				case ')', ']':
@@ -1509,6 +1505,11 @@ func (p *Parser) parseFStringContent(content string, raw bool) ([]string, []ast.
 				exprText = strings.TrimRight(strings.TrimSuffix(strings.TrimRight(exprText, " "), "="), " ")
 			}
 			if exprText != "" {
+				// A field spanning lines reads as if parenthesised, as in
+				// Python, and so does a top-level tuple: f"{1, 2}".
+				if topComma || strings.ContainsAny(exprText, "\n\r") {
+					exprText = "(" + exprText + ")"
+				}
 				expr := parseExpressionString(exprText)
 				if expr != nil {
 					expressions = append(expressions, expr)

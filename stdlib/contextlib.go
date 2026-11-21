@@ -88,6 +88,26 @@ var suppressClass = &object.Class{
 				if len(typesList.Elements) == 0 {
 					return object.NewBoolean(true)
 				}
+				// Match as except does, through the exception hierarchy
+				// (suppress(LookupError) catches a KeyError).
+				if object.IsInstance != nil && len(args) > 2 && args[2].Type() != object.NULL_OBJ {
+					var flat []object.Object
+					var flatten func(elems []object.Object)
+					flatten = func(elems []object.Object) {
+						for _, e := range elems {
+							if t, ok := e.(*object.Tuple); ok {
+								flatten(t.Elements)
+							} else {
+								flat = append(flat, e)
+							}
+						}
+					}
+					flatten(typesList.Elements)
+					r := object.IsInstance(ctx, args[2], &object.Tuple{Elements: flat})
+					if b, ok := r.(*object.Boolean); ok && b.BoolValue() {
+						return r
+					}
+				}
 				excTypeName := resolveExcTypeName(ctx, excType)
 				for _, t := range typesList.Elements {
 					name := resolveExcTypeName(ctx, t)

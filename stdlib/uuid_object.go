@@ -19,10 +19,14 @@ import (
 // uuidNamespaceConstants are real UUID objects (as in Python), so they compare
 // equal to uuid.UUID(...) of the same value and expose .hex/.version.
 var uuidNamespaceConstants = map[string]object.Object{
-	"NAMESPACE_DNS":  uuidInstance(uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")),
-	"NAMESPACE_URL":  uuidInstance(uuid.MustParse("6ba7b811-9dad-11d1-80b4-00c04fd430c8")),
-	"NAMESPACE_OID":  uuidInstance(uuid.MustParse("6ba7b812-9dad-11d1-80b4-00c04fd430c8")),
-	"NAMESPACE_X500": uuidInstance(uuid.MustParse("6ba7b814-9dad-11d1-80b4-00c04fd430c8")),
+	"NAMESPACE_DNS":      uuidInstance(uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")),
+	"NAMESPACE_URL":      uuidInstance(uuid.MustParse("6ba7b811-9dad-11d1-80b4-00c04fd430c8")),
+	"NAMESPACE_OID":      uuidInstance(uuid.MustParse("6ba7b812-9dad-11d1-80b4-00c04fd430c8")),
+	"NAMESPACE_X500":     uuidInstance(uuid.MustParse("6ba7b814-9dad-11d1-80b4-00c04fd430c8")),
+	"RESERVED_NCS":       object.NewString(uuidReservedNCS),
+	"RFC_4122":           object.NewString(uuidRFC4122),
+	"RESERVED_MICROSOFT": object.NewString(uuidReservedMicrosoft),
+	"RESERVED_FUTURE":    object.NewString(uuidReservedFuture),
 }
 
 // uuidStringOf returns the canonical string of a UUID object or a plain
@@ -49,24 +53,46 @@ func uuidInstance(id uuid.UUID) *object.Instance {
 	for _, b := range id {
 		hexStr += fmt.Sprintf("%02x", b)
 	}
-	variant := "reserved for NCS backward compatibility"
-	v := id[8] >> 6
-	switch v {
-	case 2:
-		variant = "specified in RFC 4122"
-	case 3:
-		variant = "reserved, Microsoft"
-	}
+	variant := uuidVariant(id)
 	fields := map[string]object.Object{
 		"__str_repr__": object.NewString(id.String()),
 		"hex":          object.NewString(hexStr),
 		"bytes":        object.NewBytes(id[:]),
-		"urn":          object.NewString("urn:uuid:" + id.String()),
+		"bytes_le": object.NewBytes([]byte{id[3], id[2], id[1], id[0], id[5], id[4], id[7], id[6],
+			id[8], id[9], id[10], id[11], id[12], id[13], id[14], id[15]}),
+		"urn": object.NewString("urn:uuid:" + id.String()),
 	}
 	// .int is deliberately absent: a UUID is a 128-bit integer and scriptling
 	// ints are 64-bit, so any value here would be silently wrong.
 	inst := object.NewInstanceWithFields(UUIDClass, fields)
-	inst.SetField("version", object.NewInteger(int64(id.Version())))
+	// version is only meaningful for RFC 4122 UUIDs; None otherwise.
+	var version object.Object = &object.Null{}
+	if variant == uuidRFC4122 {
+		version = object.NewInteger(int64(id.Version()))
+	}
+	inst.SetField("version", version)
+	// The RFC 4122 fields all fit in 64 bits (only .int does not).
+	be := func(b []byte) int64 {
+		var n int64
+		for _, c := range b {
+			n = n<<8 | int64(c)
+		}
+		return n
+	}
+	timeLow, timeMid, timeHi := be(id[0:4]), be(id[4:6]), be(id[6:8])
+	seqHi, seqLow, node := be(id[8:9]), be(id[9:10]), be(id[10:16])
+	for name, v := range map[string]int64{
+		"time_low": timeLow, "time_mid": timeMid, "time_hi_version": timeHi,
+		"clock_seq_hi_variant": seqHi, "clock_seq_low": seqLow, "node": node,
+		"clock_seq": (seqHi&0x3f)<<8 | seqLow,
+		"time":      (timeHi&0x0fff)<<48 | timeMid<<32 | timeLow,
+	} {
+		inst.SetField(name, object.NewInteger(v))
+	}
+	inst.SetField("fields", &object.Tuple{Elements: []object.Object{
+		object.NewInteger(timeLow), object.NewInteger(timeMid), object.NewInteger(timeHi),
+		object.NewInteger(seqHi), object.NewInteger(seqLow), object.NewInteger(node),
+	}})
 	inst.SetField("variant", object.NewString(variant))
 	return inst
 }
@@ -175,4 +201,24 @@ func parseUUIDString(s string) (uuid.UUID, bool) {
 		return uuid.UUID{}, false
 	}
 	return id, true
+}
+
+// The variant strings Python's uuid module names.
+const (
+	uuidReservedNCS       = "reserved for NCS compatibility"
+	uuidRFC4122           = "specified in RFC 4122"
+	uuidReservedMicrosoft = "reserved for Microsoft compatibility"
+	uuidReservedFuture    = "reserved for future definition"
+)
+
+func uuidVariant(id uuid.UUID) string {
+	switch b := id[8]; {
+	case b&0x80 == 0:
+		return uuidReservedNCS
+	case b&0x40 == 0:
+		return uuidRFC4122
+	case b&0x20 == 0:
+		return uuidReservedMicrosoft
+	}
+	return uuidReservedFuture
 }

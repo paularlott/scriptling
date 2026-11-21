@@ -6,6 +6,7 @@ import (
 	"math/big"
 
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/libutil"
 	"github.com/paularlott/scriptling/object"
 )
@@ -121,6 +122,20 @@ func oneFloatFunc(name string, f func(float64) float64) func(context.Context, ob
 		}
 		return object.NewFloat(f(x))
 	}
+}
+
+// callInstanceDunder calls inst.name() when its class defines it; nil when
+// it does not.
+func callInstanceDunder(ctx context.Context, inst *object.Instance, name string) object.Object {
+	fn, ok := inst.Class.LookupMember(name)
+	if !ok {
+		return nil
+	}
+	eval := evaliface.FromContext(ctx)
+	if eval == nil {
+		return errors.NewError("evaluator not available in context")
+	}
+	return eval.CallObjectFunction(ctx, fn, []object.Object{inst}, nil, nil)
 }
 
 // mathDomainError is the ValueError CPython's math module raises for an
@@ -274,6 +289,24 @@ func oneIntOrFloatFunc(name string, intFn func(*object.Integer) object.Object, f
 				return intFn(object.NewInteger(1))
 			}
 			return intFn(object.NewInteger(0))
+		case *object.Instance:
+			// math.floor(x) calls x.__floor__() (Decimal, Fraction, ...),
+			// else converts with __float__.
+			if r := callInstanceDunder(ctx, arg, "__"+name+"__"); r != nil {
+				return r
+			}
+			if name != "trunc" { // math.trunc needs __trunc__, as in Python
+				if f := callInstanceDunder(ctx, arg, "__float__"); f != nil {
+					if ff, ok := f.(*object.Float); ok {
+						return floatFn(ff)
+					}
+					if object.IsError(f) || object.IsPropagating(f) {
+						return f
+					}
+					return errors.NewTypeErrorTagged("%s.__float__ returned non-float (type %s)", arg.Class.Name, object.PythonTypeName(f))
+				}
+			}
+			return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
 		default:
 			return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
 		}

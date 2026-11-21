@@ -14,8 +14,8 @@ import (
 //
 // An aware datetime's time.Time carries one of the *time.Location values
 // below, one per (offset, name), so createDatetimeInstance can tell an aware
-// time from a naive one (naive times use time.Local, or time.UTC for the
-// naive UTC values utcnow and strptime return) and give it its tzinfo.
+// time from a naive one (naive times hold their wall clock in time.UTC) and
+// give it its tzinfo.
 
 type tzKey struct {
 	offset int
@@ -188,8 +188,11 @@ func init() {
 			}
 			if loc == nil {
 				// The local zone, as a fixed offset.
-				name, off := t.In(time.Local).Zone()
+				name, off := localInstant(t).Zone()
 				loc = tzLocation(tzKey{offset: off, name: name})
+			}
+			if isNaive(t) {
+				t = localInstant(t)
 			}
 			return createDatetimeInstance(t.In(loc))
 		},
@@ -423,4 +426,38 @@ func pyDatetimeString(t time.Time, sep string) string {
 		s += formatUTCOffset(off, true)
 	}
 	return s
+}
+
+// localInstant reads a naive datetime's wall clock as local time, choosing
+// as Python does with fold=0: the earlier instant of a repeated hour, and
+// for a skipped hour the offset in force before the change.
+func localInstant(t time.Time) time.Time {
+	w := wallClock(t)
+	wall := w.Unix()
+	local := func(u int64) int64 {
+		_, off := time.Unix(u, 0).In(time.Local).Zone()
+		return u + int64(off)
+	}
+	const maxFold = 86400
+	a := local(wall) - wall
+	u1 := wall - a
+	t1 := local(u1)
+	var b int64
+	if t1 == wall {
+		u2 := u1 - maxFold
+		b = local(u2) - u2
+		if a == b {
+			return time.Unix(u1, int64(w.Nanosecond())).In(time.Local)
+		}
+	} else {
+		b = t1 - u1
+	}
+	u2 := wall - b
+	if local(u2) == wall {
+		return time.Unix(u2, int64(w.Nanosecond())).In(time.Local)
+	}
+	if t1 == wall {
+		return time.Unix(u1, int64(w.Nanosecond())).In(time.Local)
+	}
+	return time.Unix(max(u1, u2), int64(w.Nanosecond())).In(time.Local)
 }

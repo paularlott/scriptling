@@ -125,12 +125,12 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 
 	// Handle integer methods
 	if obj.Type() == object.INTEGER_OBJ {
-		return callIntegerMethod(obj.(*object.Integer), method, args, keywords)
+		return callIntegerMethod(ctx, obj, obj.(*object.Integer), method, args, keywords)
 	}
 
 	// Handle float methods
 	if obj.Type() == object.FLOAT_OBJ {
-		return callFloatMethod(obj.(*object.Float), method, args)
+		return callFloatMethod(ctx, obj.(*object.Float), method, args, keywords)
 	}
 
 	// Handle list methods
@@ -186,6 +186,10 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 				return applyFunctionWithContext(ctx, attr, args, keywords, env)
 			}
 		}
+		// A type's dunder used unbound: int.__add__(1, 2), object.__repr__(x).
+		if m := typeDunderMethod(obj.(*object.Builtin), method); m != nil {
+			return applyFunctionWithContext(ctx, m, args, keywords, env)
+		}
 	}
 
 	// Default to string methods if object is a string
@@ -212,10 +216,10 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 	}
 	// bool is an int: True.bit_length(), True.to_bytes(1, "big").
 	if b, ok := obj.(*object.Boolean); ok {
-		return callIntegerMethod(object.NewInteger(boolToInt64(b.BoolValue())), method, args, keywords)
+		return callIntegerMethod(ctx, b, object.NewInteger(boolToInt64(b.BoolValue())), method, args, keywords)
 	}
 
-	return attributeError(obj, method)
+	return missingBuiltinMethod(ctx, obj, method, args, keywords)
 }
 
 func callSuperMethod(ctx context.Context, super *object.Super, method string, args []object.Object, keywords object.Kwargs, env *object.Environment) object.Object {
@@ -506,6 +510,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		}
 		copied := object.NewDictSized(dict.Len())
 		copied.SetFactory(dict.Factory())
+		copied.SetOrdered(dict.IsOrderedDict())
 		copied.StoreFrom(dict)
 		return copied
 	case "setdefault":
@@ -624,7 +629,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		}
 		return notCallableError(pair.Value)
 	}
-	return attributeError(dict, method)
+	return missingBuiltinMethod(ctx, dict, method, args, keywords)
 }
 
 func callListMethod(ctx context.Context, list *object.List, method string, args []object.Object, keywords object.Kwargs, env *object.Environment) object.Object {
@@ -908,7 +913,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		}
 		return NULL
 	default:
-		return attributeError(list, method)
+		return missingBuiltinMethod(ctx, list, method, args, keywords)
 	}
 }
 
@@ -1093,7 +1098,7 @@ func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args [
 	if bytesViaStrMethods[method] {
 		return callBytesViaStr(ctx, b, method, args, keywords, env)
 	}
-	return attributeError(b, method)
+	return missingBuiltinMethod(ctx, b, method, args, keywords)
 }
 
 // bytesSplitArgs parses the (sep, maxsplit) arguments of bytes.split and
@@ -2122,7 +2127,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		return TRUE
 	default:
-		return attributeError(str, method)
+		return missingBuiltinMethod(ctx, str, method, args, keywords)
 	}
 }
 func callTupleMethod(ctx context.Context, tuple *object.Tuple, method string, args []object.Object, env *object.Environment) object.Object {
@@ -2187,7 +2192,7 @@ func callTupleMethod(ctx context.Context, tuple *object.Tuple, method string, ar
 		}
 		return errors.NewValueError("tuple.index(x): x not in tuple")
 	}
-	return attributeError(tuple, method)
+	return missingBuiltinMethod(ctx, tuple, method, args, object.Kwargs{})
 }
 
 func callFloatArrayMethod(fa *object.FloatArray, method string, args []object.Object) object.Object {
@@ -2389,7 +2394,7 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 		}
 		return nativeBoolToBooleanObject(set.IsSuperset(other))
 	default:
-		return attributeError(set, method)
+		return missingBuiltinMethod(ctx, set, method, args, keywords)
 	}
 	return NULL
 }

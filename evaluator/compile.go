@@ -3673,6 +3673,7 @@ func compileRaise(n *ast.RaiseStatement) object.EvalFn {
 		r := run(ctx, env)
 		if exc, ok := r.(*object.Exception); ok && exc.Raised && exc != causeExc {
 			exc.Cause = causeExc
+			exc.SuppressContext = true
 		}
 		return r
 	}
@@ -3849,8 +3850,15 @@ func compileTry(n *ast.TryStatement) object.EvalFn {
 				// Execute except block in the same environment so variables are accessible
 				result = runBlock(ctx, env, exceptBodies[i], exceptLines[i])
 
-				// Clear the current exception after except block
+				// Clear the current exception after except block; `as e`
+				// is unbound when the handler ends, as in Python.
 				env.Delete("__current_exception__")
+				if v := n.ExceptClauses[i].ExceptVar; v != nil {
+					env.Delete(v.Value())
+				}
+				if isRaised(result) || object.IsError(result) {
+					result = chainHandledException(result, exceptionObj)
+				}
 
 				// If except block didn't re-raise, the exception was handled.
 				// Preserve control-flow signals (return, break, continue) so they
@@ -3922,6 +3930,35 @@ func matchExceptClause(ctx context.Context, clauses []*ast.ExceptClause, result 
 		return i, exceptionObj, nil
 	}
 	return -1, exceptionObj, nil
+}
+
+// chainHandledException sets __context__ on an exception raised while
+// handling handled (an internal error becomes the exception it stands for,
+// so it can carry the chain). The chain is never made circular.
+func chainHandledException(result, handled object.Object) object.Object {
+	h, ok := handled.(*object.Exception)
+	if !ok || isProtected(result) {
+		return result
+	}
+	exc, ok := result.(*object.Exception)
+	if !ok {
+		err, isErr := result.(*object.Error)
+		if !isErr {
+			return result
+		}
+		exc = &object.Exception{Message: err.Message, ExceptionType: errorExceptionType(err), Raised: true}
+		result = exc
+	}
+	if exc == h || exc.Context != nil {
+		return result
+	}
+	for c, n := h, 0; c != nil && n < 1000; c, n = c.Context, n+1 {
+		if c == exc {
+			return result
+		}
+	}
+	exc.Context = h
+	return result
 }
 
 // bindExceptClause enters an except clause for the exception it caught.
@@ -4072,6 +4109,10 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 		// attributes, out of reach of any counted container.
 		object.TrackAlloc(class, classObjectSize)
 
+		// finish, when a library claims the base (typing.NamedTuple), turns
+		// the defined class into what the base makes.
+		var finish func(context.Context, *object.Class) object.Object
+
 		// Handle base class inheritance
 		if baseClassFn != nil {
 			// Evaluate the base class expression (can be dotted like html.parser.HTMLParser)
@@ -4084,6 +4125,8 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 			if baseBuiltin, isBuiltin := baseClassObj.(*object.Builtin); isBuiltin {
 				if baseBuiltin == objectBuiltin {
 					// class C(object): the same as class C:
+				} else if hook := object.ClassBaseHook(baseBuiltin); hook != nil {
+					finish = hook
 				} else if excName, isExc := exceptionClassName(baseBuiltin); isExc {
 					class.ExceptionBase = excName
 					// Store constructor args so raise/`e.args` can use them,
@@ -4207,8 +4250,15 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 			}
 		}
 
-		env.Set(name, class)
-		var result object.Object = class
+		var defined object.Object = class
+		if finish != nil {
+			defined = finish(ctx, class)
+			if propagates(defined) {
+				return defined
+			}
+		}
+		env.Set(name, defined)
+		result := defined
 		for i := len(decorators) - 1; i >= 0; i-- {
 			dec := decorators[i](ctx, env)
 			if propagates(dec) {
@@ -4219,7 +4269,7 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 				return result
 			}
 		}
-		if result != class {
+		if result != defined {
 			env.Set(name, result)
 		}
 		return result

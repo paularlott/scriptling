@@ -93,7 +93,7 @@ assert [e for e, _ in tied.most_common()] == ["x", "y", "z"]
 # --- OrderedDict / defaultdict behave ---
 from collections import OrderedDict, defaultdict
 od = OrderedDict([("b", 1), ("a", 2)])
-assert repr(od) == "{'b': 1, 'a': 2}"
+assert repr(od) == "OrderedDict({'b': 1, 'a': 2})"
 dd = defaultdict(list)
 dd["z"].append(1)
 dd["a"].append(2)

@@ -14,6 +14,7 @@ var (
 	typeNameTuple       = object.NewString("tuple")
 	typeNameDict        = object.NewString("dict")
 	typeNameDefaultDict = object.NewString("defaultdict")
+	typeNameOrderedDict = object.NewString("OrderedDict")
 	typeNameModule      = object.NewString("module")
 	typeNameSet         = object.NewString("set")
 	typeNameFrozenSet   = object.NewString("frozenset")
@@ -87,6 +88,9 @@ func typeOf(obj object.Object) object.Object {
 		}
 		if o.Factory() != nil {
 			return typeNameDefaultDict
+		}
+		if o.IsOrderedDict() {
+			return typeNameOrderedDict
 		}
 		return typeNameDict
 	case *object.Set:

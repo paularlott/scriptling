@@ -40,6 +40,7 @@ const (
 	ABCLibraryName         = "abc"
 	BisectLibraryName      = "bisect"
 	HeapqLibraryName       = "heapq"
+	DecimalLibraryName     = "decimal"
 )
 
 // RegisterAll registers all standard libraries
@@ -82,6 +83,7 @@ func RegisterAll(p interface{ RegisterLibrary(*object.Library) }) {
 	p.RegisterLibrary(ABCLibrary)
 	p.RegisterLibrary(BisectLibrary)
 	p.RegisterLibrary(HeapqLibrary)
+	p.RegisterLibrary(DecimalLibrary)
 }
 
 // LibraryNames returns the names of every library RegisterAll registers, in

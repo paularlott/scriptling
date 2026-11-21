@@ -126,6 +126,7 @@ Example:
 			// Note: In modern Python (3.7+), regular dicts maintain order
 			// Scriptling dicts also maintain order, so this just creates a dict
 			od := object.NewDict()
+			od.SetOrdered(true)
 
 			if len(args) > 1 {
 				return errors.NewTypeErrorTagged("OrderedDict expected at most 1 argument, got %d", len(args))
@@ -303,7 +304,7 @@ Example:
 					// datetime uses) so print() shows P(x=1, y='hi').
 					// A display form past the output limit is left to
 					// __repr__, which reports it when asked.
-					if display, errObj := fieldsRepr(typename.StringValue(), fieldNames, func(name string) (object.Object, bool) {
+					if display, errObj := fieldsRepr(nt.Class.Name, fieldNames, func(name string) (object.Object, bool) {
 						return nt.GetField(name)
 					}); errObj == nil {
 						nt.SetField("__str_repr__", object.NewString(display))
@@ -415,7 +416,7 @@ Example:
 						return err
 					}
 					nt := args[0].(*object.Instance)
-					display, errObj := fieldsRepr(typename.StringValue(), fieldNames, nt.GetField)
+					display, errObj := fieldsRepr(nt.Class.Name, fieldNames, nt.GetField)
 					if errObj != nil {
 						return errObj
 					}
@@ -444,12 +445,12 @@ Example:
 					}
 					// Recompute the precomputed display form for the new values.
 					delete(fields, "__str_repr__")
-					if display, errObj := fieldsRepr(typename.StringValue(), fieldNames, func(name string) (object.Object, bool) {
+					if display, errObj := fieldsRepr(nt.Class.Name, fieldNames, func(name string) (object.Object, bool) {
 						return fields[name], true
 					}); errObj == nil {
 						fields["__str_repr__"] = object.NewString(display)
 					}
-					return object.NewInstanceWithFields(ntClass, fields)
+					return object.NewInstanceWithFields(nt.Class, fields)
 				},
 				HelpText: `_replace(**changes) - Return a new instance with fields replaced`,
 			}
@@ -585,15 +586,13 @@ Example:
 					if err := errors.ExactArgs(args, 1); err != nil {
 						return err
 					}
-					nt := args[0].(*object.Instance)
+					// Hash as the tuple of the values does, so a named
+					// tuple and the equal plain tuple hash alike.
+					str := object.DictKey(&object.Tuple{Elements: fieldValues(args[0].(*object.Instance))})
 					h := uint64(14695981039346656037)
-					for _, name := range fieldNames {
-						if v, exists := nt.GetField(name); exists {
-							for _, c := range v.Inspect() {
-								h ^= uint64(c)
-								h *= 1099511628211
-							}
-						}
+					for i := 0; i < len(str); i++ {
+						h ^= uint64(str[i])
+						h *= 1099511628211
 					}
 					return object.NewInteger(int64(h))
 				},
@@ -667,9 +666,12 @@ Example:
 				HelpText: "index(value) - Position of the first field equal to value",
 			}
 
+			// BaseClass names tuple, so isinstance(p, tuple) holds as in
+			// Python (a named tuple is a tuple subclass).
 			ntClass = &object.Class{
-				Name:    typename.StringValue(),
-				Methods: methods,
+				Name:      typename.StringValue(),
+				Methods:   methods,
+				BaseClass: namedTupleBase,
 			}
 
 			return ntClass
@@ -727,6 +729,11 @@ Example:
 	"deque":   DequeClass,
 }, "Python-compatible collections library for specialized container datatypes")
 
+// namedTupleBase is the base class of every namedtuple class: it has no
+// members of its own and exists so isinstance(p, tuple) and
+// issubclass(P, tuple) hold.
+var namedTupleBase = &object.Class{Name: "tuple", Methods: map[string]object.Object{}}
+
 // copyDequeFn is wired in init() to break the DequeClass initialization
 // cycle (the class's copy method creates a deque instance of the class).
 var copyDequeFn func(object.Object) object.Object
@@ -737,6 +744,7 @@ func init() {
 	copyDequeFn = copyDeque
 	dequeClassRef = DequeClass
 	counterClassRef = CounterClass
+	object.OrderedDictType = CollectionsLibrary.Functions()["OrderedDict"]
 }
 
 // reprBuilder assembles a library type's repr, such as P(x=1, y=[2]), held

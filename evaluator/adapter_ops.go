@@ -19,11 +19,26 @@ var binaryOps = func() map[string]ast.Op {
 			m[op.String()] = op
 		}
 	}
+	// The augmented assignments ("+=", ...) give the operator module's
+	// in-place functions: lists, dicts and sets update in place.
+	for op := ast.OpAddEq; op <= ast.OpDivEq; op++ {
+		m[op.String()] = op
+	}
 	return m
 }()
 
 func (evalAdapter) BinaryOp(ctx context.Context, op string, left, right object.Object) object.Object {
 	o, ok := binaryOps[op]
+	if ok && o >= ast.OpAddEq && o <= ast.OpDivEq {
+		result, done, errObj := applyAugmentedOp(ctx, o, left, right, GetEnvFromContext(ctx))
+		switch {
+		case errObj != nil:
+			return errObj
+		case done:
+			return left
+		}
+		return result
+	}
 	if !ok {
 		return &object.Exception{Message: "unknown operator " + op, ExceptionType: object.ExceptionTypeValueError, Raised: true}
 	}

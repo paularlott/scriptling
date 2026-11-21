@@ -247,10 +247,15 @@ Formats a time according to the given format string. If tuple is omitted, uses c
 			// struct_time holds the fields as parsed (a leap second
 			// included), whatever the zone.
 			sec := min(r.second, 59)
-			if _, errObj := (&datetimeFields{r.year, r.month, r.day, r.hour, r.minute, sec, 0}).time(time.UTC); errObj != nil {
+			year := r.year
+			if r.leapFix {
+				year = 1904
+			}
+			if _, errObj := (&datetimeFields{year, r.month, r.day, r.hour, r.minute, sec, 0}).time(time.UTC); errObj != nil {
 				return errObj
 			}
-			tt := timeToTuple(time.Date(r.year, time.Month(r.month), r.day, r.hour, r.minute, sec, 0, time.UTC), false)
+			tt := timeToTuple(time.Date(year, time.Month(r.month), r.day, r.hour, r.minute, sec, 0, time.UTC), false)
+			setStructTimeField(tt, "tm_year", 0, int64(r.year))
 			setStructTimeField(tt, "tm_sec", 5, int64(r.second))
 			setStructTimeField(tt, "tm_isdst", 8, -1)
 			return tt
@@ -327,6 +332,10 @@ func timeToTuple(t time.Time, utc bool) *object.Instance {
 	// Python's tm_wday is Monday=0; Go's Weekday is Sunday=0.
 	weekday := (int(t.Weekday()) + 6) % 7
 	yearday := t.YearDay()
+	var isdst int64
+	if t.IsDST() {
+		isdst = 1
+	}
 
 	fields := map[string]object.Object{
 		"tm_year":  object.NewInteger(int64(year)),
@@ -337,7 +346,7 @@ func timeToTuple(t time.Time, utc bool) *object.Instance {
 		"tm_sec":   object.NewInteger(int64(second)),
 		"tm_wday":  object.NewInteger(int64(weekday)),
 		"tm_yday":  object.NewInteger(int64(yearday)),
-		"tm_isdst": object.NewInteger(0),
+		"tm_isdst": object.NewInteger(isdst),
 	}
 	inst := object.NewInstanceWithFields(StructTimeClass, fields)
 	inst.SetField("_order", &object.List{Elements: []object.Object{
@@ -403,6 +412,9 @@ var StructTimeClass = &object.Class{
 				}
 				inst := args[0].(*object.Instance)
 				order, _ := inst.Field("_order").(*object.List)
+				if sl, ok := args[1].(*object.Slice); ok && order != nil {
+					return &object.Tuple{Elements: sliceElements(order.Elements, sl)}
+				}
 				idx, err := args[1].AsInt()
 				if err != nil {
 					name, nerr := args[1].AsString()

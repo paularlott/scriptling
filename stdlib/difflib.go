@@ -155,23 +155,27 @@ func lcsLength(a, b []string, meter *libutil.WorkMeter) (int, object.Object) {
 	}
 	prev := make([]int, m+1)
 	curr := make([]int, m+1)
-	for i := 1; i <= n; i++ {
+	for _, ai := range a {
 		if errObj := meter.Add(m); errObj != nil {
 			return 0, errObj
 		}
-		for j := 1; j <= m; j++ {
-			if a[i-1] == b[j-1] {
-				curr[j] = prev[j-1] + 1
-			} else if prev[j] > curr[j-1] {
-				curr[j] = prev[j]
-			} else {
-				curr[j] = curr[j-1]
+		// curr[0] stays 0 and every other cell is rewritten, so the rows
+		// swap without clearing.
+		left := 0
+		up := prev[1 : m+1]
+		diag := prev[:m]
+		row := curr[1 : m+1]
+		for j, bj := range b {
+			v := left
+			if ai == bj {
+				v = diag[j] + 1
+			} else if up[j] > v {
+				v = up[j]
 			}
+			row[j] = v
+			left = v
 		}
 		prev, curr = curr, prev
-		for k := range curr {
-			curr[k] = 0
-		}
 	}
 	return prev[m], nil
 }

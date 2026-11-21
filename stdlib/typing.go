@@ -23,9 +23,29 @@ var typingAliasClass = &object.Class{
 				if err := errors.NoKwargs("__getitem__", kwargs); err != nil {
 					return err
 				}
+				if err := errors.ExactArgs(args, 2); err != nil {
+					return err
+				}
+				// Optional[X] is X | None and Union[X, Y] is X | Y, which
+				// isinstance accepts; other aliases subscript to themselves.
+				self, _ := args[0].(*object.Instance)
+				if self == nil {
+					return args[0]
+				}
+				if name, ok := self.Field("__alias_name__").(*object.String); ok {
+					switch name.StringValue() {
+					case "Optional":
+						return object.NewTypeUnion([]object.Object{args[1], &object.Null{}})
+					case "Union":
+						if t, ok := args[1].(*object.Tuple); ok {
+							return object.NewTypeUnion(t.Elements)
+						}
+						return args[1]
+					}
+				}
 				return args[0]
 			},
-			HelpText: "__getitem__(item) - Typing aliases accept any subscript",
+			HelpText: "__getitem__(item) - Optional[X] and Union[X, Y] make a union; other aliases accept any subscript",
 		},
 		"__call__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -151,6 +171,7 @@ func init() {
 		},
 		HelpText: "NamedTuple(typename, [(name, type), ...]) - A namedtuple class",
 	}
+	object.ClassBaseHook = typingClassBaseHook
 	consts := TypingLibrary.Constants()
 	for _, n := range []string{"Generic", "Protocol", "TypedDict"} {
 		consts[n] = typingBaseClass(n)
@@ -186,3 +207,45 @@ var TypingLibrary = object.NewLibrary(TypingLibraryName, map[string]*object.Buil
 	"Type":     typingAlias("Type"),
 	"Union":    typingAlias("Union"),
 }, "Typing placeholders: annotations are accepted and discarded, as always")
+
+// typingClassBaseHook makes class P(NamedTuple) a namedtuple class.
+func typingClassBaseHook(base *object.Builtin) func(context.Context, *object.Class) object.Object {
+	if base == TypingLibrary.Functions()["NamedTuple"] {
+		return namedTupleFromClass
+	}
+	return nil
+}
+
+// namedTupleFromClass builds the namedtuple class for class P(NamedTuple):
+// the annotated names are the fields, their assigned values the defaults,
+// and the body's other members (methods, class attributes, the docstring)
+// are kept.
+func namedTupleFromClass(ctx context.Context, cls *object.Class) object.Object {
+	names := make([]object.Object, len(cls.FieldNames))
+	var defaults []object.Object
+	isField := make(map[string]bool, len(cls.FieldNames))
+	for i, f := range cls.FieldNames {
+		names[i] = object.NewString(f)
+		isField[f] = true
+		if v, ok := cls.Methods[f]; ok {
+			defaults = append(defaults, v)
+		} else if len(defaults) > 0 {
+			return errors.NewTypeErrorTagged("Non-default namedtuple field %s cannot follow default field %s", f, cls.FieldNames[i-1])
+		}
+	}
+	kw := map[string]object.Object{}
+	if len(defaults) > 0 {
+		kw["defaults"] = &object.Tuple{Elements: defaults}
+	}
+	made := CollectionsLibrary.Functions()["namedtuple"].Fn(ctx, object.NewKwargs(kw), object.NewString(cls.Name), &object.List{Elements: names})
+	nt, ok := made.(*object.Class)
+	if !ok {
+		return made
+	}
+	for name, m := range cls.Methods {
+		if !isField[name] {
+			nt.Methods[name] = m
+		}
+	}
+	return nt
+}

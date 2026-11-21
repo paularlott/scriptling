@@ -528,3 +528,144 @@ func enumValueLookup(class *object.Class, value object.Object) object.Object {
 		Raised:        true,
 	}
 }
+
+// enumFunctional is Enum("Color", names, *, start=1, ...): names is a string
+// of names separated by spaces or commas, a list of names, a list of
+// (name, value) pairs, or a dict of name to value. Unvalued names take
+// auto() values (start, start+1, ...; powers of two for flags; lower-case
+// names for StrEnum).
+func enumFunctional(base *object.Class, args []object.Object, keywords object.Kwargs) object.Object {
+	if keywords.Len() > 0 {
+		if err := errors.CheckKwargs(base.Name, keywords, "names", "module", "qualname", "type", "start", "boundary", "value"); err != nil {
+			return err
+		}
+	}
+	if v := keywords.Get("value"); v != nil {
+		args = append([]object.Object{v}, args...)
+	}
+	if v := keywords.Get("names"); v != nil {
+		args = append(args, v)
+	}
+	if len(args) != 2 {
+		return errors.NewTypeErrorTagged("%s() takes 2 positional arguments (the class name and its member names) but %d were given", base.Name, len(args))
+	}
+	name, ok := args[0].(*object.String)
+	if !ok {
+		return errors.NewTypeErrorTagged("%s() argument 1 must be str, not %s", base.Name, object.PythonTypeName(args[0]))
+	}
+	start := int64(1)
+	if s := keywords.Get("start"); s != nil {
+		n, ok := s.(*object.Integer)
+		if !ok {
+			return errors.NewTypeErrorTagged("start must be an integer")
+		}
+		start = n.IntValue()
+	}
+	isFlag := base.Name == "Flag" || base.Name == "IntFlag"
+	next := start
+	autoValue := func() object.Object {
+		if isFlag || base.Name == "StrEnum" {
+			return object.NewSentinel("auto", "auto")
+		}
+		v := object.NewInteger(next)
+		next++
+		return v
+	}
+	var names []string
+	values := map[string]object.Object{}
+	add := func(n string, v object.Object) {
+		if _, dup := values[n]; !dup {
+			names = append(names, n)
+		}
+		values[n] = v
+	}
+	switch src := args[1].(type) {
+	case *object.String:
+		for _, f := range strings.FieldsFunc(src.StringValue(), func(r rune) bool { return r == ' ' || r == ',' }) {
+			add(f, autoValue())
+		}
+	case *object.Dict:
+		for _, p := range src.OrderedPairs() {
+			k, ok := p.Key.(*object.String)
+			if !ok {
+				return errors.NewTypeErrorTagged("enum member names must be strings")
+			}
+			add(k.StringValue(), p.Value)
+		}
+	case *object.List, *object.Tuple:
+		var elems []object.Object
+		if l, ok := src.(*object.List); ok {
+			elems = l.Elements
+		} else {
+			elems = src.(*object.Tuple).Elements
+		}
+		for _, e := range elems {
+			switch item := e.(type) {
+			case *object.String:
+				add(item.StringValue(), autoValue())
+			case *object.Tuple, *object.List:
+				var pair []object.Object
+				if t, ok := item.(*object.Tuple); ok {
+					pair = t.Elements
+				} else {
+					pair = item.(*object.List).Elements
+				}
+				k, ok := pair[0].(*object.String)
+				if len(pair) != 2 || !ok {
+					return errors.NewTypeErrorTagged("enum members must be names or (name, value) pairs")
+				}
+				add(k.StringValue(), pair[1])
+			default:
+				return errors.NewTypeErrorTagged("enum members must be names or (name, value) pairs")
+			}
+		}
+	default:
+		return errors.NewTypeErrorTagged("enum member names must be a string, a sequence or a mapping, not %s", object.PythonTypeName(args[1]))
+	}
+	class := &object.Class{
+		Name:        name.StringValue(),
+		BaseClass:   base,
+		Methods:     make(map[string]object.Object, len(names)+4),
+		AssignNames: names,
+		IsEnum:      true,
+		IsIntEnum:   base.Name == "IntEnum" || base.Name == "IntFlag",
+	}
+	for mname, m := range base.Methods {
+		class.Methods[mname] = m
+	}
+	for _, n := range names {
+		class.Methods[n] = values[n]
+	}
+	if err := buildEnumMembers(class); err != nil {
+		return err
+	}
+	return class
+}
+
+// enumMissing is Color(value) for a value no member has, on a class that
+// defines _missing_: its result is the member, or None for the ValueError.
+func enumMissing(ctx context.Context, class *object.Class, value, notFound object.Object, env *object.Environment) object.Object {
+	fn, _ := class.LookupMember("_missing_")
+	callArgs := []object.Object{value}
+	switch m := fn.(type) {
+	case *object.ClassMethod:
+		fn, callArgs = m.Fn, []object.Object{class, value}
+	case *object.StaticMethod:
+		fn = m.Fn
+	}
+	r := applyFunctionWithContext(ctx, fn, callArgs, object.Kwargs{}, env)
+	if propagates(r) {
+		return r
+	}
+	if _, none := r.(*object.Null); none {
+		return notFound
+	}
+	if inst, ok := r.(*object.Instance); ok && inst.Class == class {
+		return r
+	}
+	return &object.Exception{
+		Message:       fmt.Sprintf("error in %s._missing_: returned %s instead of None or a valid member", class.Name, r.Inspect()),
+		ExceptionType: object.ExceptionTypeTypeError,
+		Raised:        true,
+	}
+}

@@ -609,6 +609,24 @@ func deepEqual(budget *cmpBudget, a, b object.Object, depth int) (bool, object.O
 		if eq, numeric := mixedNumbersEqual(a, b); numeric {
 			return eq, nil
 		}
+		// An instance with a Go-native __eq__ (a named tuple against a
+		// plain tuple) compares itself, on either side.
+		inst, isInst := a.(*object.Instance)
+		other := b
+		if !isInst {
+			inst, isInst = b.(*object.Instance)
+			other = a
+		}
+		if isInst {
+			if eqFn, isBuiltin := inst.Class.Methods["__eq__"].(*object.Builtin); isBuiltin {
+				r := eqFn.Fn(object.WithCompareDepth(context.Background(), depth+1), object.NewKwargs(nil), inst, other)
+				if propagates(r) {
+					return false, r
+				}
+				r2, ok := r.(*object.Boolean)
+				return ok && r2.BoolValue(), nil
+			}
+		}
 		// Same bridge as objectsEqual: type-name strings and type builtins
 		// ("int" vs int) name the same type.
 		return typeBridgeEqual(a, b), nil
@@ -858,6 +876,13 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			if result := evalReflectedArithmetic(ctx, operator, left, rInst, env); result != nil {
 				return result
 			}
+			// Rich comparisons reflect too: 1 < x is x.__gt__(1). Equality
+			// keeps its own path (builtins compare unequal to instances).
+			if operator != ast.OpEq && operator != ast.OpNeq {
+				if result := evalReflectedInstanceComparison(ctx, operator, left, right, env); result != nil {
+					return result
+				}
+			}
 		}
 	}
 
@@ -978,6 +1003,10 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				}
 				return orderResult(operator, cmp)
 			}
+			// A tuple subclass (a named tuple) on the right compares itself.
+			if result := evalReflectedInstanceComparison(ctx, operator, left, right, env); result != nil {
+				return result
+			}
 		case ast.OpAdd:
 			if r, ok := right.(*object.Tuple); ok {
 				if errObj := checkElementCount(len(l.Elements) + len(r.Elements)); errObj != nil {
@@ -1000,6 +1029,11 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			}
 			return newUnsupportedOperandError(operator, left, right)
 		case ast.OpEq, ast.OpNeq:
+			if _, ok := right.(*object.Instance); ok {
+				if result := evalReflectedInstanceComparison(ctx, operator, left, right, env); result != nil {
+					return result
+				}
+			}
 			eq, rerr := objectsDeepEqual(ctx, left, right)
 			if rerr != nil {
 				return rerr
@@ -1195,6 +1229,10 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 		}
 		return nativeBoolToBooleanObject(!eq)
 	default:
+		// int | None, list[int] | str: a union of types.
+		if operator == ast.OpBitOr && isTypeOperand(left) && isTypeOperand(right) {
+			return object.NewTypeUnion([]object.Object{left, right})
+		}
 		return newUnsupportedOperandError(operator, left, right)
 	}
 }
@@ -1735,6 +1773,24 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 	return object.NewString(result.String())
 }
 
+// percentNumericInstance converts an instance for a numeric % conversion
+// with __int__ (or __index__) or __float__; nil when it has neither.
+func percentNumericInstance(ctx context.Context, inst *object.Instance, conversion byte, env *object.Environment) object.Object {
+	switch conversion {
+	case 'd', 'i', 'u':
+		for _, name := range []string{"__int__", "__index__"} {
+			if r := callDunderMethod(ctx, inst, name, nil, env); r != nil {
+				return r
+			}
+		}
+	case 'x', 'X', 'o', 'c':
+		return callDunderMethod(ctx, inst, "__index__", nil, env)
+	case 'f', 'F', 'e', 'E', 'g', 'G':
+		return callDunderMethod(ctx, inst, "__float__", nil, env)
+	}
+	return nil
+}
+
 // applyStringSpec applies a % format's width/precision/flags to a string
 // body (for %s and %r): zero-padding is not a string conversion in Python, so
 // the 0 flag is dropped; width pads with spaces, '-' left-justifies, and
@@ -1756,6 +1812,16 @@ func applyStringSpec(spec string, body string) string {
 
 // formatPercentValue formats a single value according to a Python % format specifier.
 func formatPercentValue(ctx context.Context, spec string, conversion byte, val object.Object, env *object.Environment) (string, object.Object) {
+	if inst, ok := val.(*object.Instance); ok {
+		// A numeric conversion of an instance goes through int() or
+		// float(), as in Python: '%.2f' % Decimal('1.005').
+		if v := percentNumericInstance(ctx, inst, conversion, env); v != nil {
+			if propagates(v) {
+				return "", v
+			}
+			val = v
+		}
+	}
 	switch conversion {
 	case 'f', 'F', 'e', 'E', 'g', 'G':
 		// inf and nan read as Python spells them, not Go's +Inf and NaN.
@@ -2001,6 +2067,10 @@ var operatorToDunderMethod = map[ast.Op]string{
 	ast.OpMod:      "__mod__",
 	ast.OpBitOr:    "__or__",
 	ast.OpBitAnd:   "__and__",
+	ast.OpBitXor:   "__xor__",
+	ast.OpPow:      "__pow__",
+	ast.OpLShift:   "__lshift__",
+	ast.OpRShift:   "__rshift__",
 }
 
 // reflectedArithmeticDunder maps an arithmetic operator to the dunder its
@@ -2014,6 +2084,10 @@ var reflectedArithmeticDunder = map[ast.Op]string{
 	ast.OpMod:      "__rmod__",
 	ast.OpBitOr:    "__ror__",
 	ast.OpBitAnd:   "__rand__",
+	ast.OpBitXor:   "__rxor__",
+	ast.OpPow:      "__rpow__",
+	ast.OpLShift:   "__rlshift__",
+	ast.OpRShift:   "__rrshift__",
 }
 
 // formatsAnyOperand reports whether left handles operator for every right
@@ -2515,7 +2589,13 @@ func createInstanceKw(ctx context.Context, class *object.Class, args []object.Ob
 				Raised:        true,
 			}
 		}
-		return enumValueLookup(class, args[0])
+		r := enumValueLookup(class, args[0])
+		if exc, miss := r.(*object.Exception); miss && exc.ExceptionType == object.ExceptionTypeValueError {
+			if _, has := class.LookupMember("_missing_"); has {
+				return enumMissing(ctx, class, args[0], r, env)
+			}
+		}
+		return r
 	}
 	if class.AbstractMethods != nil {
 		return abstractInstantiationError(class)
@@ -2531,6 +2611,13 @@ func createInstanceKw(ctx context.Context, class *object.Class, args []object.Ob
 		}
 	}
 	if initMethod == nil && (len(args) > 0 || keywords.Len() > 0 || len(kw.names) > 0) {
+		// Enum("Color", "RED GREEN"): the functional API makes an enum.
+		if !class.IsEnum && isEnumBaseName(class.Name) && class.Methods["__members__"] == nil {
+			if len(kw.names) > 0 {
+				keywords = object.NewKwargsFrom(kw.names, kw.values)
+			}
+			return enumFunctional(class, args, keywords)
+		}
 		// As in Python: a class with no __init__ anywhere in its bases takes
 		// no arguments.
 		return &object.Exception{
@@ -4737,6 +4824,8 @@ var exceptionParents = map[string]string{
 	"UnboundLocalError":                   "NameError",
 	"JSONDecodeError":                     "ValueError",
 	"StatisticsError":                     "ValueError",
+	"InvalidOperation":                    "ArithmeticError",
+	"DivisionByZero":                      "ZeroDivisionError",
 }
 
 // matchesNamedExceptionTypeChain reports whether an exception of type

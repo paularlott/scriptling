@@ -75,6 +75,7 @@ func shallowCopy(obj object.Object) object.Object {
 	case *object.Dict:
 		clone := object.NewDict()
 		clone.SetFactory(o.Factory())
+		clone.SetOrdered(o.IsOrderedDict())
 		clone.StoreFrom(o)
 		return clone
 	case *object.Set:
@@ -84,6 +85,9 @@ func shallowCopy(obj object.Object) object.Object {
 	case *object.Instance:
 		if isDeque(o) {
 			return copyDeque(o)
+		}
+		if _, ok := o.NativeData.(*decimal); ok {
+			return o // immutable, safe to share
 		}
 		clone := object.NewInstance(o.Class)
 		o.RangeFields(func(k string, v object.Object) bool {
@@ -169,6 +173,7 @@ func deepCopyDepth(ctx context.Context, obj object.Object, memo map[object.Objec
 		}
 		result := object.NewDict()
 		result.SetFactory(v.Factory())
+		result.SetOrdered(v.IsOrderedDict())
 		memo[obj] = result
 		// Keys are hashable, hence immutable; values may nest arbitrarily.
 		// The copy preserves the dict's insertion order.

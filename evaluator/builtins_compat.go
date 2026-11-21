@@ -159,7 +159,7 @@ func isClassLike(o object.Object) bool {
 	case *object.Class:
 		return true
 	case *object.Builtin:
-		if v == objectBuiltin || v == object.DefaultDictType {
+		if v == objectBuiltin || v == object.DefaultDictType || v == object.OrderedDictType {
 			return true
 		}
 		if _, ok := typeBuiltins[v]; ok {
@@ -208,6 +208,19 @@ func issubclassOne(cls, parent object.Object) bool {
 		cExc := exceptionNameOf(cls)
 		return cExc != "" && matchesNamedExceptionTypeChain(cExc, pExc, nil)
 	}
+	if c, ok := cls.(*object.Class); ok {
+		// A class whose chain reaches a builtin type's stand-in base (a
+		// namedtuple class derives from one named tuple), matched by name
+		// as isinstance does.
+		if name := typeBuiltins[pb]; name != "" {
+			for c = c.BaseClass; c != nil; c = c.BaseClass {
+				if c.Name == name {
+					return true
+				}
+			}
+		}
+		return false
+	}
 	cb, ok := cls.(*object.Builtin)
 	if !ok {
 		return false
@@ -216,7 +229,7 @@ func issubclassOne(cls, parent object.Object) bool {
 	case "int":
 		return typeBuiltins[cb] == "bool"
 	case "dict":
-		return cb == object.DefaultDictType
+		return cb == object.DefaultDictType || cb == object.OrderedDictType
 	}
 	return false
 }
@@ -239,6 +252,14 @@ func issubclassFn(ctx context.Context, kwargs object.Kwargs, args ...object.Obje
 		parents = t.Elements
 	}
 	for _, p := range parents {
+		if members, isUnion := object.TypeUnionMembers(p); isUnion {
+			for _, m := range members {
+				if _, none := m.(*object.Null); !none && isClassLike(m) && issubclassOne(cls, m) {
+					return TRUE
+				}
+			}
+			continue
+		}
 		if !isClassLike(p) {
 			return errors.NewTypeErrorTagged("issubclass() arg 2 must be a class, a tuple of classes, or a union")
 		}

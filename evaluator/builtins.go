@@ -1,6 +1,7 @@
 package evaluator
 
 import (
+	"bytes"
 	"context"
 	stderrors "errors"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 	"unsafe"
 
 	"github.com/paularlott/scriptling/ast"
@@ -44,6 +47,9 @@ var (
 
 	// hashInstanceFn calls __hash__ on an instance; set in init() to break init cycle
 	hashInstanceFn func(ctx context.Context, inst *object.Instance) object.Object
+	// instanceDunderFn is callDunderMethod (round() and divmod() call
+	// __round__ and __divmod__); set in init() to break the init cycle.
+	instanceDunderFn func(ctx context.Context, inst *object.Instance, method string, args []object.Object, env *object.Environment) object.Object
 
 	// typeBuiltins maps type-related builtin pointers to their names for isinstance()
 	typeBuiltins map[*object.Builtin]string
@@ -1060,6 +1066,12 @@ Example:
 			if len(args) == 2 && args[1] == NULL {
 				args = args[:1] // round(x, None) is round(x)
 			}
+			if inst, ok := args[0].(*object.Instance); ok {
+				// round(x) calls x.__round__() (Decimal, Fraction, user types).
+				if r := instanceDunderFn(ctx, inst, "__round__", args[1:], GetEnvFromContext(ctx)); r != nil {
+					return r
+				}
+			}
 			if b, ok := args[0].(*object.Boolean); ok {
 				args = []object.Object{object.NewInteger(boolToInt64(b.BoolValue())), args[len(args)-1]}[:len(args)]
 			}
@@ -1227,6 +1239,17 @@ Equivalent to base**exp or base**exp % mod if mod is given.`,
 				}
 				return &object.Tuple{Elements: []object.Object{q, r}}
 			}
+			// Instances implement divmod() with __divmod__ / __rdivmod__.
+			if inst, ok := a.(*object.Instance); ok {
+				if r := instanceDunderFn(ctx, inst, "__divmod__", args[1:], GetEnvFromContext(ctx)); r != nil && r != notImplementedValue {
+					return r
+				}
+			}
+			if inst, ok := b.(*object.Instance); ok {
+				if r := instanceDunderFn(ctx, inst, "__rdivmod__", args[:1], GetEnvFromContext(ctx)); r != nil && r != notImplementedValue {
+					return r
+				}
+			}
 			af, aerr := numberAsFloat(a)
 			bf, berr := numberAsFloat(b)
 			if aerr || berr {
@@ -1324,6 +1347,18 @@ Equivalent to (a // b, a % b) for integers.`,
 			obj := args[0]
 
 			for _, typeArg := range typeArgs {
+				// A union (int | None) matches when any member does.
+				if b, ok := typeArg.(*object.Builtin); ok && b.Attributes != nil {
+					if members, isUnion := object.TypeUnionMembers(b); isUnion {
+						for _, m := range unionTypeArgs(members) {
+							r := isinstanceFn(ctx, kwargs, obj, m)
+							if r != FALSE {
+								return r
+							}
+						}
+						continue
+					}
+				}
 				// Check for class type (before AsString, since Class.AsString returns name)
 				if class, ok := typeArg.(*object.Class); ok {
 					if inst, ok := obj.(*object.Instance); ok {
@@ -1342,8 +1377,8 @@ Equivalent to (a // b, a % b) for integers.`,
 					continue
 				}
 
-				if b, ok := typeArg.(*object.Builtin); ok && b == object.DefaultDictType {
-					if d, isDict := obj.(*object.Dict); isDict && d.IsDefaultDict() {
+				if b, ok := typeArg.(*object.Builtin); ok && (b == object.DefaultDictType || b == object.OrderedDictType) {
+					if d, isDict := obj.(*object.Dict); isDict && (d.IsDefaultDict() && b == object.DefaultDictType || d.IsOrderedDict() && b == object.OrderedDictType) {
 						return TRUE
 					}
 					continue
@@ -2207,6 +2242,7 @@ issubclass(bool, int) and issubclass(MyError, Exception) are True.`,
 			case *object.Dict:
 				copied := object.NewDictSized(o.Len())
 				copied.SetFactory(o.Factory())
+				copied.SetOrdered(o.IsOrderedDict())
 				copied.StoreFrom(o)
 				return copied
 			case *object.Set:
@@ -2653,6 +2689,20 @@ func compareForSortDepth(ctx context.Context, left, right object.Object, env *ob
 			return compareElements(ctx, l.Elements, r.Elements, env, depth, budget)
 		}
 	}
+	// Rarer orderable pairs, checked only once the common ones missed:
+	// bytes, and a value against an instance (a namedtuple against a plain
+	// tuple, sorted([obj, 1])) through the instance's reflected comparison.
+	if l, ok := left.(*object.Bytes); ok {
+		if r, ok := right.(*object.Bytes); ok {
+			return bytes.Compare(l.BytesValue(), r.BytesValue()), nil
+		}
+	}
+	if _, ok := right.(*object.Instance); ok {
+		if depth > 0 {
+			ctx = object.WithCompareDepth(ctx, depth+1)
+		}
+		return compareObjectsCtx(ctx, left, right, env)
+	}
 	return 0, &object.Exception{
 		Message:       fmt.Sprintf("'<' not supported between instances of '%s' and '%s'", getTypeName(left), getTypeName(right)),
 		ExceptionType: object.ExceptionTypeTypeError,
@@ -2789,6 +2839,7 @@ func init() {
 	}
 	getAttributeFn = getAttribute
 	attachTypeMethods()
+	instanceDunderFn = callDunderMethod
 	hashInstanceFn = func(ctx context.Context, inst *object.Instance) object.Object {
 		hashFn := inst.Class.Methods["__hash__"]
 		return applyFunctionWithContext(ctx, hashFn, []object.Object{inst}, object.Kwargs{}, nil)
@@ -4138,6 +4189,35 @@ func minMaxFunctionImpl(ctx context.Context, kwargs object.Kwargs, wantMax bool,
 	return best
 }
 
+// asciiDecimalDigits replaces the Unicode decimal digits in s (Arabic-Indic,
+// Devanagari, fullwidth, ...) with ASCII ones, as int() and float() accept
+// them; ASCII text is returned unchanged.
+func asciiDecimalDigits(s string) string {
+	ascii := true
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			ascii = false
+			break
+		}
+	}
+	if ascii {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if r >= utf8.RuneSelf && unicode.Is(unicode.Nd, r) {
+			// Decimal digits come in runs of ten starting at zero.
+			start := r
+			for unicode.Is(unicode.Nd, start-1) {
+				start--
+			}
+			r = '0' + (r-start)%10
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 // parseIntLiteral converts a string to an int as Python's int(s, base) does:
 // surrounding whitespace, a sign, a prefix matching the base (any prefix for
 // base 0) and single underscores between digits are allowed. Anything else
@@ -4146,7 +4226,7 @@ func parseIntLiteral(text string, base int) object.Object {
 	invalid := func() object.Object {
 		return errors.NewValueError("invalid literal for int() with base %d: %s", base, object.ReprString(text))
 	}
-	s := strings.TrimSpace(text)
+	s := strings.TrimSpace(asciiDecimalDigits(text))
 	sign := ""
 	if strings.HasPrefix(s, "-") || strings.HasPrefix(s, "+") {
 		sign, s = s[:1], s[1:]
@@ -4196,7 +4276,7 @@ func parseFloatLiteral(text string) object.Object {
 	invalid := func() object.Object {
 		return errors.NewValueError("could not convert string to float: %s", object.ReprString(text))
 	}
-	s := strings.TrimSpace(text)
+	s := strings.TrimSpace(asciiDecimalDigits(text))
 	body := strings.TrimLeft(s, "+-")
 	if len(s)-len(body) > 1 {
 		return invalid()

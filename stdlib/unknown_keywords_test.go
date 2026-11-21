@@ -16,6 +16,8 @@ import (
 var stdlibAcceptingAnyKeyword = map[string]string{
 	"functools.partial":               "stores the keywords for the wrapped function",
 	"operator.methodcaller":           "stores the keywords for the method",
+	"operator.call":                   "passes the keywords to the callable",
+	"operator.__call__":               "passes the keywords to the callable",
 	"collections.Counter":             "keywords are initial counts",
 	"collections.Counter.__init__":    "keywords are initial counts",
 	"collections.Counter.update":      "keywords are counts to add",

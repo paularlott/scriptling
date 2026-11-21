@@ -83,14 +83,15 @@ const (
 )
 
 type genRegion struct {
-	kind    uint8
-	except  bool  // regHandler: an except clause body (clears the handled exception)
-	parent  int32 // enclosing region (0 = none)
-	slot    int   // try: parked-completion slot; with: manager slot
-	finally int   // try regions: finally body start, -1 = none
-	end     int   // with: index after the statement (where a suppressed exception resumes)
-	clauses []*ast.ExceptClause
-	starts  []int // regTry: item index of each except clause body
+	kind      uint8
+	except    bool   // regHandler: an except clause body (clears the handled exception)
+	exceptVar string // regHandler: the clause's `as` name, unbound when it ends
+	parent    int32  // enclosing region (0 = none)
+	slot      int    // try: parked-completion slot; with: manager slot
+	finally   int    // try regions: finally body start, -1 = none
+	end       int    // with: index after the statement (where a suppressed exception resumes)
+	clauses   []*ast.ExceptClause
+	starts    []int // regTry: item index of each except clause body
 }
 
 // genPlan is a generator function's compiled shape.
@@ -220,12 +221,17 @@ func buildGeneratorPlan(body *ast.BlockStatement) *genPlan {
 				cur = parent
 				toF := []int{emit(genItem{kind: genJump})}
 				for i, ec := range st.ExceptClauses {
-					id := addRegion(genRegion{kind: regHandler, except: true, parent: parent, slot: slot, finally: -1})
+					var asName ast.Expression
+					exceptVar := ""
+					if ec.ExceptVar != nil {
+						asName, exceptVar = ec.ExceptVar, ec.ExceptVar.Value()
+					}
+					id := addRegion(genRegion{kind: regHandler, except: true, exceptVar: exceptVar, parent: parent, slot: slot, finally: -1})
 					ids = append(ids, id)
 					plan.regions[tryID-1].starts[i] = len(plan.items)
 					cur = id
 					buildBlock(ec.Body, brk, cont, depth)
-					toF = append(toF, emit(genItem{kind: genExceptEnd}))
+					toF = append(toF, emit(genItem{kind: genExceptEnd, target: asName}))
 					cur = parent
 				}
 				f := len(plan.items)
@@ -621,7 +627,15 @@ func (st *genState) unwind(ctx context.Context, g *object.Instance, r int32, c g
 			}
 		case regHandler:
 			if reg.except {
+				if c.kind == compRaise {
+					if handled, ok := st.env.Get("__current_exception__"); ok {
+						c.val = chainHandledException(c.val, handled)
+					}
+				}
 				st.env.Delete("__current_exception__")
+				if reg.exceptVar != "" {
+					st.env.Delete(reg.exceptVar)
+				}
 			}
 			if reg.finally >= 0 {
 				st.park(reg.slot, c)
@@ -1393,6 +1407,9 @@ func generatorStep(ctx context.Context, g *object.Instance, st *genState, it *ge
 		}
 	case genExceptEnd:
 		genv.Delete("__current_exception__")
+		if id, ok := it.target.(*ast.Identifier); ok {
+			genv.Delete(id.Value())
+		}
 		st.cursor = it.jump
 	case genFinallyEnd:
 		st.cursor = idx + 1

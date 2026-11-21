@@ -519,4 +519,11 @@ import bisect
 assert R('present bisect') == "'present bisect'", 'modules#0'
 import heapq
 assert R('present heapq') == "'present heapq'", 'modules#1'
+# struct_time slices like a tuple.
+import time as _time
+_t = _time.gmtime(0)
+assert _t[:3] == (1970, 1, 1) and _t[-3:] == (3, 1, 0) and tuple(_t) == _t[:]
+_y, _m, _d = _t[:3]
+assert (_y, _m, _d, _t.tm_isdst) == (1970, 1, 1, 0)
+
 print("OK")

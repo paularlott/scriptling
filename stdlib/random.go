@@ -87,18 +87,13 @@ var RandomLibrary = object.NewLibrary(RandomLibraryName, map[string]*object.Buil
 			if err := errors.MaxArgs(args, 1); err != nil {
 				return err
 			}
-			var seedVal int64
-			if len(args) == 0 {
-				seedVal = time.Now().UnixNano()
-			} else {
-				switch arg := args[0].(type) {
-				case *object.Integer:
-					seedVal = arg.IntValue()
-				case *object.Float:
-					seedVal = int64(arg.FloatValue())
-				default:
-					return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
-				}
+			var a object.Object
+			if len(args) == 1 {
+				a = args[0]
+			}
+			seedVal, errObj := randomSeedValue(a)
+			if errObj != nil {
+				return errObj
 			}
 			rng = rand.New(rand.NewSource(seedVal))
 			return &object.Null{}

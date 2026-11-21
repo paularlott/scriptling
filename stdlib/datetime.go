@@ -6,6 +6,7 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/paularlott/scriptling/errors"
@@ -70,6 +71,13 @@ func getTimeFromInstance(instance *object.Instance) (time.Time, object.Object) {
 
 // Helper to create a datetime instance (stores time as Unix microseconds)
 func createDatetimeInstance(t time.Time) *object.Instance {
+	// A naive datetime is its wall clock, held in UTC whatever produced it
+	// (the local zone for now() and fromtimestamp()), so naive values built
+	// any way compare, hash and do arithmetic on the wall clock as Python's
+	// do; timestamp() and astimezone() read the wall clock as local time.
+	if t.Location() != time.UTC && isNaive(t) {
+		t = wallClock(t)
+	}
 	// year/month/day/... are attributes in Python, not methods: they are
 	// set as fields (which resolve before class methods) so dt.year reads
 	// as an integer like Python, and dt.year() is "not callable" like Python.
@@ -90,8 +98,8 @@ func createDatetimeInstance(t time.Time) *object.Instance {
 
 // Helper to create a date instance (stores time as Unix microseconds)
 func createDateInstance(t time.Time) *object.Instance {
-	// Normalize to midnight for date
-	t = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	// A date is its calendar day, held at midnight UTC.
+	t = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 	return object.NewInstanceWithFields(DateClass, map[string]object.Object{
 		"_time":        object.NewInteger(t.UnixMicro()),
 		"_utc":         object.NewBoolean(t.Location() == time.UTC),
@@ -417,7 +425,7 @@ func init() {
 						if err != nil {
 							return err
 						}
-						loc = time.Local
+						loc = time.UTC
 						if tzLoc != nil {
 							loc = tzLoc
 						}
@@ -1002,7 +1010,7 @@ var datetimeConstructorBuiltin = &object.Builtin{
 		if errObj := f.set(vals[:7]); errObj != nil {
 			return errObj
 		}
-		loc := time.Local
+		loc := time.UTC
 		if tz := vals[7]; tz != nil {
 			tzLoc, err := tzinfoLocation(tz)
 			if err != nil {
@@ -1206,7 +1214,7 @@ var dateConstructorBuiltin = &object.Builtin{
 		if errObj := f.set(vals); errObj != nil {
 			return errObj
 		}
-		t, errObj := f.time(time.Local)
+		t, errObj := f.time(time.UTC)
 		if errObj != nil {
 			return errObj
 		}
@@ -1504,7 +1512,7 @@ func init() {
 	// The date of the datetime's fields, at local midnight like date(y, m, d),
 	// so dt.date() == date(dt.year, dt.month, dt.day).
 	dateOnly := func(t time.Time) object.Object {
-		return createDateInstance(time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local))
+		return createDateInstance(time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC))
 	}
 	DatetimeClass.Methods["date"] = timeMethod("date() - Return the date part as a date", dateOnly)
 	for _, c := range []*object.Class{DatetimeClass, DateClass} {
@@ -1528,9 +1536,27 @@ func init() {
 				return errors.NewValueError("ordinal must be >= 1")
 			}
 			t := time.Unix((n-unixEpochOrdinal)*86400, 0).UTC()
-			return createDateInstance(time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local))
+			return createDateInstance(time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC))
 		},
 		HelpText: "fromordinal(n) - Return the date with proleptic Gregorian ordinal n",
+	}
+	dateFromOrdinal := dateConstructorBuiltin.Attributes["fromordinal"].(*object.Builtin)
+	datetimeConstructorBuiltin.Attributes["fromordinal"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("fromordinal", kwargs); err != nil {
+				return err
+			}
+			r := dateFromOrdinal.Fn(ctx, kwargs, args...)
+			if inst, ok := r.(*object.Instance); ok {
+				t, err := getTimeFromInstance(inst)
+				if err != nil {
+					return err
+				}
+				return createDatetimeInstance(t)
+			}
+			return r
+		},
+		HelpText: "fromordinal(n) - Return midnight of the day with proleptic Gregorian ordinal n",
 	}
 
 	TimedeltaClass.Methods["__add__"] = timedeltaArith(func(l, r float64) float64 { return l + r })
@@ -1610,11 +1636,30 @@ func timetuple(t time.Time) object.Object {
 	}}
 }
 
+var (
+	isoCalendarOnce  sync.Once
+	isoCalendarClass *object.Class
+)
+
+// isocalendar returns Python's IsoCalendarDate: a namedtuple of year, week
+// and weekday (a plain tuple should the class be unavailable).
 func isocalendar(t time.Time) object.Object {
 	year, week := t.ISOWeek()
-	return &object.Tuple{Elements: []object.Object{
-		object.NewInteger(int64(year)), object.NewInteger(int64(week)), object.NewInteger(isoWeekday(t)),
-	}}
+	vals := []object.Object{object.NewInteger(int64(year)), object.NewInteger(int64(week)), object.NewInteger(isoWeekday(t))}
+	isoCalendarOnce.Do(func() {
+		names := &object.List{Elements: []object.Object{object.NewString("year"), object.NewString("week"), object.NewString("weekday")}}
+		r := CollectionsLibrary.Functions()["namedtuple"].Fn(context.Background(), object.Kwargs{}, object.NewString("IsoCalendarDate"), names)
+		isoCalendarClass, _ = r.(*object.Class)
+	})
+	if isoCalendarClass != nil {
+		if init, ok := isoCalendarClass.Methods["__init__"].(*object.Builtin); ok {
+			inst := object.NewInstance(isoCalendarClass)
+			if r := init.Fn(context.Background(), object.Kwargs{}, append([]object.Object{inst}, vals...)...); !object.IsError(r) {
+				return inst
+			}
+		}
+	}
+	return &object.Tuple{Elements: vals}
 }
 
 func toordinal(t time.Time) object.Object {

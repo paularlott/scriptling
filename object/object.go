@@ -2432,6 +2432,7 @@ func deepCopyDict(d *Dict) *Dict {
 	}
 	out := NewDictSized(d.Len())
 	out.SetFactory(d.Factory())
+	out.SetOrdered(d.IsOrderedDict())
 	for _, k := range d.OrderedKeys() {
 		v, _ := d.Lookup(k)
 		if nested, ok := v.Value.(*Dict); ok {
@@ -2626,7 +2627,24 @@ type dictExtra struct {
 	// owner links an instance's __dict__ / vars() view to the instance:
 	// writes to the dict write through to the instance's fields.
 	owner *Instance
+	// ordered marks a collections.OrderedDict, which displays as
+	// OrderedDict({...}) and reports its own type name.
+	ordered bool
 }
+
+// SetOrdered marks (or unmarks) the dict as a collections.OrderedDict.
+func (d *Dict) SetOrdered(on bool) {
+	if !on && d.extra == nil {
+		return
+	}
+	if d.extra == nil {
+		d.extra = &dictExtra{}
+	}
+	d.extra.ordered = on
+}
+
+// IsOrderedDict reports whether the dict was created by OrderedDict().
+func (d *Dict) IsOrderedDict() bool { return d.extra != nil && d.extra.ordered }
 
 // Factory returns the defaultdict factory, or nil for an ordinary dict.
 func (d *Dict) Factory() Object {
@@ -2662,8 +2680,18 @@ func (d *Dict) LinkOwner(inst *Instance) {
 // evaluator installs it. Both are nil until then.
 var (
 	DefaultDictType *Builtin
+	// OrderedDictType is collections.OrderedDict, for isinstance.
+	OrderedDictType *Builtin
 	FactoryRepr     func(factory Object) string
 )
+
+// ClassBaseHook, when set (by the standard library), reports whether a
+// builtin used as a class statement's base makes its own kind of class, as
+// typing.NamedTuple does, and returns the function that turns
+// the class the statement defined (its body run, its annotated FieldNames
+// and assigned values in Methods) into the value bound to the class name.
+// It is consulted only when a class statement names a builtin base.
+var ClassBaseHook = func(base *Builtin) func(ctx context.Context, cls *Class) Object { return nil }
 
 // IsDefaultDict reports whether the dict was created by defaultdict().
 func (d *Dict) IsDefaultDict() bool { return d.Factory() != nil }
@@ -2779,6 +2807,11 @@ type Exception struct {
 	// Cause is __cause__, set by `raise X from e`; nil is None (no cause,
 	// or `raise X from None`).
 	Cause *Exception
+	// Context is __context__: the exception being handled when this one
+	// was raised (nil is None). SuppressContext is __suppress_context__,
+	// set by `raise X from Y`.
+	Context         *Exception
+	SuppressContext bool
 	// Raised distinguishes an exception that is actively propagating (produced
 	// by a `raise` or by an operation that failed) from one that is merely a
 	// value (constructed via `ValueError("x")`, bound by `except ... as e`, or
@@ -2865,7 +2898,12 @@ type Class struct {
 }
 
 func (c *Class) Type() ObjectType { return CLASS_OBJ }
-func (c *Class) Inspect() string  { return fmt.Sprintf("<class '%s'>", c.Name) }
+func (c *Class) Inspect() string {
+	if c.IsEnum {
+		return "<enum '" + c.Name + "'>"
+	}
+	return fmt.Sprintf("<class '%s'>", c.Name)
+}
 
 func (c *Class) AsString() (string, Object)          { return c.Name, nil }
 func (c *Class) AsInt() (int64, Object)              { return 0, errMustBeInteger }

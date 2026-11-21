@@ -425,10 +425,85 @@ func operatorFunctions() map[string]*object.Builtin {
 			HelpText: "index(a) - Same as a.__index__(): a as an integer",
 		},
 	}
+	for _, n := range [][2]string{{"iadd", "+="}, {"isub", "-="}, {"imul", "*="}, {"itruediv", "/="},
+		{"ifloordiv", "//="}, {"imod", "%="}, {"ipow", "**="}, {"ilshift", "<<="}, {"irshift", ">>="},
+		{"iand", "&="}, {"ior", "|="}, {"ixor", "^="}, {"iconcat", "+="}} {
+		fns[n[0]] = binaryOperator(n[0], n[1], "Same as a "+n[1]+" b: updates a mutable a in place and returns it")
+	}
+	fns["length_hint"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			args, kerr := kwargsToPositional("length_hint", args, kwargs, "obj", "default")
+			if kerr != nil {
+				return kerr
+			}
+			if len(args) < 1 || len(args) > 2 {
+				return errors.NewTypeErrorTagged("length_hint expected 1 or 2 arguments, got %d", len(args))
+			}
+			def := int64(0)
+			if len(args) == 2 {
+				d, ok := args[1].(*object.Integer)
+				if !ok {
+					return errors.NewTypeErrorTagged("'%s' object cannot be interpreted as an integer", object.PythonTypeName(args[1]))
+				}
+				def = d.IntValue()
+			}
+			switch v := args[0].(type) {
+			case *object.String:
+				return object.NewInteger(int64(len([]rune(v.StringValue()))))
+			case *object.Bytes:
+				return object.NewInteger(int64(len(v.BytesValue())))
+			case *object.List:
+				return object.NewInteger(int64(len(v.Elements)))
+			case *object.Tuple:
+				return object.NewInteger(int64(len(v.Elements)))
+			case *object.Dict:
+				return object.NewInteger(int64(v.Len()))
+			case *object.Set:
+				return object.NewInteger(int64(v.Len()))
+			case *object.Instance:
+				for _, name := range []string{"__len__", "__length_hint__"} {
+					if r := callInstanceDunder(ctx, v, name); r != nil {
+						return r
+					}
+				}
+			case *object.DictKeys:
+				return object.NewInteger(int64(v.Dict.Len()))
+			case *object.DictValues:
+				return object.NewInteger(int64(v.Dict.Len()))
+			case *object.DictItems:
+				return object.NewInteger(int64(v.Dict.Len()))
+			}
+			switch v := args[0].(type) {
+			case interface{ Len() (int64, bool) }: // ranges and their iterators
+				if n, ok := v.Len(); ok {
+					return object.NewInteger(n)
+				}
+			case interface{ Len() int }:
+				return object.NewInteger(int64(v.Len()))
+			}
+			return object.NewInteger(def)
+		},
+		HelpText: "length_hint(obj, default=0) - len(obj) when it has one, else default",
+	}
+	fns["call"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if len(args) < 1 {
+				return errors.NewTypeErrorTagged("call() missing required argument 'obj'")
+			}
+			caller, ok := evaliface.FromContext(ctx).(evaliface.KwargsCaller)
+			if !ok {
+				return errors.NewError("evaluator not available in context")
+			}
+			return caller.CallObjectFunctionKwargs(ctx, args[0], args[1:], kwargs, nil)
+		},
+		HelpText: "call(obj, /, *args, **kwargs) - obj(*args, **kwargs)",
+	}
 	// Python's dunder aliases (operator.__add__ is operator.add).
 	for _, n := range []string{"add", "sub", "mul", "truediv", "floordiv", "mod", "pow",
 		"eq", "ne", "lt", "le", "gt", "ge", "and_", "or_", "xor", "lshift", "rshift",
-		"neg", "pos", "abs", "invert", "not_", "contains", "getitem", "setitem", "delitem", "concat", "index"} {
+		"neg", "pos", "abs", "invert", "not_", "contains", "getitem", "setitem", "delitem", "concat", "index",
+		"iadd", "isub", "imul", "itruediv", "ifloordiv", "imod", "ipow", "ilshift", "irshift", "iand", "ior",
+		"ixor", "iconcat", "call"} {
 		fns["__"+strings.TrimSuffix(n, "_")+"__"] = fns[n]
 	}
 	return fns

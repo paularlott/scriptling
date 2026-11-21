@@ -433,12 +433,12 @@ func (l *Lexer) nextToken() token.Token {
 				l.readChar() // consume 'f'
 				l.readChar() // consume 'r', l.ch == quote
 				tok.Type = token.RF_STRING
-				tok.Literal = l.readRawTripleString(quote)
+				tok.Literal = l.readFStringBody(quote, true)
 			} else {
 				l.readChar() // consume 'f'
 				l.readChar() // consume 'r', l.ch == quote
 				tok.Type = token.RF_STRING
-				tok.Literal = l.readRawString(quote)
+				tok.Literal = l.readFStringBody(quote, false)
 			}
 		} else {
 			tok.Literal = l.readIdentifier()
@@ -472,12 +472,12 @@ func (l *Lexer) nextToken() token.Token {
 				l.readChar() // consume 'r'
 				l.readChar() // consume 'f', l.ch == quote
 				tok.Type = token.RF_STRING
-				tok.Literal = l.readRawTripleString(quote)
+				tok.Literal = l.readFStringBody(quote, true)
 			} else {
 				l.readChar() // consume 'r'
 				l.readChar() // consume 'f', l.ch == quote
 				tok.Type = token.RF_STRING
-				tok.Literal = l.readRawString(quote)
+				tok.Literal = l.readFStringBody(quote, false)
 			}
 		} else {
 			tok.Literal = l.readIdentifier()
@@ -830,62 +830,155 @@ func (l *Lexer) readRawTripleString(quote byte) string {
 }
 
 func (l *Lexer) readFString(quote byte) string {
-	l.readChar() // consume quote
-	position := l.position
-	for l.ch != quote && l.ch != 0 {
-		if l.ch == '\\' {
-			l.readChar() // skip backslash
-		}
-		if l.ch == '\n' {
-			l.line++ // backslash-newline continues the literal
-		}
-		if l.ch != 0 {
-			l.readChar()
-		}
-	}
-	str := l.input[position:l.position]
-	l.unterminated = l.ch != quote
-	l.readChar() // consume closing quote
-	return str
+	return l.readFStringBody(quote, false)
 }
 
 // readTripleFString reads a triple-quoted f-string (f"""...""" or f”'...”').
 // Entry: current l.ch is the opening quote (either ' or ").
 func (l *Lexer) readTripleFString(quote byte) string {
-	// Consume the three opening quotes
-	l.readChar()
-	l.readChar()
-	l.readChar()
-	position := l.position
-	for l.ch != 0 {
-		if l.ch == quote && l.peekChar() == quote && l.peekN(2) == quote {
-			break
-		}
-		if l.ch == '\\' {
-			// The escaped character (even a quote) never ends the
-			// literal, as in Python, including raw literals.
-			l.readChar()
-		}
-		if l.ch == '\n' {
+	return l.readFStringBody(quote, true)
+}
+
+// readFStringBody reads an f-string (raw or not) whose opening quote is
+// l.ch and returns its body. As in Python 3.12 (PEP 701) a replacement field
+// may hold any expression, including strings in the same quote and nested
+// f-strings, so the closing quote is the first one outside every field.
+func (l *Lexer) readFStringBody(quote byte, triple bool) string {
+	open := 1
+	if triple {
+		open = 3
+	}
+	start := l.position + open
+	end := ScanFString(l.input, start, quote, triple)
+	l.unterminated = end >= len(l.input)
+	close := len(l.input)
+	if !l.unterminated {
+		close = end + open
+	}
+	for l.position < close && l.ch != 0 {
+		// Newlines in the literal (backslash-continued or in a triple-quoted
+		// body or a replacement field) advance the line count.
+		if l.ch == '\n' && l.position >= start && l.position < end {
 			l.line++
 		}
-		if l.ch != 0 {
-			l.readChar()
-		}
-	}
-	str := l.input[position:l.position]
-	l.unterminated = l.ch != quote
-	// Consume the three closing quotes if present
-	if l.ch == quote {
 		l.readChar()
-		if l.ch == quote {
-			l.readChar()
-			if l.ch == quote {
-				l.readChar()
+	}
+	if end > len(l.input) {
+		end = len(l.input)
+	}
+	return l.input[start:end]
+}
+
+// ScanFString returns the index in s where the f-string body that starts at
+// i ends (its closing quote), or len(s) when it is unterminated. Literal
+// text ends at the closing quote (a backslash keeps the next character in
+// the literal, as in raw strings); inside a {replacement field} brackets
+// nest, string literals (nested f-strings included, in any quote) are
+// skipped whole, and after a top-level ':' the format spec is literal text
+// with nested fields.
+func ScanFString(s string, i int, quote byte, triple bool) int {
+	type field struct {
+		depth  int  // open brackets inside the field's expression
+		inSpec bool // in the format spec after a top-level ':'
+	}
+	var fields []field
+	for i < len(s) {
+		c := s[i]
+		if len(fields) == 0 || fields[len(fields)-1].inSpec {
+			// Literal text, or a format spec.
+			switch {
+			case c == '\\':
+				i += 2
+				continue
+			case len(fields) == 0 && c == quote && (!triple || (i+2 < len(s) && s[i+1] == quote && s[i+2] == quote)):
+				return i
+			case c == '{':
+				if len(fields) == 0 && i+1 < len(s) && s[i+1] == '{' {
+					i += 2
+					continue
+				}
+				fields = append(fields, field{})
+			case c == '}':
+				if len(fields) > 0 {
+					fields = fields[:len(fields)-1]
+				} else if i+1 < len(s) && s[i+1] == '}' {
+					i++
+				}
+			}
+			i++
+			continue
+		}
+		f := &fields[len(fields)-1]
+		switch c {
+		case '\'', '"':
+			i = SkipStringLiteral(s, i)
+			continue
+		case '(', '[', '{':
+			f.depth++
+		case ')', ']':
+			if f.depth > 0 {
+				f.depth--
+			}
+		case '}':
+			if f.depth == 0 {
+				fields = fields[:len(fields)-1]
+			} else {
+				f.depth--
+			}
+		case ':':
+			if f.depth == 0 {
+				f.inSpec = true
+			}
+		case '!':
+			// A conversion (!r) is followed by ':' or '}', handled above.
+		}
+		i++
+	}
+	return len(s)
+}
+
+// SkipStringLiteral returns the index just past the string literal whose
+// opening quote is s[i], taking its prefix (the letters right before i) into
+// account: an f-string's replacement fields are scanned as ScanFString does.
+// It returns len(s) when the literal is unterminated.
+func SkipStringLiteral(s string, i int) int {
+	q := s[i]
+	// The prefix is the run of string-prefix letters right before the
+	// quote, when it is a whole word (xf"..." has none).
+	k := i
+	for k > 0 && i-k < 2 && strings.IndexByte("fFrRbBuU", s[k-1]) >= 0 {
+		k--
+	}
+	isF := false
+	if k == 0 || !isIdentifierChar(s[k-1]) {
+		isF = strings.ContainsAny(s[k:i], "fF")
+	}
+	triple := i+2 < len(s) && s[i+1] == q && s[i+2] == q
+	open := 1
+	if triple {
+		open = 3
+	}
+	if isF {
+		end := ScanFString(s, i+open, q, triple)
+		if end >= len(s) {
+			return len(s)
+		}
+		return end + open
+	}
+	for j := i + open; j < len(s); j++ {
+		switch s[j] {
+		case '\\':
+			j++
+		case q:
+			if !triple {
+				return j + 1
+			}
+			if j+2 < len(s) && s[j+1] == q && s[j+2] == q {
+				return j + 3
 			}
 		}
 	}
-	return str
+	return len(s)
 }
 
 func isLetter(ch byte) bool {

@@ -174,8 +174,8 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 		// the instance's own timestamp (same instant, so exact match)
 		{"utcnow renders UTC components", `
 			u = datetime.datetime.utcnow()
-			g = time.gmtime(u.timestamp())
-			result = u.year==g[0] and u.month==g[1] and u.day==g[2] and u.hour==g[3] and u.minute==g[4] and u.second==g[5]
+			a = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+			result = u.tzinfo is None and abs((a - u).total_seconds()) < 5
 		`, true},
 		// now must render local components
 		{"now renders local components", `
@@ -185,7 +185,7 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 		`, true},
 		// now and utcnow describe the same instant
 		{"now and utcnow same instant", `
-			d = datetime.datetime.now().timestamp() - datetime.datetime.utcnow().timestamp()
+			d = datetime.datetime.now().timestamp() - datetime.datetime.now(datetime.timezone.utc).timestamp()
 			result = d < 5 and d > -5
 		`, true},
 
@@ -233,7 +233,7 @@ func TestDatetimeUTCPlus8(t *testing.T) {
 		`, "1970-01-01T09:00:00"},
 		{"utcnow replace renders utc", `
 			u = datetime.datetime.utcnow().replace(hour=7, minute=0, second=0, microsecond=0)
-			g = time.gmtime(u.timestamp())
+			g = time.gmtime(u.replace(tzinfo=datetime.timezone.utc).timestamp())
 			result = u.hour == 7 and g[3] == u.hour and g[2] == u.day
 		`, true},
 
@@ -364,8 +364,8 @@ func TestDatetimeUTCMinus5(t *testing.T) {
 		`, "2024-01-15T23:51:33"},
 		{"utcnow renders UTC components", `
 			u = datetime.datetime.utcnow()
-			g = time.gmtime(u.timestamp())
-			result = u.year==g[0] and u.month==g[1] and u.day==g[2] and u.hour==g[3] and u.minute==g[4] and u.second==g[5]
+			a = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+			result = u.tzinfo is None and abs((a - u).total_seconds()) < 5
 		`, true},
 		{"now renders local components", `
 			n = datetime.datetime.now()
@@ -401,6 +401,37 @@ func TestDatetimeLocalUTC(t *testing.T) {
 	})
 }
 
+// TestStrptimeWithoutYear: a day of the month with no year parses into 1900,
+// as in Python up to 3.14 (3.15 raises); 29 February stays a valid
+// time.strptime result but is out of range for a datetime.
+func TestStrptimeWithoutYear(t *testing.T) {
+	runDatetimeCases(t, []struct {
+		name   string
+		script string
+		want   interface{}
+	}{
+		{"month day", `
+			result = datetime.datetime.strptime("05-06", "%m-%d").isoformat()
+		`, "1900-05-06T00:00:00"},
+		{"day month name time", `
+			result = str(datetime.datetime.strptime("6 May 10:30", "%d %b %H:%M"))
+		`, "1900-05-06 10:30:00"},
+		{"time.strptime 29 February", `
+			result = str(tuple(time.strptime("02-29", "%m-%d")))
+		`, "(1900, 2, 29, 0, 0, 0, 0, 60, -1)"},
+		{"datetime 29 February", `
+			try:
+				datetime.datetime.strptime("02-29", "%m-%d")
+				result = "no error"
+			except ValueError as e:
+				result = str(e)
+		`, "day is out of range for month"},
+		{"1 March", `
+			result = datetime.datetime.strptime("03-01", "%m-%d").isoformat()
+		`, "1900-03-01T00:00:00"},
+	})
+}
+
 // TestDatetimeHostTimezone runs the critical invariants against whatever zone
 // the host is configured with, since CI machines vary.
 func TestDatetimeHostTimezone(t *testing.T) {
@@ -415,8 +446,8 @@ func TestDatetimeHostTimezone(t *testing.T) {
 		`, true},
 		{"utcnow matches gmtime of same instant", `
 			u = datetime.datetime.utcnow()
-			g = time.gmtime(u.timestamp())
-			result = u.year==g[0] and u.month==g[1] and u.day==g[2] and u.hour==g[3] and u.minute==g[4] and u.second==g[5]
+			a = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+			result = u.tzinfo is None and abs((a - u).total_seconds()) < 5
 		`, true},
 		{"now matches localtime of same instant", `
 			n = datetime.datetime.now()
@@ -428,7 +459,7 @@ func TestDatetimeHostTimezone(t *testing.T) {
 		`, "2024-01-15T23:51:33"},
 		{"utcnow replace renders utc", `
 			u = datetime.datetime.utcnow().replace(hour=7, minute=0, second=0, microsecond=0)
-			g = time.gmtime(u.timestamp())
+			g = time.gmtime(u.replace(tzinfo=datetime.timezone.utc).timestamp())
 			result = u.hour == 7 and g[3] == u.hour and g[2] == u.day
 		`, true},
 	})

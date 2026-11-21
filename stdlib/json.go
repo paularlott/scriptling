@@ -320,9 +320,32 @@ func (e *jsonEncoder) dict(obj object.Object, pairs []object.DictPair, seen map[
 	if e.opts.sortKeys {
 		sorted := make([]object.DictPair, len(pairs))
 		copy(sorted, pairs)
-		sort.Slice(sorted, func(i, j int) bool {
-			return sorted[i].StringKey() < sorted[j].StringKey()
-		})
+		allStrings := true
+		for _, p := range sorted {
+			if _, ok := p.Key.(*object.String); !ok {
+				allStrings = false
+				break
+			}
+		}
+		if allStrings {
+			sort.Slice(sorted, func(i, j int) bool {
+				return sorted[i].StringKey() < sorted[j].StringKey()
+			})
+		} else {
+			// Python sorts the original keys, so numbers sort numerically
+			// and a str key beside a number key is a TypeError.
+			var errObj object.Object
+			sort.SliceStable(sorted, func(i, j int) bool {
+				lt, err := jsonKeyLess(sorted[i].Key, sorted[j].Key)
+				if err != nil && errObj == nil {
+					errObj = err
+				}
+				return lt
+			})
+			if errObj != nil {
+				return errObj
+			}
+		}
 		pairs = sorted
 	}
 	e.buf.WriteByte('{')
@@ -654,4 +677,39 @@ func indentJSON(src []byte, indent, itemSep, keySep string) ([]byte, object.Obje
 		return nil, errObj
 	}
 	return dst.Bytes(), nil
+}
+
+// jsonKeyLess is a < b for dict keys as sort_keys compares them: numbers
+// (bools as 0 and 1) together, strings together, else a TypeError.
+func jsonKeyLess(a, b object.Object) (bool, object.Object) {
+	num := func(o object.Object) (float64, bool) {
+		switch v := o.(type) {
+		case *object.Integer:
+			return float64(v.IntValue()), true
+		case *object.Float:
+			return v.FloatValue(), true
+		case *object.Boolean:
+			if v.BoolValue() {
+				return 1, true
+			}
+			return 0, true
+		}
+		return 0, false
+	}
+	if x, ok := num(a); ok {
+		if y, ok := num(b); ok {
+			if ai, ok := a.(*object.Integer); ok {
+				if bi, ok := b.(*object.Integer); ok {
+					return ai.IntValue() < bi.IntValue(), nil
+				}
+			}
+			return x < y, nil
+		}
+	}
+	if x, ok := a.(*object.String); ok {
+		if y, ok := b.(*object.String); ok {
+			return x.StringValue() < y.StringValue(), nil
+		}
+	}
+	return false, errors.NewTypeErrorTagged("'<' not supported between instances of '%s' and '%s'", object.PythonTypeName(a), object.PythonTypeName(b))
 }

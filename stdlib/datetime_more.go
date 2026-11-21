@@ -329,7 +329,10 @@ func init() {
 		}
 		return createTimeInstance(timeOfDay(t, loc))
 	})
-	dm["timestamp"] = timeMethod("timestamp() - POSIX timestamp, with microseconds", func(t time.Time) object.Object {
+	dm["timestamp"] = timeMethod("timestamp() - POSIX timestamp, with microseconds (a naive datetime is local time)", func(t time.Time) object.Object {
+		if isNaive(t) {
+			t = localInstant(t)
+		}
 		return object.NewFloat(float64(t.UnixMicro()) / 1e6)
 	})
 	for _, name := range []string{"__lt__", "__gt__", "__le__", "__ge__", "__eq__", "__ne__", "__hash__"} {
@@ -377,7 +380,7 @@ func init() {
 			if len(args) == 2 {
 				l, lok := args[0].(*object.Instance)
 				r, rok := args[1].(*object.Instance)
-				if lok && rok && l.Class != r.Class {
+				if lok && rok && (l.Class != r.Class || awareMismatch(l, r)) {
 					return object.NewBoolean(false)
 				}
 			}
@@ -391,7 +394,7 @@ func init() {
 			if len(args) == 2 {
 				l, lok := args[0].(*object.Instance)
 				r, rok := args[1].(*object.Instance)
-				if lok && rok && l.Class != r.Class {
+				if lok && rok && (l.Class != r.Class || awareMismatch(l, r)) {
 					return object.NewBoolean(true)
 				}
 			}
@@ -402,6 +405,32 @@ func init() {
 	for _, c := range []*object.Class{DatetimeClass, DateClass, TimeClass} {
 		c.Methods["__eq__"] = sameKindEq
 		c.Methods["__ne__"] = sameKindNe
+	}
+	// Ordering a naive value against an aware one is a TypeError, as in Python.
+	for _, name := range []string{"__lt__", "__gt__", "__le__", "__ge__"} {
+		base := DatetimeClass.Methods[name].(*object.Builtin)
+		kind := &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if len(args) == 2 {
+					l, lok := args[0].(*object.Instance)
+					r, rok := args[1].(*object.Instance)
+					if lok && rok && awareMismatch(l, r) {
+						what := "datetimes"
+						if l.Class == TimeClass {
+							what = "times"
+						}
+						return errors.NewTypeErrorTagged("can't compare offset-naive and offset-aware %s", what)
+					}
+				}
+				return base.Fn(ctx, kwargs, args...)
+			},
+			HelpText: base.HelpText,
+		}
+		for _, c := range []*object.Class{DatetimeClass, DateClass, TimeClass} {
+			if c.Methods[name] == base {
+				c.Methods[name] = kind
+			}
+		}
 	}
 
 	datetimeConstructorBuiltin.Attributes["combine"] = &object.Builtin{
@@ -427,7 +456,7 @@ func init() {
 			if err != nil {
 				return err
 			}
-			loc := time.Local
+			loc := time.UTC
 			if _, aware := awareKey(clock.Location()); aware {
 				loc = clock.Location()
 			}
@@ -436,7 +465,7 @@ func init() {
 				if err != nil {
 					return err
 				}
-				loc = time.Local
+				loc = time.UTC
 				if tzLoc != nil {
 					loc = tzLoc
 				}
@@ -445,10 +474,43 @@ func init() {
 		},
 		HelpText: "combine(date, time, tzinfo=time.tzinfo) - The datetime of a date and a time",
 	}
-	datetimeConstructorBuiltin.Attributes["min"] = createDatetimeInstance(time.Date(1, 1, 1, 0, 0, 0, 0, time.Local))
-	datetimeConstructorBuiltin.Attributes["max"] = createDatetimeInstance(time.Date(9999, 12, 31, 23, 59, 59, 999999000, time.Local))
-	dateConstructorBuiltin.Attributes["min"] = createDateInstance(time.Date(1, 1, 1, 0, 0, 0, 0, time.Local))
-	dateConstructorBuiltin.Attributes["max"] = createDateInstance(time.Date(9999, 12, 31, 0, 0, 0, 0, time.Local))
+	fromTS := datetimeConstructorBuiltin.Attributes["fromtimestamp"].(*object.Builtin)
+	// viaFromTimestamp runs datetime.fromtimestamp(ts, tz) and converts the
+	// datetime it gives.
+	viaFromTimestamp := func(name string, tz object.Object, conv func(time.Time) object.Object) *object.Builtin {
+		return &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs(name, kwargs); err != nil {
+					return err
+				}
+				if err := errors.ExactArgs(args, 1); err != nil {
+					return err
+				}
+				r := fromTS.Fn(ctx, kwargs, args[0], tz)
+				inst, ok := r.(*object.Instance)
+				if !ok {
+					return r
+				}
+				t, err := getTimeFromInstance(inst)
+				if err != nil {
+					return err
+				}
+				return conv(t)
+			},
+		}
+	}
+	utcFromTS := viaFromTimestamp("utcfromtimestamp", utcTimezone, func(t time.Time) object.Object {
+		return createDatetimeInstance(wallClock(t))
+	})
+	utcFromTS.HelpText = "utcfromtimestamp(timestamp) - The naive UTC datetime of a POSIX timestamp"
+	datetimeConstructorBuiltin.Attributes["utcfromtimestamp"] = utcFromTS
+	dateFromTS := viaFromTimestamp("fromtimestamp", &object.Null{}, func(t time.Time) object.Object { return createDateInstance(t) })
+	dateFromTS.HelpText = "fromtimestamp(timestamp) - The local date of a POSIX timestamp"
+	dateConstructorBuiltin.Attributes["fromtimestamp"] = dateFromTS
+	datetimeConstructorBuiltin.Attributes["min"] = createDatetimeInstance(time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC))
+	datetimeConstructorBuiltin.Attributes["max"] = createDatetimeInstance(time.Date(9999, 12, 31, 23, 59, 59, 999999000, time.UTC))
+	dateConstructorBuiltin.Attributes["min"] = createDateInstance(time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC))
+	dateConstructorBuiltin.Attributes["max"] = createDateInstance(time.Date(9999, 12, 31, 0, 0, 0, 0, time.UTC))
 	timeConstructorBuiltin.Attributes["min"] = createTimeInstance(time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC))
 	timeConstructorBuiltin.Attributes["max"] = createTimeInstance(time.Date(1900, 1, 1, 23, 59, 59, 999999000, time.UTC))
 	if timedeltaBuiltinNew.Attributes == nil {
@@ -505,4 +567,18 @@ func floorDiv(a, b int64) int64 {
 		q--
 	}
 	return q
+}
+
+// awareMismatch reports whether one of two datetimes (or times) is naive and
+// the other aware.
+func awareMismatch(l, r *object.Instance) bool {
+	if l.Class == DateClass || r.Class == DateClass {
+		return false
+	}
+	lt, lok := l.GetField("tzinfo")
+	rt, rok := r.GetField("tzinfo")
+	if !lok || !rok {
+		return false
+	}
+	return (lt.Type() == object.NULL_OBJ) != (rt.Type() == object.NULL_OBJ)
 }

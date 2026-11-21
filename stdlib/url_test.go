@@ -240,7 +240,7 @@ func TestURLLibrary(t *testing.T) {
 		}
 	})
 
-	t.Run("urlencode with list values", func(t *testing.T) {
+	t.Run("urlencode with list values and doseq", func(t *testing.T) {
 		urlencode := lib.Functions()["urlencode"]
 		dict := object.NewStringDict(map[string]object.Object{
 			"key": &object.List{
@@ -250,7 +250,8 @@ func TestURLLibrary(t *testing.T) {
 				},
 			},
 		})
-		result := urlencode.Fn(context.Background(), object.NewKwargs(nil), dict)
+		// doseq=True expands the list; without it the list's str() is sent.
+		result := urlencode.Fn(context.Background(), object.NewKwargs(nil), dict, object.NewBoolean(true))
 
 		if str, ok := result.(*object.String); ok {
 			// Should contain key=value1&key=value2

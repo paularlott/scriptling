@@ -80,26 +80,80 @@ Example:
 	},
 	"UUID": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.NoKwargs("UUID", kwargs); err != nil {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("UUID", kwargs, "hex", "bytes", "bytes_le", "fields", "int", "version", "is_safe"); err != nil {
+					return err
+				}
+			}
+			if err := errors.MaxArgs(args, 1); err != nil {
 				return err
 			}
-			if err := errors.ExactArgs(args, 1); err != nil {
-				return err
+			hexArg := kwargs.Get("hex")
+			if len(args) == 1 {
+				hexArg = args[0]
 			}
-			s, err := args[0].AsString()
-			if err != nil {
-				return err
+			given := 0
+			for _, o := range []object.Object{hexArg, kwargs.Get("bytes"), kwargs.Get("bytes_le"), kwargs.Get("fields"), kwargs.Get("int")} {
+				if o != nil && o.Type() != object.NULL_OBJ {
+					given++
+				}
 			}
-			id, ok := parseUUIDString(s)
-			if !ok {
-				return errors.NewValueError("badly formed hexadecimal UUID string")
+			if given != 1 {
+				return errors.NewTypeErrorTagged("one of the hex, bytes, bytes_le, fields, or int arguments must be given")
+			}
+			var id uuid.UUID
+			switch {
+			case hexArg != nil && hexArg.Type() != object.NULL_OBJ:
+				s, err := hexArg.AsString()
+				if err != nil {
+					return err
+				}
+				var ok bool
+				if id, ok = parseUUIDString(s); !ok {
+					return errors.NewValueError("badly formed hexadecimal UUID string")
+				}
+			case kwargs.Get("bytes") != nil || kwargs.Get("bytes_le") != nil:
+				b, le := kwargs.Get("bytes"), false
+				if b == nil {
+					b, le = kwargs.Get("bytes_le"), true
+				}
+				raw, ok := b.(*object.Bytes)
+				if !ok || raw.Len() != 16 {
+					if le {
+						return errors.NewValueError("bytes_le is not a 16-char string")
+					}
+					return errors.NewValueError("bytes is not a 16-char string")
+				}
+				copy(id[:], raw.BytesValue())
+				if le {
+					// The first three fields are little-endian.
+					id[0], id[1], id[2], id[3] = id[3], id[2], id[1], id[0]
+					id[4], id[5] = id[5], id[4]
+					id[6], id[7] = id[7], id[6]
+				}
+			default:
+				// int= and fields= need integers wider than 64 bits.
+				return errors.NewValueError("UUID(int=...) and UUID(fields=...) are not supported: integers are 64-bit")
+			}
+			if v := kwargs.Get("version"); v != nil && v.Type() != object.NULL_OBJ {
+				n, err := v.AsInt()
+				if err != nil {
+					return err
+				}
+				if n < 1 || n > 8 {
+					return errors.NewValueError("illegal version number")
+				}
+				// Set the RFC 4122 variant and the version number.
+				id[8] = id[8]&0x3f | 0x80
+				id[6] = id[6]&0x0f | byte(n)<<4
 			}
 			return uuidInstance(id)
 		},
-		HelpText: `UUID(hex_string) - UUID object from a canonical string
+		HelpText: `UUID(hex=None, bytes=None, bytes_le=None, *, version=None) - UUID object
 
-Accepts hyphenated, bare-hex or URN forms; str() renders the canonical
-hyphenated form.`,
+Accepts hyphenated, bare-hex, braced or URN strings, or 16 bytes (bytes_le:
+first three fields little-endian); str() renders the canonical hyphenated
+form. int= is not supported (UUIDs are 128-bit, integers 64-bit).`,
 	},
 	"uuid3": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

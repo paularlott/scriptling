@@ -215,11 +215,31 @@ Parses a URL query string and returns a list of (key, value) tuples.`,
 				return err
 			}
 
+			// doseq expands a list or tuple value into one pair per element;
+			// without it the value is written as str() shows it, as in Python.
+			doseqObj := kwargs.Get("doseq")
+			if len(args) > 1 {
+				doseqObj = args[1]
+			}
+			doseq := false
+			if doseqObj != nil {
+				switch d := doseqObj.(type) {
+				case *object.Boolean:
+					doseq = d.BoolValue()
+				case *object.Integer:
+					doseq = d.IntValue() != 0
+				default:
+					doseq = doseqObj.Type() != object.NULL_OBJ
+				}
+			}
 			// Pairs keep their order, as in Python, and a value that is not
 			// a string is written as str() would show it.
 			var out strings.Builder
 			add := func(key string, val object.Object) {
 				text, err := val.AsString()
+				if b, ok := val.(*object.Bytes); ok {
+					text, err = string(b.BytesValue()), nil
+				}
 				if err != nil {
 					text = val.Inspect()
 				}
@@ -231,6 +251,10 @@ Parses a URL query string and returns a list of (key, value) tuples.`,
 				out.WriteString(url.QueryEscape(text))
 			}
 			addPair := func(key string, val object.Object) {
+				if !doseq {
+					add(key, val)
+					return
+				}
 				switch v := val.(type) {
 				case *object.List:
 					for _, elem := range v.Elements {
