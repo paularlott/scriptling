@@ -899,47 +899,45 @@ func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args [
 			out = append(out, elem.(*object.Bytes).BytesValue()...)
 		}
 		return object.NewBytes(out)
-	case "split":
-		// Python bytes.split(sep=None, maxsplit=-1): whitespace runs when
-		// no separator, else byte-separator occurrences.
-		if len(args) > 2 {
-			return errors.NewError("split() takes at most 2 arguments (%d given)", len(args))
-		}
+	case "split", "rsplit":
+		// Python bytes.split(sep=None, maxsplit=-1): runs of ASCII whitespace
+		// when there is no separator, else separator occurrences. rsplit
+		// counts maxsplit from the right.
 		data := b.BytesValue()
-		maxSplit := -1
-		if len(args) == 2 {
-			if n, err := args[1].AsInt(); err == nil {
-				maxSplit = int(clampMaxsplit(n, len(data)))
-			}
+		sep, whitespace, maxSplit, errObj := bytesSplitArgs(method, args, len(data))
+		if errObj != nil {
+			return errObj
 		}
-		var parts [][]byte
 		limitParts := func(n int) int {
 			if maxSplit >= 0 {
-				return min(n, maxSplit+1)
+				return min(n, int(maxSplit)+1)
 			}
 			return n
 		}
-		if len(args) == 0 || args[0].Type() == object.NULL_OBJ {
+		var parts [][]byte
+		if whitespace {
 			if errObj := checkBytesSplit(len(data), int64(limitParts(len(data)/2+1)), func() int { return limitParts(countBytesFields(data)) }); errObj != nil {
 				return errObj
 			}
-			parts = bytesFields(data)
+			switch {
+			case maxSplit < 0:
+				parts = bytesFields(data)
+			case method == "split":
+				parts = stringsToBytes(whitespaceSplit(string(data), maxSplit, isBytesSpace))
+			default:
+				parts = stringsToBytes(rsplitFields(string(data), maxSplit, isBytesSpace))
+			}
 		} else {
-			sepObj, ok := args[0].(*object.Bytes)
-			if !ok {
-				return errors.NewTypeError("bytes", args[0].Type().String())
-			}
-			sep := sepObj.BytesValue()
-			if len(sep) == 0 {
-				return errors.NewError("empty separator")
-			}
 			if errObj := checkBytesSplit(len(data), int64(limitParts(len(data)/len(sep)+1)), func() int { return limitParts(bytes.Count(data, sep) + 1) }); errObj != nil {
 				return errObj
 			}
-			if maxSplit < 0 {
+			switch {
+			case maxSplit < 0:
 				parts = bytes.Split(data, sep)
-			} else {
-				parts = bytes.SplitN(data, sep, maxSplit+1)
+			case method == "split":
+				parts = bytes.SplitN(data, sep, int(maxSplit)+1)
+			default:
+				parts = stringsToBytes(rsplitSep(string(data), string(sep), maxSplit))
 			}
 		}
 		elems := make([]object.Object, len(parts))
@@ -1019,6 +1017,42 @@ func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args [
 	return attributeError(b, method)
 }
 
+// bytesSplitArgs parses the (sep, maxsplit) arguments of bytes.split and
+// rsplit the way splitArgs does for str.
+func bytesSplitArgs(method string, args []object.Object, length int) (sep []byte, whitespace bool, maxsplit int64, errObj object.Object) {
+	if len(args) > 2 {
+		return nil, false, 0, errors.NewTypeErrorTagged("%s() takes at most 2 arguments (%d given)", method, len(args))
+	}
+	maxsplit = -1
+	if len(args) == 2 {
+		n, e := indexArg("maxsplit", args[1])
+		if e != nil {
+			return nil, false, 0, e
+		}
+		maxsplit = clampMaxsplit(n, length)
+	}
+	if len(args) == 0 || args[0].Type() == object.NULL_OBJ {
+		return nil, true, maxsplit, nil
+	}
+	sepObj, ok := args[0].(*object.Bytes)
+	if !ok {
+		return nil, false, 0, errors.NewTypeErrorTagged("a bytes-like object is required, not '%s'", object.PythonTypeName(args[0]))
+	}
+	if len(sepObj.BytesValue()) == 0 {
+		return nil, false, 0, errors.NewValueError("empty separator")
+	}
+	return sepObj.BytesValue(), false, maxsplit, nil
+}
+
+// stringsToBytes converts each part to a byte slice.
+func stringsToBytes(parts []string) [][]byte {
+	out := make([][]byte, len(parts))
+	for i, p := range parts {
+		out[i] = []byte(p)
+	}
+	return out
+}
+
 // splitKeywordArgs folds the sep= and maxsplit= keywords of split and rsplit
 // into positional arguments (sep, maxsplit), so s.split(",", maxsplit=1) is
 // s.split(",", 1). Any other keyword, or one that repeats a positional
@@ -1046,71 +1080,167 @@ func splitKeywordArgs(method string, args []object.Object, keywords map[string]o
 	return out, nil
 }
 
-// stringSearchWindow parses the (sub[, start[, end]]) arguments shared by find,
-// rfind, index, rindex and count and clamps start and end to s. The window is
-// empty when start > end.
-func stringSearchWindow(name, s string, args []object.Object) (sub string, start, end int, errObj object.Object) {
-	if len(args) < 1 || len(args) > 3 {
-		return "", 0, 0, errors.NewError("%s() takes 1-3 arguments (%d given)", name, len(args))
+// indexArg reads an integer argument the way Python's __index__ does: an int
+// or a bool. Anything else, a float included, is a TypeError naming param.
+func indexArg(param string, obj object.Object) (int64, object.Object) {
+	switch v := obj.(type) {
+	case *object.Integer:
+		return v.AsInt()
+	case *object.Boolean:
+		return boolToInt64(v.BoolValue()), nil
 	}
-	sub, errObj = args[0].AsString()
-	if errObj != nil {
-		return "", 0, 0, errors.ParameterError("sub", errObj)
+	return 0, errors.NewTypeErrorTagged("%s: '%s' object cannot be interpreted as an integer", param, object.PythonTypeName(obj))
+}
+
+// strArg reads a str argument; anything else is a TypeError naming param.
+func strArg(param string, obj object.Object) (string, object.Object) {
+	if s, ok := obj.(*object.String); ok {
+		return s.StringValue(), nil
 	}
-	end = len(s)
-	if len(args) >= 2 {
-		v, e := args[1].AsInt()
+	return "", errors.NewTypeErrorTagged("%s: must be str, not %s", param, object.PythonTypeName(obj))
+}
+
+// runeByteOffset returns the byte offset in s of the character at index i,
+// or len(s) when s has i characters or fewer.
+func runeByteOffset(s string, i int) int {
+	for off := range s {
+		if i == 0 {
+			return off
+		}
+		i--
+	}
+	return len(s)
+}
+
+// charIndex converts a byte offset into s to a character index.
+func charIndex(s string, off int, ascii bool) int {
+	if ascii {
+		return off
+	}
+	return utf8.RuneCountInString(s[:off])
+}
+
+// stringWindow reads the optional start and end arguments (args[i] and
+// args[i+1], None meaning not given) of a str method that searches s[start:end].
+// They are character positions adjusted like slice indices, except that start
+// is not capped at the length. It returns the window as byte offsets into s,
+// with start > end when the window is empty, and whether s is ASCII, in which
+// case byte offsets are character positions.
+func stringWindow(s string, args []object.Object, i int) (start, end int, ascii bool, errObj object.Object) {
+	ascii = isASCII(s)
+	n := len(s)
+	if !ascii {
+		n = utf8.RuneCountInString(s)
+	}
+	end = n
+	if len(args) > i && args[i].Type() != object.NULL_OBJ {
+		v, e := indexArg("start", args[i])
 		if e != nil {
-			return "", 0, 0, errors.ParameterError("start", e)
+			return 0, 0, ascii, e
 		}
 		start = int(v)
 		if start < 0 {
-			start = max(len(s)+start, 0)
+			start = max(n+start, 0)
 		}
 	}
-	if len(args) == 3 {
-		v, e := args[2].AsInt()
+	if len(args) > i+1 && args[i+1].Type() != object.NULL_OBJ {
+		v, e := indexArg("end", args[i+1])
 		if e != nil {
-			return "", 0, 0, errors.ParameterError("end", e)
+			return 0, 0, ascii, e
 		}
 		end = int(v)
 		if end < 0 {
-			end = len(s) + end
+			end = max(n+end, 0)
 		}
+		end = min(end, n)
 	}
-	return sub, min(start, len(s)), min(end, len(s)), nil
+	if !ascii && start <= end {
+		startByte := runeByteOffset(s, start)
+		end = startByte + runeByteOffset(s[startByte:], end-start)
+		start = startByte
+	}
+	return start, end, ascii, nil
+}
+
+// stringSearchWindow parses the (sub[, start[, end]]) arguments shared by find,
+// rfind, index, rindex and count; the window is as stringWindow returns it.
+func stringSearchWindow(name, s string, args []object.Object) (sub string, start, end int, ascii bool, errObj object.Object) {
+	if len(args) < 1 || len(args) > 3 {
+		return "", 0, 0, false, errors.NewTypeErrorTagged("%s() takes 1-3 arguments (%d given)", name, len(args))
+	}
+	sub, errObj = strArg("sub", args[0])
+	if errObj != nil {
+		return "", 0, 0, false, errObj
+	}
+	start, end, ascii, errObj = stringWindow(s, args, 1)
+	return sub, start, end, ascii, errObj
 }
 
 // stringPadArgs parses the (width[, fillchar]) arguments shared by ljust, rjust
-// and center. It returns the width and fill character, or a non-nil early
-// result (the string itself when it is already wide enough, or an error).
-func stringPadArgs(name string, str *object.String, args []object.Object) (w int, fillChar string, early object.Object) {
+// and center. It returns the width and number of fill characters to add, both
+// in characters, and the fill character, or a non-nil early result (the string
+// itself when it is already wide enough, or an error).
+func stringPadArgs(name string, str *object.String, args []object.Object) (w, pad int, fillChar string, early object.Object) {
 	if len(args) < 1 || len(args) > 2 {
-		return 0, "", errors.NewError("%s() takes 1-2 arguments (%d given)", name, len(args))
+		return 0, 0, "", errors.NewTypeErrorTagged("%s() takes 1-2 arguments (%d given)", name, len(args))
 	}
-	width, errObj := args[0].AsInt()
+	width, errObj := indexArg("width", args[0])
 	if errObj != nil {
-		return 0, "", errors.ParameterError("width", errObj)
-	}
-	w = int(width)
-	if w <= len(str.StringValue()) {
-		return 0, "", str
-	}
-	if errObj := checkWidth("padded string", int64(w)); errObj != nil {
-		return 0, "", errObj
+		return 0, 0, "", errObj
 	}
 	fillChar = " "
 	if len(args) == 2 {
-		fill, errObj2 := args[1].AsString()
-		if errObj2 != nil {
-			return 0, "", errors.ParameterError("fillchar", errObj2)
+		fill, ok := args[1].(*object.String)
+		if !ok {
+			return 0, 0, "", errors.NewTypeErrorTagged("The fill character must be a unicode character, not %s", object.PythonTypeName(args[1]))
 		}
-		if len(fill) != 1 {
-			return 0, "", errors.NewError("fill character must be exactly one character")
+		fillChar = fill.StringValue()
+		if len(fillChar) != 1 && utf8.RuneCountInString(fillChar) != 1 {
+			return 0, 0, "", errors.NewTypeErrorTagged("The fill character must be exactly one character long")
 		}
-		fillChar = fill
 	}
-	return w, fillChar, nil
+	s := str.StringValue()
+	n := len(s)
+	if !isASCII(s) {
+		n = utf8.RuneCountInString(s)
+	}
+	w = int(width)
+	if w <= n {
+		return 0, 0, "", str
+	}
+	pad = w - n
+	if errObj := checkWidth("padded string", int64(len(s))+int64(pad)*int64(len(fillChar))); errObj != nil {
+		return 0, 0, "", errObj
+	}
+	return w, pad, fillChar, nil
+}
+
+// splitArgs parses the (sep, maxsplit) arguments of str.split and rsplit.
+// whitespace is true when sep is absent or None; maxsplit is -1 when absent
+// and is clamped by clampMaxsplit. An empty separator is a ValueError.
+func splitArgs(method string, args []object.Object, length int) (sep string, whitespace bool, maxsplit int64, errObj object.Object) {
+	if len(args) > 2 {
+		return "", false, 0, errors.NewTypeErrorTagged("%s() takes at most 2 arguments (%d given)", method, len(args))
+	}
+	maxsplit = -1
+	if len(args) == 2 {
+		n, e := indexArg("maxsplit", args[1])
+		if e != nil {
+			return "", false, 0, e
+		}
+		maxsplit = clampMaxsplit(n, length)
+	}
+	if len(args) == 0 || args[0].Type() == object.NULL_OBJ {
+		return "", true, maxsplit, nil
+	}
+	s, ok := args[0].(*object.String)
+	if !ok {
+		return "", false, 0, errors.NewTypeErrorTagged("sep: must be str or None, not %s", object.PythonTypeName(args[0]))
+	}
+	if s.StringValue() == "" {
+		return "", false, 0, errors.NewValueError("empty separator")
+	}
+	return s.StringValue(), false, maxsplit, nil
 }
 
 func callStringMethod(ctx context.Context, str *object.String, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
@@ -1131,117 +1261,35 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return err
 		}
 		return object.NewString(fastStringLower(str.StringValue()))
-	case "split":
-		if err := errors.MaxArgs(args, 2); err != nil {
-			return err
-		}
-		// No separator, or an explicit None: split on whitespace runs.
-		if len(args) == 0 || args[0].Type() == object.NULL_OBJ {
-			maxsplit := int64(-1)
-			if len(args) == 2 {
-				n, err := args[1].AsInt()
-				if err != nil {
-					return errors.ParameterError("maxsplit", err)
-				}
-				maxsplit = clampMaxsplit(n, len(str.StringValue()))
-			}
-			if errObj := checkSplitCount(str.StringValue(), "", maxsplit); errObj != nil {
-				return errObj
-			}
-			elements := whitespaceSplit(str.StringValue(), maxsplit)
-			list := &object.List{Elements: make([]object.Object, len(elements))}
-			object.TrackSlice(list.Elements)
-			for i, part := range elements {
-				list.Elements[i] = object.NewSubstring(part, str.StringValue())
-			}
-			return list
-		}
-		// With separator argument
-		sep, errObj := args[0].AsString()
+	case "split", "rsplit":
+		// No separator, or an explicit None, splits on whitespace runs.
+		// rsplit counts maxsplit from the right, so the leftmost element
+		// keeps the un-split remainder.
+		s := str.StringValue()
+		sep, whitespace, maxsplit, errObj := splitArgs(method, args, len(s))
 		if errObj != nil {
-			return errors.ParameterError("sep", errObj)
+			return errObj
 		}
-
-		var parts []string
-		if len(args) == 1 {
-			if errObj := checkSplitCount(str.StringValue(), sep, -1); errObj != nil {
-				return errObj
-			}
-			parts = strings.Split(str.StringValue(), sep)
-		} else {
-			maxsplitObj := args[1]
-			maxsplit, err := maxsplitObj.AsInt()
-			if err != nil {
-				return errors.ParameterError("maxsplit", err)
-			}
-			maxsplit = clampMaxsplit(maxsplit, len(str.StringValue()))
-			n := int(maxsplit + 1)
-			if maxsplit < 0 {
-				n = -1
-			}
-			if errObj := checkSplitCount(str.StringValue(), sep, int64(n)-1); errObj != nil {
-				return errObj
-			}
-			parts = strings.SplitN(str.StringValue(), sep, n)
-		}
-
-		elements := make([]object.Object, len(parts))
-		object.TrackSlice(elements)
-		for i, part := range parts {
-			elements[i] = object.NewSubstring(part, str.StringValue())
-		}
-		return &object.List{Elements: elements}
-	case "rsplit":
-		if err := errors.MaxArgs(args, 2); err != nil {
-			return err
-		}
-		// rsplit works from the right; maxsplit limits splits counted from
-		// the end, so the leftmost element keeps the un-split remainder.
-		if len(args) == 0 || args[0].Type() == object.NULL_OBJ {
-			maxsplit := int64(-1)
-			if len(args) == 2 {
-				n, err := args[1].AsInt()
-				if err != nil {
-					return errors.ParameterError("maxsplit", err)
-				}
-				maxsplit = clampMaxsplit(n, len(str.StringValue()))
-			}
-			if errObj := checkSplitCount(str.StringValue(), "", maxsplit); errObj != nil {
-				return errObj
-			}
-			parts := rsplitFields(str.StringValue(), maxsplit)
-			elements := make([]object.Object, len(parts))
-			object.TrackSlice(elements)
-			for i, part := range parts {
-				elements[i] = object.NewSubstring(part, str.StringValue())
-			}
-			return &object.List{Elements: elements}
-		}
-		sep, errObj := args[0].AsString()
-		if errObj != nil {
-			return errors.ParameterError("sep", errObj)
+		if errObj := checkSplitCount(s, sep, maxsplit); errObj != nil {
+			return errObj
 		}
 		var parts []string
-		if len(args) == 1 {
-			if errObj := checkSplitCount(str.StringValue(), sep, -1); errObj != nil {
-				return errObj
-			}
-			parts = strings.Split(str.StringValue(), sep)
-		} else {
-			maxsplit, err := args[1].AsInt()
-			if err != nil {
-				return errors.ParameterError("maxsplit", err)
-			}
-			maxsplit = clampMaxsplit(maxsplit, len(str.StringValue()))
-			if errObj := checkSplitCount(str.StringValue(), sep, maxsplit); errObj != nil {
-				return errObj
-			}
-			parts = rsplitSep(str.StringValue(), sep, maxsplit)
+		switch {
+		case whitespace && method == "split":
+			parts = whitespaceSplit(s, maxsplit, nil)
+		case whitespace:
+			parts = rsplitFields(s, maxsplit, nil)
+		case method == "rsplit":
+			parts = rsplitSep(s, sep, maxsplit)
+		case maxsplit < 0:
+			parts = strings.Split(s, sep)
+		default:
+			parts = strings.SplitN(s, sep, int(maxsplit+1))
 		}
 		elements := make([]object.Object, len(parts))
 		object.TrackSlice(elements)
 		for i, part := range parts {
-			elements[i] = object.NewSubstring(part, str.StringValue())
+			elements[i] = object.NewSubstring(part, s)
 		}
 		return &object.List{Elements: elements}
 	case "replace":
@@ -1375,42 +1423,23 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if len(args) < 1 || len(args) > 3 {
 			return errors.NewError("%s() takes 1-3 arguments (%d given)", method, len(args))
 		}
+		atStart := method == "startswith"
+		if _, isTuple := args[0].(*object.Tuple); !isTuple {
+			if _, errObj := args[0].AsString(); errObj != nil {
+				return errors.NewTypeErrorTagged("%s first arg must be str or a tuple of str, not %s", method, object.PythonTypeName(args[0]))
+			}
+		}
 		s := str.StringValue()
 		if len(args) > 1 {
-			start, err := args[1].AsInt()
-			if err != nil {
-				return errors.ParameterError("start", err)
+			start, end, _, errObj := stringWindow(s, args, 1)
+			if errObj != nil {
+				return errObj
 			}
-			if start < 0 {
-				start = 0
+			if start > end {
+				return FALSE
 			}
-			if start > int64(len(s)) {
-				start = int64(len(s))
-			}
-			s = s[start:]
+			s = s[start:end]
 		}
-		if len(args) > 2 {
-			end, err := args[2].AsInt()
-			if err != nil {
-				return errors.ParameterError("end", err)
-			}
-			// end is relative to the original string, matching Python.
-			orig := str.StringValue()
-			if end < 0 {
-				end += int64(len(orig))
-				if end < 0 {
-					end = 0
-				}
-			}
-			if end > int64(len(orig)) {
-				end = int64(len(orig))
-			}
-			if end < int64(len(orig)-len(s)) {
-				end = int64(len(orig) - len(s))
-			}
-			s = s[:end-int64(len(orig)-len(s))]
-		}
-		atStart := method == "startswith"
 		check := func(prefix string) bool {
 			if atStart {
 				return strings.HasPrefix(s, prefix)
@@ -1424,7 +1453,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			for _, e := range prefixes.Elements {
 				prefix, errObj := e.AsString()
 				if errObj != nil {
-					return errors.ParameterError(method[:len(method)-3], errObj)
+					return errors.NewTypeErrorTagged("tuple for %s must only contain str, not %s", method, object.PythonTypeName(e))
 				}
 				if check(prefix) {
 					return TRUE
@@ -1432,76 +1461,53 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}
 			return FALSE
 		default:
-			name := "prefix"
-			if !atStart {
-				name = "suffix"
-			}
-			if prefix, errObj := args[0].AsString(); errObj == nil {
-				return nativeBoolToBooleanObject(check(prefix))
-			}
-			return errors.ParameterError(name, errors.NewError("must be str or tuple"))
+			prefix, _ := args[0].AsString() // checked above
+			return nativeBoolToBooleanObject(check(prefix))
 		}
-	case "find":
-		sub, start, end, errObj := stringSearchWindow("find", str.StringValue(), args)
+	case "find", "index":
+		s := str.StringValue()
+		sub, start, end, ascii, errObj := stringSearchWindow(method, s, args)
 		if errObj != nil {
 			return errObj
 		}
-		if start > end {
-			return object.NewInteger(-1)
+		idx := -1
+		if start <= end {
+			idx = strings.Index(s[start:end], sub)
 		}
-		idx := strings.Index(str.StringValue()[start:end], sub)
-		if idx == -1 {
-			return object.NewInteger(-1)
+		if idx >= 0 {
+			return object.NewInteger(int64(charIndex(s, start+idx, ascii)))
 		}
-		return object.NewInteger(int64(start + idx))
-	case "rfind":
-		sub, start, end, errObj := stringSearchWindow("rfind", str.StringValue(), args)
+		if method == "index" {
+			return errors.NewValueError("substring not found")
+		}
+		return object.NewInteger(-1)
+	case "rfind", "rindex":
+		s := str.StringValue()
+		sub, start, end, ascii, errObj := stringSearchWindow(method, s, args)
 		if errObj != nil {
 			return errObj
 		}
-		if start > end {
-			return object.NewInteger(-1)
+		idx := -1
+		if start <= end {
+			idx = strings.LastIndex(s[start:end], sub)
 		}
-		idx := strings.LastIndex(str.StringValue()[start:end], sub)
-		if idx == -1 {
-			return object.NewInteger(-1)
+		if idx >= 0 {
+			return object.NewInteger(int64(charIndex(s, start+idx, ascii)))
 		}
-		return object.NewInteger(int64(start + idx))
-	case "rindex":
-		sub, start, end, errObj := stringSearchWindow("rindex", str.StringValue(), args)
-		if errObj != nil {
-			return errObj
-		}
-		if start > end {
+		if method == "rindex" {
 			return errors.NewValueError("substring not found")
 		}
-		idx := strings.LastIndex(str.StringValue()[start:end], sub)
-		if idx == -1 {
-			return errors.NewValueError("substring not found")
-		}
-		return object.NewInteger(int64(start + idx))
-	case "index":
-		sub, start, end, errObj := stringSearchWindow("index", str.StringValue(), args)
-		if errObj != nil {
-			return errObj
-		}
-		if start > end {
-			return errors.NewValueError("substring not found")
-		}
-		idx := strings.Index(str.StringValue()[start:end], sub)
-		if idx == -1 {
-			return errors.NewValueError("substring not found")
-		}
-		return object.NewInteger(int64(start + idx))
+		return object.NewInteger(-1)
 	case "count":
-		sub, start, end, errObj := stringSearchWindow("count", str.StringValue(), args)
+		s := str.StringValue()
+		sub, start, end, _, errObj := stringSearchWindow("count", s, args)
 		if errObj != nil {
 			return errObj
 		}
 		if start > end {
 			return object.NewInteger(0)
 		}
-		return object.NewInteger(int64(strings.Count(str.StringValue()[start:end], sub)))
+		return object.NewInteger(int64(strings.Count(s[start:end], sub)))
 	case "format":
 		// Python-style formatting: {}, {0}, {name}, {{ }} escapes and
 		// optional :format specs. Positional fields draw on the arguments,
@@ -1609,33 +1615,38 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		if errObj != nil {
 			return errors.ParameterError("width", errObj)
 		}
+		s := str.StringValue()
+		n := len(s)
+		if !isASCII(s) {
+			n = utf8.RuneCountInString(s)
+		}
 		w := int(width)
-		if w <= len(str.StringValue()) {
+		if w <= n {
 			return str
 		}
-		if errObj := checkWidth("padded string", int64(w)); errObj != nil {
+		pad := w - n
+		if errObj := checkWidth("padded string", int64(len(s)+pad)); errObj != nil {
 			return errObj
 		}
 		// Handle negative sign
-		if len(str.StringValue()) > 0 && (str.StringValue()[0] == '-' || str.StringValue()[0] == '+') {
+		if len(s) > 0 && (s[0] == '-' || s[0] == '+') {
 			var builder strings.Builder
-			builder.Grow(w)
-			builder.WriteByte(str.StringValue()[0])
-			builder.WriteString(strings.Repeat("0", w-len(str.StringValue())))
-			builder.WriteString(str.StringValue()[1:])
+			builder.Grow(len(s) + pad)
+			builder.WriteByte(s[0])
+			builder.WriteString(strings.Repeat("0", pad))
+			builder.WriteString(s[1:])
 			return object.NewString(builder.String())
 		}
 		var builder strings.Builder
-		builder.Grow(w)
-		builder.WriteString(strings.Repeat("0", w-len(str.StringValue())))
+		builder.Grow(len(s) + pad)
+		builder.WriteString(strings.Repeat("0", pad))
 		builder.WriteString(str.StringValue())
 		return object.NewString(builder.String())
 	case "center":
-		w, fillChar, early := stringPadArgs("center", str, args)
+		w, padding, fillChar, early := stringPadArgs("center", str, args)
 		if early != nil {
 			return early
 		}
-		padding := w - len(str.StringValue())
 		// CPython's center: left = padding/2 + (padding & width & 1).
 		// The extra character alternates with the parity of the target
 		// width: 'ab'.center(7, '*') is '***ab**' but 'x'.center(6) is
@@ -1644,31 +1655,29 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		rightPad := padding - leftPad
 		// Use strings.Builder for efficient concatenation
 		var builder strings.Builder
-		builder.Grow(w)
+		builder.Grow(len(str.StringValue()) + padding*len(fillChar))
 		builder.WriteString(strings.Repeat(fillChar, leftPad))
 		builder.WriteString(str.StringValue())
 		builder.WriteString(strings.Repeat(fillChar, rightPad))
 		return object.NewString(builder.String())
 	case "ljust":
-		w, fillChar, early := stringPadArgs("ljust", str, args)
+		_, padding, fillChar, early := stringPadArgs("ljust", str, args)
 		if early != nil {
 			return early
 		}
-		// Use strings.Builder for efficient concatenation
 		var builder strings.Builder
-		builder.Grow(w)
+		builder.Grow(len(str.StringValue()) + padding*len(fillChar))
 		builder.WriteString(str.StringValue())
-		builder.WriteString(strings.Repeat(fillChar, w-len(str.StringValue())))
+		builder.WriteString(strings.Repeat(fillChar, padding))
 		return object.NewString(builder.String())
 	case "rjust":
-		w, fillChar, early := stringPadArgs("rjust", str, args)
+		_, padding, fillChar, early := stringPadArgs("rjust", str, args)
 		if early != nil {
 			return early
 		}
-		// Use strings.Builder for efficient concatenation
 		var builder strings.Builder
-		builder.Grow(w)
-		builder.WriteString(strings.Repeat(fillChar, w-len(str.StringValue())))
+		builder.Grow(len(str.StringValue()) + padding*len(fillChar))
+		builder.WriteString(strings.Repeat(fillChar, padding))
 		builder.WriteString(str.StringValue())
 		return object.NewString(builder.String())
 	case "splitlines":
@@ -2541,15 +2550,19 @@ func rsplitSep(s, sep string, maxsplit int64) []string {
 // maxsplit splits (negative: no limit), like Python's str.rsplit(None, n):
 // the leftmost element keeps its interior and leading whitespace, and only
 // the separator run consumed by a split (or trailing whitespace at the end
-// of the string) is removed.
-func rsplitFields(s string, maxsplit int64) []string {
+// of the string) is removed. isSpace says which characters are whitespace,
+// nil meaning unicode.IsSpace.
+func rsplitFields(s string, maxsplit int64, isSpace func(rune) bool) []string {
 	if maxsplit < 0 {
-		return strings.Fields(s)
+		return fieldsFunc(s, isSpace)
+	}
+	if isSpace == nil {
+		isSpace = unicode.IsSpace
 	}
 	var fields []string
 	end := len(s)
 	for maxsplit > 0 {
-		trimmed := strings.TrimRightFunc(s[:end], unicode.IsSpace)
+		trimmed := strings.TrimRightFunc(s[:end], isSpace)
 		if trimmed == "" {
 			break
 		}
@@ -2557,7 +2570,7 @@ func rsplitFields(s string, maxsplit int64) []string {
 		start := len(trimmed)
 		for start > 0 {
 			r, size := utf8.DecodeLastRuneInString(trimmed[:start])
-			if unicode.IsSpace(r) {
+			if isSpace(r) {
 				break
 			}
 			start -= size
@@ -2566,7 +2579,7 @@ func rsplitFields(s string, maxsplit int64) []string {
 		end = start
 		maxsplit--
 	}
-	if head := strings.TrimRightFunc(s[:end], unicode.IsSpace); head != "" {
+	if head := strings.TrimRightFunc(s[:end], isSpace); head != "" {
 		fields = append([]string{head}, fields...)
 	}
 	return fields
@@ -2574,17 +2587,21 @@ func rsplitFields(s string, maxsplit int64) []string {
 
 // whitespaceSplit is split(None, maxsplit): whitespace-run fields, limited
 // to maxsplit from the left, with the remainder keeping its original text
-// ("a  b  c".split(None, 1) == ["a", "b  c"]).
-func whitespaceSplit(s string, maxsplit int64) []string {
+// ("a  b  c".split(None, 1) == ["a", "b  c"]). isSpace says which characters
+// are whitespace, nil meaning unicode.IsSpace.
+func whitespaceSplit(s string, maxsplit int64, isSpace func(rune) bool) []string {
 	if maxsplit < 0 {
-		return strings.Fields(s)
+		return fieldsFunc(s, isSpace)
+	}
+	if isSpace == nil {
+		isSpace = unicode.IsSpace
 	}
 	var fields []string
 	i := 0
 	for i < len(s) {
 		for i < len(s) {
 			r, size := utf8.DecodeRuneInString(s[i:])
-			if !unicode.IsSpace(r) {
+			if !isSpace(r) {
 				break
 			}
 			i += size
@@ -2599,7 +2616,7 @@ func whitespaceSplit(s string, maxsplit int64) []string {
 		start := i
 		for i < len(s) {
 			r, size := utf8.DecodeRuneInString(s[i:])
-			if unicode.IsSpace(r) {
+			if isSpace(r) {
 				break
 			}
 			i += size
@@ -2609,8 +2626,21 @@ func whitespaceSplit(s string, maxsplit int64) []string {
 	return fields
 }
 
-// bytesFields splits data on runs of ASCII whitespace, like Python's
-// bytes.split() with no separator.
+// fieldsFunc splits s on runs of characters isSpace accepts; nil means
+// unicode.IsSpace, through strings.Fields and its ASCII fast path.
+func fieldsFunc(s string, isSpace func(rune) bool) []string {
+	if isSpace == nil {
+		return strings.Fields(s)
+	}
+	return strings.FieldsFunc(s, isSpace)
+}
+
+// isBytesSpace reports whether r is whitespace to bytes.split: ASCII space,
+// tab, newline, carriage return, vertical tab or form feed.
+func isBytesSpace(r rune) bool {
+	return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\v' || r == '\f'
+}
+
 // countBytesFields counts the fields bytesFields would return, without
 // building them.
 func countBytesFields(data []byte) int {
@@ -2627,6 +2657,8 @@ func countBytesFields(data []byte) int {
 	return n
 }
 
+// bytesFields splits data on runs of ASCII whitespace, like Python's
+// bytes.split() with no separator.
 func bytesFields(data []byte) [][]byte {
 	var out [][]byte
 	start := -1

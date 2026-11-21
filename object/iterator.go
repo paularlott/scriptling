@@ -132,7 +132,7 @@ func IterableToSlice(obj Object) ([]Object, bool) {
 	case *DictItems:
 		elements := make([]Object, 0, len(iter.Dict.Pairs))
 		for _, p := range iter.Dict.OrderedPairs() {
-			elements = append(elements, &Tuple{Elements: []Object{p.Key, p.Value}})
+			elements = append(elements, NewPair(p.Key, p.Value))
 		}
 		return elements, true
 	case *FloatArray:
@@ -352,7 +352,15 @@ func newZipIterator(iterables []Object, strict bool) *Iterator {
 		if done {
 			return nil, false
 		}
-		tuple := make([]Object, len(sources))
+		// Two inputs, the usual case, yield pairs built in one allocation.
+		var pair *pairTuple
+		var tuple []Object
+		if len(sources) == 2 {
+			pair = &pairTuple{}
+			tuple = pair.elems[:]
+		} else {
+			tuple = make([]Object, len(sources))
+		}
 		for j, src := range sources {
 			v, ok := src()
 			if !ok {
@@ -377,6 +385,10 @@ func newZipIterator(iterables []Object, strict bool) *Iterator {
 			}
 			tuple[j] = v
 		}
+		if pair != nil {
+			pair.Elements = tuple
+			return &pair.Tuple, true
+		}
 		return &Tuple{Elements: tuple}, true
 	})
 	it.infinite = allInfinite
@@ -399,7 +411,7 @@ func NewEnumerateIterator(iterable Object, start int64) *Iterator {
 		if isPropagatingValue(v) {
 			return v, true
 		}
-		tuple := &Tuple{Elements: []Object{NewInteger(index), v}}
+		tuple := NewPair(NewInteger(index), v)
 		index++
 		return tuple, true
 	})

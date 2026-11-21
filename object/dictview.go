@@ -143,7 +143,7 @@ func (di *DictItems) CreateIterator() *Iterator {
 				index++
 
 				if pair, ok := di.Dict.Pairs[key]; ok {
-					return &Tuple{Elements: []Object{pair.Key, pair.Value}}, true
+					return NewPair(pair.Key, pair.Value), true
 				}
 			}
 			return nil, false

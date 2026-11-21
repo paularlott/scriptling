@@ -2475,6 +2475,20 @@ type Tuple struct {
 	Elements []Object
 }
 
+// pairTuple is a two-element tuple together with its elements, so the pair
+// is one allocation rather than a tuple and a separate backing array.
+type pairTuple struct {
+	Tuple
+	elems [2]Object
+}
+
+// NewPair returns the tuple (a, b).
+func NewPair(a, b Object) *Tuple {
+	p := &pairTuple{elems: [2]Object{a, b}}
+	p.Elements = p.elems[:]
+	return &p.Tuple
+}
+
 func (t *Tuple) Type() ObjectType { return TUPLE_OBJ }
 func (t *Tuple) Inspect() string  { return inspectContainer(t) }
 
