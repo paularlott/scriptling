@@ -536,11 +536,19 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 		}
 	}
 
+	// starred is the *name target, kept to mark it in a complex target list.
+	var starred *ast.Identifier
+
 	// Parse first target (may be starred)
 	if p.curTokenIs(token.ASTERISK) {
 		starredIndex = 0
 		if !p.expectPeek(token.IDENT) {
 			return nil
+		}
+		if p.peekTokenIs(token.COMMA) || p.peekTokenIs(token.ASSIGN) {
+			starred = p.ident(p.curToken.Literal)
+			addIdent(starred)
+			goto rest
 		}
 	}
 	if p.curTokenIs(token.IDENT) && !p.peekTokenIs(token.COMMA) && !p.peekTokenIs(token.ASSIGN) {
@@ -555,9 +563,13 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 		return nil
 	}
 
+rest:
 	// Parse remaining targets
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken() // consume comma
+		if p.peekTokenIs(token.ASSIGN) {
+			break // trailing comma: a, = ... and *a, = ...
+		}
 		p.nextToken() // move to next token
 
 		// Check for starred identifier
@@ -570,7 +582,8 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 			if !p.expectPeek(token.IDENT) {
 				return nil
 			}
-			addIdent(p.ident(p.curToken.Literal))
+			starred = p.ident(p.curToken.Literal)
+			addIdent(starred)
 			continue
 		}
 
@@ -596,8 +609,13 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 	}
 
 	if starredIndex != -1 && complex {
-		p.errors = append(p.errors, "starred unpacking cannot be mixed with grouped or subscripted assignment targets")
-		return nil
+		// a, (b, c), *rest = ...: the general tuple target takes a starred
+		// element.
+		for i, e := range elements {
+			if e == ast.Expression(starred) {
+				elements[i] = &ast.StarredElement{Token: p.nodeLine(), Value: starred}
+			}
+		}
 	}
 
 	if !p.expectPeek(token.ASSIGN) {
@@ -2300,6 +2318,11 @@ func (p *Parser) parseForStatement() *ast.ForStatement {
 
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken() // consume comma
+		if p.peekTokenIs(token.IN) {
+			// trailing comma: for a, in ... unpacks a one-item sequence
+			stmt.Variables = []ast.Expression{&ast.TupleLiteral{Elements: stmt.Variables}}
+			break
+		}
 		p.nextToken() // move to next expression
 		stmt.Variables = append(stmt.Variables, p.parseForTarget())
 	}
@@ -2467,11 +2490,21 @@ func (p *Parser) parseAdditionalClauses() []ast.ComprehensionClause {
 		p.nextToken() // consume FOR
 		p.nextToken() // move to variable
 		vars := make([]ast.Expression, 1, 2)
-		vars[0] = p.parseExpression(EQUALS)
+		vars[0] = p.parseForTarget()
 		for p.peekTokenIs(token.COMMA) {
 			p.nextToken()
+			if p.peekTokenIs(token.IN) {
+				vars = []ast.Expression{&ast.TupleLiteral{Elements: vars}}
+				break
+			}
 			p.nextToken()
-			vars = append(vars, p.parseExpression(EQUALS))
+			vars = append(vars, p.parseForTarget())
+		}
+		for _, v := range vars {
+			if _, isStar := v.(*ast.StarredElement); isStar {
+				vars = []ast.Expression{&ast.TupleLiteral{Elements: vars}}
+				break
+			}
 		}
 		if !p.expectPeek(token.IN) {
 			return nil
@@ -2496,11 +2529,23 @@ func (p *Parser) parseComprehensionCore(expr ast.Expression, endToken token.Toke
 
 	p.nextToken()
 	comp.Variables = make([]ast.Expression, 1, 2)
-	comp.Variables[0] = p.parseExpression(EQUALS)
+	comp.Variables[0] = p.parseForTarget()
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken()
+		if p.peekTokenIs(token.IN) {
+			comp.Variables = []ast.Expression{&ast.TupleLiteral{Elements: comp.Variables}}
+			break
+		}
 		p.nextToken()
-		comp.Variables = append(comp.Variables, p.parseExpression(EQUALS))
+		comp.Variables = append(comp.Variables, p.parseForTarget())
+	}
+	// [x for *a, x in ...]: present a starred target list as one group,
+	// as a for statement does.
+	for _, v := range comp.Variables {
+		if _, starred := v.(*ast.StarredElement); starred {
+			comp.Variables = []ast.Expression{&ast.TupleLiteral{Elements: comp.Variables}}
+			break
+		}
 	}
 
 	if !p.expectPeek(token.IN) {
@@ -2755,11 +2800,23 @@ func (p *Parser) parseDictComprehension(_ ast.LineInfo, keyExpr, valueExpr ast.E
 
 	p.nextToken()
 	comp.Variables = make([]ast.Expression, 1, 2)
-	comp.Variables[0] = p.parseExpression(EQUALS)
+	comp.Variables[0] = p.parseForTarget()
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken()
+		if p.peekTokenIs(token.IN) {
+			comp.Variables = []ast.Expression{&ast.TupleLiteral{Elements: comp.Variables}}
+			break
+		}
 		p.nextToken()
-		comp.Variables = append(comp.Variables, p.parseExpression(EQUALS))
+		comp.Variables = append(comp.Variables, p.parseForTarget())
+	}
+	// [x for *a, x in ...]: present a starred target list as one group,
+	// as a for statement does.
+	for _, v := range comp.Variables {
+		if _, starred := v.(*ast.StarredElement); starred {
+			comp.Variables = []ast.Expression{&ast.TupleLiteral{Elements: comp.Variables}}
+			break
+		}
 	}
 
 	if !p.expectPeek(token.IN) {
@@ -2789,11 +2846,23 @@ func (p *Parser) parseSetComprehension(_ ast.LineInfo, expr ast.Expression) ast.
 
 	p.nextToken()
 	comp.Variables = make([]ast.Expression, 1, 2)
-	comp.Variables[0] = p.parseExpression(EQUALS)
+	comp.Variables[0] = p.parseForTarget()
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken()
+		if p.peekTokenIs(token.IN) {
+			comp.Variables = []ast.Expression{&ast.TupleLiteral{Elements: comp.Variables}}
+			break
+		}
 		p.nextToken()
-		comp.Variables = append(comp.Variables, p.parseExpression(EQUALS))
+		comp.Variables = append(comp.Variables, p.parseForTarget())
+	}
+	// [x for *a, x in ...]: present a starred target list as one group,
+	// as a for statement does.
+	for _, v := range comp.Variables {
+		if _, starred := v.(*ast.StarredElement); starred {
+			comp.Variables = []ast.Expression{&ast.TupleLiteral{Elements: comp.Variables}}
+			break
+		}
 	}
 
 	if !p.expectPeek(token.IN) {

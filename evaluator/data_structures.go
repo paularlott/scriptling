@@ -815,7 +815,12 @@ func boundObjectDunder(inst *object.Instance, name string) object.Object {
 // Internal markers (names that start and end with "__") are not attributes.
 func instanceDictView(inst *object.Instance) *object.Dict {
 	d := object.NewDictSized(inst.FieldCount())
+	// An exception's args are BaseException's own slot, not in __dict__.
+	isExc := inst.Class != nil && inst.Class.ExceptionBase != ""
 	inst.RangeFields(func(name string, v object.Object) bool {
+		if isExc && name == "args" {
+			return true
+		}
 		if !(len(name) > 4 && strings.HasPrefix(name, "__") && strings.HasSuffix(name, "__")) {
 			d.SetByString(name, v)
 		}
@@ -861,6 +866,12 @@ func evalClassIndexExpression(class, index object.Object) object.Object {
 			return &object.Tuple{Elements: []object.Object{cl.BaseClass}}
 		}
 		return &object.Tuple{Elements: []object.Object{objectBuiltin}}
+	case "__mro__":
+		var chain []object.Object
+		for c := cl; c != nil; c = c.BaseClass {
+			chain = append(chain, c)
+		}
+		return &object.Tuple{Elements: append(chain, objectBuiltin)}
 	}
 	return attributeError(cl, field)
 }

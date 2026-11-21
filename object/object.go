@@ -2936,8 +2936,12 @@ type Class struct {
 	// values live in Methods.
 	FieldNames  []string
 	AssignNames []string
-	cacheMu     sync.RWMutex
-	cache       map[string]classLookupCacheEntry
+	// Slots, when non-nil, holds the only attribute names instances may
+	// set: the class and each user base define __slots__ (without
+	// "__dict__"), so instances have no __dict__, as in Python.
+	Slots   map[string]struct{}
+	cacheMu sync.RWMutex
+	cache   map[string]classLookupCacheEntry
 	// shapeRoot is the empty field layout of this class's instances, from
 	// which the shared layouts they move through grow; see instShape.
 	shapeRoot atomic.Pointer[instShape]
@@ -3397,10 +3401,16 @@ func (i *Instance) InvalidateBoundMethod(name string) {
 type Super struct {
 	Class    *Class
 	Instance *Instance
+	// Owner is the receiver class when super() is used in a class method
+	// (cls), where Instance is nil.
+	Owner *Class
 }
 
 func (s *Super) Type() ObjectType { return SUPER_OBJ }
 func (s *Super) Inspect() string {
+	if s.Instance == nil {
+		return fmt.Sprintf("<super: <class '%s'>, <%s object>>", s.Class.Name, s.Owner.Name)
+	}
 	return fmt.Sprintf("<super: <class '%s'>, <%s object>>", s.Class.Name, s.Instance.Class.Name)
 }
 

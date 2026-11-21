@@ -231,7 +231,19 @@ func callSuperMethod(ctx context.Context, super *object.Super, method string, ar
 			case *object.StaticMethod:
 				return applyFunctionWithContext(ctx, m.Fn, args, keywords, env)
 			case *object.ClassMethod:
-				return applyFunctionWithContext(ctx, m.Fn, prependSelf(super.Instance.Class, args), keywords, env)
+				owner := super.Owner
+				if super.Instance != nil {
+					owner = super.Instance.Class
+				}
+				return applyFunctionWithContext(ctx, m.Fn, prependSelf(owner, args), keywords, env)
+			}
+			if super.Instance == nil {
+				// super() in a class method: __init_subclass__ is an implicit
+				// class method; anything else is reached unbound, as in Python.
+				if method == "__init_subclass__" {
+					return applyFunctionWithContext(ctx, fn, prependSelf(super.Owner, args), keywords, env)
+				}
+				return applyFunctionWithContext(ctx, fn, args, keywords, env)
 			}
 			// Bind 'self' for all other callable types (Function, Builtin, LambdaFunction, etc.)
 			newArgs := prependSelf(super.Instance, args)
@@ -239,6 +251,16 @@ func callSuperMethod(ctx context.Context, super *object.Super, method string, ar
 		}
 	}
 
+	if super.Instance == nil {
+		// object.__init_subclass__ takes no arguments and does nothing.
+		if method == "__init_subclass__" {
+			if len(args) > 0 || keywords.Len() > 0 {
+				return errors.NewTypeErrorTagged("%s.__init_subclass__() takes no keyword arguments", super.Owner.Name)
+			}
+			return NULL
+		}
+		return attributeError(super, method)
+	}
 	if res := callObjectDefault(super.Instance, method, args, keywords); res != nil {
 		return res
 	}

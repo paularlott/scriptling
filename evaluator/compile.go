@@ -413,19 +413,14 @@ func compileAssign(n *ast.AssignStatement) object.EvalFn {
 		if propagates(val) {
 			return val
 		}
-		// Execute chained assignments first (a = b = 5: assign 5 to b, then to a)
-		if n.Chained != nil {
-			if err := assignToExpression(ctx, n.Chained.Left, val, env); err != nil {
-				return assignErrorToObject(err)
-			}
-			for c := n.Chained.Chained; c != nil; c = c.Chained {
-				if err := assignToExpression(ctx, c.Left, val, env); err != nil {
-					return assignErrorToObject(err)
-				}
-			}
-		}
+		// Targets bind left to right, as in Python: a = b = 5 assigns a, then b.
 		if err := assignToExpression(ctx, n.Left, val, env); err != nil {
 			return assignErrorToObject(err)
+		}
+		for c := n.Chained; c != nil; c = c.Chained {
+			if err := assignToExpression(ctx, c.Left, val, env); err != nil {
+				return assignErrorToObject(err)
+			}
 		}
 		return NULL
 	}
@@ -2577,6 +2572,13 @@ func compileAugmentedAssign(n *ast.AugmentedAssignStatement) object.EvalFn {
 				return errObj
 			}
 			if done {
+				// The item was changed in place, but Python still stores it
+				// back: t[0] += [x] on a tuple extends the list, then raises.
+				if _, isTuple := ops.obj.(*object.Tuple); isTuple && !idx.IsDotAccess {
+					if err := ops.write(ctx, false, currentVal); err != nil {
+						return assignErrorToObject(err)
+					}
+				}
 				return NULL
 			}
 			if err := ops.write(ctx, idx.IsDotAccess, result); err != nil {
@@ -4276,6 +4278,22 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 			}
 		}
 
+		class.Slots = classSlots(class)
+
+		// As in Python, a base class's __init_subclass__ (an implicit
+		// class method) runs for each new subclass before its decorators.
+		if class.BaseClass != nil {
+			if hook, ok := class.BaseClass.LookupMember("__init_subclass__"); ok {
+				fn := hook
+				if cm, isCM := hook.(*object.ClassMethod); isCM {
+					fn = cm.Fn
+				}
+				if res := applyFunctionWithContext(ctx, fn, []object.Object{class}, object.Kwargs{}, env); propagates(res) {
+					return res
+				}
+			}
+		}
+
 		var defined object.Object = class
 		if finish != nil {
 			defined = finish(ctx, class)
@@ -4300,6 +4318,54 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 		}
 		return result
 	}
+}
+
+// classSlots returns the attribute names instances of class may set when
+// the class body defines __slots__ and every user base restricts its
+// instances too; nil means instances take any attribute.
+func classSlots(class *object.Class) map[string]struct{} {
+	own, ok := class.Methods["__slots__"]
+	if !ok || class.ExceptionBase != "" || class.IsEnum {
+		return nil
+	}
+	if class.BaseClass != nil {
+		// An inherited __slots__ is not the subclass's own: Python then
+		// gives its instances a __dict__.
+		if inherited, has := class.BaseClass.LookupMember("__slots__"); has && inherited == own {
+			return nil
+		}
+	}
+	if class.BaseClass != nil && class.BaseClass.Slots == nil {
+		return nil
+	}
+	var names []object.Object
+	switch v := own.(type) {
+	case *object.String:
+		names = []object.Object{v}
+	case *object.List:
+		names = v.Elements
+	case *object.Tuple:
+		names = v.Elements
+	default:
+		return nil
+	}
+	slots := make(map[string]struct{}, len(names))
+	if class.BaseClass != nil {
+		for k := range class.BaseClass.Slots {
+			slots[k] = struct{}{}
+		}
+	}
+	for _, n := range names {
+		s, ok := n.(*object.String)
+		if !ok {
+			return nil
+		}
+		if s.StringValue() == "__dict__" {
+			return nil
+		}
+		slots[s.StringValue()] = struct{}{}
+	}
+	return slots
 }
 
 // sliceWalk adapts a slice for NewIterator.

@@ -865,6 +865,10 @@ Use list(zip(...)) to get a list.`,
 				// is named (slot 0 holds the first parameter); else a
 				// variable named self, for super() in a nested scope.
 				obj, ok = env.GetSlotByIndex(0)
+				// In a class method the receiver is the class itself (cls).
+				if cls, isCls := obj.(*object.Class); ok && isCls && classIsSubclass(cls, classObj) {
+					return &object.Super{Class: classObj, Owner: cls}
+				}
 				if inst, isInst := obj.(*object.Instance); !ok || !isInst || !instanceOfClass(inst, classObj) {
 					obj, ok = env.Get("self")
 				}
@@ -881,6 +885,12 @@ Use list(zip(...)) to get a list.`,
 				classObj, ok = args[0].(*object.Class)
 				if !ok {
 					return errors.NewTypeError("CLASS", args[0].Type().String())
+				}
+				if cls, isCls := args[1].(*object.Class); isCls {
+					if !classIsSubclass(cls, classObj) {
+						return errors.NewTypeErrorTagged("super(type, obj): obj must be an instance or subtype of type")
+					}
+					return &object.Super{Class: classObj, Owner: cls}
 				}
 
 				instanceObj, ok = args[1].(*object.Instance)
@@ -1420,6 +1430,18 @@ Equivalent to (a // b, a % b) for integers.`,
 				if b, ok := typeArg.(*object.Builtin); ok {
 					if b == objectBuiltin {
 						return TRUE
+					}
+					if classes, isType := object.BuiltinTypeClasses(b); isType {
+						if inst, ok := obj.(*object.Instance); ok {
+							for _, want := range classes {
+								for c := inst.Class; c != nil; c = c.BaseClass {
+									if c == want {
+										return TRUE
+									}
+								}
+							}
+						}
+						continue
 					}
 					if b == typeTypeBuiltin {
 						// isinstance(C, type): C is a class or a type.
@@ -2929,6 +2951,16 @@ func notCallableError(obj object.Object) object.Object {
 	}
 }
 
+// classIsSubclass reports whether cls is base or derives from it.
+func classIsSubclass(cls, base *object.Class) bool {
+	for c := cls; c != nil; c = c.BaseClass {
+		if c == base {
+			return true
+		}
+	}
+	return false
+}
+
 func init() {
 	mapFunction = mapFunctionImpl
 	filterFunction = filterFunctionImpl
@@ -4031,7 +4063,7 @@ func nextFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 		if len(args) == 2 {
 			return args[1]
 		}
-		return &object.Exception{Message: "StopIteration", ExceptionType: object.ExceptionTypeStopIteration, Raised: true}
+		return &object.Exception{Message: "", ExceptionType: object.ExceptionTypeStopIteration, Raised: true}
 	}
 	return val
 }

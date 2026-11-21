@@ -2519,6 +2519,12 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 				}
 				return nil
 			}
+			if o.Class.Slots != nil {
+				if _, ok := o.Class.Slots[key.StringValue()]; !ok {
+					return raisedAssignmentError(object.ExceptionTypeAttributeError,
+						fmt.Sprintf("'%s' object has no attribute '%s' and no __dict__ for setting new attributes", o.Class.Name, key.StringValue()))
+				}
+			}
 			o.SetField(key.StringValue(), value)
 			o.InvalidateBoundMethod(key.StringValue())
 			return nil
@@ -5667,7 +5673,12 @@ func setForVariables(variables []ast.Expression, value object.Object, env *objec
 	if len(variables) == 1 {
 		return setForVariable(variables[0], value, env)
 	}
+	return unpackForVariables(variables, value, env)
+}
 
+// unpackForVariables unpacks value into the targets, one item each; a
+// single target in a group (for (a,) in ...) still unpacks.
+func unpackForVariables(variables []ast.Expression, value object.Object, env *object.Environment) error {
 	// Flat unpacking: a, b in ...
 	var elements []object.Object
 	switch v := value.(type) {
@@ -5743,7 +5754,7 @@ func setForTargets(variables []ast.Expression, value object.Object, env *object.
 		}
 		return nil
 	}
-	return setForVariables(variables, value, env)
+	return unpackForVariables(variables, value, env)
 }
 
 // setForVariable assigns a single for-loop target expression to a value.

@@ -1431,6 +1431,15 @@ var TimedeltaClass = &object.Class{
 	},
 }
 
+func init() {
+	// A datetime is a date, as in Python.
+	object.RegisterBuiltinType(dateConstructorBuiltin, DateClass, DatetimeClass)
+	object.RegisterBuiltinType(datetimeConstructorBuiltin, DatetimeClass)
+	object.RegisterBuiltinType(timedeltaBuiltinNew, TimedeltaClass)
+	object.RegisterBuiltinType(timeConstructorBuiltin, TimeClass)
+	object.RegisterBuiltinType(timezoneConstructorBuiltin, TimezoneClass)
+}
+
 // DatetimeLibrary is the main datetime module
 var DatetimeLibrary = object.NewLibrary(DatetimeLibraryName,
 	map[string]*object.Builtin{

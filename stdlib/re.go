@@ -40,7 +40,7 @@ var RegexClass = &object.Class{
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 				regex := args[0].(*object.Instance)
-				pattern := regex.Field("pattern").(*object.String).StringValue()
+				pattern := regex.Field("_source").(*object.String).StringValue()
 				text, _ := args[1].AsString()
 
 				re, err := GetCompiledRegex(pattern)
@@ -72,7 +72,7 @@ Returns a Match object if the pattern matches at the beginning, or None if no ma
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 				regex := args[0].(*object.Instance)
-				pattern := regex.Field("pattern").(*object.String).StringValue()
+				pattern := regex.Field("_source").(*object.String).StringValue()
 				text, _ := args[1].AsString()
 
 				re, err := GetCompiledRegex(pattern)
@@ -103,7 +103,7 @@ Returns a Match object for the first match, or None if no match found.`,
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 				regex := args[0].(*object.Instance)
-				pattern := regex.Field("pattern").(*object.String).StringValue()
+				pattern := regex.Field("_source").(*object.String).StringValue()
 				text, _ := args[1].AsString()
 
 				re, err := GetCompiledRegex(pattern)
@@ -170,7 +170,7 @@ If there are no capturing groups, returns a list of strings for the full matches
 					return errors.NewTypeError("STRING", args[1].Type().String())
 				}
 				regex := args[0].(*object.Instance)
-				pattern := regex.Field("pattern").(*object.String).StringValue()
+				pattern := regex.Field("_source").(*object.String).StringValue()
 				text, _ := args[1].AsString()
 
 				re, err := GetCompiledRegex(pattern)
@@ -226,12 +226,13 @@ var MatchClass = &object.Class{
 		},
 		"groupdict": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.NoKwargs("groupdict", kwargs); err != nil {
+				if err := errors.CheckKwargs("groupdict", kwargs, "default"); err != nil {
 					return err
 				}
-				if err := errors.ExactArgs(args, 1); err != nil {
+				if err := errors.RangeArgs(args, 1, 2); err != nil {
 					return err
 				}
+				def := matchDefault(kwargs, args)
 				match := args[0].(*object.Instance)
 				groups := match.Field("_groups").(*object.List).Elements
 				names := match.Field("_group_names").(*object.List).Elements
@@ -241,7 +242,11 @@ var MatchClass = &object.Class{
 					if !ok || ns.StringValue() == "" || i >= len(groups) {
 						continue
 					}
-					result.SetByString(ns.StringValue(), groups[i])
+					v := groups[i]
+					if _, unmatched := v.(*object.Null); unmatched {
+						v = def
+					}
+					result.SetByString(ns.StringValue(), v)
 				}
 				return result
 			},
@@ -249,12 +254,13 @@ var MatchClass = &object.Class{
 		},
 		"groups": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.NoKwargs("groups", kwargs); err != nil {
+				if err := errors.CheckKwargs("groups", kwargs, "default"); err != nil {
 					return err
 				}
-				if err := errors.ExactArgs(args, 1); err != nil {
+				if err := errors.RangeArgs(args, 1, 2); err != nil {
 					return err
 				}
+				def := matchDefault(kwargs, args)
 				match := args[0].(*object.Instance)
 				groups := match.Field("_groups").(*object.List).Elements
 				if len(groups) <= 1 {
@@ -264,6 +270,9 @@ var MatchClass = &object.Class{
 				object.TrackSlice(elements)
 				for i := 1; i < len(groups); i++ {
 					elements[i-1] = groups[i]
+					if _, unmatched := groups[i].(*object.Null); unmatched {
+						elements[i-1] = def
+					}
 				}
 				return &object.Tuple{Elements: elements}
 			},
@@ -303,11 +312,144 @@ var MatchClass = &object.Class{
 }
 
 // Helper function to create a Regex instance
-func createRegexInstance(pattern string, flags int64) *object.Instance {
+// regexDelegate makes a compiled pattern's method that calls the module
+// function of the same name with the pattern as its first argument. The
+// stored pattern already carries its flags, so no flags= is passed on.
+func regexDelegate(name string, help string) *object.Builtin {
+	return &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Get("flags") != nil {
+				return errors.NewTypeErrorTagged("%s() got an unexpected keyword argument 'flags'", name)
+			}
+			if len(args) < 1 {
+				return errors.NewTypeErrorTagged("%s() missing pattern", name)
+			}
+			regex, ok := args[0].(*object.Instance)
+			if !ok {
+				return errors.NewTypeError("Regex", args[0].Type().String())
+			}
+			callArgs := make([]object.Object, len(args))
+			callArgs[0] = regex.Field("_source")
+			copy(callArgs[1:], args[1:])
+			return ReLibrary.Functions()[name].Fn(ctx, kwargs, callArgs...)
+		},
+		HelpText: help,
+	}
+}
+
+func init() {
+	RegexClass.Methods["__repr__"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			regex, ok := args[0].(*object.Instance)
+			if len(args) != 1 || !ok {
+				return errors.NewTypeErrorTagged("__repr__() takes no arguments")
+			}
+			pattern := regex.Field("pattern").(*object.String).StringValue()
+			flags, _ := regex.Field("flags").AsInt()
+			return object.NewString(regexRepr(pattern, flags))
+		},
+	}
+	// m[g] is m.group(g), as in Python.
+	MatchClass.Methods["__getitem__"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			match, ok := args[0].(*object.Instance)
+			if len(args) != 2 || !ok {
+				return errors.NewTypeErrorTagged("__getitem__() takes exactly one argument")
+			}
+			n, errObj := matchGroupIndex(match, args[1])
+			if errObj != nil {
+				return errObj
+			}
+			return match.Field("_groups").(*object.List).Elements[n]
+		},
+	}
+	MatchClass.Methods["__repr__"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			match, ok := args[0].(*object.Instance)
+			if len(args) != 1 || !ok {
+				return errors.NewTypeErrorTagged("__repr__() takes no arguments")
+			}
+			start, _ := match.Field("_start").AsInt()
+			end, _ := match.Field("_end").AsInt()
+			text, _ := match.Field("_groups").(*object.List).Elements[0].AsString()
+			return object.NewString(fmt.Sprintf("<re.Match object; span=(%d, %d), match=%s>", start, end, object.ReprString(text)))
+		},
+	}
+	RegexClass.Methods["sub"] = regexDelegate("sub", `sub(repl, string, count=0) - Replace matches of the pattern`)
+	RegexClass.Methods["subn"] = regexDelegate("subn", `subn(repl, string, count=0) - Replace matches, returning (new_string, n)`)
+	RegexClass.Methods["split"] = regexDelegate("split", `split(string, maxsplit=0) - Split string by matches of the pattern`)
+	RegexClass.Methods["fullmatch"] = regexDelegate("fullmatch", `fullmatch(string) - Match the pattern against the whole string`)
+}
+
+// matchDefault is the default= of Match.groups and groupdict: the value an
+// unmatched group gives, None unless given.
+func matchDefault(kwargs object.Kwargs, args []object.Object) object.Object {
+	if len(args) > 1 {
+		return args[1]
+	}
+	if v := kwargs.Get("default"); v != nil {
+		return v
+	}
+	return &object.Null{}
+}
+
+// RE_UNICODE is re.UNICODE, set on every str pattern's flags in Python 3.
+const RE_UNICODE = 32
+
+// createRegexInstance makes a compiled pattern: pattern is the text as
+// written, source the pattern with its flags applied, which matching uses.
+// flags reports, as Python does, the given flags, the inline flags that
+// lead the pattern, and re.UNICODE.
+func createRegexInstance(pattern, source string, flags int64) *object.Instance {
 	return object.NewInstanceWithFields(RegexClass, map[string]object.Object{
 		"pattern": object.NewString(pattern),
-		"flags":   object.NewInteger(flags),
+		"flags":   object.NewInteger(flags | inlineFlags(pattern) | RE_UNICODE),
+		"_source": object.NewString(source),
 	})
+}
+
+// inlineFlags returns the i, m and s flags of a leading (?ims) group.
+func inlineFlags(pattern string) int64 {
+	var flags int64
+	for strings.HasPrefix(pattern, "(?") {
+		end := strings.IndexByte(pattern, ')')
+		if end < 0 {
+			return flags
+		}
+		group := pattern[2:end]
+		for _, c := range group {
+			switch c {
+			case 'i':
+				flags |= RE_IGNORECASE
+			case 'm':
+				flags |= RE_MULTILINE
+			case 's':
+				flags |= RE_DOTALL
+			default:
+				return flags
+			}
+		}
+		pattern = pattern[end+1:]
+	}
+	return flags
+}
+
+func regexRepr(pattern string, flags int64) string {
+	var names []string
+	if flags&RE_IGNORECASE != 0 {
+		names = append(names, "re.IGNORECASE")
+	}
+	if flags&RE_MULTILINE != 0 {
+		names = append(names, "re.MULTILINE")
+	}
+	if flags&RE_DOTALL != 0 {
+		names = append(names, "re.DOTALL")
+	}
+	quoted := object.ReprString(pattern)
+	if len(names) == 0 {
+		return "re.compile(" + quoted + ")"
+	}
+	return "re.compile(" + quoted + ", " + strings.Join(names, "|") + ")"
 }
 
 // matchGroupIndex resolves a group number or (?P<name>...) name of a match
@@ -1088,16 +1230,16 @@ Flags:
 			if err != nil {
 				return errors.NewTypeErrorTagged("%s", err.Error())
 			}
-			pattern = applyFlags(pattern, flags)
+			source := applyFlags(pattern, flags)
 
 			// Try to compile to validate the pattern
-			_, err = GetCompiledRegex(pattern)
+			_, err = GetCompiledRegex(source)
 			if err != nil {
 				return reCompileError(err)
 			}
 
 			// Return the compiled regex object
-			return createRegexInstance(pattern, flags)
+			return createRegexInstance(pattern, source, flags)
 		},
 		HelpText: `compile(pattern, flags=0) - Compile regex pattern
 

@@ -10,6 +10,22 @@ import (
 // evaluator for libraries that cannot import it. Nil until then.
 var IsInstance func(ctx context.Context, obj, classinfo Object) Object
 
+// builtinTypeClasses maps a library type's constructor builtin (datetime.date)
+// to the classes of the instances it makes, for isinstance.
+var builtinTypeClasses = map[*Builtin][]*Class{}
+
+// RegisterBuiltinType makes isinstance(x, b) true for instances of any of
+// classes. Call it from package init only.
+func RegisterBuiltinType(b *Builtin, classes ...*Class) {
+	builtinTypeClasses[b] = classes
+}
+
+// BuiltinTypeClasses returns the instance classes registered for b.
+func BuiltinTypeClasses(b *Builtin) ([]*Class, bool) {
+	c, ok := builtinTypeClasses[b]
+	return c, ok
+}
+
 // reprHook and strHook are the evaluator's repr() and str(), installed for
 // libraries that cannot import it.
 var reprHook, strHook func(ctx context.Context, obj Object) (string, Object)
