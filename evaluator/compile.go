@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"unsafe"
 
@@ -61,7 +62,7 @@ func compileNode(node ast.Node) object.EvalFn {
 		}
 	case *ast.StringLiteral:
 		// evalStringLiteral reads the node's boxed-value cache, so the node
-		// itself is captured, exactly as the old path did.
+		// itself is captured.
 		return func(ctx context.Context, env *object.Environment) object.Object {
 			return evalStringLiteral(n)
 		}
@@ -274,7 +275,7 @@ func compileProgram(program *ast.Program) object.EvalFn {
 }
 
 // compileProgramNode compiles the program's statement list. Slot setup and the
-// per-statement result handling stay at runtime exactly as in evalProgram.
+// per-statement result handling happen at run time.
 func compileProgramNode(n *ast.Program) object.EvalFn {
 	stmts := make([]object.EvalFn, len(n.Statements))
 	lines := make([]int, len(n.Statements))
@@ -333,8 +334,7 @@ func compileProgramNode(n *ast.Program) object.EvalFn {
 }
 
 // compileBlock compiles a block's statement list. The result-type switch and
-// the context checker are kept exactly as they are in
-// evalBlockStatementWithContext.
+// the context checker run per statement at run time.
 func compileBlock(n *ast.BlockStatement) object.EvalFn {
 	stmts := make([]object.EvalFn, len(n.Statements))
 	lines := make([]int, len(n.Statements))
@@ -405,8 +405,7 @@ func compileExpressionStatement(n *ast.ExpressionStatement) object.EvalFn {
 // compileAssign converts an assignment statement.
 func compileAssign(n *ast.AssignStatement) object.EvalFn {
 	// Every target kind (identifier, index, attribute) goes through
-	// assignToExpression exactly as before — the conversion compiles the value
-	// expression and removes the dispatch needed to reach the helper.
+	// assignToExpression; only the value expression is compiled here.
 	value := compileExpr(n.Value)
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		val := value(ctx, env)
@@ -632,10 +631,10 @@ func compileFastRangeParts(n *ast.ForStatement) (*ast.Identifier, []object.EvalF
 	return target, args
 }
 
-// compileRangeArgs mirrors evalRangeArgs with the argument expressions already
-// compiled. It returns ok=false when the arguments do not fit the fast path
-// (wrong count or non-integer at runtime), sending the caller to the generic
-// iteration path, exactly as evalRangeArgs does.
+// compileRangeArgs evaluates range()'s compiled argument expressions. It
+// returns ok=false when the arguments do not fit the fast path (wrong count
+// or non-integer at runtime), sending the caller to the generic iteration
+// path.
 func compileRangeArgs(args []object.EvalFn) func(ctx context.Context, env *object.Environment) (start, stop, step int64, errObj object.Object, ok bool) {
 	return func(ctx context.Context, env *object.Environment) (int64, int64, int64, object.Object, bool) {
 		if len(args) < 1 || len(args) > 3 {
@@ -901,7 +900,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 						return err
 					}
 
-					element := object.NewString(string(char))
+					element := object.NewRuneString(char)
 					if err := setForVariables(n.Variables, element, env); err != nil {
 						return assignErrorToObject(err)
 					}
@@ -981,7 +980,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 // then the string-concatenation chain, then the general path. IntFast and the
 // concat chain's shape are static parser annotations, so they are tested at
 // compile time; the fast paths themselves still run at runtime and fall back
-// to the general path exactly as before.
+// to the general path.
 func compileInfix(n *ast.InfixExpression) object.EvalFn {
 	op := n.Operator
 	if op == ast.OpAnd || op == ast.OpOr {
@@ -1266,22 +1265,54 @@ func compileExprs(exps []ast.Expression) []object.EvalFn {
 	return fns
 }
 
-// compileKeywordMap compiles keyword-argument values. Iteration order of the
-// returned map at run time matches the old code's range over the AST map:
-// unspecified, exactly as before.
-func compileKeywordMap(kws map[string]ast.Expression) map[string]object.EvalFn {
+// compileKeywords compiles a call's keyword-argument values into parallel
+// slices of names and value closures, sorted by name. The AST keeps keywords
+// in a map, so their source order is not known; a fixed order makes their
+// evaluation deterministic.
+func compileKeywords(kws map[string]ast.Expression) ([]string, []object.EvalFn) {
 	if len(kws) == 0 {
-		return nil
+		return nil, nil
 	}
-	fns := make(map[string]object.EvalFn, len(kws))
-	for k, v := range kws {
-		fns[k] = compileExpr(v)
+	names := make([]string, 0, len(kws))
+	for k := range kws {
+		names = append(names, k)
 	}
-	return fns
+	sort.Strings(names)
+	fns := make([]object.EvalFn, len(names))
+	for i, k := range names {
+		fns[i] = compileExpr(kws[k])
+	}
+	return names, fns
 }
 
-// evalCompiledCallArgs is evalCallArgs over pre-compiled arguments, into the
-// same pooled per-root buffer. The returned slice is BORROWED: the caller must
+// evalKeywordValues evaluates a call's keyword values into a buffer borrowed
+// from the per-root arg-buffer free-list: release it with object.ReleaseArgs.
+// On a propagating value the buffer is already released and the value is
+// returned as the second result.
+func evalKeywordValues(ctx context.Context, env *object.Environment, kwFns []object.EvalFn) ([]object.Object, object.Object) {
+	vals := object.AcquireArgs(env, len(kwFns))
+	for i, vfn := range kwFns {
+		val := vfn(ctx, env)
+		if propagates(val) {
+			object.ReleaseArgs(env, vals)
+			return nil, val
+		}
+		vals[i] = val
+	}
+	return vals, nil
+}
+
+// keywordMap builds the keyword map handed to callees that take one.
+func keywordMap(names []string, vals []object.Object) map[string]object.Object {
+	keywords := make(map[string]object.Object, len(names))
+	for i, name := range names {
+		keywords[name] = vals[i]
+	}
+	return keywords
+}
+
+// evalCompiledCallArgs evaluates a call's compiled arguments into a buffer
+// from the pooled per-root free-list. The returned slice is BORROWED: the caller must
 // call object.ReleaseArgs(env, args) once the callee has returned.
 func evalCompiledCallArgs(ctx context.Context, env *object.Environment, argFns []object.EvalFn) []object.Object {
 	n := len(argFns)
@@ -1300,7 +1331,7 @@ func evalCompiledCallArgs(ctx context.Context, env *object.Environment, argFns [
 	return result
 }
 
-// applyCompiledBuiltinFast is applyBuiltinFast over pre-compiled arguments.
+// applyCompiledBuiltinFast calls a builtin with positional arguments only.
 func applyCompiledBuiltinFast(ctx context.Context, env *object.Environment, fn *object.Builtin, argFns []object.EvalFn) object.Object {
 	args := evalCompiledCallArgs(ctx, env, argFns)
 	if isPropagatedError(args) {
@@ -1320,7 +1351,7 @@ func applyCompiledBuiltinFast(ctx context.Context, env *object.Environment, fn *
 // keyword and unpack evaluation — stays in the closure.
 func compileCall(n *ast.CallExpression) object.EvalFn {
 	argFns := compileExprs(n.Arguments)
-	kwFns := compileKeywordMap(n.GetKeywords())
+	kwNames, kwFns := compileKeywords(n.GetKeywords())
 	unpackFns := compileExprs(n.GetArgsUnpack())
 	unpackAt := n.GetArgsUnpackAt()
 	var kwargsUnpackFn object.EvalFn
@@ -1329,7 +1360,7 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 	}
 	callee := compileExpr(n.Function)
 
-	// general is the old general path for complex call expressions. fnFn
+	// general handles every call shape: keywords, unpacks and any callee. fnFn
 	// supplies the callee when it must still be evaluated (nil means the
 	// callee object was already resolved by the caller).
 	general := func(ctx context.Context, env *object.Environment, function object.Object, fnFn object.EvalFn) object.Object {
@@ -1362,15 +1393,14 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 			defer object.ReleaseArgs(env, args)
 		}
 
-		var keywords map[string]object.Object
+		// kwVals is borrowed like args. It is released below once the callee
+		// has bound it or it has been copied into a map; an error return
+		// before then simply leaves the buffer to the garbage collector.
+		var kwVals []object.Object
 		if len(kwFns) > 0 {
-			keywords = make(map[string]object.Object, len(kwFns))
-			for k, vfn := range kwFns {
-				val := vfn(ctx, env)
-				if propagates(val) {
-					return val
-				}
-				keywords[k] = val
+			var failed object.Object
+			if kwVals, failed = evalKeywordValues(ctx, env, kwFns); failed != nil {
+				return failed
 			}
 		}
 
@@ -1382,22 +1412,34 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 			}
 		}
 
+		var keywords map[string]object.Object
 		if kwargsUnpackFn != nil {
 			kwargsVal := kwargsUnpackFn(ctx, env)
 			if propagates(kwargsVal) {
 				return kwargsVal
 			}
-			if dict, ok := kwargsVal.(*object.Dict); ok {
-				if keywords == nil {
-					keywords = make(map[string]object.Object, len(dict.Pairs))
-				}
-				for _, pair := range dict.Pairs {
-					keywords[pair.StringKey()] = pair.Value
-				}
-			} else {
+			dict, ok := kwargsVal.(*object.Dict)
+			if !ok {
 				return errors.NewError("argument after ** must be a dictionary, not %s", kwargsVal.Type())
 			}
+			keywords = make(map[string]object.Object, len(kwVals)+len(dict.Pairs))
+			for i, name := range kwNames {
+				keywords[name] = kwVals[i]
+			}
+			for _, pair := range dict.Pairs {
+				keywords[pair.StringKey()] = pair.Value
+			}
+		} else if len(kwVals) > 0 {
+			// A user function binds its keywords straight from the slices;
+			// every other callee takes them as a map.
+			if fn, ok := function.(*object.Function); ok {
+				res := applyUserFunctionKw(ctx, fn, args, nil, kwArgs{names: kwNames, values: kwVals}, env)
+				object.ReleaseArgs(env, kwVals)
+				return res
+			}
+			keywords = keywordMap(kwNames, kwVals)
 		}
+		object.ReleaseArgs(env, kwVals)
 
 		return applyFunctionWithContext(ctx, function, args, keywords, env)
 	}
@@ -1476,9 +1518,8 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 				if builtin, ok := builtins[name]; ok {
 					return applyCompiledBuiltinFast(ctx, env, builtin, argFns)
 				}
-				// Not found: the old code fell to the general path, which
-				// re-evaluated the callee expression and produced the
-				// identifier error from there.
+				// Not found: the general path evaluates the callee expression
+				// and produces the identifier error from there.
 				return general(ctx, env, nil, callee)
 			}
 		}
@@ -1498,7 +1539,7 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 	receiver := compileExpr(n.Receiver)
 	name := n.Method.Value()
 	argFns := compileExprs(n.Arguments)
-	kwFns := compileKeywordMap(n.GetKeywords())
+	kwNames, kwFns := compileKeywords(n.GetKeywords())
 	unpackFns := compileExprs(n.GetArgsUnpack())
 	unpackAt := n.GetArgsUnpackAt()
 	var kwargsUnpackFn object.EvalFn
@@ -1540,8 +1581,8 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 			}
 		}
 
-		// Fast path for plain instance method calls, which are the object-oriented
-		// equivalent of the monomorphic paths in evalCallExpression.
+		// Fast path for plain instance method calls, the object-oriented
+		// equivalent of compileCall's per-arity paths.
 		if inst, ok := obj.(*object.Instance); ok && !hasOverflow {
 			if result, handled := tryEvalInstanceMethodFastCompiled(ctx, inst, name, argFns, env); handled {
 				return result
@@ -1558,14 +1599,12 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 		// Evaluate keyword arguments
 		var keywords map[string]object.Object
 		if len(kwFns) > 0 {
-			keywords = make(map[string]object.Object, len(kwFns))
-			for k, vfn := range kwFns {
-				val := vfn(ctx, env)
-				if propagates(val) {
-					return val
-				}
-				keywords[k] = val
+			kwVals, failed := evalKeywordValues(ctx, env, kwFns)
+			if failed != nil {
+				return failed
 			}
+			keywords = keywordMap(kwNames, kwVals)
+			object.ReleaseArgs(env, kwVals)
 		}
 
 		// Handle *args unpacking (supports multiple)
@@ -1613,7 +1652,8 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 	}
 }
 
-// evalFastDictGetCompiled is evalFastDictGet over pre-compiled arguments.
+// evalFastDictGetCompiled is dict.get(key[, default]) without building an
+// argument slice.
 func evalFastDictGetCompiled(ctx context.Context, dict *object.Dict, argFns []object.EvalFn, env *object.Environment) object.Object {
 	keyObj := argFns[0](ctx, env)
 	if propagates(keyObj) {
@@ -1645,8 +1685,8 @@ func evalFastDictGetCompiled(ctx context.Context, dict *object.Dict, argFns []ob
 	return defaultObj
 }
 
-// evalFastDictCallableMethodCompiled is evalFastDictCallableMethod over
-// pre-compiled arguments.
+// evalFastDictCallableMethodCompiled calls a callable stored in a dict under
+// method, as d.method(args).
 func evalFastDictCallableMethodCompiled(ctx context.Context, dict *object.Dict, method string, argFns []object.EvalFn, env *object.Environment) object.Object {
 	pair, ok := dict.GetByString(method)
 	if !ok {
@@ -1836,6 +1876,7 @@ func compileLambda(n *ast.Lambda) object.EvalFn {
 			LocalSlots:       localSlots,
 			LocalSlotNames:   localSlotNames,
 			ParamSlotIndexes: n.ParamSlotIndexes,
+			ReuseCallEnv:     !n.HasNestedFunc,
 			CompiledBody:     body,
 			CompiledDefaults: defaults,
 			ResolvedDefaults: resolved,
@@ -1855,9 +1896,9 @@ const (
 	classObjectSize = int64(unsafe.Sizeof(object.Class{})+unsafe.Sizeof(object.Environment{})) + 64
 )
 
-// evalCompiledExpressions is evalExpressionsWithContext over pre-compiled
-// expressions: on the first propagating value it returns the one-element
-// sentinel slice, exactly like the original.
+// evalCompiledExpressions evaluates compiled expressions in order: on the
+// first propagating value it returns the one-element sentinel slice (see
+// isPropagatedError).
 func evalCompiledExpressions(ctx context.Context, env *object.Environment, fns []object.EvalFn) []object.Object {
 	if len(fns) == 0 {
 		return nil
@@ -2205,20 +2246,20 @@ func compileSlice(n *ast.SliceExpression) object.EvalFn {
 			}
 			return evalIndexExpression(ctx, obj, sliceObj, false)
 		case *object.List:
-			return sliceList(obj.Elements, start, end, step, hasStart, hasEnd, hasStep)
+			return sliceList(obj.Elements, start, end, step, hasStart, hasEnd)
 		case *object.Tuple:
-			result := sliceList(obj.Elements, start, end, step, hasStart, hasEnd, hasStep)
+			result := sliceList(obj.Elements, start, end, step, hasStart, hasEnd)
 			if list, ok := result.(*object.List); ok {
 				return &object.Tuple{Elements: list.Elements}
 			}
 			return result
 		case *object.String:
-			elements := sliceString(obj.StringValue(), start, end, step, hasStart, hasEnd, hasStep)
+			elements := sliceString(obj.StringValue(), start, end, step, hasStart, hasEnd)
 			return object.NewSubstring(elements, obj.StringValue())
 		case *object.Bytes:
-			return sliceBytes(obj, start, end, step, hasStart, hasEnd, hasStep)
+			return sliceBytes(obj, start, end, step, hasStart, hasEnd)
 		case *object.FloatArray:
-			return sliceFloatArray(obj, start, end, step, hasStart, hasEnd, hasStep)
+			return sliceFloatArray(obj, start, end, step, hasStart, hasEnd)
 		default:
 			return errors.NewError("slice operator not supported: %s", leftVal.Type())
 		}
@@ -2496,6 +2537,34 @@ func (ops *augIndexOperands) write(ctx context.Context, isDotAccess bool, value 
 }
 
 func compileMultipleAssign(n *ast.MultipleAssignStatement) object.EvalFn {
+	// a, b = x, y with one value per name: evaluate every value, then assign,
+	// without building the tuple in between.
+	if tl, ok := n.Value.(*ast.TupleLiteral); ok && n.StarredIndex < 0 && len(tl.Elements) == len(n.Names) && len(n.Names) <= 4 {
+		plain := true
+		for _, e := range tl.Elements {
+			if _, starred := e.(*ast.StarredElement); starred {
+				plain = false
+			}
+		}
+		if plain {
+			valueFns := compileExprs(tl.Elements)
+			return func(ctx context.Context, env *object.Environment) object.Object {
+				var vals [4]object.Object
+				for i, fn := range valueFns {
+					val := fn(ctx, env)
+					if propagates(val) {
+						return val
+					}
+					vals[i] = val
+				}
+				for i, name := range n.Names {
+					env.Set(name.Value(), vals[i])
+				}
+				return NULL
+			}
+		}
+	}
+
 	valueFn := compileExpr(n.Value)
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		val := valueFn(ctx, env)
@@ -2546,8 +2615,10 @@ func compileMultipleAssign(n *ast.MultipleAssignStatement) object.EvalFn {
 			starStart := n.StarredIndex
 			starEnd := len(elements) - elementsAfterStar
 
-			// Assign starred variable (as a list)
-			starredElements := elements[starStart:starEnd]
+			// Assign starred variable: a new list, never a view of the
+			// value being unpacked.
+			starredElements := make([]object.Object, starEnd-starStart)
+			copy(starredElements, elements[starStart:starEnd])
 			env.Set(n.Names[n.StarredIndex].Value(), &object.List{Elements: starredElements})
 
 			// Assign elements after the starred variable
@@ -2688,8 +2759,8 @@ func compiledClauses(clauses []ast.ComprehensionClause) []compiledClause {
 	return out
 }
 
-// evalCompiledAdditionalClauses mirrors evalAdditionalClauses over
-// pre-compiled clauses.
+// evalCompiledAdditionalClauses runs a comprehension's remaining for/if
+// clauses from idx, calling action for each combination that passes.
 func evalCompiledAdditionalClauses(ctx context.Context, clauses []compiledClause, idx int, env *object.Environment, action func() object.Object) object.Object {
 	if idx >= len(clauses) {
 		return action()

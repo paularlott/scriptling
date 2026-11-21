@@ -261,7 +261,6 @@ var (
 	errMustBeBoolean = &Error{Message: ErrMustBeBoolean}
 	errMustBeList    = &Error{Message: ErrMustBeList}
 	errMustBeDict    = &Error{Message: ErrMustBeDict}
-	errMustBeBytes   = &Error{Message: ErrMustBeBytes}
 )
 
 // Exception type constants
@@ -535,6 +534,26 @@ func NewString(v string) *String {
 		trackString(str)
 	}
 	return str
+}
+
+// asciiStrings holds one shared String for each ASCII character. Strings are
+// immutable, so every one-character string of that character can be the same
+// object, as with small integers.
+var asciiStrings = func() (t [128]String) {
+	for i := range t {
+		t[i].value = ByteString(byte(i))
+	}
+	return t
+}()
+
+// NewRuneString returns the one-character string for r. ASCII characters come
+// from a shared table, so iterating over or indexing into text allocates
+// nothing for them.
+func NewRuneString(r rune) *String {
+	if r >= 0 && r < int32(len(asciiStrings)) {
+		return &asciiStrings[r]
+	}
+	return NewString(string(r))
 }
 
 // stringObjectOverhead approximates the bytes a String costs beyond its text:
@@ -945,6 +964,10 @@ type LambdaFunction struct {
 	LocalSlots       map[string]int
 	LocalSlotNames   []string
 	ParamSlotIndexes []int
+	// ReuseCallEnv allows a call's environment to return to the free-list
+	// when the call ends. It must be false for a lambda that contains another
+	// lambda, which can keep the environment alive after the call.
+	ReuseCallEnv bool
 
 	// CompiledBody is the compiled form of Body, set when the lambda is
 	// compiled. The evaluator compiles and stores it on first call for
@@ -1159,8 +1182,8 @@ type Environment struct {
 	slotIndex                  map[string]int
 	slotNames                  []string
 	slots                      []Object
-	callPoolSlots              uint8
-	ownSlots                   bool // slotIndex and slotNames are this environment's own copy
+	callPoolSlots              uint8 // slot count + 1 when this is a pooled call frame, else 0
+	ownSlots                   bool  // slotIndex and slotNames are this environment's own copy
 	outer                      *Environment
 	root                       *Environment
 	globals                    map[string]bool
@@ -1570,7 +1593,7 @@ func (e *Environment) ResourceGuard() *ResourceGuard {
 // ReleaseCallEnvironment.
 func AcquireCallEnvironment(outer *Environment, slotIndex map[string]int, slotNames []string) *Environment {
 	slotCount := len(slotNames)
-	if slotCount > 0 && slotCount <= maxPooledCallEnvSlots && outer != nil {
+	if slotCount <= maxPooledCallEnvSlots && outer != nil {
 		if root := outer.root; root != nil {
 			if fl := root.freeFrames; fl != nil {
 				if bucket := fl.buckets[slotCount]; len(bucket) > 0 {
@@ -1581,7 +1604,7 @@ func AcquireCallEnvironment(outer *Environment, slotIndex map[string]int, slotNa
 					env.slotIndex = slotIndex
 					env.slotNames = slotNames
 					env.ownSlots = false
-					env.callPoolSlots = uint8(slotCount)
+					env.callPoolSlots = uint8(slotCount) + 1
 					env.outer = outer
 					env.root = root
 					env.output = outer.output
@@ -1595,7 +1618,7 @@ func AcquireCallEnvironment(outer *Environment, slotIndex map[string]int, slotNa
 			}
 		}
 		env := NewEnclosedEnvironmentWithSlots(outer, slotIndex, slotNames)
-		env.callPoolSlots = uint8(slotCount)
+		env.callPoolSlots = uint8(slotCount) + 1
 		return env
 	}
 	return NewEnclosedEnvironmentWithSlots(outer, slotIndex, slotNames)
@@ -1609,7 +1632,7 @@ func ReleaseCallEnvironment(env *Environment) {
 		return
 	}
 	root := env.root
-	slotCount := env.callPoolSlots
+	slotCount := env.callPoolSlots - 1
 	for i := range env.slots {
 		env.slots[i] = nil
 	}
@@ -2285,11 +2308,13 @@ func (s *CallableSnapshot) ApplySnapshot(target *Environment) {
 			Variadic:         v.Variadic,
 			Kwargs:           v.Kwargs,
 			KeywordOnlyStart: v.KeywordOnlyStart,
+			PositionalOnly:   v.PositionalOnly,
 			Body:             v.Body,
 			Env:              target,
 			LocalSlots:       v.LocalSlots,
 			LocalSlotNames:   v.LocalSlotNames,
 			ParamSlotIndexes: v.ParamSlotIndexes,
+			ReuseCallEnv:     v.ReuseCallEnv,
 			CompiledBody:     v.CompiledBody,
 			CompiledDefaults: v.CompiledDefaults,
 			ResolvedDefaults: v.ResolvedDefaults,

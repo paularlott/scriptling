@@ -860,6 +860,12 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 // intentionally minimal — decode/hex/base64 cover the round-trips users
 // actually need in glue scripts.
 func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	if len(keywords) > 0 && (method == "split" || method == "rsplit") {
+		var errObj object.Object
+		if args, errObj = splitKeywordArgs(method, args, keywords); errObj != nil {
+			return errObj
+		}
+	}
 	switch method {
 	case "join":
 		// b"-".join([b"a", b"b"]): concatenate an iterable of bytes.
@@ -1013,7 +1019,107 @@ func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args [
 	return attributeError(b, method)
 }
 
+// splitKeywordArgs folds the sep= and maxsplit= keywords of split and rsplit
+// into positional arguments (sep, maxsplit), so s.split(",", maxsplit=1) is
+// s.split(",", 1). Any other keyword, or one that repeats a positional
+// argument, is a TypeError.
+func splitKeywordArgs(method string, args []object.Object, keywords map[string]object.Object) ([]object.Object, object.Object) {
+	out := []object.Object{NULL, object.NewInteger(-1)}
+	n := copy(out, args)
+	if len(args) > 2 {
+		return args, nil // the method reports the arity error
+	}
+	for name, val := range keywords {
+		idx := 0
+		switch name {
+		case "sep":
+		case "maxsplit":
+			idx = 1
+		default:
+			return nil, errors.NewTypeErrorTagged("%s() got an unexpected keyword argument '%s'", method, name)
+		}
+		if idx < n {
+			return nil, errors.NewTypeErrorTagged("%s() got multiple values for argument '%s'", method, name)
+		}
+		out[idx] = val
+	}
+	return out, nil
+}
+
+// stringSearchWindow parses the (sub[, start[, end]]) arguments shared by find,
+// rfind, index, rindex and count and clamps start and end to s. The window is
+// empty when start > end.
+func stringSearchWindow(name, s string, args []object.Object) (sub string, start, end int, errObj object.Object) {
+	if len(args) < 1 || len(args) > 3 {
+		return "", 0, 0, errors.NewError("%s() takes 1-3 arguments (%d given)", name, len(args))
+	}
+	sub, errObj = args[0].AsString()
+	if errObj != nil {
+		return "", 0, 0, errors.ParameterError("sub", errObj)
+	}
+	end = len(s)
+	if len(args) >= 2 {
+		v, e := args[1].AsInt()
+		if e != nil {
+			return "", 0, 0, errors.ParameterError("start", e)
+		}
+		start = int(v)
+		if start < 0 {
+			start = max(len(s)+start, 0)
+		}
+	}
+	if len(args) == 3 {
+		v, e := args[2].AsInt()
+		if e != nil {
+			return "", 0, 0, errors.ParameterError("end", e)
+		}
+		end = int(v)
+		if end < 0 {
+			end = len(s) + end
+		}
+	}
+	return sub, min(start, len(s)), min(end, len(s)), nil
+}
+
+// stringPadArgs parses the (width[, fillchar]) arguments shared by ljust, rjust
+// and center. It returns the width and fill character, or a non-nil early
+// result (the string itself when it is already wide enough, or an error).
+func stringPadArgs(name string, str *object.String, args []object.Object) (w int, fillChar string, early object.Object) {
+	if len(args) < 1 || len(args) > 2 {
+		return 0, "", errors.NewError("%s() takes 1-2 arguments (%d given)", name, len(args))
+	}
+	width, errObj := args[0].AsInt()
+	if errObj != nil {
+		return 0, "", errors.ParameterError("width", errObj)
+	}
+	w = int(width)
+	if w <= len(str.StringValue()) {
+		return 0, "", str
+	}
+	if errObj := checkWidth("padded string", int64(w)); errObj != nil {
+		return 0, "", errObj
+	}
+	fillChar = " "
+	if len(args) == 2 {
+		fill, errObj2 := args[1].AsString()
+		if errObj2 != nil {
+			return 0, "", errors.ParameterError("fillchar", errObj2)
+		}
+		if len(fill) != 1 {
+			return 0, "", errors.NewError("fill character must be exactly one character")
+		}
+		fillChar = fill
+	}
+	return w, fillChar, nil
+}
+
 func callStringMethod(ctx context.Context, str *object.String, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	if len(keywords) > 0 && (method == "split" || method == "rsplit") {
+		var errObj object.Object
+		if args, errObj = splitKeywordArgs(method, args, keywords); errObj != nil {
+			return errObj
+		}
+	}
 	switch method {
 	case "upper":
 		if err := errors.ExactArgs(args, 0); err != nil {
@@ -1336,241 +1442,66 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			return errors.ParameterError(name, errors.NewError("must be str or tuple"))
 		}
 	case "find":
-		if len(args) < 1 || len(args) > 3 {
-			return errors.NewError("find() takes 1-3 arguments (%d given)", len(args))
-		}
-		substr, errObj := args[0].AsString()
+		sub, start, end, errObj := stringSearchWindow("find", str.StringValue(), args)
 		if errObj != nil {
-			return errors.ParameterError("sub", errObj)
-		}
-		start := 0
-		end := len(str.StringValue())
-		if len(args) >= 2 {
-			s, errObj2 := args[1].AsInt()
-			if errObj2 != nil {
-				return errors.ParameterError("start", errObj2)
-			}
-			start = int(s)
-			if start < 0 {
-				start = len(str.StringValue()) + start
-				if start < 0 {
-					start = 0
-				}
-			}
-		}
-		if len(args) == 3 {
-			e, errObj3 := args[2].AsInt()
-			if errObj3 != nil {
-				return errors.ParameterError("end", errObj3)
-			}
-			end = int(e)
-			if end < 0 {
-				end = len(str.StringValue()) + end
-			}
-		}
-		if start > len(str.StringValue()) {
-			start = len(str.StringValue())
-		}
-		if end > len(str.StringValue()) {
-			end = len(str.StringValue())
+			return errObj
 		}
 		if start > end {
 			return object.NewInteger(-1)
 		}
-		searchStr := str.StringValue()[start:end]
-		idx := strings.Index(searchStr, substr)
+		idx := strings.Index(str.StringValue()[start:end], sub)
 		if idx == -1 {
 			return object.NewInteger(-1)
 		}
 		return object.NewInteger(int64(start + idx))
 	case "rfind":
-		if len(args) < 1 || len(args) > 3 {
-			return errors.NewError("rfind() takes 1-3 arguments (%d given)", len(args))
-		}
-		substr, errObj := args[0].AsString()
+		sub, start, end, errObj := stringSearchWindow("rfind", str.StringValue(), args)
 		if errObj != nil {
-			return errors.ParameterError("sub", errObj)
-		}
-		start := 0
-		end := len(str.StringValue())
-		if len(args) >= 2 {
-			s, errObj2 := args[1].AsInt()
-			if errObj2 != nil {
-				return errors.ParameterError("start", errObj2)
-			}
-			start = int(s)
-			if start < 0 {
-				start = len(str.StringValue()) + start
-				if start < 0 {
-					start = 0
-				}
-			}
-		}
-		if len(args) == 3 {
-			e, errObj3 := args[2].AsInt()
-			if errObj3 != nil {
-				return errors.ParameterError("end", errObj3)
-			}
-			end = int(e)
-			if end < 0 {
-				end = len(str.StringValue()) + end
-			}
-		}
-		if start > len(str.StringValue()) {
-			start = len(str.StringValue())
-		}
-		if end > len(str.StringValue()) {
-			end = len(str.StringValue())
+			return errObj
 		}
 		if start > end {
 			return object.NewInteger(-1)
 		}
-		searchStr := str.StringValue()[start:end]
-		idx := strings.LastIndex(searchStr, substr)
+		idx := strings.LastIndex(str.StringValue()[start:end], sub)
 		if idx == -1 {
 			return object.NewInteger(-1)
 		}
 		return object.NewInteger(int64(start + idx))
 	case "rindex":
-		if len(args) < 1 || len(args) > 3 {
-			return errors.NewError("rindex() takes 1-3 arguments (%d given)", len(args))
-		}
-		substr, errObj := args[0].AsString()
+		sub, start, end, errObj := stringSearchWindow("rindex", str.StringValue(), args)
 		if errObj != nil {
-			return errors.ParameterError("sub", errObj)
-		}
-		start := 0
-		end := len(str.StringValue())
-		if len(args) >= 2 {
-			s, errObj2 := args[1].AsInt()
-			if errObj2 != nil {
-				return errors.ParameterError("start", errObj2)
-			}
-			start = int(s)
-			if start < 0 {
-				start = len(str.StringValue()) + start
-				if start < 0 {
-					start = 0
-				}
-			}
-		}
-		if len(args) == 3 {
-			e, errObj3 := args[2].AsInt()
-			if errObj3 != nil {
-				return errors.ParameterError("end", errObj3)
-			}
-			end = int(e)
-			if end < 0 {
-				end = len(str.StringValue()) + end
-			}
-		}
-		if start > len(str.StringValue()) {
-			start = len(str.StringValue())
-		}
-		if end > len(str.StringValue()) {
-			end = len(str.StringValue())
+			return errObj
 		}
 		if start > end {
 			return errors.NewValueError("substring not found")
 		}
-		searchStr := str.StringValue()[start:end]
-		idx := strings.LastIndex(searchStr, substr)
+		idx := strings.LastIndex(str.StringValue()[start:end], sub)
 		if idx == -1 {
 			return errors.NewValueError("substring not found")
 		}
 		return object.NewInteger(int64(start + idx))
 	case "index":
-		if len(args) < 1 || len(args) > 3 {
-			return errors.NewError("index() takes 1-3 arguments (%d given)", len(args))
-		}
-		substr, errObj := args[0].AsString()
+		sub, start, end, errObj := stringSearchWindow("index", str.StringValue(), args)
 		if errObj != nil {
-			return errors.ParameterError("sub", errObj)
-		}
-		start := 0
-		end := len(str.StringValue())
-		if len(args) >= 2 {
-			s, errObj2 := args[1].AsInt()
-			if errObj2 != nil {
-				return errors.ParameterError("start", errObj2)
-			}
-			start = int(s)
-			if start < 0 {
-				start = len(str.StringValue()) + start
-				if start < 0 {
-					start = 0
-				}
-			}
-		}
-		if len(args) == 3 {
-			e, errObj3 := args[2].AsInt()
-			if errObj3 != nil {
-				return errors.ParameterError("end", errObj3)
-			}
-			end = int(e)
-			if end < 0 {
-				end = len(str.StringValue()) + end
-			}
-		}
-		if start > len(str.StringValue()) {
-			start = len(str.StringValue())
-		}
-		if end > len(str.StringValue()) {
-			end = len(str.StringValue())
+			return errObj
 		}
 		if start > end {
 			return errors.NewValueError("substring not found")
 		}
-		searchStr := str.StringValue()[start:end]
-		idx := strings.Index(searchStr, substr)
+		idx := strings.Index(str.StringValue()[start:end], sub)
 		if idx == -1 {
 			return errors.NewValueError("substring not found")
 		}
 		return object.NewInteger(int64(start + idx))
 	case "count":
-		if len(args) < 1 || len(args) > 3 {
-			return errors.NewError("count() takes 1-3 arguments (%d given)", len(args))
-		}
-		substr, errObj := args[0].AsString()
+		sub, start, end, errObj := stringSearchWindow("count", str.StringValue(), args)
 		if errObj != nil {
-			return errors.ParameterError("sub", errObj)
-		}
-		start := 0
-		end := len(str.StringValue())
-		if len(args) >= 2 {
-			s, errObj2 := args[1].AsInt()
-			if errObj2 != nil {
-				return errors.ParameterError("start", errObj2)
-			}
-			start = int(s)
-			if start < 0 {
-				start = len(str.StringValue()) + start
-				if start < 0 {
-					start = 0
-				}
-			}
-		}
-		if len(args) == 3 {
-			e, errObj3 := args[2].AsInt()
-			if errObj3 != nil {
-				return errors.ParameterError("end", errObj3)
-			}
-			end = int(e)
-			if end < 0 {
-				end = len(str.StringValue()) + end
-			}
-		}
-		if start > len(str.StringValue()) {
-			start = len(str.StringValue())
-		}
-		if end > len(str.StringValue()) {
-			end = len(str.StringValue())
+			return errObj
 		}
 		if start > end {
 			return object.NewInteger(0)
 		}
-		searchStr := str.StringValue()[start:end]
-		return object.NewInteger(int64(strings.Count(searchStr, substr)))
+		return object.NewInteger(int64(strings.Count(str.StringValue()[start:end], sub)))
 	case "format":
 		// Python-style formatting: {}, {0}, {name}, {{ }} escapes and
 		// optional :format specs. Positional fields draw on the arguments,
@@ -1700,30 +1631,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		builder.WriteString(str.StringValue())
 		return object.NewString(builder.String())
 	case "center":
-		if len(args) < 1 || len(args) > 2 {
-			return errors.NewError("center() takes 1-2 arguments (%d given)", len(args))
-		}
-		width, errObj := args[0].AsInt()
-		if errObj != nil {
-			return errors.ParameterError("width", errObj)
-		}
-		w := int(width)
-		if w <= len(str.StringValue()) {
-			return str
-		}
-		if errObj := checkWidth("padded string", int64(w)); errObj != nil {
-			return errObj
-		}
-		fillChar := " "
-		if len(args) == 2 {
-			fill, errObj2 := args[1].AsString()
-			if errObj2 != nil {
-				return errors.ParameterError("fillchar", errObj2)
-			}
-			if len(fill) != 1 {
-				return errors.NewError("fill character must be exactly one character")
-			}
-			fillChar = fill
+		w, fillChar, early := stringPadArgs("center", str, args)
+		if early != nil {
+			return early
 		}
 		padding := w - len(str.StringValue())
 		// CPython's center: left = padding/2 + (padding & width & 1).
@@ -1740,30 +1650,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		builder.WriteString(strings.Repeat(fillChar, rightPad))
 		return object.NewString(builder.String())
 	case "ljust":
-		if len(args) < 1 || len(args) > 2 {
-			return errors.NewError("ljust() takes 1-2 arguments (%d given)", len(args))
-		}
-		width, errObj := args[0].AsInt()
-		if errObj != nil {
-			return errors.ParameterError("width", errObj)
-		}
-		w := int(width)
-		if w <= len(str.StringValue()) {
-			return str
-		}
-		if errObj := checkWidth("padded string", int64(w)); errObj != nil {
-			return errObj
-		}
-		fillChar := " "
-		if len(args) == 2 {
-			fill, errObj2 := args[1].AsString()
-			if errObj2 != nil {
-				return errors.ParameterError("fillchar", errObj2)
-			}
-			if len(fill) != 1 {
-				return errors.NewError("fill character must be exactly one character")
-			}
-			fillChar = fill
+		w, fillChar, early := stringPadArgs("ljust", str, args)
+		if early != nil {
+			return early
 		}
 		// Use strings.Builder for efficient concatenation
 		var builder strings.Builder
@@ -1772,30 +1661,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		builder.WriteString(strings.Repeat(fillChar, w-len(str.StringValue())))
 		return object.NewString(builder.String())
 	case "rjust":
-		if len(args) < 1 || len(args) > 2 {
-			return errors.NewError("rjust() takes 1-2 arguments (%d given)", len(args))
-		}
-		width, errObj := args[0].AsInt()
-		if errObj != nil {
-			return errors.ParameterError("width", errObj)
-		}
-		w := int(width)
-		if w <= len(str.StringValue()) {
-			return str
-		}
-		if errObj := checkWidth("padded string", int64(w)); errObj != nil {
-			return errObj
-		}
-		fillChar := " "
-		if len(args) == 2 {
-			fill, errObj2 := args[1].AsString()
-			if errObj2 != nil {
-				return errors.ParameterError("fillchar", errObj2)
-			}
-			if len(fill) != 1 {
-				return errors.NewError("fill character must be exactly one character")
-			}
-			fillChar = fill
+		w, fillChar, early := stringPadArgs("rjust", str, args)
+		if early != nil {
+			return early
 		}
 		// Use strings.Builder for efficient concatenation
 		var builder strings.Builder

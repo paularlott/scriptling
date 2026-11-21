@@ -1612,6 +1612,10 @@ type Lambda struct {
 	Parameters []*Identifier
 	overflow   *FuncOverflow
 	Body       Expression
+	// HasNestedFunc marks a lambda whose parameters or body contain another
+	// lambda: the inner one may outlive the call, so the call's environment
+	// cannot be reused.
+	HasNestedFunc bool
 
 	LocalSlots       map[string]int
 	LocalSlotNames   []string

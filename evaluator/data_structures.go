@@ -9,13 +9,13 @@ import (
 	"github.com/paularlott/scriptling/object"
 )
 
-// evalHashKeyChecked is like evalHashKey but surfaces a raise/error from a
+// evalHashKeyChecked returns obj's dict key, surfacing a raise/error from a
 // user-defined __hash__ instead of silently falling back to the identity hash.
 // The second return is non-nil exactly when __hash__ raised or errored, or the
 // value is unhashable (Python's TypeError: unhashable type).
 func evalHashKeyChecked(ctx context.Context, obj object.Object) (string, object.Object) {
 	if inst, ok := obj.(*object.Instance); ok {
-		if _, hasHash := inst.Class.Methods["__hash__"]; hasHash && hashInstanceFn != nil {
+		if _, hasHash := inst.Class.Methods["__hash__"]; hasHash {
 			result := hashInstanceFn(ctx, inst)
 			if object.IsError(result) || result.Type() == object.EXCEPTION_OBJ {
 				return "", result
@@ -544,8 +544,7 @@ func evalStringIndexExpression(str, index object.Object) object.Object {
 		if idx < 0 || idx >= length {
 			return &object.Exception{Message: "string index out of range", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 		}
-		// A single byte from the static table: never keeps the string alive.
-		return object.NewString(object.ByteString(strObject.StringValue()[idx]))
+		return object.NewRuneString(rune(strObject.StringValue()[idx]))
 	}
 
 	runes := []rune(strObject.StringValue())
@@ -556,7 +555,7 @@ func evalStringIndexExpression(str, index object.Object) object.Object {
 	if idx < 0 || idx >= length {
 		return &object.Exception{Message: "string index out of range", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 	}
-	return object.NewString(string(runes[idx]))
+	return object.NewRuneString(runes[idx])
 }
 
 func evalInstanceIndexExpression(ctx context.Context, instance, index object.Object, isDotAccess bool) object.Object {
@@ -699,7 +698,7 @@ func evalBuiltinIndexExpression(builtin, index object.Object) object.Object {
 	return attributeError(b, field)
 }
 
-func sliceList(elements []object.Object, start, end, step int64, hasStart, hasEnd, hasStep bool) object.Object {
+func sliceList(elements []object.Object, start, end, step int64, hasStart, hasEnd bool) object.Object {
 	length := int64(len(elements))
 
 	// Handle negative step (reverse iteration)
@@ -779,7 +778,7 @@ func sliceList(elements []object.Object, start, end, step int64, hasStart, hasEn
 
 // sliceBytes applies a [start:end:step] slice to a Bytes value, returning a new
 // Bytes. Negative steps are honoured (matching String/List semantics).
-func sliceBytes(b *object.Bytes, start, end, step int64, hasStart, hasEnd, hasStep bool) object.Object {
+func sliceBytes(b *object.Bytes, start, end, step int64, hasStart, hasEnd bool) object.Object {
 	src := b.BytesValue()
 	length := int64(len(src))
 
@@ -851,7 +850,7 @@ func sliceBytes(b *object.Bytes, start, end, step int64, hasStart, hasEnd, hasSt
 	return object.NewBytes(out)
 }
 
-func sliceFloatArray(fa *object.FloatArray, start, end, step int64, hasStart, hasEnd, hasStep bool) object.Object {
+func sliceFloatArray(fa *object.FloatArray, start, end, step int64, hasStart, hasEnd bool) object.Object {
 	if step <= 0 {
 		return errors.NewError("slice step cannot be zero or negative for FloatArray")
 	}
@@ -925,7 +924,7 @@ func sliceFloatArray(fa *object.FloatArray, start, end, step int64, hasStart, ha
 	return object.NewFloatArray1D(data)
 }
 
-func sliceString(str string, start, end, step int64, hasStart, hasEnd, hasStep bool) string {
+func sliceString(str string, start, end, step int64, hasStart, hasEnd bool) string {
 	// ASCII fast-path for step=1 (most common): use byte indexing directly
 	if step == 1 && isASCII(str) {
 		length := int64(len(str))
@@ -1063,7 +1062,7 @@ func evalListSliceExpression(list, index object.Object) object.Object {
 		}
 	}
 
-	return sliceList(listObj.Elements, start, end, step, hasStart, hasEnd, hasStep)
+	return sliceList(listObj.Elements, start, end, step, hasStart, hasEnd)
 }
 
 // evalTupleSliceExpression handles slice objects applied to tuples
@@ -1095,7 +1094,7 @@ func evalTupleSliceExpression(tuple, index object.Object) object.Object {
 	}
 
 	// Use sliceList and convert result to tuple
-	sliced := sliceList(tupleObj.Elements, start, end, step, hasStart, hasEnd, hasStep)
+	sliced := sliceList(tupleObj.Elements, start, end, step, hasStart, hasEnd)
 	if slicedList, ok := sliced.(*object.List); ok {
 		return &object.Tuple{Elements: slicedList.Elements}
 	}
@@ -1130,7 +1129,7 @@ func evalStringSliceExpression(str, index object.Object) object.Object {
 		}
 	}
 
-	slicedStr := sliceString(strObj.StringValue(), start, end, step, hasStart, hasEnd, hasStep)
+	slicedStr := sliceString(strObj.StringValue(), start, end, step, hasStart, hasEnd)
 	return object.NewSubstring(slicedStr, strObj.StringValue())
 }
 

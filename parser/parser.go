@@ -2326,6 +2326,14 @@ func (p *Parser) parseLambda() ast.Expression {
 
 	lambda := &ast.Lambda{}
 
+	// Track lambdas nested inside this one, as parseFunctionStatement does
+	// for a def's body.
+	p.nestedFuncStack = append(p.nestedFuncStack, false)
+	defer func() {
+		lambda.HasNestedFunc = p.nestedFuncStack[len(p.nestedFuncStack)-1]
+		p.nestedFuncStack = p.nestedFuncStack[:len(p.nestedFuncStack)-1]
+	}()
+
 	if !p.peekTokenIs(token.COLON) {
 		params, defaults, variadic, kwargs, keywordOnlyStart, posOnly := p.parseLambdaParameters()
 		lambda.Parameters = params

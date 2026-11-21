@@ -17,9 +17,6 @@ var (
 	errorType   = reflect.TypeOf((*error)(nil)).Elem()
 	objectType  = reflect.TypeOf((*Object)(nil)).Elem()
 
-	// Pre-allocated common reflect.Values
-	nullValue = reflect.ValueOf(&Null{})
-
 	// Function signature cache
 	signatureCache = sync.Map{} // map[reflect.Type]*FunctionSignature
 

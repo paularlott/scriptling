@@ -307,10 +307,6 @@ func (p *Scriptling) needsParentMerge(name string, existingDict *object.Dict) bo
 	return true // Only has sub-libraries, needs merge
 }
 
-func (p *Scriptling) loadLibrary(name string) error {
-	return p.loadLibraryWithContext(context.Background(), name)
-}
-
 func (p *Scriptling) loadLibraryWithContext(ctx context.Context, name string) error {
 	return p.loadLibraryWithDepth(ctx, name, 0)
 }

@@ -721,10 +721,7 @@ func evalMinusPrefixOperatorExpression(right object.Object) object.Object {
 		return object.NewFloat(-right.FloatValue())
 	case *object.Boolean:
 		// bool is an int in Python: -True is -1
-		v := int64(0)
-		if right.BoolValue() {
-			v = 1
-		}
+		v := boolToInt64(right.BoolValue())
 		return object.NewInteger(-v)
 	default:
 		// Python: TypeError: bad operand type for unary -: 'str'
@@ -741,10 +738,7 @@ func evalBitwiseNotOperatorExpression(right object.Object) object.Object {
 	case *object.Integer:
 		return object.NewInteger(^right.IntValue())
 	case *object.Boolean:
-		v := int64(0)
-		if right.BoolValue() {
-			v = 1
-		}
+		v := boolToInt64(right.BoolValue())
 		return object.NewInteger(^v)
 	default:
 		return &object.Exception{
@@ -801,10 +795,7 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 		case *object.Float:
 			return evalFloatInfixValues(operator, float64(l.IntValue()), r.FloatValue())
 		case *object.Boolean:
-			rv := int64(0)
-			if r.BoolValue() {
-				rv = 1
-			}
+			rv := boolToInt64(r.BoolValue())
 			return evalIntegerInfixExpression(operator, l.IntValue(), rv)
 		case *object.String:
 			if operator == ast.OpMul {
@@ -839,24 +830,15 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 		case *object.Integer:
 			return evalFloatInfixValues(operator, l.FloatValue(), float64(r.IntValue()))
 		case *object.Boolean:
-			rv := float64(0)
-			if r.BoolValue() {
-				rv = 1
-			}
+			rv := float64(boolToInt64(r.BoolValue()))
 			return evalFloatInfixValues(operator, l.FloatValue(), rv)
 		default:
 			return evalFloatInfixExpression(operator, left, right)
 		}
 	case *object.Boolean:
-		lv := int64(0)
-		if l.BoolValue() {
-			lv = 1
-		}
+		lv := boolToInt64(l.BoolValue())
 		if rb, ok := right.(*object.Boolean); ok {
-			rv := int64(0)
-			if rb.BoolValue() {
-				rv = 1
-			}
+			rv := boolToInt64(rb.BoolValue())
 			return evalIntegerInfixExpression(operator, lv, rv)
 		}
 		return evalInfixExpression(ctx, operator, object.NewInteger(lv), right, env)
@@ -1075,10 +1057,7 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 
 	if rb, ok := right.(*object.Boolean); ok {
 		if operator >= ast.OpAdd && operator <= ast.OpNeq {
-			rv := int64(0)
-			if rb.BoolValue() {
-				rv = 1
-			}
+			rv := boolToInt64(rb.BoolValue())
 			return evalInfixExpression(ctx, operator, left, object.NewInteger(rv), env)
 		}
 	}
@@ -1980,7 +1959,7 @@ func unpackArgsFromIterable(ctx context.Context, argsVal object.Object, env *obj
 			return nil, errObj
 		}
 		for _, r := range val.StringValue() {
-			unpacked = append(unpacked, object.NewString(string(r)))
+			unpacked = append(unpacked, object.NewRuneString(r))
 		}
 	case *object.Iterator:
 		if val.Infinite() {
@@ -2462,13 +2441,28 @@ func functionBody(fn *object.Function) object.EvalFn {
 }
 
 func applyUserFunction(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	return applyUserFunctionKw(ctx, fn, args, keywords, kwArgs{}, env)
+}
+
+// kwArgs carries a call's keyword arguments as parallel slices, for a call
+// site that knows its keyword names at compile time and can hand them to the
+// parameter binder without building a map. The slices are only read during
+// binding and are not retained.
+type kwArgs struct {
+	names  []string
+	values []object.Object
+}
+
+// applyUserFunctionKw is applyUserFunction with keywords given as a map, as
+// kwArgs slices, or neither (never both).
+func applyUserFunctionKw(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object, kw kwArgs, env *object.Environment) object.Object {
 	// Generator functions construct a generator instead of running.
 	if fn.GeneratorPlan != nil {
 		plan, _ := fn.GeneratorPlan.(*genPlan)
 		if plan == nil {
 			return errors.NewError("generator function '%s' has no compiled plan", fn.Name)
 		}
-		return newGenerator(ctx, fn, args, keywords, env, plan)
+		return newGenerator(ctx, fn, args, kw.merge(keywords), env, plan)
 	}
 	// Check call depth to prevent stack overflow
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
@@ -2480,7 +2474,7 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 		defer cd.Exit()
 	}
 
-	extendedEnv, err := extendFunctionEnv(ctx, fn, args, keywords)
+	extendedEnv, err := extendFunctionEnv(ctx, fn, args, keywords, kw)
 	if err != nil {
 		return err
 	}
@@ -2493,6 +2487,19 @@ func applyUserFunction(ctx context.Context, fn *object.Function, args []object.O
 		}
 	}
 	return unwrapReturnValue(evaluated)
+}
+
+// merge returns the keywords as a map: the given map when there are no slice
+// keywords, otherwise a new map holding them.
+func (kw kwArgs) merge(keywords map[string]object.Object) map[string]object.Object {
+	if len(kw.names) == 0 {
+		return keywords
+	}
+	m := make(map[string]object.Object, len(kw.names))
+	for i, name := range kw.names {
+		m[name] = kw.values[i]
+	}
+	return m
 }
 
 // applyFunction calls a function object with arguments and keyword arguments.
@@ -2606,6 +2613,15 @@ func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFuncti
 	return fixErrorPos(ctx, body(ctx, extendedEnv), fn.Body.Line()) // No unwrapping needed for lambda expressions
 }
 
+// setParam binds the parameter at index idx in a new call environment,
+// through its slot when the function has one for it.
+func (fp *funcParams) setParam(env *object.Environment, idx int, val object.Object) {
+	if idx < len(fp.paramSlotIndexes) && env.SetSlotByIndex(fp.paramSlotIndexes[idx], val) {
+		return
+	}
+	env.Set(fp.parameters[idx].Value(), val)
+}
+
 // evalDefault evaluates a parameter default in the defining scope, through the
 // closure compiled at definition time when the function carries one.
 // Functions assembled without compiled defaults (none in the evaluator today)
@@ -2652,7 +2668,7 @@ type funcParams struct {
 }
 
 // extendEnvWithParams handles the common logic for extending environments with function arguments
-func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
+func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Object, keywords map[string]object.Object, kw kwArgs) (*object.Environment, object.Object) {
 	var env *object.Environment
 	if fp.reuseCallEnv {
 		env = object.AcquireCallEnvironment(fp.parentEnv, fp.localSlots, fp.localSlotNames)
@@ -2662,6 +2678,7 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 
 	numParams := len(fp.parameters)
 	numArgs := len(args)
+	numKeywords := len(keywords) + len(kw.names)
 	positionalLimit := numParams
 	if fp.keywordOnlyStart > 0 && fp.keywordOnlyStart-1 < positionalLimit {
 		positionalLimit = fp.keywordOnlyStart - 1
@@ -2669,7 +2686,7 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 
 	// Fast path for the common case: exact positional arguments with no defaults,
 	// variadics, kwargs, or keyword arguments.
-	if len(keywords) == 0 && fp.keywordOnlyStart == 0 && fp.variadic == nil && fp.kwargs == nil && len(fp.defaultValues) == 0 && numArgs == numParams {
+	if numKeywords == 0 && fp.keywordOnlyStart == 0 && fp.variadic == nil && fp.kwargs == nil && len(fp.defaultValues) == 0 && numArgs == numParams {
 		if len(fp.paramSlotIndexes) == numParams {
 			for paramIdx, slotIdx := range fp.paramSlotIndexes {
 				if !env.SetSlotByIndex(slotIdx, args[paramIdx]) {
@@ -2686,7 +2703,7 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 
 	// Set provided positional arguments
 	for paramIdx := 0; paramIdx < positionalLimit && paramIdx < numArgs; paramIdx++ {
-		env.Set(fp.parameters[paramIdx].Value(), args[paramIdx])
+		fp.setParam(env, paramIdx, args[paramIdx])
 	}
 
 	// Check for extra positional arguments
@@ -2707,7 +2724,7 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 	}
 
 	// Handle keyword arguments if present
-	if len(keywords) > 0 {
+	if numKeywords > 0 {
 		// Use a stack-allocated array for small param counts to track which params are set
 		var setSmall [8]bool
 		var setParams map[string]bool
@@ -2739,7 +2756,9 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 
 		var extraKwargs map[string]object.Object
 
-		for key, value := range keywords {
+		// bindKeyword binds one keyword argument, returning an error object
+		// when it cannot be bound.
+		bindKeyword := func(key string, value object.Object) object.Object {
 			// Check if parameter exists
 			paramIdx := -1
 			for pi, param := range fp.parameters {
@@ -2753,12 +2772,12 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 				// If **kwargs is defined, collect extra keyword arguments
 				if fp.kwargs != nil {
 					if extraKwargs == nil {
-						extraKwargs = make(map[string]object.Object, len(keywords))
+						extraKwargs = make(map[string]object.Object, numKeywords)
 					}
 					extraKwargs[key] = value
-					continue
+					return nil
 				}
-				return nil, errors.NewError("got an unexpected keyword argument '%s'", key)
+				return errors.NewTypeErrorTagged("got an unexpected keyword argument '%s'", key)
 			}
 
 			// A '/' marker makes the parameters before it positional-only:
@@ -2768,12 +2787,12 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 			if paramIdx < fp.positionalOnly {
 				if fp.kwargs != nil {
 					if extraKwargs == nil {
-						extraKwargs = make(map[string]object.Object, len(keywords))
+						extraKwargs = make(map[string]object.Object, numKeywords)
 					}
 					extraKwargs[key] = value
-					continue
+					return nil
 				}
-				return nil, &object.Exception{
+				return &object.Exception{
 					Message:       fmt.Sprintf("got some positional-only arguments passed as keyword arguments: '%s'", key),
 					ExceptionType: object.ExceptionTypeTypeError,
 					Raised:        true,
@@ -2781,11 +2800,22 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 			}
 
 			if isParamSet(paramIdx, key) {
-				return nil, errors.NewError("multiple values for argument '%s'", key)
+				return errors.NewTypeErrorTagged("multiple values for argument '%s'", key)
 			}
 
-			env.Set(key, value)
+			fp.setParam(env, paramIdx, value)
 			markParamSet(paramIdx, key)
+			return nil
+		}
+		for i, key := range kw.names {
+			if errObj := bindKeyword(key, kw.values[i]); errObj != nil {
+				return nil, errObj
+			}
+		}
+		for key, value := range keywords {
+			if errObj := bindKeyword(key, value); errObj != nil {
+				return nil, errObj
+			}
 		}
 
 		// Set **kwargs dict if defined
@@ -2815,7 +2845,7 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 					if object.IsError(defaultVal) || isRaised(defaultVal) {
 						return nil, defaultVal
 					}
-					env.Set(param.Value(), defaultVal)
+					fp.setParam(env, pi, defaultVal)
 				} else {
 					minArgs := numParams - len(fp.defaultValues)
 					return nil, errors.NewArgumentError(numArgs, minArgs)
@@ -2834,7 +2864,7 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 				if object.IsError(defaultVal) || isRaised(defaultVal) {
 					return defaultVal, false
 				}
-				env.Set(param.Value(), defaultVal)
+				fp.setParam(env, i, defaultVal)
 				return nil, false
 			}
 			return nil, true
@@ -2865,7 +2895,7 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 	return env, nil
 }
 
-func extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
+func extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object, kw kwArgs) (*object.Environment, object.Object) {
 	return extendEnvWithParams(ctx, funcParams{
 		parameters:       fn.Parameters,
 		defaultValues:    fn.DefaultValues,
@@ -2880,7 +2910,7 @@ func extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.O
 		localSlotNames:   fn.LocalSlotNames,
 		paramSlotIndexes: fn.ParamSlotIndexes,
 		reuseCallEnv:     fn.ReuseCallEnv,
-	}, args, keywords)
+	}, args, keywords, kw)
 }
 
 func extendLambdaEnv(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
@@ -2897,8 +2927,8 @@ func extendLambdaEnv(ctx context.Context, fn *object.LambdaFunction, args []obje
 		localSlots:       fn.LocalSlots,
 		localSlotNames:   fn.LocalSlotNames,
 		paramSlotIndexes: fn.ParamSlotIndexes,
-		reuseCallEnv:     true,
-	}, args, keywords)
+		reuseCallEnv:     fn.ReuseCallEnv,
+	}, args, keywords, kwArgs{})
 }
 
 func analyzeFunctionLocals(stmt *ast.FunctionStatement) (map[string]int, []string) {
@@ -2966,10 +2996,7 @@ func isTruthy(obj object.Object) bool {
 			return len(v.Data) > 0
 		case *object.Instance:
 			// Try __bool__ first, then __len__ via the function variable (avoids init cycle)
-			if isTruthyInstanceFn != nil {
-				return isTruthyInstanceFn(v)
-			}
-			return true
+			return isTruthyInstanceFn(v)
 		default:
 			return true
 		}
@@ -3264,19 +3291,6 @@ func init() {
 		return true
 	}
 }
-
-// evalDictLiteralWithContext is in data_structures.go
-// evalIndexExpression is in data_structures.go
-// evalDictMemberAccess is in data_structures.go
-// evalListIndexExpression is in data_structures.go
-// evalTupleIndexExpression is in data_structures.go
-// evalDictIndexExpression is in data_structures.go
-// evalStringIndexExpression is in data_structures.go
-// evalRegexIndexExpression is in data_structures.go
-
-// evalSliceExpressionWithContext is in data_structures.go
-// sliceList is in data_structures.go
-// sliceString is in data_structures.go
 
 // raisedExceptionCarrier is implemented by an import error that wraps an
 // exception raised by a module's top-level code, so the import site can
@@ -3954,8 +3968,8 @@ func markRaised(obj object.Object) object.Object {
 	return obj
 }
 
-// isPropagatedError reports whether the slice returned by evalCallArgs /
-// evalExpressionsWithContext is the one-element sentinel those helpers return
+// isPropagatedError reports whether the slice returned by evalCompiledCallArgs
+// or evalCompiledExpressions is the one-element sentinel those helpers return
 // when evaluating a sub-expression produced a propagating value: an internal
 // *object.Error or a raised *object.Exception. Callers use it to propagate that
 // value instead of treating it as a real argument/element.
@@ -4134,13 +4148,10 @@ var exceptionParents = map[string]string{
 	"JSONDecodeError":                     "ValueError",
 }
 
-func matchesNamedExceptionType(exceptionType, expectedType string) bool {
-	return matchesNamedExceptionTypeChain(exceptionType, expectedType, nil)
-}
-
-// matchesNamedExceptionTypeChain is matchesNamedExceptionType, additionally
-// walking a user exception class's TypeChain: except ValueError must catch
-// an exception raised as class MyError(ValueError).
+// matchesNamedExceptionTypeChain reports whether an exception of type
+// exceptionType is caught by "except expectedType", following the built-in
+// hierarchy and a user exception class's TypeChain: except ValueError must
+// catch an exception raised as class MyError(ValueError).
 func matchesNamedExceptionTypeChain(exceptionType, expectedType string, chain []string) bool {
 	switch expectedType {
 	case "BaseException":
@@ -4938,27 +4949,10 @@ func setIdentifierFast(target *ast.Identifier, value object.Object, env *object.
 	}
 }
 
-// iterableToSliceChecked materializes an iterable into a slice of elements for
-// builtins that accept any iterable (list, tuple, sorted, map, ...). Class
-// instances run the full iterator protocol exactly like a for-loop: __iter__
-// must return an iterator, __next__ runs to StopIteration, and a raised
-// exception or internal error (from the protocol itself or yielded as an
-// element) propagates as the third return. Non-instance types defer to
-// object.IterableToSlice; ok=false without a raise means "not iterable" and
-// the caller reports its usual type error.
 // acceptInstanceIterableFn is set in init() to break the initialization
 // cycle between the builtins map and the evaluator (see evalTruthyFn).
 var acceptInstanceIterableFn func(ctx context.Context, obj object.Object) (object.Object, object.Object)
 
-// acceptInstanceIterable validates one enumerate/zip argument. Materialized
-// builtin iterables and raw iterators pass through unchanged: the zip and
-// enumerate iterators pull iterator inputs lazily (so infinite iterators such
-// as itertools.cycle work, as in Python) and pass a yielded error or raised
-// exception straight to the consumer. Class instances get __iter__ called
-// now (a raise there surfaces at construction, like Python) and the
-// resulting iterator is likewise pulled lazily. It returns (nil, nil) when
-// the object is not an iterable type at all, so the caller reports its usual
-// type error.
 // callIter calls an instance's __iter__ method fn and returns the iterator
 // it gives: a native iterator, or a script iterator (an instance with
 // __next__) wrapped as one. Anything else is Python's TypeError.
@@ -4980,6 +4974,15 @@ func callIter(ctx context.Context, inst *object.Instance, fn object.Object, env 
 	}
 }
 
+// acceptInstanceIterable validates one enumerate/zip argument. Materialized
+// builtin iterables and raw iterators pass through unchanged: the zip and
+// enumerate iterators pull iterator inputs lazily (so infinite iterators such
+// as itertools.cycle work, as in Python) and pass a yielded error or raised
+// exception straight to the consumer. Class instances get __iter__ called
+// now (a raise there surfaces at construction, like Python) and the
+// resulting iterator is likewise pulled lazily. It returns (nil, nil) when
+// the object is not an iterable type at all, so the caller reports its usual
+// type error.
 func acceptInstanceIterable(ctx context.Context, obj object.Object) (object.Object, object.Object) {
 	switch o := obj.(type) {
 	case *object.List, *object.Tuple, *object.String, *object.FloatArray, *object.Iterator,
@@ -5011,6 +5014,14 @@ func acceptInstanceIterable(ctx context.Context, obj object.Object) (object.Obje
 // cycle between the builtins map and the evaluator (see evalTruthyFn).
 var iterableToSliceCheckedFn func(ctx context.Context, obj object.Object, env *object.Environment) ([]object.Object, bool, object.Object)
 
+// iterableToSliceChecked materializes an iterable into a slice of elements for
+// builtins that accept any iterable (list, tuple, sorted, map, ...). Class
+// instances run the full iterator protocol exactly like a for-loop: __iter__
+// must return an iterator, __next__ runs to StopIteration, and a raised
+// exception or internal error (from the protocol itself or yielded as an
+// element) propagates as the third return. Non-instance types defer to
+// object.IterableToSlice; ok=false without a raise means "not iterable" and
+// the caller reports its usual type error.
 func iterableToSliceChecked(ctx context.Context, obj object.Object, env *object.Environment) ([]object.Object, bool, object.Object) {
 	if iter, isIter := obj.(*object.Iterator); isIter {
 		if iter.Infinite() {
@@ -5112,9 +5123,6 @@ func instanceToIterator(ctx context.Context, inst *object.Instance, env *object.
 	})
 }
 
-// evalMethodCallExpression is in methods.go
-// callStringMethodWithKeywords is in methods.go
-
 func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object) object.Object) object.Object {
 	switch o := obj.(type) {
 	case *object.Class:
@@ -5211,7 +5219,7 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 		}
 	case *object.String:
 		for _, ch := range o.StringValue() {
-			if err := fn(object.NewString(string(ch))); err != nil {
+			if err := fn(object.NewRuneString(ch)); err != nil {
 				return err
 			}
 		}

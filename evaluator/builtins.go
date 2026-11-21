@@ -1575,7 +1575,7 @@ For other objects, returns the same as str().`,
 			}
 			// Call __hash__ on instances that define it
 			if inst, ok := args[0].(*object.Instance); ok {
-				if _, hasHash := inst.Class.Methods["__hash__"]; hasHash && hashInstanceFn != nil {
+				if _, hasHash := inst.Class.Methods["__hash__"]; hasHash {
 					return hashInstanceFn(ctx, inst)
 				}
 			}

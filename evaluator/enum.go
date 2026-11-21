@@ -245,11 +245,3 @@ func enumValueLookup(class *object.Class, value object.Object) object.Object {
 		Raised:        true,
 	}
 }
-
-// enumIterate materialises an enum class's members for iteration, `in`, and
-// the list()/tuple() constructors.
-func enumIterate(class *object.Class) []object.Object {
-	out := make([]object.Object, len(class.EnumMembers))
-	copy(out, class.EnumMembers)
-	return out
-}

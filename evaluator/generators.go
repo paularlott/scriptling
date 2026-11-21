@@ -276,12 +276,11 @@ func init() {
 // NativeData: instance fields are object.Object-typed and cannot hold the
 // plan or environment directly.
 type genState struct {
-	plan    *genPlan
-	env     *object.Environment
-	iter    *object.Iterator
-	cursor  int
-	started bool
-	done    bool
+	plan   *genPlan
+	env    *object.Environment
+	iter   *object.Iterator
+	cursor int
+	done   bool
 
 	// depthCtx and depth cache the call-depth tracker of the context the
 	// generator was last resumed under: a loop resumes it under the same
@@ -294,7 +293,7 @@ type genState struct {
 // function. Parameters bind eagerly (Python validates the call now); the
 // body runs lazily from the first next().
 func newGenerator(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object, env *object.Environment, plan *genPlan) object.Object {
-	callEnv, errObj := extendFunctionEnv(ctx, fn, args, keywords)
+	callEnv, errObj := extendFunctionEnv(ctx, fn, args, keywords, kwArgs{})
 	if errObj != nil {
 		return errObj
 	}
@@ -462,7 +461,7 @@ func generatorIterFor(ctx context.Context, val object.Object, env *object.Enviro
 		elements := make([]object.Object, 0, len(o.StringValue()))
 		object.TrackSlice(elements)
 		for _, ch := range o.StringValue() {
-			elements = append(elements, object.NewString(string(ch)))
+			elements = append(elements, object.NewRuneString(ch))
 		}
 		return sliceIterator(elements), nil
 	case *object.Bytes:

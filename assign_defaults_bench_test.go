@@ -64,6 +64,33 @@ for i in range(10000):
 `)
 }
 
+// Calls to a function with no parameters or locals: its call frame has no
+// slots and comes from the same free-list as any other.
+func BenchmarkInterp_CallNoArgs(b *testing.B) {
+	benchScript(b, `
+limit = 5
+def f():
+    return limit
+total = 0
+for i in range(10000):
+    total = f()
+`)
+}
+
+// Iterating over and indexing into text: one-character strings come from a
+// shared table for ASCII.
+func BenchmarkInterp_StringChars(b *testing.B) {
+	benchScript(b, `
+s = "the quick brown fox jumps over the lazy dog"
+n = 0
+for i in range(200):
+    for ch in s:
+        if ch == "o":
+            n += 1
+    first = s[0]
+`)
+}
+
 // Def executed in a loop: resolveDefaults runs and allocates per execution.
 func BenchmarkInterp_DefCreationLoop(b *testing.B) {
 	benchScript(b, `
