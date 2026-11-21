@@ -104,13 +104,17 @@ func (p *PathlibLibraryInstance) createPathObject(pathStr string) object.Object 
 		partObjs[i] = object.NewString(part)
 	}
 
+	// __str_repr__ makes a Path read as its path wherever a string is
+	// expected (os.path.join(p, "x"), open(p)), as os.PathLike does.
 	return object.NewInstanceWithData(p.PathClass, map[string]object.Object{
-		"name":    object.NewString(base),
-		"stem":    object.NewString(stem),
-		"suffix":  object.NewString(ext),
-		"parent":  object.NewString(filepath.Dir(cleanPath)),
-		"parts":   &object.Tuple{Elements: partObjs},
-		"__str__": object.NewString(cleanPath),
+		"name":         object.NewString(base),
+		"stem":         object.NewString(stem),
+		"suffix":       object.NewString(ext),
+		"suffixes":     pathSuffixes(base),
+		"parent":       object.NewString(filepath.Dir(cleanPath)),
+		"parts":        &object.Tuple{Elements: partObjs},
+		"__str__":      object.NewString(cleanPath),
+		"__str_repr__": object.NewString(cleanPath),
 	}, &pathNativeData{path: cleanPath})
 }
 
@@ -292,7 +296,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 						return errObj
 					}
 					missingOk := false
-					if val, ok := kwargs.Kwargs["missing_ok"]; ok {
+					if val, ok := kwargs.Lookup("missing_ok"); ok {
 						if b, err := val.AsBool(); err == nil {
 							missingOk = b
 						}
@@ -472,6 +476,7 @@ func (p *PathlibLibraryInstance) createPathlibLibrary() *object.Library {
 	// Path("a") / "b" joins, str(p) is the path and repr(p) PosixPath('...'),
 	// as in Python.
 	p.PathClass.Methods["__truediv__"] = p.PathClass.Methods["joinpath"]
+	p.addPurePathMethods()
 	p.PathClass.Methods["__str__"] = strFieldMethod()
 	p.PathClass.Methods["__repr__"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {

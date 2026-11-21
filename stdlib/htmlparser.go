@@ -37,7 +37,7 @@ var htmlParserMethods = map[string]object.Object{
 
 			// Check for convert_charrefs kwarg (default True)
 			convertCharrefs := true
-			if val, ok := kwargs.Kwargs["convert_charrefs"]; ok {
+			if val, ok := kwargs.Lookup("convert_charrefs"); ok {
 				if boolVal, ok := val.(*object.Boolean); ok {
 					convertCharrefs = boolVal.BoolValue()
 				}

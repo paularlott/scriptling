@@ -41,6 +41,7 @@ func TestLibraryNamesContents(t *testing.T) {
 		stdlib.XMLLibraryName, stdlib.XMLAliasLibraryName, // scriptling.xml, xml
 		stdlib.HTMLParserLibraryName, stdlib.ShlexLibraryName, stdlib.SecretsLibraryName,
 		stdlib.JSONLibraryName, stdlib.URLParseLibraryName,
+		stdlib.OperatorLibraryName, stdlib.ABCLibraryName,
 	}
 	for _, n := range mustHave {
 		if !slices.Contains(names, n) {
@@ -49,7 +50,7 @@ func TestLibraryNamesContents(t *testing.T) {
 	}
 	// Pin the literal script names too, so renaming a constant cannot
 	// silently change what scripts import.
-	for _, n := range []string{"csv", "scriptling.csv", "xml", "scriptling.xml", "html.parser", "shlex", "secrets"} {
+	for _, n := range []string{"csv", "scriptling.csv", "xml", "scriptling.xml", "html.parser", "shlex", "secrets", "operator", "abc"} {
 		if !slices.Contains(names, n) {
 			t.Errorf("stdlib.LibraryNames() lacks script name %q", n)
 		}
@@ -89,6 +90,8 @@ func TestStdlibRepresentativeCalls(t *testing.T) {
 		{"shlex", "import shlex\nshlex.split('a \"b c\"')[1]", "b c"},
 		{"secrets", "import secrets\nstr(len(secrets.token_hex(8)))", "16"},
 		{"json", "import json\njson.dumps({'a': 1})", `{"a": 1}`},
+		{"operator", "import operator\nstr(sorted([(1, 'b'), (2, 'a')], key=operator.itemgetter(1))[0][0])", "2"},
+		{"abc", "from abc import ABC, abstractmethod\nclass S(ABC):\n    @abstractmethod\n    def f(self): pass\nclass T(S):\n    def f(self): return 'ok'\nT().f()", "ok"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

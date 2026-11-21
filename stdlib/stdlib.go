@@ -36,6 +36,8 @@ const (
 	HTMLParserLibraryName  = "html.parser"
 	ShlexLibraryName       = "shlex"
 	SecretsLibraryName     = "secrets"
+	OperatorLibraryName    = "operator"
+	ABCLibraryName         = "abc"
 )
 
 // RegisterAll registers all standard libraries
@@ -74,6 +76,8 @@ func RegisterAll(p interface{ RegisterLibrary(*object.Library) }) {
 	p.RegisterLibrary(HTMLParserLibrary)
 	p.RegisterLibrary(ShlexLibrary)
 	p.RegisterLibrary(SecretsLibrary)
+	p.RegisterLibrary(OperatorLibrary)
+	p.RegisterLibrary(ABCLibrary)
 }
 
 // LibraryNames returns the names of every library RegisterAll registers, in

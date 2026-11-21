@@ -13,14 +13,24 @@ func (evalAdapter) CallFunction(ctx context.Context, fn *object.Function, args [
 	if gilEnv := enterScript(fn.Env); gilEnv != nil {
 		defer gilEnv.ExitGIL()
 	}
-	return applyFunctionWithContext(ctx, fn, args, kwargs, fn.Env)
+	return applyFunctionWithContext(ctx, fn, args, object.NewKwargs(kwargs), fn.Env)
 }
 
 func (evalAdapter) CallObjectFunction(ctx context.Context, fn object.Object, args []object.Object, kwargs map[string]object.Object, env *object.Environment) object.Object {
 	if gilEnv := enterScript(env); gilEnv != nil {
 		defer gilEnv.ExitGIL()
 	}
-	return applyFunction(ctx, fn, args, kwargs, env)
+	// WithContext: a bound method (obj.method passed as a callback) binds self.
+	return applyFunctionWithContext(ctx, fn, args, object.NewKwargs(kwargs), env)
+}
+
+// CallObjectFunctionKwargs is CallObjectFunction with the keywords as an
+// object.Kwargs, which is passed on without building a map.
+func (evalAdapter) CallObjectFunctionKwargs(ctx context.Context, fn object.Object, args []object.Object, kwargs object.Kwargs, env *object.Environment) object.Object {
+	if gilEnv := enterScript(env); gilEnv != nil {
+		defer gilEnv.ExitGIL()
+	}
+	return applyFunctionWithContext(ctx, fn, args, kwargs, env)
 }
 
 func (evalAdapter) CallMethod(ctx context.Context, instance *object.Instance, method *object.Function, args []object.Object) object.Object {
@@ -28,7 +38,7 @@ func (evalAdapter) CallMethod(ctx context.Context, instance *object.Instance, me
 		defer gilEnv.ExitGIL()
 	}
 	allArgs := append([]object.Object{instance}, args...)
-	return applyFunctionWithContext(ctx, method, allArgs, nil, method.Env)
+	return applyFunctionWithContext(ctx, method, allArgs, object.Kwargs{}, method.Env)
 }
 
 // WithEvaluator adds evaluator to context

@@ -515,6 +515,7 @@ func TestSumWithStart(t *testing.T) {
 		{"float start seeds float", `str(sum([1, 2], 0.5))`, `3.5`},
 		{"empty iterable with start", `sum([], 7)`, `7`},
 		{"no start unchanged", `sum([1, 2])`, `3`},
+		{"list start concatenates", `str(sum([[1], [2]], []))`, `[1, 2]`},
 		{"non-number start errors", `def f():
     return sum([1], "x")
 msg = "no error"
@@ -522,7 +523,7 @@ try:
     f()
 except Exception as e:
     msg = str(e)
-msg`, `sum() start must be a number, got STRING`},
+msg`, `sum() can't sum strings [use ''.join(seq) instead]`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

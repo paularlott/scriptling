@@ -179,22 +179,17 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 			return errors.NewError("index operator not supported: %s", leftType)
 		}
 		attr, _ := index.AsString()
-		fn := left.(*object.Function)
-		switch attr {
-		case "__name__", "name":
-			return object.NewString(fn.Name)
-		}
-		return attributeError(left, attr)
+		return functionAttribute(ctx, left, attr)
 	case object.LAMBDA_OBJ:
 		if !isDotAccess {
 			return errors.NewError("index operator not supported: %s", leftType)
 		}
 		attr, _ := index.AsString()
-		switch attr {
-		case "__name__", "name":
-			return object.NewString("<lambda>")
+		return functionAttribute(ctx, left, attr)
+	case object.ITERATOR_OBJ:
+		if r, ok := evalRangeIndexExpression(left.(*object.Iterator), index, isDotAccess); ok {
+			return r
 		}
-		return attributeError(left, attr)
 	case object.SENTINEL_OBJ:
 		if !isDotAccess {
 			// Python: "'sentinel' object is not subscriptable"
@@ -247,6 +242,9 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 		if s, ok := left.(*object.String); ok && attr == "__name__" {
 			return s
 		}
+		if v := numberAttribute(left, attr); v != nil {
+			return v
+		}
 		if exc, ok := left.(*object.Exception); ok {
 			switch attr {
 			case "args":
@@ -258,12 +256,27 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 					}
 				}
 				return &object.Tuple{Elements: args}
+			case "value":
+				// StopIteration.value: a generator's return value.
+				if exc.ExceptionType == object.ExceptionTypeStopIteration {
+					if len(exc.Args) > 0 {
+						return exc.Args[0]
+					}
+					return NULL
+				}
 			case "__name__":
 				name := exc.ExceptionType
 				if name == "" {
 					name = "Exception"
 				}
 				return object.NewString(name)
+			case "__cause__":
+				if exc.Cause != nil {
+					return exc.Cause
+				}
+				return NULL
+			case "__traceback__":
+				return NULL
 			}
 			// Custom attributes of the user exception instance the raise
 			// converted from (e.code for a class storing it in __init__).
@@ -497,7 +510,7 @@ func evalDictIndexExpression(ctx context.Context, dict, index object.Object) obj
 		// defaultdict: call the factory, store the result, return it.
 		if f := dictObject.Factory(); f != nil {
 			if _, none := f.(*object.Null); !none {
-				val := applyFunctionWithContext(ctx, f, nil, nil, GetEnvFromContext(ctx))
+				val := applyFunctionWithContext(ctx, f, nil, object.Kwargs{}, GetEnvFromContext(ctx))
 				if propagates(val) {
 					return val
 				}
@@ -566,7 +579,7 @@ func evalInstanceIndexExpression(ctx context.Context, instance, index object.Obj
 	if !isDotAccess {
 		if getitem, ok := inst.Class.LookupMember("__getitem__"); ok {
 			args := []object.Object{instance, index}
-			return applyFunctionWithContext(ctx, getitem, args, nil, nil)
+			return applyFunctionWithContext(ctx, getitem, args, object.Kwargs{}, nil)
 		}
 		return &object.Exception{
 			Message:       fmt.Sprintf("'%s' object is not subscriptable", inst.Class.Name),
@@ -590,14 +603,14 @@ func evalInstanceIndexExpression(ctx context.Context, instance, index object.Obj
 	if val, ok := inst.GetField(field); ok {
 		// If it's a property descriptor, call the getter
 		if prop, ok := val.(*object.Property); ok {
-			return applyFunctionWithContext(ctx, prop.Getter, []object.Object{instance}, nil, nil)
+			return applyFunctionWithContext(ctx, prop.Getter, []object.Object{instance}, object.Kwargs{}, nil)
 		}
 		return val
 	}
 	// Check class methods - property descriptors on the class are also supported
 	if fn, ok := inst.Class.LookupMember(field); ok {
 		if prop, ok := fn.(*object.Property); ok {
-			return applyFunctionWithContext(ctx, prop.Getter, []object.Object{instance}, nil, nil)
+			return applyFunctionWithContext(ctx, prop.Getter, []object.Object{instance}, object.Kwargs{}, nil)
 		}
 		if sm, ok := fn.(*object.StaticMethod); ok {
 			return sm.Fn // return the raw function for later calling
@@ -615,9 +628,12 @@ func evalInstanceIndexExpression(ctx context.Context, instance, index object.Obj
 	if field == "__dict__" {
 		return instanceDictView(inst)
 	}
+	if field == "__doc__" {
+		return NULL // a class without a docstring
+	}
 	// As in Python, __getattr__ is consulted only when normal lookup fails.
 	if getattr, ok := inst.Class.LookupMember("__getattr__"); ok {
-		return applyFunctionWithContext(ctx, getattr, []object.Object{instance, index}, nil, nil)
+		return applyFunctionWithContext(ctx, getattr, []object.Object{instance, index}, object.Kwargs{}, nil)
 	}
 	return attributeError(inst, field)
 }
@@ -658,6 +674,19 @@ func evalClassIndexExpression(class, index object.Object) object.Object {
 		}
 		return fn
 	}
+	switch field {
+	case "__doc__":
+		return NULL // no docstring
+	case "__qualname__":
+		return object.NewString(cl.Name)
+	case "__module__":
+		return object.NewString("__main__")
+	case "__bases__":
+		if cl.BaseClass != nil {
+			return &object.Tuple{Elements: []object.Object{cl.BaseClass}}
+		}
+		return &object.Tuple{Elements: []object.Object{objectBuiltin}}
+	}
 	return attributeError(cl, field)
 }
 
@@ -693,6 +722,16 @@ func evalBuiltinIndexExpression(builtin, index object.Object) object.Object {
 	if b.Attributes != nil {
 		if val, ok := b.Attributes[field]; ok {
 			return val
+		}
+	}
+	// Types (int, ValueError, ...) have a __name__, as in Python: an
+	// __exit__ often logs exc_type.__name__.
+	if field == "__name__" {
+		if name, ok := exceptionBuiltins[b]; ok {
+			return object.NewString(name)
+		}
+		if name, ok := typeBuiltins[b]; ok {
+			return object.NewString(name)
 		}
 	}
 	return attributeError(b, field)

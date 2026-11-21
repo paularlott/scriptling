@@ -1,6 +1,12 @@
 package evaluator
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/paularlott/scriptling/ast"
+	"github.com/paularlott/scriptling/lexer"
+	"github.com/paularlott/scriptling/parser"
+)
 
 func TestSlotLocalsSupportRecursiveFunctionName(t *testing.T) {
 	input := `
@@ -73,4 +79,34 @@ classify(7)
 `
 
 	testIntegerObject(t, testEval(input), 7)
+}
+
+// Names bound by match patterns, by with targets (also several in one
+// statement) and by a yield's assignment get local slots like assignments.
+func TestSlotLocalsCollectPatternWithAndYieldBindings(t *testing.T) {
+	src := `
+def f(v):
+    match v:
+        case [a, *rest, (b, _)]:
+            pass
+        case Point(c, y=d) | {"k": c, **d}:
+            pass
+    with x() as e, y() as g:
+        pass
+    h = yield 1
+    i, j = yield
+    k = yield from v
+`
+	program := parser.New(lexer.New(src)).ParseProgram()
+	fs := program.Statements[0].(*ast.FunctionStatement)
+	for _, name := range []string{"v", "a", "rest", "b", "c", "d", "e", "g", "h", "i", "j", "k"} {
+		if _, ok := fs.Function.LocalSlots[name]; !ok {
+			t.Errorf("%s has no local slot (slots: %v)", name, fs.Function.LocalSlotNames)
+		}
+	}
+	for _, name := range []string{"_", "Point", "x", "y"} {
+		if _, ok := fs.Function.LocalSlots[name]; ok {
+			t.Errorf("%s should not be a local slot", name)
+		}
+	}
 }

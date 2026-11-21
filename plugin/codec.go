@@ -233,11 +233,11 @@ func valuesFromKwargs(kwargs object.Kwargs) (map[string]Value, error) {
 }
 
 func valuesFromKwargsWithCallbacks(kwargs object.Kwargs, callbacks *callbackSet) (map[string]Value, error) {
-	if len(kwargs.Kwargs) == 0 {
+	if kwargs.Len() == 0 {
 		return nil, nil
 	}
-	values := make(map[string]Value, len(kwargs.Kwargs))
-	for key, arg := range kwargs.Kwargs {
+	values := make(map[string]Value, kwargs.Len())
+	for key, arg := range kwargs.All() {
 		encoded, err := objectToValueWithCallbacks(arg, callbacks)
 		if err != nil {
 			return nil, err

@@ -192,7 +192,7 @@ func newWaitForLibrary(guard *netsecurity.Guard, paths *fssecurity.Config) *obje
 						return err
 					}
 
-					timeout, pollRate, err := parseWaitOptions(args, kwargs.Kwargs)
+					timeout, pollRate, err := parseWaitOptions(args, kwargs.Map())
 					if err != nil {
 						return err
 					}
@@ -248,7 +248,7 @@ Raises PermissionError if the path is outside the allowed paths.`,
 						return err
 					}
 
-					timeout, pollRate, err := parseWaitOptions(args, kwargs.Kwargs)
+					timeout, pollRate, err := parseWaitOptions(args, kwargs.Map())
 					if err != nil {
 						return err
 					}
@@ -318,7 +318,7 @@ Raises PermissionError if the path is outside the allowed paths.`,
 						return errors.NewTypeError("INT|STRING", args[1].Type().String())
 					}
 
-					timeout, pollRate, err := parseWaitOptionsKwargsOnly(30, 1.0, kwargs.Kwargs)
+					timeout, pollRate, err := parseWaitOptionsKwargsOnly(30, 1.0, kwargs.Map())
 					if err != nil {
 						return err
 					}
@@ -390,7 +390,7 @@ Raises an error if a configured network policy denies the address.`,
 					}
 
 					// Handle kwargs
-					for k, v := range kwargs.Kwargs {
+					for k, v := range kwargs.All() {
 						switch k {
 						case "timeout":
 							if t, err := v.AsInt(); err == nil {
@@ -498,7 +498,7 @@ Raises an error if a configured network policy denies the URL.`,
 						return err
 					}
 
-					timeout, pollRate, err := parseWaitOptionsKwargsOnly(30, 1.0, kwargs.Kwargs)
+					timeout, pollRate, err := parseWaitOptionsKwargsOnly(30, 1.0, kwargs.Map())
 					if err != nil {
 						return err
 					}
@@ -556,7 +556,7 @@ Raises PermissionError if the path is outside the allowed paths.`,
 						return err
 					}
 
-					timeout, pollRate, err := parseWaitOptions(args, kwargs.Kwargs)
+					timeout, pollRate, err := parseWaitOptions(args, kwargs.Map())
 					if err != nil {
 						return err
 					}

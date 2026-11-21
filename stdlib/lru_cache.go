@@ -51,8 +51,8 @@ func newLRUCacheWrapper(fn object.Object, maxsize int64) object.Object {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// Copy the args: the evaluator's fast paths pass a reused buffer.
 			callArgs := append([]object.Object{}, args...)
-			callKwargs := make(map[string]object.Object, len(kwargs.Kwargs))
-			for k, v := range kwargs.Kwargs {
+			callKwargs := make(map[string]object.Object, kwargs.Len())
+			for k, v := range kwargs.All() {
 				callKwargs[k] = v
 			}
 

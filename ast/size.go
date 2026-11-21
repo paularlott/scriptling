@@ -61,6 +61,7 @@ var (
 	sizeOfMatchStatement          = int(unsafe.Sizeof(MatchStatement{}))
 	sizeOfCaseClause              = int(unsafe.Sizeof(CaseClause{}))
 	sizeOfOrPattern               = int(unsafe.Sizeof(OrPattern{}))
+	sizeOfYieldStatement          = int(unsafe.Sizeof(YieldStatement{}))
 	sizeOfStatementInterface      = int(unsafe.Sizeof((*Statement)(nil)))
 	sizeOfExpressionInterface     = int(unsafe.Sizeof((*Expression)(nil)))
 	sizeOfIdentifierPointer       = int(unsafe.Sizeof((*Identifier)(nil)))
@@ -435,6 +436,13 @@ func (e *estimator) walkStatement(stmt Statement) {
 		e.walkExpression(n.ContextExpr)
 		e.walkIdentifier(n.Target)
 		e.walkStatement(n.Body)
+	case *YieldStatement:
+		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfYieldStatement) {
+			return
+		}
+		e.addToken(n.Token)
+		e.walkExpression(n.Value)
+		e.walkExpression(n.Target)
 	case *MatchStatement:
 		if n == nil || !e.mark(uintptr(unsafe.Pointer(n)), sizeOfMatchStatement) {
 			return

@@ -29,6 +29,7 @@ var (
 	dirFunction    func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 	iterFunction   func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 	nextFunction   func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
+	sumGenericFn   func(ctx context.Context, start, iterable object.Object) object.Object
 
 	// callDunderMethodFn is set in init() to break the initialization cycle
 	callDunderMethodFn func(ctx context.Context, inst *object.Instance, method string, args []object.Object, env *object.Environment) object.Object
@@ -423,15 +424,34 @@ Converts an integer, string, or float to a float.`,
 			startInt := int64(0)
 			startFloat := 0.0
 			hasFloat := false
+			var start object.Object
 			if len(args) == 2 {
-				switch v := args[1].(type) {
+				start = args[1]
+			}
+			if kwargs.Len() > 0 {
+				if v, ok := kwargs.Lookup("start"); ok && kwargs.Len() == 1 && start == nil {
+					start = v
+				} else {
+					return errors.NewTypeErrorTagged("sum() got an unexpected keyword argument")
+				}
+			}
+			if start != nil {
+				switch v := start.(type) {
 				case *object.Integer:
 					startInt = v.IntValue()
 				case *object.Float:
 					startFloat = v.FloatValue()
 					hasFloat = true
+				case *object.Boolean:
+					startInt = boolToInt64(v.BoolValue())
+				case *object.String:
+					return errors.NewTypeErrorTagged("sum() can't sum strings [use ''.join(seq) instead]")
+				case *object.Bytes:
+					return errors.NewTypeErrorTagged("sum() can't sum bytes [use b''.join(seq) instead]")
 				default:
-					return errors.NewError("sum() start must be a number, got %s", args[1].Type())
+					// Any other start (a list, a tuple, an instance with
+					// __add__) sums with +, as Python does.
+					return sumGenericFn(ctx, start, args[0])
 				}
 			}
 
@@ -458,7 +478,7 @@ Converts an integer, string, or float to a float.`,
 			intSum := startInt
 			floatSum := startFloat
 
-			for _, elem := range elements {
+			for i, elem := range elements {
 				if b, isBool := elem.(*object.Boolean); isBool {
 					// bool is an int subclass: sum(x > 2 for x in xs) counts matches.
 					elem = object.NewInteger(boolToInt64(b.BoolValue()))
@@ -477,7 +497,13 @@ Converts an integer, string, or float to a float.`,
 					}
 					floatSum += v.FloatValue()
 				default:
-					return errors.NewError("unsupported operand type for sum(): %s", elem.Type())
+					// A non-number: carry on with +, which raises
+					// Python's TypeError or calls __add__/__radd__.
+					var acc object.Object = object.NewInteger(intSum)
+					if hasFloat {
+						acc = object.NewFloat(floatSum)
+					}
+					return sumGenericFn(ctx, acc, &object.List{Elements: elements[i:]})
 				}
 			}
 
@@ -548,7 +574,7 @@ Example:
 					return errors.NewError("range step cannot be zero")
 				}
 			}
-			return object.NewRangeIterator(start, stop, step)
+			return object.NewRange(start, stop, step)
 		},
 		HelpText: `range([start,] stop[, step]) - Generate sequence of numbers
 
@@ -875,6 +901,9 @@ Example:
 	},
 	"round": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if nd, ok := kwargs.Lookup("ndigits"); ok && len(args) == 1 && nd.Type() != object.NULL_OBJ {
+				args = []object.Object{args[0], nd}
+			}
 			if len(args) < 1 || len(args) > 2 {
 				return errors.NewError("round() takes 1 or 2 arguments (%d given)", len(args))
 			}
@@ -1155,6 +1184,9 @@ Equivalent to (a // b, a % b) for integers.`,
 				}
 
 				if b, ok := typeArg.(*object.Builtin); ok {
+					if b == objectBuiltin {
+						return TRUE
+					}
 					if excName, isExc := exceptionBuiltins[b]; isExc {
 						if exc, ok := obj.(*object.Exception); ok {
 							actual := exc.ExceptionType
@@ -1162,6 +1194,12 @@ Equivalent to (a // b, a % b) for integers.`,
 								actual = "Exception"
 							}
 							if matchesNamedExceptionTypeChain(actual, excName, exc.TypeChain) {
+								return TRUE
+							}
+						}
+						// An instance of a user exception class not yet raised.
+						if inst, ok := obj.(*object.Instance); ok && inst.Class.ExceptionBase != "" {
+							if matchesNamedExceptionTypeChain(exceptionNameOf(inst.Class), excName, nil) {
 								return TRUE
 							}
 						}
@@ -1586,8 +1624,10 @@ For other objects, returns the same as str().`,
 					Raised:        true,
 				}
 			}
-			// FNV-1a hash algorithm - fast and good distribution
-			str := args[0].Inspect()
+			// FNV-1a hash algorithm - fast and good distribution. It runs over
+			// the value's dict key, so values that are equal as dict keys
+			// (1, 1.0 and True) hash alike.
+			str := object.DictKey(args[0])
 			const (
 				offset64 = 14695981039346656037
 				prime64  = 1099511628211
@@ -1915,28 +1955,12 @@ For classes: method names.
 For dicts: key names.`,
 	},
 	"issubclass": {
-		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 2); err != nil {
-				return err
-			}
-			cls, ok := args[0].(*object.Class)
-			if !ok {
-				return errors.NewTypeError("CLASS", args[0].Type().String())
-			}
-			parent, ok := args[1].(*object.Class)
-			if !ok {
-				return errors.NewTypeError("CLASS", args[1].Type().String())
-			}
-			for c := cls; c != nil; c = c.BaseClass {
-				if c == parent {
-					return TRUE
-				}
-			}
-			return FALSE
-		},
-		HelpText: `issubclass(cls, parent) - Return True if cls is a subclass of parent
+		Fn: issubclassFn,
+		HelpText: `issubclass(cls, classinfo) - Return True if cls is a subclass of classinfo
 
-Checks the full inheritance chain. issubclass(C, C) is True.`,
+classinfo is a class, a builtin type (int, dict, ValueError, object, ...) or a
+tuple of them. Checks the full inheritance chain; issubclass(C, C) is True,
+issubclass(bool, int) and issubclass(MyError, Exception) are True.`,
 	},
 	"copy": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -2526,6 +2550,7 @@ func init() {
 	dirFunction = dirFunctionImpl
 	iterFunction = iterFunctionImpl
 	nextFunction = nextFunctionImpl
+	sumGenericFn = sumGeneric
 	callDunderMethodFn = callDunderMethod
 	assignAttributeFn = func(ctx context.Context, obj, name, value object.Object) error {
 		return assignIndexValue(ctx, true, obj, name, value)
@@ -2534,7 +2559,7 @@ func init() {
 	attachTypeMethods()
 	hashInstanceFn = func(ctx context.Context, inst *object.Instance) object.Object {
 		hashFn := inst.Class.Methods["__hash__"]
-		return applyFunctionWithContext(ctx, hashFn, []object.Object{inst}, nil, nil)
+		return applyFunctionWithContext(ctx, hashFn, []object.Object{inst}, object.Kwargs{}, nil)
 	}
 
 	// Build reverse lookup for isinstance() to support bare type names
@@ -2581,13 +2606,13 @@ func init() {
 		"ModuleNotFoundError", "RecursionError", "NotImplementedError",
 		"UnicodeError", "UnicodeDecodeError", "UnicodeEncodeError",
 		"KeyboardInterrupt", "JSONDecodeError", "AssertionError",
-		"FrozenInstanceError", "MemoryError",
+		"FrozenInstanceError", "MemoryError", "GeneratorExit",
 	} {
 		builtins[name] = exceptionConstructor(name)
 	}
 	exceptionBuiltins = make(map[*object.Builtin]string)
 	for name, b := range builtins {
-		if name == "Exception" || name == "BaseException" || name == "StopIteration" || name == "KeyboardInterrupt" ||
+		if name == "Exception" || name == "BaseException" || name == "StopIteration" || name == "KeyboardInterrupt" || name == "GeneratorExit" ||
 			strings.HasSuffix(name, "Error") || strings.HasSuffix(name, "Exception") {
 			exceptionBuiltins[b] = name
 			b.Fn = trackExceptions(b.Fn)
@@ -2691,7 +2716,7 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 			var callArg [1]object.Object // reused: a callee never keeps its args slice
 			for i, elem := range elements {
 				callArg[0] = elem
-				key := applyFunctionWithContext(ctx, keyFunc, callArg[:], nil, env)
+				key := applyFunctionWithContext(ctx, keyFunc, callArg[:], object.Kwargs{}, env)
 				if propagates(key) {
 					return key
 				}
@@ -2865,7 +2890,7 @@ func mapFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 		env := GetEnvFromContext(ctx)
 		return lazyApply(ctx, args[1:], func(items []object.Object) (object.Object, bool) {
 			// items is a fresh slice per element, so it can be the args.
-			return applyFunctionWithContext(ctx, fn, items, nil, env), true
+			return applyFunctionWithContext(ctx, fn, items, object.Kwargs{}, env), true
 		})
 	}
 	// Get all iterables as slices
@@ -2893,7 +2918,7 @@ func mapFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 		for j := range iterables {
 			callArgs[j] = iterables[j][i]
 		}
-		res := applyFunctionWithContext(ctx, fn, callArgs, nil, env)
+		res := applyFunctionWithContext(ctx, fn, callArgs, object.Kwargs{}, env)
 		// A raised exception from the mapped function must propagate at the
 		// first raising element, not be stored as a result element.
 		if propagates(res) {
@@ -2925,7 +2950,7 @@ func filterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 			elem := items[0]
 			test := elem
 			if fn.Type() != object.NULL_OBJ {
-				test = applyFunctionWithContext(ctx, fn, []object.Object{elem}, nil, env)
+				test = applyFunctionWithContext(ctx, fn, []object.Object{elem}, object.Kwargs{}, env)
 				if propagates(test) {
 					return test, true
 				}
@@ -2961,7 +2986,7 @@ func filterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 			}
 		} else {
 			callArg[0] = elem
-			res := applyFunctionWithContext(ctx, fn, callArg[:], nil, env)
+			res := applyFunctionWithContext(ctx, fn, callArg[:], object.Kwargs{}, env)
 			// A raised exception from the predicate must propagate, not be
 			// coerced to "keep" via truthiness.
 			if propagates(res) {
@@ -3380,9 +3405,17 @@ func nextFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 	var iter *object.Iterator
 	switch o := args[0].(type) {
 	case *object.Iterator:
+		if _, _, _, isRange := o.RangeObject(); isRange {
+			return &object.Exception{Message: "'range' object is not an iterator", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
+		}
 		iter = o
 	case *object.Instance:
 		env := GetEnvFromContext(ctx)
+		// A generator is resumed directly, so the StopIteration that ends it
+		// keeps the generator's return value.
+		if len(args) == 1 && o.Class == generatorClass {
+			return generatorNext(ctx, o, env)
+		}
 		iter = instanceToIterator(ctx, o, env)
 	default:
 		return errors.NewTypeError("ITERATOR or iterable instance", args[0].Type().String())
@@ -3397,13 +3430,67 @@ func nextFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 	return val
 }
 
+// sumGeneric is sum(iterable, start) for values that are not all numbers:
+// start + e0 + e1 + ..., with the + operator's rules.
+func sumGeneric(ctx context.Context, start, iterable object.Object) object.Object {
+	env := GetEnvFromContext(ctx)
+	elements, ok, rerr := iterableToSliceCheckedFn(ctx, iterable, env)
+	if rerr != nil {
+		return rerr
+	}
+	if !ok {
+		return errors.NewTypeError("iterable", iterable.Type().String())
+	}
+	acc := start
+	for _, elem := range elements {
+		acc = evalInfixExpression(ctx, ast.OpAdd, acc, elem, env)
+		if propagates(acc) {
+			return acc
+		}
+	}
+	return acc
+}
+
+// callableSentinelIterator is iter(callable, sentinel): an iterator calling
+// fn with no arguments until it returns a value equal to sentinel.
+func callableSentinelIterator(ctx context.Context, fn, sentinel object.Object) object.Object {
+	if !isCallableObject(fn) {
+		return &object.Exception{Message: "iter(v, w): v must be callable", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
+	}
+	env := GetEnvFromContext(ctx)
+	done := false
+	return object.NewIterator(func() (object.Object, bool) {
+		if done {
+			return nil, false
+		}
+		v := applyFunctionWithContext(ctx, fn, nil, object.Kwargs{}, env)
+		if propagates(v) {
+			done = true
+			return v, true
+		}
+		eq, errObj := evalObjectsEqualChecked(ctx, v, sentinel, env)
+		if errObj != nil {
+			done = true
+			return errObj, true
+		}
+		if eq {
+			done = true
+			return nil, false
+		}
+		return v, true
+	}).SetTypeName(iterTypeNameCallable)
+}
+
 func iterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-	if err := errors.ExactArgs(args, 1); err != nil {
+	if err := errors.RangeArgs(args, 1, 2); err != nil {
 		return err
+	}
+	if len(args) == 2 {
+		return callableSentinelIterator(ctx, args[0], args[1])
 	}
 	switch o := args[0].(type) {
 	case *object.Iterator:
-		return o
+		return o.Iter()
 	case *object.List, *object.Tuple, *object.String, *object.Set, *object.Dict,
 		*object.DictKeys, *object.DictValues, *object.DictItems:
 		elems, _ := object.IterableToSlice(args[0])
@@ -3417,6 +3504,9 @@ func iterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.
 			return v, true
 		})
 	case *object.Instance:
+		if o.Class == generatorClass {
+			return o // iter(g) is g
+		}
 		env := GetEnvFromContext(ctx)
 		if fn, ok := findDunderMethod(o, "__iter__"); ok {
 			iter, errObj := callIter(ctx, o, fn, env)
@@ -3589,7 +3679,7 @@ func minMaxFunctionImpl(ctx context.Context, kwargs object.Kwargs, wantMax bool,
 		if keyFunc == nil {
 			return elem, nil
 		}
-		key := applyFunctionWithContext(ctx, keyFunc, []object.Object{elem}, nil, env)
+		key := applyFunctionWithContext(ctx, keyFunc, []object.Object{elem}, object.Kwargs{}, env)
 		if propagates(key) {
 			return nil, key
 		}

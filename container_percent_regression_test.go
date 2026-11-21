@@ -781,9 +781,9 @@ r
 		src  string
 		want string
 	}{
-		{"missing keyword", `"{x}".format(y=1)`, "format field 'x' has no matching keyword argument"},
-		{"too few arguments", `"{} {}".format(1)`, "not enough arguments for format string"},
-		{"index out of range", `"{5}".format(1)`, "format index 5 out of range"},
+		{"missing keyword", `"{x}".format(y=1)`, "'x'"},
+		{"too few arguments", `"{} {}".format(1)`, "Replacement index 1 out of range for positional args tuple"},
+		{"index out of range", `"{5}".format(1)`, "Replacement index 5 out of range"},
 		{"single open brace", `"{".format(1)`, "single '{' in format string"},
 		{"single close brace", `"}".format(1)`, "single '}' in format string"},
 	}

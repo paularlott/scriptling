@@ -227,10 +227,7 @@ func callFloatMethod(f *object.Float, method string, args []object.Object) objec
 				Raised:        true,
 			}
 		}
-		return &object.List{Elements: []object.Object{
-			object.NewInteger(r.Num().Int64()),
-			object.NewInteger(r.Denom().Int64()),
-		}}
+		return object.NewPair(object.NewInteger(r.Num().Int64()), object.NewInteger(r.Denom().Int64()))
 	}
 	return attributeError(f, method)
 }

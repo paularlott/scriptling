@@ -51,7 +51,7 @@ func (s *Server) buildPluginServer() {
 	for funcName, handlerRef := range handlers {
 		ref := handlerRef // capture for closure
 		ps.RegisterBuiltin(funcName, func(callCtx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			return s.runPluginHandler(callCtx, ref, args, kwargs.Kwargs)
+			return s.runPluginHandler(callCtx, ref, args, kwargs.Map())
 		})
 		Log.Debug("Registered plugin function", "name", funcName, "handler", ref)
 	}

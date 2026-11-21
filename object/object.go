@@ -14,6 +14,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -21,6 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"unsafe"
+	"weak"
 
 	"github.com/paularlott/scriptling/ast"
 )
@@ -926,11 +928,36 @@ type Function struct {
 	// the evaluator may memoise into CompiledBody. Objects assembled elsewhere
 	// may be shared between trees and are never written after construction.
 	CompilerOwned bool
+	// Abstract marks a method decorated with abc.abstractmethod.
+	Abstract bool
 	// GeneratorPlan is the evaluator's compiled resumable plan for a
 	// generator function (body contains yield; opaque here, a
 	// *evaluator.genPlan). Non-nil marks a generator: calling one
 	// constructs a generator instead of running the body.
 	GeneratorPlan any
+}
+
+// wrappedFunctions records, for a function decorated with functools.wraps,
+// the callable it wraps. Few functions are wrappers, so the link lives here
+// rather than in a field every function would carry. Entries are keyed weakly
+// and removed when the wrapper is collected.
+var wrappedFunctions sync.Map // weak.Pointer[Function] -> Object
+
+// SetWrapped records the callable functools.wraps copied this function's
+// identity from: __doc__ and __wrapped__ read through it.
+func (f *Function) SetWrapped(wrapped Object) {
+	key := weak.Make(f)
+	if _, replaced := wrappedFunctions.Swap(key, wrapped); !replaced {
+		runtime.AddCleanup(f, func(k weak.Pointer[Function]) { wrappedFunctions.Delete(k) }, key)
+	}
+}
+
+// Wrapped returns the callable recorded by SetWrapped, or nil.
+func (f *Function) Wrapped() Object {
+	if v, ok := wrappedFunctions.Load(weak.Make(f)); ok {
+		return v.(Object)
+	}
+	return nil
 }
 
 func (f *Function) Type() ObjectType { return FUNCTION_OBJ }
@@ -2717,6 +2744,9 @@ type Exception struct {
 	// converted from, so custom attributes and methods (e.code) remain
 	// reachable on the caught exception.
 	OriginInstance *Instance
+	// Cause is __cause__, set by `raise X from e`; nil is None (no cause,
+	// or `raise X from None`).
+	Cause *Exception
 	// Raised distinguishes an exception that is actively propagating (produced
 	// by a `raise` or by an operation that failed) from one that is merely a
 	// value (constructed via `ValueError("x")`, bound by `except ... as e`, or
@@ -2778,6 +2808,12 @@ type Class struct {
 	IsEnum      bool
 	IsIntEnum   bool
 	EnumMembers []Object
+	// IsABC marks abc.ABC and the classes deriving from it: only they
+	// enforce @abstractmethod, as in Python.
+	IsABC bool
+	// AbstractMethods lists, sorted, the abstract methods an ABC class
+	// leaves unimplemented; non-nil makes instantiation a TypeError.
+	AbstractMethods []string
 	// FieldNames lists the class body's annotated names in source order
 	// (@dataclass fields); AssignNames the plain top-level assignment
 	// targets (enum members, dataclass defaults). Compile-time metadata;
@@ -2789,6 +2825,11 @@ type Class struct {
 	// shapeRoot is the empty field layout of this class's instances, from
 	// which the shared layouts they move through grow; see instShape.
 	shapeRoot atomic.Pointer[instShape]
+	// setattr caches whether the class defines __setattr__, so an attribute
+	// assignment does not look the name up each time: the lookup epoch the
+	// answer was computed under (plus one) shifted left, and the answer in
+	// the low bit.
+	setattr atomic.Uint64
 }
 
 func (c *Class) Type() ObjectType { return CLASS_OBJ }
@@ -2839,6 +2880,22 @@ func (c *Class) LookupMember(name string) (Object, bool) {
 	c.cacheMu.Unlock()
 
 	return value, ok
+}
+
+// HasSetattr reports whether the class defines __setattr__. The answer is
+// cached until a class attribute is next assigned.
+func (c *Class) HasSetattr() bool {
+	epoch := classLookupEpoch.Load() + 1
+	if v := c.setattr.Load(); v>>1 == epoch {
+		return v&1 == 1
+	}
+	_, has := c.Methods["__setattr__"]
+	v := epoch << 1
+	if has {
+		v |= 1
+	}
+	c.setattr.Store(v)
+	return has
 }
 
 func (c *Class) InvalidateLookupCache() {

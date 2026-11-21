@@ -24,7 +24,7 @@ func TestJSONDumpsIndent(t *testing.T) {
 		}
 		if len(sortKeys) > 0 && sortKeys[0] {
 			merged := map[string]object.Object{"sort_keys": object.NewBoolean(true)}
-			for k, v := range kwargs.Kwargs {
+			for k, v := range kwargs.All() {
 				merged[k] = v
 			}
 			kwargs = object.NewKwargs(merged)

@@ -427,6 +427,8 @@ func objectsEqual(a, b object.Object) bool {
 		return av.BoolValue() == b.(*object.Boolean).BoolValue()
 	case *object.Null:
 		return true
+	case *object.Iterator:
+		return av.RangeEqual(b.(*object.Iterator))
 	default:
 		return a == b // Reference equality for complex types
 	}
@@ -436,6 +438,46 @@ func objectsEqual(a, b object.Object) bool {
 // (int, str, dict, ..., or an exception constructor) name the same type:
 // type() returns names, so type(x) == int compares the name with the
 // builtin's.
+// mixedNumbersEqual compares two numbers of different types (int, float and
+// bool in any pairing) by value. numeric is false when either is not a number.
+func mixedNumbersEqual(a, b object.Object) (equal, numeric bool) {
+	ai, af, aIsFloat, ok := numberParts(a)
+	if !ok {
+		return false, false
+	}
+	bi, bf, bIsFloat, ok := numberParts(b)
+	if !ok {
+		return false, false
+	}
+	switch {
+	case aIsFloat && bIsFloat:
+		return af == bf, true
+	case aIsFloat:
+		return floatEqualsInt(af, bi), true
+	case bIsFloat:
+		return floatEqualsInt(bf, ai), true
+	}
+	return ai == bi, true
+}
+
+// numberParts returns a number's value: i for an int or bool, f for a float.
+func numberParts(o object.Object) (i int64, f float64, isFloat, ok bool) {
+	switch v := o.(type) {
+	case *object.Integer:
+		return v.IntValue(), 0, false, true
+	case *object.Boolean:
+		return boolToInt64(v.BoolValue()), 0, false, true
+	case *object.Float:
+		return 0, v.FloatValue(), true, true
+	}
+	return 0, 0, false, false
+}
+
+// floatEqualsInt reports whether f is exactly the integer i.
+func floatEqualsInt(f float64, i int64) bool {
+	return f == math.Trunc(f) && f >= math.MinInt64 && f < math.MaxInt64 && int64(f) == i
+}
+
 func typeBridgeEqual(a, b object.Object) bool {
 	var name string
 	var t object.Object
@@ -470,7 +512,7 @@ func typeBridgeEqual(a, b object.Object) bool {
 func evalObjectsEqualChecked(ctx context.Context, a, b object.Object, env *object.Environment) (bool, object.Object) {
 	if aInst, ok := a.(*object.Instance); ok {
 		if method, has := aInst.Class.Methods["__eq__"]; has {
-			result := applyFunctionWithContext(ctx, method, []object.Object{a, b}, nil, env)
+			result := applyFunctionWithContext(ctx, method, []object.Object{a, b}, object.Kwargs{}, env)
 			if propagates(result) {
 				return false, result
 			}
@@ -482,7 +524,7 @@ func evalObjectsEqualChecked(ctx context.Context, a, b object.Object, env *objec
 	}
 	if bInst, ok := b.(*object.Instance); ok {
 		if method, has := bInst.Class.Methods["__eq__"]; has {
-			result := applyFunctionWithContext(ctx, method, []object.Object{b, a}, nil, env)
+			result := applyFunctionWithContext(ctx, method, []object.Object{b, a}, object.Kwargs{}, env)
 			if propagates(result) {
 				return false, result
 			}
@@ -551,6 +593,11 @@ func objectsDeepEqual(ctx context.Context, a, b object.Object) (bool, object.Obj
 // comparisons, which are cheaper than comparing the interfaces.
 func deepEqual(budget *cmpBudget, a, b object.Object, depth int) (bool, object.Object) {
 	if a.Type() != b.Type() {
+		// Numbers of different types compare by value, inside containers
+		// as at the top level: [1] == [1.0] and {"a": True} == {"a": 1}.
+		if eq, numeric := mixedNumbersEqual(a, b); numeric {
+			return eq, nil
+		}
 		// Same bridge as objectsEqual: type-name strings and type builtins
 		// ("int" vs int) name the same type.
 		return typeBridgeEqual(a, b), nil
@@ -672,6 +719,8 @@ func deepEqual(budget *cmpBudget, a, b object.Object, depth int) (bool, object.O
 			}
 		}
 		return true, nil
+	case *object.Iterator:
+		return av.RangeEqual(b.(*object.Iterator)), nil
 	default:
 		return a == b, nil // Reference equality for other types
 	}
@@ -1766,7 +1815,7 @@ func evalBytesMultiplication(b *object.Bytes, multiplier int64) object.Object {
 func callDunderMethod(ctx context.Context, inst *object.Instance, method string, args []object.Object, env *object.Environment) object.Object {
 	if fn, ok := inst.Class.LookupMember(method); ok {
 		newArgs := prependSelf(inst, args)
-		result := applyFunctionWithContext(ctx, fn, newArgs, nil, env)
+		result := applyFunctionWithContext(ctx, fn, newArgs, object.Kwargs{}, env)
 		if object.IsError(result) {
 			return result
 		}
@@ -1831,7 +1880,7 @@ func evalReflectedArithmetic(ctx context.Context, operator ast.Op, left object.O
 	if !has {
 		return nil
 	}
-	return applyFunctionWithContext(ctx, method, []object.Object{right, left}, nil, env)
+	return applyFunctionWithContext(ctx, method, []object.Object{right, left}, object.Kwargs{}, env)
 }
 
 // mirroredComparisonDunder maps a comparison operator to the dunder that
@@ -1868,13 +1917,13 @@ func evalReflectedInstanceComparison(ctx context.Context, operator ast.Op, left,
 		}
 		return nil
 	}
-	return applyFunctionWithContext(ctx, method, []object.Object{right, left}, nil, env)
+	return applyFunctionWithContext(ctx, method, []object.Object{right, left}, object.Kwargs{}, env)
 }
 
 // negateEquality implements != for a class that defines __eq__ but not
 // __ne__: as in Python 3, the result is the inverse of __eq__.
 func negateEquality(ctx context.Context, eq object.Object, args []object.Object, env *object.Environment) object.Object {
-	result := applyFunctionWithContext(ctx, eq, args, nil, env)
+	result := applyFunctionWithContext(ctx, eq, args, object.Kwargs{}, env)
 	if propagates(result) {
 		return result
 	}
@@ -1906,7 +1955,7 @@ func evalInstanceInfixExpression(ctx context.Context, operator ast.Op, left *obj
 
 	// Call the dunder method with self and the right operand
 	args := []object.Object{left, right}
-	return applyFunctionWithContext(ctx, method, args, nil, env)
+	return applyFunctionWithContext(ctx, method, args, object.Kwargs{}, env)
 }
 
 func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object {
@@ -1933,6 +1982,9 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 	}
 	if builtin, ok := builtins[node.Value()]; ok {
 		return builtin
+	}
+	if node.Value() == "Ellipsis" {
+		return ellipsisValue
 	}
 	return errors.NewIdentifierError(node.Value())
 }
@@ -1967,6 +2019,7 @@ func unpackArgsFromIterable(ctx context.Context, argsVal object.Object, env *obj
 		}
 		// Drain with the same size check and cancellation as list(iterator),
 		// so f(*range(n)) with a huge n stops cleanly.
+		val = val.Iter()
 		cc := newContextChecker(ctx)
 		for {
 			if err := cc.check(); err != nil {
@@ -2095,7 +2148,7 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 		// For explicit bracket access (not dot), call __setitem__ if defined
 		if !isDotAccess {
 			if setitem, ok := o.Class.Methods["__setitem__"]; ok {
-				result := applyFunctionWithContext(ctx, setitem, []object.Object{obj, index, value}, nil, nil)
+				result := applyFunctionWithContext(ctx, setitem, []object.Object{obj, index, value}, object.Kwargs{}, nil)
 				if object.IsError(result) {
 					return fmt.Errorf("%s", result.(*object.Error).Message)
 				}
@@ -2110,6 +2163,19 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 				return raisedAssignmentError(object.ExceptionTypeAttributeError,
 					"assigning to __dict__ is not supported; update it in place (obj.__dict__.update(...)) or use setattr()")
 			}
+			// A class's __setattr__ takes over every attribute assignment;
+			// it stores values with object.__setattr__ or super().
+			if o.Class.HasSetattr() {
+				setattr := o.Class.Methods["__setattr__"]
+				result := applyFunctionWithContext(ctx, setattr, []object.Object{o, key, value}, object.Kwargs{}, nil)
+				if object.IsError(result) {
+					return fmt.Errorf("%s", result.(*object.Error).Message)
+				}
+				if isRaised(result) {
+					return &assignmentExceptionError{ex: result.(*object.Exception)}
+				}
+				return nil
+			}
 			// Frozen dataclasses refuse field writes after construction
 			// (Python's FrozenInstanceError, an AttributeError subclass).
 			if _, frozen := o.Class.Methods["__frozen__"]; frozen {
@@ -2122,7 +2188,7 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 					return raisedAssignmentError(object.ExceptionTypeAttributeError,
 						fmt.Sprintf("property '%s' of '%s' object has no setter", key.StringValue(), o.Class.Name))
 				}
-				result := applyFunctionWithContext(ctx, p.Setter, []object.Object{o, value}, nil, nil)
+				result := applyFunctionWithContext(ctx, p.Setter, []object.Object{o, value}, object.Kwargs{}, nil)
 				if object.IsError(result) {
 					return fmt.Errorf("%s", result.(*object.Error).Message)
 				}
@@ -2213,13 +2279,13 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 //     envFn holds the resolved value so the caller can skip a redundant lookup.
 //   - ok=false, envFn==nil: not applicable, caller should use normal resolution.
 
-func createInstance(ctx context.Context, class *object.Class, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+func createInstance(ctx context.Context, class *object.Class, args []object.Object, keywords object.Kwargs, env *object.Environment) object.Object {
 	return createInstanceKw(ctx, class, args, keywords, kwArgs{}, env)
 }
 
 // createInstanceKw is createInstance with keywords given as a map, as kwArgs
 // slices, or neither (never both).
-func createInstanceKw(ctx context.Context, class *object.Class, args []object.Object, keywords map[string]object.Object, kw kwArgs, env *object.Environment) object.Object {
+func createInstanceKw(ctx context.Context, class *object.Class, args []object.Object, keywords object.Kwargs, kw kwArgs, env *object.Environment) object.Object {
 	// Enum classes construct by value lookup, not instantiation.
 	if class.IsEnum {
 		if len(args) != 1 {
@@ -2231,6 +2297,9 @@ func createInstanceKw(ctx context.Context, class *object.Class, args []object.Ob
 		}
 		return enumValueLookup(class, args[0])
 	}
+	if class.AbstractMethods != nil {
+		return abstractInstantiationError(class)
+	}
 	instance := object.NewInstance(class)
 
 	// Call __init__ if it exists, walking the base class chain
@@ -2241,7 +2310,7 @@ func createInstanceKw(ctx context.Context, class *object.Class, args []object.Ob
 			break
 		}
 	}
-	if initMethod == nil && (len(args) > 0 || len(keywords) > 0 || len(kw.names) > 0) {
+	if initMethod == nil && (len(args) > 0 || keywords.Len() > 0 || len(kw.names) > 0) {
 		// As in Python: a class with no __init__ anywhere in its bases takes
 		// no arguments.
 		return &object.Exception{
@@ -2332,7 +2401,7 @@ func createInstanceKw(ctx context.Context, class *object.Class, args []object.Ob
 func applyUserFunctionDirect(ctx context.Context, fn *object.Function, arg object.Object) object.Object {
 	if fn.GeneratorPlan != nil {
 		plan, _ := fn.GeneratorPlan.(*genPlan)
-		return newGenerator(ctx, fn, []object.Object{arg}, nil, fn.Env, plan)
+		return newGenerator(ctx, fn, []object.Object{arg}, object.Kwargs{}, fn.Env, plan)
 	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.enterCall() {
@@ -2371,7 +2440,7 @@ func applyUserFunctionDirect(ctx context.Context, fn *object.Function, arg objec
 func applyUserFunction2(ctx context.Context, fn *object.Function, a0, a1 object.Object) object.Object {
 	if fn.GeneratorPlan != nil {
 		plan, _ := fn.GeneratorPlan.(*genPlan)
-		return newGenerator(ctx, fn, []object.Object{a0, a1}, nil, fn.Env, plan)
+		return newGenerator(ctx, fn, []object.Object{a0, a1}, object.Kwargs{}, fn.Env, plan)
 	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.enterCall() {
@@ -2412,7 +2481,7 @@ func applyUserFunction2(ctx context.Context, fn *object.Function, a0, a1 object.
 func applyUserFunctionN(ctx context.Context, fn *object.Function, args ...object.Object) object.Object {
 	if fn.GeneratorPlan != nil {
 		plan, _ := fn.GeneratorPlan.(*genPlan)
-		return newGenerator(ctx, fn, args, nil, fn.Env, plan)
+		return newGenerator(ctx, fn, args, object.Kwargs{}, fn.Env, plan)
 	}
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.enterCall() {
@@ -2468,7 +2537,7 @@ func functionBody(fn *object.Function) object.EvalFn {
 	return body
 }
 
-func applyUserFunction(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+func applyUserFunction(ctx context.Context, fn *object.Function, args []object.Object, keywords object.Kwargs, env *object.Environment) object.Object {
 	return applyUserFunctionKw(ctx, fn, args, keywords, kwArgs{}, env)
 }
 
@@ -2483,7 +2552,7 @@ type kwArgs struct {
 
 // applyUserFunctionKw is applyUserFunction with keywords given as a map, as
 // kwArgs slices, or neither (never both).
-func applyUserFunctionKw(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object, kw kwArgs, env *object.Environment) object.Object {
+func applyUserFunctionKw(ctx context.Context, fn *object.Function, args []object.Object, keywords object.Kwargs, kw kwArgs, env *object.Environment) object.Object {
 	// Generator functions construct a generator instead of running.
 	if fn.GeneratorPlan != nil {
 		plan, _ := fn.GeneratorPlan.(*genPlan)
@@ -2517,17 +2586,13 @@ func applyUserFunctionKw(ctx context.Context, fn *object.Function, args []object
 	return unwrapReturnValue(evaluated)
 }
 
-// merge returns the keywords as a map: the given map when there are no slice
-// keywords, otherwise a new map holding them.
-func (kw kwArgs) merge(keywords map[string]object.Object) map[string]object.Object {
+// merge returns the keywords as an owned Kwargs: the given one when there are
+// no slice keywords, otherwise a copy of the slices (which are borrowed).
+func (kw kwArgs) merge(keywords object.Kwargs) object.Kwargs {
 	if len(kw.names) == 0 {
 		return keywords
 	}
-	m := make(map[string]object.Object, len(kw.names))
-	for i, name := range kw.names {
-		m[name] = kw.values[i]
-	}
-	return m
+	return object.NewKwargsFrom(kw.names, kw.values)
 }
 
 // applyFunction calls a function object with arguments and keyword arguments.
@@ -2556,10 +2621,10 @@ func ApplyFunctionGIL(ctx context.Context, fn object.Object, args []object.Objec
 			defer env.ExitGIL()
 		}
 	}
-	return applyFunction(ctx, fn, args, keywords, env)
+	return applyFunction(ctx, fn, args, object.NewKwargs(keywords), env)
 }
 
-func applyFunction(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+func applyFunction(ctx context.Context, fn object.Object, args []object.Object, keywords object.Kwargs, env *object.Environment) object.Object {
 	switch fn := fn.(type) {
 	case *object.Function:
 		return applyUserFunction(ctx, fn, args, keywords, env)
@@ -2567,7 +2632,7 @@ func applyFunction(ctx context.Context, fn object.Object, args []object.Object, 
 		return applyLambdaFunctionWithContext(ctx, fn, args, keywords, env)
 	case *object.Builtin:
 		ctxWithEnv := SetEnvInContext(ctx, env)
-		return checkResult(fn.Fn(ctxWithEnv, object.NewKwargs(keywords), args...))
+		return checkResult(fn.Fn(ctxWithEnv, keywords, args...))
 	case *object.Class:
 		return createInstance(ctx, fn, args, keywords, env)
 	case *object.Instance:
@@ -2583,7 +2648,7 @@ func applyFunction(ctx context.Context, fn object.Object, args []object.Object, 
 		}
 	case *object.ClientWrapper:
 		if callable, ok := fn.Client.(object.ScriptCallable); ok {
-			return callable.ScriptCall(ctx, args, keywords)
+			return callable.ScriptCall(ctx, args, keywords.Map())
 		}
 		return errors.NewError("cannot call %s: not callable", fn.Inspect())
 	default:
@@ -2591,7 +2656,7 @@ func applyFunction(ctx context.Context, fn object.Object, args []object.Object, 
 	}
 }
 
-func applyFunctionWithContext(ctx context.Context, fn object.Object, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+func applyFunctionWithContext(ctx context.Context, fn object.Object, args []object.Object, keywords object.Kwargs, env *object.Environment) object.Object {
 	// Handle BoundMethod - prepend self to args
 	if bm, ok := fn.(*object.BoundMethod); ok {
 		if len(args) == 0 {
@@ -2614,13 +2679,13 @@ func applyFunctionWithContext(ctx context.Context, fn object.Object, args []obje
 	return applyFunction(ctx, fn, args, keywords, env)
 }
 
-func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords object.Kwargs, env *object.Environment) object.Object {
 	return applyLambdaFunctionKw(ctx, fn, args, keywords, kwArgs{})
 }
 
 // applyLambdaFunctionKw is applyLambdaFunctionWithContext with keywords given
 // as a map, as kwArgs slices, or neither (never both).
-func applyLambdaFunctionKw(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object, kw kwArgs) object.Object {
+func applyLambdaFunctionKw(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords object.Kwargs, kw kwArgs) object.Object {
 	// Check call depth to prevent stack overflow
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.enterCall() {
@@ -2702,7 +2767,7 @@ type funcParams struct {
 }
 
 // extendEnvWithParams handles the common logic for extending environments with function arguments
-func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Object, keywords map[string]object.Object, kw kwArgs) (*object.Environment, object.Object) {
+func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Object, keywords object.Kwargs, kw kwArgs) (*object.Environment, object.Object) {
 	var env *object.Environment
 	if fp.reuseCallEnv {
 		env = object.AcquireCallEnvironment(fp.parentEnv, fp.localSlots, fp.localSlotNames)
@@ -2712,7 +2777,7 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 
 	numParams := len(fp.parameters)
 	numArgs := len(args)
-	numKeywords := len(keywords) + len(kw.names)
+	numKeywords := keywords.Len() + len(kw.names)
 	positionalLimit := numParams
 	if fp.keywordOnlyStart > 0 && fp.keywordOnlyStart-1 < positionalLimit {
 		positionalLimit = fp.keywordOnlyStart - 1
@@ -2846,7 +2911,7 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 				return nil, errObj
 			}
 		}
-		for key, value := range keywords {
+		for key, value := range keywords.All() {
 			if errObj := bindKeyword(key, value); errObj != nil {
 				return nil, errObj
 			}
@@ -2929,7 +2994,7 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 	return env, nil
 }
 
-func extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object, keywords map[string]object.Object, kw kwArgs) (*object.Environment, object.Object) {
+func extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.Object, keywords object.Kwargs, kw kwArgs) (*object.Environment, object.Object) {
 	return extendEnvWithParams(ctx, funcParams{
 		parameters:       fn.Parameters,
 		defaultValues:    fn.DefaultValues,
@@ -2947,7 +3012,7 @@ func extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.O
 	}, args, keywords, kw)
 }
 
-func extendLambdaEnv(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object, kw kwArgs) (*object.Environment, object.Object) {
+func extendLambdaEnv(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords object.Kwargs, kw kwArgs) (*object.Environment, object.Object) {
 	return extendEnvWithParams(ctx, funcParams{
 		parameters:       fn.Parameters,
 		defaultValues:    fn.DefaultValues,
@@ -3031,6 +3096,13 @@ func isTruthy(obj object.Object) bool {
 		case *object.Instance:
 			// Try __bool__ first, then __len__ via the function variable (avoids init cycle)
 			return isTruthyInstanceFn(v)
+		case *object.Iterator:
+			// Iterators are truthy; a range object is when it is not empty.
+			if _, _, _, isRange := v.RangeObject(); isRange {
+				n, _ := v.Len()
+				return n > 0
+			}
+			return true
 		default:
 			return true
 		}
@@ -3052,7 +3124,10 @@ var evalTruthyFn func(ctx context.Context, obj object.Object, env *object.Enviro
 // dunder propagates as the second return.
 func renderConvertedValue(ctx context.Context, val object.Object, conv string, env *object.Environment) (string, object.Object) {
 	switch conv {
-	case "r", "a":
+	case "a":
+		s, rerr := renderConvertedValue(ctx, val, "r", env)
+		return asciiEscape(s), rerr
+	case "r":
 		switch v := val.(type) {
 		case *object.Instance:
 			return reprInstanceChecked(ctx, v, env)
@@ -3285,7 +3360,7 @@ func evalTruthy(ctx context.Context, obj object.Object, env *object.Environment)
 		return isTruthy(obj), nil
 	}
 	if fn, ok := findDunderMethod(inst, "__bool__"); ok {
-		result := applyFunctionWithContext(ctx, fn, prependSelf(inst, nil), nil, inst.Class.Env)
+		result := applyFunctionWithContext(ctx, fn, prependSelf(inst, nil), object.Kwargs{}, inst.Class.Env)
 		if propagates(result) {
 			return false, result
 		}
@@ -3294,7 +3369,7 @@ func evalTruthy(ctx context.Context, obj object.Object, env *object.Environment)
 		}
 	}
 	if fn, ok := findDunderMethod(inst, "__len__"); ok {
-		result := applyFunctionWithContext(ctx, fn, prependSelf(inst, nil), nil, inst.Class.Env)
+		result := applyFunctionWithContext(ctx, fn, prependSelf(inst, nil), object.Kwargs{}, inst.Class.Env)
 		if propagates(result) {
 			return false, result
 		}
@@ -3316,13 +3391,13 @@ func init() {
 	acceptInstanceIterableFn = acceptInstanceIterable
 	isTruthyInstanceFn = func(inst *object.Instance) bool {
 		if fn, ok := findDunderMethod(inst, "__bool__"); ok {
-			result := applyFunctionWithContext(context.Background(), fn, prependSelf(inst, nil), nil, inst.Class.Env)
+			result := applyFunctionWithContext(context.Background(), fn, prependSelf(inst, nil), object.Kwargs{}, inst.Class.Env)
 			if b, ok := result.(*object.Boolean); ok {
 				return b.BoolValue()
 			}
 		}
 		if fn, ok := findDunderMethod(inst, "__len__"); ok {
-			result := applyFunctionWithContext(context.Background(), fn, prependSelf(inst, nil), nil, inst.Class.Env)
+			result := applyFunctionWithContext(context.Background(), fn, prependSelf(inst, nil), object.Kwargs{}, inst.Class.Env)
 			if i, ok := result.(*object.Integer); ok {
 				return i.IntValue() != 0
 			}
@@ -3818,7 +3893,7 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 		return FALSE
 	case *object.Instance:
 		if fn, ok := findDunderMethod(container, "__contains__"); ok {
-			result := applyFunctionWithContext(ctx, fn, prependSelf(container, []object.Object{left}), nil, container.Class.Env)
+			result := applyFunctionWithContext(ctx, fn, prependSelf(container, []object.Object{left}), object.Kwargs{}, container.Class.Env)
 			if propagates(result) {
 				return result
 			}
@@ -3858,6 +3933,40 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 			return FALSE
 		}
 		return errors.NewTypeError("iterable", right.Type().String())
+	case *object.Iterator:
+		if _, _, _, isRange := container.RangeObject(); isRange {
+			switch v := left.(type) {
+			case *object.Integer:
+				return nativeBoolToBooleanObject(container.RangeContains(v.IntValue()))
+			case *object.Boolean:
+				return nativeBoolToBooleanObject(container.RangeContains(boolToInt64(v.BoolValue())))
+			case *object.Float:
+				f := v.FloatValue()
+				return nativeBoolToBooleanObject(f == math.Trunc(f) && math.Abs(f) < 1<<62 && container.RangeContains(int64(f)))
+			}
+		}
+		// Python consumes an iterator up to the first match.
+		it := container.Iter()
+		cc := newContextChecker(ctx)
+		for {
+			if err := cc.check(); err != nil {
+				return err
+			}
+			e, ok := it.Next()
+			if !ok {
+				return FALSE
+			}
+			if propagates(e) {
+				return e
+			}
+			eq, rerr := searchEqual(ctx, e, left, env)
+			if rerr != nil {
+				return rerr
+			}
+			if eq {
+				return TRUE
+			}
+		}
 	default:
 		return errors.NewTypeError("iterable", right.Type().String())
 	}
@@ -4196,8 +4305,9 @@ func matchesNamedExceptionTypeChain(exceptionType, expectedType string, chain []
 	case "BaseException":
 		return true
 	case "Exception":
-		// Everything but a raised BaseException itself derives from Exception.
-		return exceptionType != "BaseException"
+		// Everything but a raised BaseException itself and GeneratorExit
+		// (which close() raises in a generator) derives from Exception.
+		return exceptionType != "BaseException" && exceptionType != exceptionTypeGeneratorExit
 	}
 	for t := exceptionType; t != ""; t = exceptionParents[t] {
 		if t == expectedType {
@@ -4459,7 +4569,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 		case *object.Instance:
 			if !target.IsDotAccess {
 				if delitem, ok := o.Class.Methods["__delitem__"]; ok {
-					result := applyFunctionWithContext(ctx, delitem, []object.Object{obj, index}, nil, nil)
+					result := applyFunctionWithContext(ctx, delitem, []object.Object{obj, index}, object.Kwargs{}, nil)
 					if object.IsError(result) {
 						return fmt.Errorf("%s", result.(*object.Error).Message)
 					}
@@ -4536,7 +4646,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			return nil
 		case *object.Instance:
 			if delitem, ok := o.Class.Methods["__delitem__"]; ok {
-				result := applyFunctionWithContext(ctx, delitem, []object.Object{obj, sliceObj}, nil, nil)
+				result := applyFunctionWithContext(ctx, delitem, []object.Object{obj, sliceObj}, object.Kwargs{}, nil)
 				if object.IsError(result) {
 					return fmt.Errorf("%s", result.(*object.Error).Message)
 				}
@@ -4625,7 +4735,7 @@ func assignToSliceExpression(ctx context.Context, target *ast.SliceExpression, v
 		return nil
 	case *object.Instance:
 		if setitem, ok := o.Class.Methods["__setitem__"]; ok {
-			result := applyFunctionWithContext(ctx, setitem, []object.Object{obj, sliceObj, value}, nil, nil)
+			result := applyFunctionWithContext(ctx, setitem, []object.Object{obj, sliceObj, value}, object.Kwargs{}, nil)
 			if object.IsError(result) {
 				return fmt.Errorf("%s", result.(*object.Error).Message)
 			}
@@ -4996,7 +5106,12 @@ var acceptInstanceIterableFn func(ctx context.Context, obj object.Object) (objec
 // it gives: a native iterator, or a script iterator (an instance with
 // __next__) wrapped as one. Anything else is Python's TypeError.
 func callIter(ctx context.Context, inst *object.Instance, fn object.Object, env *object.Environment) (*object.Iterator, object.Object) {
-	iterObj := applyFunctionWithContext(ctx, fn, prependSelf(inst, nil), nil, env)
+	// A generator is its own iterator: resume it directly rather than
+	// through __iter__ and a __next__ method call per element.
+	if inst.Class == generatorClass {
+		return generatorIterator(ctx, inst, env), nil
+	}
+	iterObj := applyFunctionWithContext(ctx, fn, prependSelf(inst, nil), object.Kwargs{}, env)
 	if propagates(iterObj) {
 		return nil, iterObj
 	}
@@ -5187,6 +5302,7 @@ func iterateObject(ctx context.Context, obj object.Object, fn func(object.Object
 			}
 		}
 	case *object.Iterator:
+		o = o.Iter()
 		for {
 			el, ok := o.Next()
 			if !ok {
@@ -5878,33 +5994,29 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 		return TRUE, subject
 
 	case *ast.CallExpression:
-		// Handle type patterns like int(), str(), list(), dict()
-		if ident, ok := p.Function.(*ast.Identifier); ok {
-			// Check if it's a type constructor with no arguments
-			if len(p.Arguments) == 0 && !p.HasOverflow() {
-				typeName := ident.Value()
-				subjectType := getTypeName(subject)
-				if typeName == subjectType {
-					return TRUE, subject
-				}
-				return FALSE, NULL
-			}
-		}
-		return &object.Error{Message: "call expressions in patterns must be type constructors with no arguments"}, NULL
+		return matchClassPattern(ctx, subject, p, capturedVars, env)
 
 	case *ast.IntegerLiteral:
-		if intObj, ok := subject.(*object.Integer); ok {
-			if intObj.IntValue() == p.Value {
+		switch s := subject.(type) {
+		case *object.Integer:
+			if s.IntValue() == p.Value {
 				return TRUE, subject
 			}
+		case *object.Float, *object.Boolean, *object.Instance:
+			// Literal patterns compare with ==: case 1 matches 1.0, True
+			// and an IntEnum member.
+			return matchValue(ctx, subject, object.NewInteger(p.Value), env)
 		}
 		return FALSE, NULL
 
 	case *ast.FloatLiteral:
-		if floatObj, ok := subject.(*object.Float); ok {
-			if floatObj.FloatValue() == p.Value {
+		switch s := subject.(type) {
+		case *object.Float:
+			if s.FloatValue() == p.Value {
 				return TRUE, subject
 			}
+		case *object.Integer, *object.Boolean, *object.Instance:
+			return matchValue(ctx, subject, object.NewFloat(p.Value), env)
 		}
 		return FALSE, NULL
 
@@ -5915,6 +6027,18 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 			}
 		}
 		return FALSE, NULL
+
+	case *ast.IndexExpression, *ast.PrefixExpression:
+		// Value patterns: a dotted name (case Color.RED) or a negative
+		// number, evaluated in the enclosing scope and compared with ==.
+		if ix, ok := p.(*ast.IndexExpression); ok && !ix.IsDotAccess {
+			break
+		}
+		val := compileExpr(p)(ctx, env)
+		if propagates(val) {
+			return val, NULL
+		}
+		return matchValue(ctx, subject, val, env)
 
 	case *ast.Boolean:
 		if boolObj, ok := subject.(*object.Boolean); ok {
@@ -5938,7 +6062,21 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 		}
 
 		// Match all keys in pattern
+		var matchedKeys []string // for a **rest capture
 		for _, patternPair := range p.Pairs {
+			if patternPair.Key == nil {
+				// **rest: the remaining items, in a new dict.
+				rest := object.NewDict()
+				for canonical, pair := range dictObj.All() {
+					if !slices.Contains(matchedKeys, canonical) {
+						rest.Store(canonical, pair.Key, pair.Value)
+					}
+				}
+				if ident, ok := patternPair.Value.(*ast.Identifier); ok && ident.Value() != "_" {
+					capturedVars[ident.Value()] = rest
+				}
+				continue
+			}
 			// Mapping-pattern keys are value expressions evaluated at match
 			// time in the enclosing scope (PEP 634), so variables are visible.
 			// Mapping patterns are rare, so the key expression is compiled
@@ -5956,6 +6094,7 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 			if !exists {
 				return FALSE, NULL
 			}
+			matchedKeys = append(matchedKeys, keyStr)
 
 			// If pattern value is an identifier (not _), it's a capture variable
 			if ident, ok := patternPair.Value.(*ast.Identifier); ok && ident.Value() != "_" {
@@ -5976,31 +6115,232 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 		return TRUE, subject
 
 	case *ast.ListLiteral:
-		// Simple list matching
-		listObj, ok := subject.(*object.List)
-		if !ok {
+		return matchSequencePattern(ctx, subject, p.Elements, capturedVars, env)
+
+	case *ast.TupleLiteral:
+		return matchSequencePattern(ctx, subject, p.Elements, capturedVars, env)
+	}
+	return &object.Error{Message: fmt.Sprintf("unsupported pattern type: %T", pattern)}, NULL
+}
+
+// matchValue matches a literal or value pattern: subject == value, with the
+// == operator's semantics.
+func matchValue(ctx context.Context, subject, value object.Object, env *object.Environment) (object.Object, object.Object) {
+	res := evalInfixExpression(ctx, ast.OpEq, subject, value, env)
+	if propagates(res) {
+		return res, NULL
+	}
+	eq, errObj := evalTruthy(ctx, res, env)
+	if errObj != nil {
+		return errObj, NULL
+	}
+	if eq {
+		return TRUE, subject
+	}
+	return FALSE, NULL
+}
+
+// matchSequencePattern matches [a, b] / (a, b) / a, *rest patterns against a
+// list or tuple (strings, bytes and mappings are not sequences here, as in
+// Python). One starred name collects the middle elements as a list.
+func matchSequencePattern(ctx context.Context, subject object.Object, patterns []ast.Expression, capturedVars map[string]object.Object, env *object.Environment) (object.Object, object.Object) {
+	var elements []object.Object
+	switch s := subject.(type) {
+	case *object.List:
+		elements = s.Elements
+	case *object.Tuple:
+		elements = s.Elements
+	default:
+		return FALSE, NULL
+	}
+	star := -1
+	for i, pat := range patterns {
+		if _, ok := pat.(*ast.StarredElement); ok {
+			if star >= 0 {
+				return errors.NewError("multiple starred names in sequence pattern"), NULL
+			}
+			star = i
+		}
+	}
+	if star < 0 && len(elements) != len(patterns) || star >= 0 && len(elements) < len(patterns)-1 {
+		return FALSE, NULL
+	}
+	for i, pat := range patterns {
+		elem := object.Object(nil)
+		switch {
+		case star < 0 || i < star:
+			elem = elements[i]
+		case i == star:
+			if ident, ok := pat.(*ast.StarredElement).Value.(*ast.Identifier); ok && ident.Value() != "_" {
+				rest := elements[star : len(elements)-(len(patterns)-1-star)]
+				capturedVars[ident.Value()] = &object.List{Elements: append([]object.Object(nil), rest...)}
+			}
+			continue
+		default:
+			elem = elements[len(elements)-(len(patterns)-i)]
+		}
+		matched, _ := matchPattern(ctx, elem, pat, capturedVars, env)
+		if propagates(matched) {
+			return matched, NULL
+		}
+		if matched == FALSE {
 			return FALSE, NULL
 		}
+	}
+	return TRUE, subject
+}
 
-		if len(p.Elements) != len(listObj.Elements) {
-			return FALSE, NULL
+// builtinSelfMatchTypes are the built-in types whose class pattern takes one
+// positional sub-pattern matched against the subject itself: case int(n).
+var builtinSelfMatchTypes = map[string]bool{
+	"bool": true, "bytearray": true, "bytes": true, "dict": true, "float": true,
+	"frozenset": true, "int": true, "list": true, "set": true, "str": true, "tuple": true,
+}
+
+// matchClassPattern matches Cls(), Cls(p1, p2) and Cls(attr=p): an isinstance
+// check, then positional sub-patterns against the attributes the class's
+// __match_args__ names (a dataclass's fields when it has none), and keyword
+// sub-patterns against the named attributes. A missing attribute fails the
+// match.
+func matchClassPattern(ctx context.Context, subject object.Object, p *ast.CallExpression, capturedVars map[string]object.Object, env *object.Environment) (object.Object, object.Object) {
+	if p.GetArgsUnpack() != nil || p.GetKwargsUnpack() != nil {
+		return errors.NewError("unpacking is not allowed in class patterns"), NULL
+	}
+	ident, _ := p.Function.(*ast.Identifier)
+	var cls object.Object
+	var isInst bool
+	if ident != nil && builtinSelfMatchTypes[ident.Value()] {
+		// Built-in type patterns (case int():) check the type by name
+		// without resolving it, as before class patterns took
+		// sub-patterns: a name lookup per case is the cost of a match.
+		isInst = isinstanceOfTypeName(subject, ident.Value())
+	} else {
+		if ident != nil {
+			cls = evalIdentifier(ident, env)
+		} else {
+			cls = compileExpr(p.Function)(ctx, env)
 		}
+		if propagates(cls) {
+			return cls, NULL
+		}
+		c, isClass := cls.(*object.Class)
+		if inst, ok := subject.(*object.Instance); ok && isClass {
+			for k := inst.Class; k != nil && !isInst; k = k.BaseClass {
+				isInst = k == c
+			}
+		} else {
+			r := builtins["isinstance"].Fn(ctx, object.NewKwargs(nil), subject, cls)
+			if propagates(r) {
+				return errors.NewTypeErrorTagged("called match pattern must be a class"), NULL
+			}
+			isInst = r == TRUE
+		}
+	}
+	if !isInst {
+		return FALSE, NULL
+	}
 
-		for i, elemExpr := range p.Elements {
-			matched, _ := matchPattern(ctx, listObj.Elements[i], elemExpr, capturedVars, env)
-			if propagates(matched) {
+	if len(p.Arguments) > 0 {
+		class, _ := cls.(*object.Class)
+		if class == nil {
+			ident, _ := p.Function.(*ast.Identifier)
+			if ident == nil || !builtinSelfMatchTypes[ident.Value()] {
+				return errors.NewTypeErrorTagged("%s() accepts 0 positional sub-patterns (%d given)", getTypeName(cls), len(p.Arguments)), NULL
+			}
+			if len(p.Arguments) > 1 {
+				return errors.NewTypeErrorTagged("%s() accepts 1 positional sub-pattern (%d given)", ident.Value(), len(p.Arguments)), NULL
+			}
+			matched, _ := matchPattern(ctx, subject, p.Arguments[0], capturedVars, env)
+			if matched != TRUE {
 				return matched, NULL
 			}
-			if matched == FALSE {
-				return FALSE, NULL
+		} else {
+			names, errObj := classMatchArgs(class)
+			if errObj != nil {
+				return errObj, NULL
+			}
+			if len(p.Arguments) > len(names) {
+				return errors.NewTypeErrorTagged("%s() accepts %d positional sub-pattern%s (%d given)", class.Name, len(names), plural(len(names)), len(p.Arguments)), NULL
+			}
+			for i, pat := range p.Arguments {
+				if matched := matchAttributePattern(ctx, subject, names[i], pat, capturedVars, env); matched != TRUE {
+					return matched, NULL
+				}
 			}
 		}
-
-		return TRUE, subject
-
-	default:
-		return &object.Error{Message: fmt.Sprintf("unsupported pattern type: %T", pattern)}, NULL
 	}
+
+	keywords := p.GetKeywords()
+	if len(keywords) > 0 {
+		names := make([]string, 0, len(keywords))
+		for name := range keywords {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			if matched := matchAttributePattern(ctx, subject, name, keywords[name], capturedVars, env); matched != TRUE {
+				return matched, NULL
+			}
+		}
+	}
+	return TRUE, subject
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+// matchAttributePattern matches the subject's attribute name against a
+// sub-pattern; a missing attribute is no match.
+func matchAttributePattern(ctx context.Context, subject object.Object, name string, pat ast.Expression, capturedVars map[string]object.Object, env *object.Environment) object.Object {
+	val := getAttribute(ctx, subject, name)
+	if isAttributeError(val) {
+		return FALSE
+	}
+	if propagates(val) {
+		return val
+	}
+	matched, _ := matchPattern(ctx, val, pat, capturedVars, env)
+	return matched
+}
+
+// classMatchArgs is a class's __match_args__ (searched through its bases):
+// the attribute names its positional sub-patterns match. A dataclass
+// without one uses its fields, as Python's @dataclass generates it.
+func classMatchArgs(class *object.Class) ([]string, object.Object) {
+	for c := class; c != nil; c = c.BaseClass {
+		v, ok := c.Methods["__match_args__"]
+		if !ok {
+			continue
+		}
+		var elems []object.Object
+		switch t := v.(type) {
+		case *object.Tuple:
+			elems = t.Elements
+		case *object.List:
+			elems = t.Elements
+		default:
+			return nil, errors.NewTypeErrorTagged("%s.__match_args__ must be a tuple (got %s)", class.Name, getTypeName(v))
+		}
+		names := make([]string, len(elems))
+		for i, e := range elems {
+			s, ok := e.(*object.String)
+			if !ok {
+				return nil, errors.NewTypeErrorTagged("__match_args__ elements must be strings (got %s)", getTypeName(e))
+			}
+			names[i] = s.StringValue()
+		}
+		return names, nil
+	}
+	for c := class; c != nil; c = c.BaseClass {
+		if _, generated := c.Methods["__init__"].(*object.Builtin); generated && len(c.FieldNames) > 0 {
+			return c.FieldNames, nil
+		}
+	}
+	return nil, nil
 }
 
 func getTypeName(obj object.Object) string {

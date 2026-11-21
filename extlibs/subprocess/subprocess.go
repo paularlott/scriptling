@@ -84,7 +84,7 @@ var Library = object.NewLibrary(LibraryName, map[string]*object.Builtin{
 				cmdStr, _ = args[0].AsString()
 				// Check if shell mode is enabled
 				shell := false
-				if sh, exists := kwargs.Kwargs["shell"]; exists {
+				if sh, exists := kwargs.Lookup("shell"); exists {
 					if b, ok := sh.(*object.Boolean); ok {
 						shell = b.BoolValue()
 					}
@@ -122,49 +122,49 @@ var Library = object.NewLibrary(LibraryName, map[string]*object.Builtin{
 			env := make(map[string]string)
 
 			// Parse kwargs (Python-style keyword arguments)
-			if capture, exists := kwargs.Kwargs["capture_output"]; exists {
+			if capture, exists := kwargs.Lookup("capture_output"); exists {
 				if b, ok := capture.(*object.Boolean); ok {
 					captureOutput = b.BoolValue()
 				}
 			}
-			if sh, exists := kwargs.Kwargs["shell"]; exists {
+			if sh, exists := kwargs.Lookup("shell"); exists {
 				if b, ok := sh.(*object.Boolean); ok {
 					shell = b.BoolValue()
 				}
 			}
-			if wd, exists := kwargs.Kwargs["cwd"]; exists {
+			if wd, exists := kwargs.Lookup("cwd"); exists {
 				if s, ok := wd.(*object.String); ok {
 					cwd = s.StringValue()
 				}
 			}
-			if to, exists := kwargs.Kwargs["timeout"]; exists {
+			if to, exists := kwargs.Lookup("timeout"); exists {
 				if f, ok := to.(*object.Float); ok {
 					timeout = f.FloatValue()
 				} else if i, ok := to.(*object.Integer); ok {
 					timeout = float64(i.IntValue())
 				}
 			}
-			if ch, exists := kwargs.Kwargs["check"]; exists {
+			if ch, exists := kwargs.Lookup("check"); exists {
 				if b, ok := ch.(*object.Boolean); ok {
 					check = b.BoolValue()
 				}
 			}
-			if txt, exists := kwargs.Kwargs["text"]; exists {
+			if txt, exists := kwargs.Lookup("text"); exists {
 				if b, ok := txt.(*object.Boolean); ok {
 					text = b.BoolValue()
 				}
 			}
-			if enc, exists := kwargs.Kwargs["encoding"]; exists {
+			if enc, exists := kwargs.Lookup("encoding"); exists {
 				if s, ok := enc.(*object.String); ok {
 					encoding = s.StringValue()
 				}
 			}
-			if inp, exists := kwargs.Kwargs["input"]; exists {
+			if inp, exists := kwargs.Lookup("input"); exists {
 				if s, ok := inp.(*object.String); ok {
 					inputData = s.StringValue()
 				}
 			}
-			if envDict, exists := kwargs.Kwargs["env"]; exists {
+			if envDict, exists := kwargs.Lookup("env"); exists {
 				if d, ok := envDict.(*object.Dict); ok {
 					for _, pair := range d.All() {
 						if valStr, ok := pair.Value.(*object.String); ok {

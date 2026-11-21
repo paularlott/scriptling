@@ -187,15 +187,15 @@ try:
 except TypeError:
     pass
 
-# --- clear limits for generator phase-1 gaps ------------------------------------------
+# --- send() of a value to a just-started generator is a TypeError -------------------
 def sgen():
     yield 1
 
 gg = sgen()
 try:
     gg.send(5)
-    assert False, "expected NotImplementedError"
-except NotImplementedError:
+    assert False, "expected TypeError"
+except TypeError:
     pass
 
 # --- asdict / astuple / frozen ----------------------------------------------------------

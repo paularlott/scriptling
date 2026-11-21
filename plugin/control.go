@@ -63,7 +63,7 @@ func NewControlLibrary(manager *Manager, registrar Registrar, scriptRegistrar Sc
 		},
 		"batch_call": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(kwargs.Kwargs) != 0 {
+				if kwargs.Len() != 0 {
 					return pluginErr("batch_call() does not accept keyword arguments")
 				}
 				if len(args) != 2 {

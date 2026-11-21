@@ -1429,7 +1429,7 @@ func TestTypedReceiverMethodKwargsOnly(t *testing.T) {
 		return &trConfig{values: map[string]string{}}
 	})
 	cb.Method("set_kwargs", func(self *trConfig, kwargs object.Kwargs, key string, val string) {
-		if len(kwargs.Kwargs) == 0 && kwargs.Get("nonexistent") == nil {
+		if kwargs.Len() == 0 && kwargs.Get("nonexistent") == nil {
 		}
 		self.values[key] = val
 	})

@@ -3,6 +3,7 @@ package evaluator
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"unsafe"
@@ -44,7 +45,7 @@ func compileNode(node ast.Node) object.EvalFn {
 			// `yield` parses as a name in expression position (it is a
 			// soft keyword); using it as one is always a mistake here.
 			return func(ctx context.Context, env *object.Environment) object.Object {
-				return errors.NewError("yield expressions are not supported (yield works as a statement in generator functions)")
+				return errors.NewError("yield inside an expression is not supported (use it as a statement, or as the whole value of an assignment: x = yield v)")
 			}
 		}
 		return func(ctx context.Context, env *object.Environment) object.Object {
@@ -131,7 +132,7 @@ func compileNode(node ast.Node) object.EvalFn {
 		return compileExpr(n.Value)
 	case *ast.YieldStatement:
 		// Safety net: the generator plan builder intercepts legal yields;
-		// one reaching ordinary compilation is out of place (phase 1).
+		// one reaching ordinary compilation is outside any function.
 		return func(ctx context.Context, env *object.Environment) object.Object {
 			return errors.NewError("yield outside a generator function is not supported")
 		}
@@ -631,6 +632,52 @@ func compileFastRangeParts(n *ast.ForStatement) (*ast.Identifier, []object.EvalF
 	return target, args
 }
 
+// callMakesGenerator returns, for a loop header of the form f(...) or
+// name.method(...), a function reporting whether that callee is currently a
+// generator function: a call to one always returns a new generator. It
+// returns nil for any other header.
+func callMakesGenerator(iterable ast.Expression) func(env *object.Environment) bool {
+	switch call := iterable.(type) {
+	case *ast.CallExpression:
+		if ident, ok := call.Function.(*ast.Identifier); ok {
+			name := ident.Value()
+			return func(env *object.Environment) bool {
+				val, _ := env.Get(name)
+				fn, ok := val.(*object.Function)
+				return ok && fn.GeneratorPlan != nil
+			}
+		}
+	case *ast.MethodCallExpression:
+		if ident, ok := call.Receiver.(*ast.Identifier); ok {
+			receiver, method := ident.Value(), call.Method.Value()
+			return func(env *object.Environment) bool {
+				val, _ := env.Get(receiver)
+				inst, ok := val.(*object.Instance)
+				if !ok {
+					return false
+				}
+				fn := plainInstanceMethod(inst, method)
+				return fn != nil && fn.GeneratorPlan != nil
+			}
+		}
+	}
+	return nil
+}
+
+// closeLoopGenerator closes the generator a loop header created when the
+// loop left it unfinished. An error from the generator's cleanup is dropped,
+// as Python drops one raised while a generator is being freed.
+func closeLoopGenerator(ctx context.Context, env *object.Environment, iterableVal object.Object, fresh func(env *object.Environment) bool) {
+	g, ok := iterableVal.(*object.Instance)
+	if !ok || g.Class != generatorClass {
+		return
+	}
+	if st, _ := g.NativeData.(*genState); st == nil || st.done || !fresh(env) {
+		return
+	}
+	generatorCloseRun(ctx, g, env)
+}
+
 // compileRangeArgs evaluates range()'s compiled argument expressions. It
 // returns ok=false when the arguments do not fit the fast path (wrong count
 // or non-integer at runtime), sending the caller to the generic iteration
@@ -681,51 +728,8 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 		rangeArgs = compileRangeArgs(rangeArgFns)
 	}
 
-	return func(ctx context.Context, env *object.Environment) object.Object {
-		// Fast range path. Everything static about the shape was resolved at
-		// compile time; the shadowing check is dynamic.
-		if rangeTarget != nil {
-			if _, shadowed := env.Get("range"); !shadowed {
-				start, stop, step, errObj, ok := rangeArgs(ctx, env)
-				if ok {
-					if errObj != nil {
-						return errObj
-					}
-					var result object.Object = NULL
-					cc := newContextChecker(ctx)
-					for i := start; ; i += step {
-						if step > 0 {
-							if i >= stop {
-								break
-							}
-						} else if i <= stop {
-							break
-						}
-
-						if err := cc.check(); err != nil {
-							return err
-						}
-
-						setIdentifierFast(rangeTarget, object.NewInteger(i), env)
-						var act loopAction
-						act, result = loopResult(body(ctx, env))
-						switch act {
-						case loopExit:
-							return result
-						case loopBreak:
-							return NULL // broke: skip else, return NULL
-						}
-					}
-					return result
-				}
-			}
-		}
-
-		iterableVal := iterable(ctx, env)
-		if propagates(iterableVal) {
-			return iterableVal
-		}
-
+	// run is the loop over an evaluated iterable.
+	run := func(ctx context.Context, env *object.Environment, iterableVal object.Object) object.Object {
 		var result object.Object = NULL
 		broke := false
 
@@ -777,7 +781,7 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 				iter = object.NewIterator(sliceWalk(o.EnumMembers))
 			}
 		case *object.Iterator:
-			iter = o
+			iter = o.Iter()
 		case *object.Dict:
 			iter = o.CreateIterator()
 		case *object.DictKeys:
@@ -973,6 +977,61 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 		}
 		return result
 	}
+	// A generator made by the loop header itself (for x in gen():) has no
+	// other owner, so a loop that stops early closes it, running its finally
+	// blocks at once as Python does when the generator is freed.
+	ownsGenerator := callMakesGenerator(n.Iterable)
+
+	return func(ctx context.Context, env *object.Environment) object.Object {
+		// Fast range path. Everything static about the shape was resolved at
+		// compile time; the shadowing check is dynamic.
+		if rangeTarget != nil {
+			if _, shadowed := env.Get("range"); !shadowed {
+				start, stop, step, errObj, ok := rangeArgs(ctx, env)
+				if ok {
+					if errObj != nil {
+						return errObj
+					}
+					var result object.Object = NULL
+					cc := newContextChecker(ctx)
+					for i := start; ; i += step {
+						if step > 0 {
+							if i >= stop {
+								break
+							}
+						} else if i <= stop {
+							break
+						}
+
+						if err := cc.check(); err != nil {
+							return err
+						}
+
+						setIdentifierFast(rangeTarget, object.NewInteger(i), env)
+						var act loopAction
+						act, result = loopResult(body(ctx, env))
+						switch act {
+						case loopExit:
+							return result
+						case loopBreak:
+							return NULL // broke: skip else, return NULL
+						}
+					}
+					return result
+				}
+			}
+		}
+
+		iterableVal := iterable(ctx, env)
+		if propagates(iterableVal) {
+			return iterableVal
+		}
+		result := run(ctx, env, iterableVal)
+		if ownsGenerator != nil {
+			closeLoopGenerator(ctx, env, iterableVal, ownsGenerator)
+		}
+		return result
+	}
 }
 
 // compileInfix converts an infix expression. The branch order matters:
@@ -1008,7 +1067,7 @@ func compileInfix(n *ast.InfixExpression) object.EvalFn {
 		}
 	}
 
-	intFast := n.IntFast != ast.IntFastNone
+	intFast := compileIntInfix(n)
 	useConcat := false
 	var concatLeaves []object.EvalFn
 	if op == ast.OpAdd {
@@ -1020,10 +1079,8 @@ func compileInfix(n *ast.InfixExpression) object.EvalFn {
 	left := compileExpr(n.Left)
 	right := compileExpr(n.Right)
 	return func(ctx context.Context, env *object.Environment) object.Object {
-		if intFast {
-			// tryEvalIntInfix reads only static shape off the node and
-			// evalIdentifier for identifier operands, so it is used as-is.
-			if result, ok := tryEvalIntInfix(n, env); ok {
+		if intFast != nil {
+			if result, ok := intFast(env); ok {
 				return result
 			}
 		}
@@ -1302,13 +1359,27 @@ func evalKeywordValues(ctx context.Context, env *object.Environment, kwFns []obj
 	return vals, nil
 }
 
-// keywordMap builds the keyword map handed to callees that take one.
-func keywordMap(names []string, vals []object.Object) map[string]object.Object {
-	keywords := make(map[string]object.Object, len(names))
+// unpackedKeywords builds the Kwargs of a call with a **dict unpack: the
+// call's own keywords, then the dict's entries. A dict entry naming one of
+// the call's keywords is Python's TypeError.
+func unpackedKeywords(names []string, vals []object.Object, dict *object.Dict) (object.Kwargs, object.Object) {
+	var b object.KwargsBuilder
+	b.Grow(len(names) + dict.Len())
 	for i, name := range names {
-		keywords[name] = vals[i]
+		b.Set(name, vals[i])
 	}
-	return keywords
+	for _, pair := range dict.All() {
+		name := pair.StringKey()
+		if slices.Contains(names, name) {
+			return object.Kwargs{}, duplicateKeywordError(name)
+		}
+		b.Set(name, pair.Value)
+	}
+	return b.Kwargs(), nil
+}
+
+func duplicateKeywordError(name string) object.Object {
+	return errors.NewTypeErrorTagged("got multiple values for keyword argument '%s'", name)
 }
 
 // evalCompiledCallArgs evaluates a call's compiled arguments into a buffer
@@ -1412,7 +1483,7 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 			}
 		}
 
-		var keywords map[string]object.Object
+		var keywords object.Kwargs
 		if kwargsUnpackFn != nil {
 			kwargsVal := kwargsUnpackFn(ctx, env)
 			if propagates(kwargsVal) {
@@ -1422,31 +1493,28 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 			if !ok {
 				return errors.NewError("argument after ** must be a dictionary, not %s", kwargsVal.Type())
 			}
-			keywords = make(map[string]object.Object, len(kwVals)+dict.Len())
-			for i, name := range kwNames {
-				keywords[name] = kwVals[i]
-			}
-			for _, pair := range dict.All() {
-				keywords[pair.StringKey()] = pair.Value
+			var dupErr object.Object
+			if keywords, dupErr = unpackedKeywords(kwNames, kwVals, dict); dupErr != nil {
+				return dupErr
 			}
 		} else if len(kwVals) > 0 {
 			// Functions, lambdas and classes bind their keywords straight
-			// from the slices; every other callee takes them as a map.
+			// from the slices; every other callee takes an owned Kwargs.
 			kw := kwArgs{names: kwNames, values: kwVals}
 			var res object.Object
 			switch fn := function.(type) {
 			case *object.Function:
-				res = applyUserFunctionKw(ctx, fn, args, nil, kw, env)
+				res = applyUserFunctionKw(ctx, fn, args, object.Kwargs{}, kw, env)
 			case *object.LambdaFunction:
-				res = applyLambdaFunctionKw(ctx, fn, args, nil, kw)
+				res = applyLambdaFunctionKw(ctx, fn, args, object.Kwargs{}, kw)
 			case *object.Class:
-				res = createInstanceKw(ctx, fn, args, nil, kw, env)
+				res = createInstanceKw(ctx, fn, args, object.Kwargs{}, kw, env)
 			}
 			if res != nil {
 				object.ReleaseArgs(env, kwVals)
 				return res
 			}
-			keywords = keywordMap(kwNames, kwVals)
+			keywords = object.NewKwargsFrom(kwNames, kwVals)
 		}
 		object.ReleaseArgs(env, kwVals)
 
@@ -1504,7 +1572,7 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 						if isPropagatedError(args) {
 							return args[0]
 						}
-						res := applyUserFunction(ctx, fn, args, nil, env)
+						res := applyUserFunction(ctx, fn, args, object.Kwargs{}, env)
 						object.ReleaseArgs(env, args)
 						return res
 					case *object.Builtin:
@@ -1515,7 +1583,7 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 						if isPropagatedError(args) {
 							return args[0]
 						}
-						res := applyLambdaFunctionWithContext(ctx, fn, args, nil, env)
+						res := applyLambdaFunctionWithContext(ctx, fn, args, object.Kwargs{}, env)
 						object.ReleaseArgs(env, args)
 						return res
 					}
@@ -1606,7 +1674,7 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 		defer object.ReleaseArgs(env, args)
 
 		// Evaluate keyword arguments
-		var keywords map[string]object.Object
+		var keywords object.Kwargs
 		if len(kwFns) > 0 {
 			kwVals, failed := evalKeywordValues(ctx, env, kwFns)
 			if failed != nil {
@@ -1616,12 +1684,12 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 			// binds its keywords straight from the slices.
 			if inst, ok := obj.(*object.Instance); ok && len(unpackFns) == 0 && kwargsUnpackFn == nil {
 				if fn := plainInstanceMethod(inst, name); fn != nil {
-					res := applyUserFunctionKw(ctx, fn, prependSelf(inst, args), nil, kwArgs{names: kwNames, values: kwVals}, env)
+					res := applyUserFunctionKw(ctx, fn, prependSelf(inst, args), object.Kwargs{}, kwArgs{names: kwNames, values: kwVals}, env)
 					object.ReleaseArgs(env, kwVals)
 					return res
 				}
 			}
-			keywords = keywordMap(kwNames, kwVals)
+			keywords = object.NewKwargsFrom(kwNames, kwVals)
 			object.ReleaseArgs(env, kwVals)
 		}
 
@@ -1651,16 +1719,22 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 				return kwargsVal
 			}
 			if dict, ok := kwargsVal.(*object.Dict); ok {
-				if keywords == nil {
-					keywords = make(map[string]object.Object, dict.Len())
+				var b object.KwargsBuilder
+				b.Grow(keywords.Len() + dict.Len())
+				for name, v := range keywords.All() {
+					b.Set(name, v)
 				}
 				for _, pair := range dict.All() {
 					if str, ok := pair.Key.(*object.String); ok {
-						keywords[str.StringValue()] = pair.Value
+						if keywords.Has(str.StringValue()) {
+							return duplicateKeywordError(str.StringValue())
+						}
+						b.Set(str.StringValue(), pair.Value)
 					} else {
 						return errors.NewError("keywords must be strings, not %s", pair.Key.Type())
 					}
 				}
+				keywords = b.Kwargs()
 			} else {
 				return errors.NewError("argument after ** must be a dictionary, not %s", kwargsVal.Type())
 			}
@@ -1759,7 +1833,7 @@ func evalSuperMethodCall(ctx context.Context, env *object.Environment, superCall
 		}
 		kw = kwArgs{names: kwNames, values: kwVals}
 	}
-	res := applyUserFunctionKw(ctx, fn, prependSelf(inst, args), nil, kw, env)
+	res := applyUserFunctionKw(ctx, fn, prependSelf(inst, args), object.Kwargs{}, kw, env)
 	object.ReleaseArgs(env, kw.values)
 	object.ReleaseArgs(env, args)
 	return res, true
@@ -1834,11 +1908,11 @@ func evalFastDictCallableMethodCompiled(ctx context.Context, dict *object.Dict, 
 		ctxWithEnv := SetEnvInContext(ctx, env)
 		return checkResult(fn.Fn(ctxWithEnv, object.NewKwargs(nil), args...))
 	case *object.Function:
-		return applyFunctionWithContext(ctx, fn, args, nil, env)
+		return applyFunctionWithContext(ctx, fn, args, object.Kwargs{}, env)
 	case *object.LambdaFunction:
-		return applyFunctionWithContext(ctx, fn, args, nil, env)
+		return applyFunctionWithContext(ctx, fn, args, object.Kwargs{}, env)
 	case *object.Class:
-		return applyFunctionWithContext(ctx, fn, args, nil, env)
+		return applyFunctionWithContext(ctx, fn, args, object.Kwargs{}, env)
 	default:
 		return notCallableError(fn)
 	}
@@ -1986,9 +2060,6 @@ func compileFunctionStatement(n *ast.FunctionStatement) object.EvalFn {
 		generatorPlan = plan
 	}
 	return func(ctx context.Context, env *object.Environment) object.Object {
-		if plan != nil && plan.invalid != "" {
-			return errors.NewError("cannot define generator '%s': %s", name, plan.invalid)
-		}
 		localSlots, localSlotNames := analyzeFunctionLocals(n)
 		resolved, fail := resolveDefaults(ctx, env, n.Function.Parameters, defaults)
 		if fail != nil {
@@ -2022,7 +2093,7 @@ func compileFunctionStatement(n *ast.FunctionStatement) object.EvalFn {
 			if propagates(dec) {
 				return dec
 			}
-			result = applyFunctionWithContext(ctx, dec, []object.Object{result}, nil, env)
+			result = applyFunctionWithContext(ctx, dec, []object.Object{result}, object.Kwargs{}, env)
 			if propagates(result) {
 				return result
 			}
@@ -2444,6 +2515,14 @@ func compileSlice(n *ast.SliceExpression) object.EvalFn {
 			return sliceBytes(obj, start, end, step, hasStart, hasEnd)
 		case *object.FloatArray:
 			return sliceFloatArray(obj, start, end, step, hasStart, hasEnd)
+		case *object.Iterator:
+			if _, _, _, isRange := obj.RangeObject(); isRange {
+				if !hasStep {
+					step = 1
+				}
+				return rangeSlice(obj, start, end, step, hasStart, hasEnd)
+			}
+			return errors.NewError("slice operator not supported: %s", leftVal.Type())
 		default:
 			return errors.NewError("slice operator not supported: %s", leftVal.Type())
 		}
@@ -2496,11 +2575,7 @@ func compileAugmentedAssign(n *ast.AugmentedAssignStatement) object.EvalFn {
 	}
 
 	targetFn := compileExpr(target)
-	return func(ctx context.Context, env *object.Environment) object.Object {
-		currentVal := targetFn(ctx, env)
-		if propagates(currentVal) {
-			return currentVal
-		}
+	finish := func(ctx context.Context, env *object.Environment, currentVal object.Object) object.Object {
 		newVal := valueFn(ctx, env)
 		if propagates(newVal) {
 			return newVal
@@ -2516,6 +2591,41 @@ func compileAugmentedAssign(n *ast.AugmentedAssignStatement) object.EvalFn {
 			return assignErrorToObject(err)
 		}
 		return NULL
+	}
+
+	// Integer fast path for a name target and an integer-shaped value
+	// (t += i, i += 1, t += i * 2): the value is computed unboxed and only the
+	// result is boxed. Anything else, including overflow, takes finish, which
+	// recomputes the side-effect-free value on the general path.
+	if _, isName := target.(*ast.Identifier); isName && ast.IsIntResultOp(op.BaseOp()) {
+		if valueInt := compileIntOperand(n.Value); valueInt != nil {
+			baseOp := op.BaseOp()
+			return func(ctx context.Context, env *object.Environment) object.Object {
+				currentVal := targetFn(ctx, env)
+				if propagates(currentVal) {
+					return currentVal
+				}
+				if cur, ok := currentVal.(*object.Integer); ok {
+					if v, ok := valueInt(env); ok {
+						if r, ok := applyIntFastOp(baseOp, cur.IntValue(), v); ok {
+							if err := assignToExpression(ctx, target, object.NewInteger(r), env); err != nil {
+								return assignErrorToObject(err)
+							}
+							return NULL
+						}
+					}
+				}
+				return finish(ctx, env, currentVal)
+			}
+		}
+	}
+
+	return func(ctx context.Context, env *object.Environment) object.Object {
+		currentVal := targetFn(ctx, env)
+		if propagates(currentVal) {
+			return currentVal
+		}
+		return finish(ctx, env, currentVal)
 	}
 }
 
@@ -2535,7 +2645,11 @@ func applyAugmentedOp(ctx context.Context, op ast.Op, currentVal, newVal object.
 		}
 		if cur, ok := currentVal.(*object.Integer); ok {
 			if r, ok := newVal.(*object.Integer); ok {
-				return object.NewInteger(cur.IntValue() + r.IntValue()), false, nil
+				// On overflow fall through so evalInfixExpression raises
+				// OverflowError, as t = t + v does.
+				if sum, ok := addOv(cur.IntValue(), r.IntValue()); ok {
+					return object.NewInteger(sum), false, nil
+				}
 			}
 		}
 	}
@@ -2615,7 +2729,7 @@ func applyAugmentedOp(ctx context.Context, op ast.Op, currentVal, newVal object.
 	if inst, ok := currentVal.(*object.Instance); ok {
 		if name, ok := inPlaceDunder[baseOp]; ok {
 			if method, has := inst.Class.Methods[name]; has {
-				result = applyFunctionWithContext(ctx, method, []object.Object{inst, newVal}, nil, env)
+				result = applyFunctionWithContext(ctx, method, []object.Object{inst, newVal}, object.Kwargs{}, env)
 				if propagates(result) {
 					return nil, false, result
 				}
@@ -3430,15 +3544,7 @@ func compileRaise(n *ast.RaiseStatement) object.EvalFn {
 	if n.Cause != nil {
 		cause = compileExpr(n.Cause)
 	}
-	return func(ctx context.Context, env *object.Environment) object.Object {
-		if cause != nil {
-			// `raise X from e`: evaluate the cause expression for its
-			// effects; chaining is not modelled (phase 1).
-			c := cause(ctx, env)
-			if propagates(c) {
-				return c
-			}
-		}
+	run := func(ctx context.Context, env *object.Environment) object.Object {
 		if message != nil {
 			msg := message(ctx, env)
 			if object.IsError(msg) {
@@ -3482,10 +3588,9 @@ func compileRaise(n *ast.RaiseStatement) object.EvalFn {
 				}
 			}
 			// A user exception CLASS without a call: raise MyError.
+			// Python instantiates it with no arguments, as for a built-in.
 			if cls, ok := msg.(*object.Class); ok && cls.ExceptionBase != "" {
-				exc := &object.Exception{ExceptionType: cls.Name, TypeChain: exceptionClassChain(cls)}
-				exc.Raised = true
-				return exc
+				return toRaisedException(ctx, cls, nil, env)
 			}
 			// Python 3 doesn't support raise "string", only raise Exception("string")
 			return errors.NewError("exceptions must derive from BaseException")
@@ -3498,6 +3603,26 @@ func compileRaise(n *ast.RaiseStatement) object.EvalFn {
 
 		// No current exception - error
 		return errors.NewError("No active exception to re-raise")
+	}
+	if cause == nil {
+		return run
+	}
+	// `raise X from e`: e becomes the raised exception's __cause__ (None
+	// for `from None`).
+	return func(ctx context.Context, env *object.Environment) object.Object {
+		c := cause(ctx, env)
+		if propagates(c) {
+			return c
+		}
+		causeExc, cerr := exceptionCause(ctx, c, env)
+		if cerr != nil {
+			return cerr
+		}
+		r := run(ctx, env)
+		if exc, ok := r.(*object.Exception); ok && exc.Raised && exc != causeExc {
+			exc.Cause = causeExc
+		}
+		return r
 	}
 }
 
@@ -3532,56 +3657,83 @@ func compileWith(n *ast.WithStatement) object.EvalFn {
 			env.Set(n.Target.Value(), enterResult)
 		}
 
-		// Execute body
+		// Execute body, then __exit__ — always, even on exception.
 		result := fixErrorPos(ctx, body(ctx, env), bodyLine)
-
-		// Call __exit__ — always, even on exception
-		// __exit__(exc_type, exc_val, exc_tb) — pass None, None, None on success
-		// or exception info on error. If __exit__ returns truthy, suppress the exception.
-		inst := ctxObj.(*object.Instance)
-		var excType object.Object = NULL
-		var excVal object.Object = NULL
-		if isRaised(result) || object.IsError(result) {
-			if exc, ok := result.(*object.Exception); ok {
-				excType = object.NewString(exc.ExceptionType)
-				excVal = object.NewString(exc.Message)
-			} else if err, ok := result.(*object.Error); ok {
-				excType = object.NewString("Exception")
-				excVal = object.NewString(err.Message)
-			}
-		}
-		exitArgs := []object.Object{excType, excVal, NULL}
-
-		exitResult := callDunderMethod(ctx, inst, "__exit__", exitArgs, env)
-		// A raise (or internal error) from __exit__ itself propagates and wins
-		// over the body's in-flight exception, matching Python (where the
-		// __exit__ exception replaces/chains the original). This must be checked
-		// before the truthy-suppression test below, since a raised exception is
-		// itself truthy and would otherwise be mistaken for "suppress". The one
-		// exception is a protected result (see isProtected): letting __exit__
-		// replace it would launder a security refusal, an exit or a stopped
-		// run into an exception a handler can catch, so it keeps propagating
-		// whatever __exit__ does.
-		if exitResult != nil && propagates(exitResult) && !isProtected(result) {
-			return exitResult
-		}
-
-		// If the body raised and __exit__ returned a truthy value, suppress the
-		// exception (Python's __exit__ contract), unless it is protected (see
-		// isProtected). A raise from the __exit__ result's own __bool__
-		// propagates rather than being coerced.
-		if (isRaised(result) || object.IsError(result)) && exitResult != nil && !isProtected(result) {
-			suppress, serr := evalTruthy(ctx, exitResult, env)
-			if serr != nil {
-				return serr
-			}
-			if suppress {
-				return NULL
-			}
-		}
-
-		return result
+		return callWithExit(ctx, ctxObj.(*object.Instance), result, env)
 	}
+}
+
+// exceptionTypeObject is the type of a raised exception as a value: the
+// user exception class it was raised from, else the built-in exception type
+// (ValueError, ...), else its type name.
+func exceptionTypeObject(exc *object.Exception) object.Object {
+	if exc.OriginInstance != nil && exc.OriginInstance.Class != nil {
+		return exc.OriginInstance.Class
+	}
+	if b, ok := builtins[exc.ExceptionType]; ok {
+		if _, isExc := exceptionBuiltins[b]; isExc {
+			return b
+		}
+	}
+	return typeOf(exc)
+}
+
+// callWithExit calls a context manager's __exit__ for a with block whose
+// body ended with result, and returns the with statement's outcome: result
+// itself, NULL when __exit__ suppresses the exception, or a raise from
+// __exit__. A body that raised passes __exit__ the exception's type and the
+// exception itself, otherwise None, None, None; the traceback is always None.
+func callWithExit(ctx context.Context, inst *object.Instance, result object.Object, env *object.Environment) object.Object {
+	var excType object.Object = NULL
+	var excVal object.Object = NULL
+	var handled *object.Exception
+	failed := isRaised(result) || object.IsError(result)
+	if failed {
+		switch r := result.(type) {
+		case *object.Exception:
+			excType = exceptionTypeObject(r)
+			excVal = r
+			// While __exit__ looks at it the exception is a value, as in an
+			// except clause; it propagates again afterwards.
+			handled = r
+			r.Raised = false
+		case *object.Error:
+			e := &object.Exception{Message: r.Message, ExceptionType: errorExceptionType(r)}
+			excType = exceptionTypeObject(e)
+			excVal = e
+		}
+	}
+	exitResult := callDunderMethod(ctx, inst, "__exit__", []object.Object{excType, excVal, NULL}, env)
+	if handled != nil {
+		handled.Raised = true
+	}
+	// A raise (or internal error) from __exit__ itself propagates and wins
+	// over the body's in-flight exception, matching Python (where the
+	// __exit__ exception replaces/chains the original). This must be checked
+	// before the truthy-suppression test below, since a raised exception is
+	// itself truthy and would otherwise be mistaken for "suppress". The one
+	// exception is a protected result (see isProtected): letting __exit__
+	// replace it would launder a security refusal, an exit or a stopped
+	// run into an exception a handler can catch, so it keeps propagating
+	// whatever __exit__ does.
+	if exitResult != nil && propagates(exitResult) && !isProtected(result) {
+		return exitResult
+	}
+
+	// If the body raised and __exit__ returned a truthy value, suppress the
+	// exception (Python's __exit__ contract), unless it is protected (see
+	// isProtected). A raise from the __exit__ result's own __bool__
+	// propagates rather than being coerced.
+	if failed && exitResult != nil && !isProtected(result) {
+		suppress, serr := evalTruthy(ctx, exitResult, env)
+		if serr != nil {
+			return serr
+		}
+		if suppress {
+			return NULL
+		}
+	}
+	return result
 }
 
 func compileTry(n *ast.TryStatement) object.EvalFn {
@@ -3634,49 +3786,13 @@ func compileTry(n *ast.TryStatement) object.EvalFn {
 				return result // always propagates
 			}
 
-			// Convert Error to Exception for consistent handling (do this once, before matching)
-			var exceptionObj object.Object = result
-			if err, ok := result.(*object.Error); ok {
-				exceptionObj = &object.Exception{
-					Message:       err.Message,
-					ExceptionType: errorExceptionType(err),
-					Raised:        true,
-				}
+			i, exceptionObj, raised := matchExceptClause(ctx, n.ExceptClauses, result, env)
+			if raised != nil {
+				return raised
 			}
-
-			// Try each except clause in order
-			for i, exceptClause := range n.ExceptClauses {
-				// Check if exception type matches (if specified)
-				if exceptClause.ExceptType != nil {
-					// Python evaluates the except-type expression. Names and dotted
-					// names are matched structurally, but any other sub-expression
-					// (e.g. a call `except (boom(), ValueError):`) must be evaluated
-					// so its raise propagates rather than being silently ignored.
-					if raised := evalExceptTypeSideEffects(ctx, exceptClause.ExceptType, env); raised != nil {
-						return raised
-					}
-					if !matchesExceptionType(exceptionObj, exceptClause.ExceptType, env) {
-						// Exception type doesn't match, try next except clause
-						continue
-					}
-				}
-
-				// This except clause matches - execute it
+			if i >= 0 {
 				exceptionCaught = true
-				// The exception is now caught: it becomes an ordinary value that the
-				// handler can inspect (str(e), e.args, re-raise via `raise`). Clear
-				// the Raised flag so using it as a value inside the except body does
-				// not spuriously unwind the stack. A bare `raise` re-marks it.
-				if exc, ok := exceptionObj.(*object.Exception); ok {
-					exc.Raised = false
-				}
-				// Store the current exception for bare raise support
-				env.Set("__current_exception__", exceptionObj)
-
-				// Bind exception to variable if specified
-				if exceptClause.ExceptVar != nil {
-					env.Set(exceptClause.ExceptVar.Value(), exceptionObj)
-				}
+				bindExceptClause(n.ExceptClauses[i], exceptionObj, env)
 
 				// Execute except block in the same environment so variables are accessible
 				result = runBlock(ctx, env, exceptBodies[i], exceptLines[i])
@@ -3695,9 +3811,6 @@ func compileTry(n *ast.TryStatement) object.EvalFn {
 						result = NULL
 					}
 				}
-
-				// Exception was handled (or re-raised), don't try other except clauses
-				break
 			}
 		}
 
@@ -3728,23 +3841,91 @@ func compileTry(n *ast.TryStatement) object.EvalFn {
 	}
 }
 
+// matchExceptClause finds the except clause catching result, a raised
+// exception or internal error: its index (-1 when none matches) and the
+// exception as the handler sees it (an internal error converted to an
+// exception). raised is a raise from evaluating an except type expression.
+func matchExceptClause(ctx context.Context, clauses []*ast.ExceptClause, result object.Object, env *object.Environment) (int, object.Object, object.Object) {
+	var exceptionObj object.Object = result
+	if err, ok := result.(*object.Error); ok {
+		exceptionObj = &object.Exception{
+			Message:       err.Message,
+			ExceptionType: errorExceptionType(err),
+			Raised:        true,
+		}
+	}
+	for i, exceptClause := range clauses {
+		if exceptClause.ExceptType != nil {
+			// Python evaluates the except-type expression. Names and dotted
+			// names are matched structurally, but any other sub-expression
+			// (e.g. a call `except (boom(), ValueError):`) must be evaluated
+			// so its raise propagates rather than being silently ignored.
+			if raised := evalExceptTypeSideEffects(ctx, exceptClause.ExceptType, env); raised != nil {
+				return -1, exceptionObj, raised
+			}
+			if !matchesExceptionType(exceptionObj, exceptClause.ExceptType, env) {
+				continue
+			}
+		}
+		return i, exceptionObj, nil
+	}
+	return -1, exceptionObj, nil
+}
+
+// bindExceptClause enters an except clause for the exception it caught.
+func bindExceptClause(clause *ast.ExceptClause, exceptionObj object.Object, env *object.Environment) {
+	// The exception is now caught: it becomes an ordinary value that the
+	// handler can inspect (str(e), e.args, re-raise via `raise`). Clear
+	// the Raised flag so using it as a value inside the except body does
+	// not spuriously unwind the stack. A bare `raise` re-marks it.
+	if exc, ok := exceptionObj.(*object.Exception); ok {
+		exc.Raised = false
+	}
+	// Store the current exception for bare raise support
+	env.Set("__current_exception__", exceptionObj)
+	if clause.ExceptVar != nil {
+		env.Set(clause.ExceptVar.Value(), exceptionObj)
+	}
+}
+
 func compileMatch(n *ast.MatchStatement) object.EvalFn {
-	subject := compileExpr(n.Subject)
-	guards := make([]object.EvalFn, len(n.Cases))
+	sel := compileMatchSelect(n)
 	bodies := make([]object.EvalFn, len(n.Cases))
 	bodyLines := make([]int, len(n.Cases))
+	for i, caseClause := range n.Cases {
+		bodies[i] = compileStmt(caseClause.Body)
+		bodyLines[i] = caseClause.Body.Line()
+	}
+	return func(ctx context.Context, env *object.Environment) object.Object {
+		i, errObj := sel(ctx, env)
+		if errObj != nil {
+			return errObj
+		}
+		if i < 0 {
+			return NULL
+		}
+		// Execute body in the environment (with captures)
+		return fixErrorPos(ctx, bodies[i](ctx, env), bodyLines[i])
+	}
+}
+
+// compileMatchSelect compiles a match statement's case selection: the
+// returned function evaluates the subject, finds the first case whose
+// pattern and guard match, binds its captures, and returns its index (-1
+// when no case matches) or a propagating error.
+func compileMatchSelect(n *ast.MatchStatement) func(ctx context.Context, env *object.Environment) (int, object.Object) {
+	subject := compileExpr(n.Subject)
+	guards := make([]object.EvalFn, len(n.Cases))
 	for i, caseClause := range n.Cases {
 		if caseClause.Guard != nil {
 			guards[i] = compileExpr(caseClause.Guard)
 		}
-		bodies[i] = compileStmt(caseClause.Body)
-		bodyLines[i] = caseClause.Body.Line()
 	}
 
-	return func(ctx context.Context, env *object.Environment) object.Object {
+	return func(ctx context.Context, env *object.Environment) (int, object.Object) {
 		subjectVal := subject(ctx, env)
 		if propagates(subjectVal) {
-			return subjectVal
+			return -1, subjectVal
 		}
 
 		for i, caseClause := range n.Cases {
@@ -3753,7 +3934,7 @@ func compileMatch(n *ast.MatchStatement) object.EvalFn {
 
 			matched, capturedValue := matchPattern(ctx, subjectVal, caseClause.Pattern, capturedVars, env)
 			if propagates(matched) {
-				return matched
+				return -1, matched
 			}
 
 			if matched == TRUE {
@@ -3766,11 +3947,11 @@ func compileMatch(n *ast.MatchStatement) object.EvalFn {
 				if guards[i] != nil {
 					guardResult := guards[i](ctx, env)
 					if propagates(guardResult) {
-						return guardResult
+						return -1, guardResult
 					}
 					guardTruthy, gErr := evalTruthy(ctx, guardResult, env)
 					if gErr != nil {
-						return gErr
+						return -1, gErr
 					}
 					if !guardTruthy {
 						// Guard failed - try next case
@@ -3782,13 +3963,10 @@ func compileMatch(n *ast.MatchStatement) object.EvalFn {
 				if caseClause.CaptureAs != nil {
 					env.Set(caseClause.CaptureAs.Value(), capturedValue)
 				}
-
-				// Execute body in the environment (with captures)
-				return fixErrorPos(ctx, bodies[i](ctx, env), bodyLines[i])
+				return i, nil
 			}
 		}
-
-		return NULL
+		return -1, nil
 	}
 }
 
@@ -3809,6 +3987,7 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 		baseClassFn = compileExpr(n.BaseClass)
 	}
 	name := n.Name.Value()
+	doc := docstringOf(n.Body)
 
 	// Compile-time metadata in source order: annotated names (dataclass
 	// fields) and plain top-level assignment targets (enum members,
@@ -3850,7 +4029,9 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 			// class MyError(ValueError): deriving from a built-in exception
 			// constructor makes this a user exception class.
 			if baseBuiltin, isBuiltin := baseClassObj.(*object.Builtin); isBuiltin {
-				if excName, isExc := exceptionBuiltins[baseBuiltin]; isExc {
+				if baseBuiltin == objectBuiltin {
+					// class C(object): the same as class C:
+				} else if excName, isExc := exceptionBuiltins[baseBuiltin]; isExc {
 					class.ExceptionBase = excName
 					// Store constructor args so raise/`e.args` can use them,
 					// as Python's Exception.__init__ does.
@@ -3882,11 +4063,20 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 				if baseClass.ExceptionBase != "" {
 					class.ExceptionBase = baseClass.ExceptionBase
 				}
+				class.IsABC = baseClass.IsABC
 
 				// Copy methods from base class
 				for mname, method := range baseClass.Methods {
 					class.Methods[mname] = method
 				}
+			}
+		}
+		if doc != nil {
+			class.Methods["__doc__"] = doc
+		} else if class.BaseClass != nil {
+			// A docstring is not inherited: shadow a base's with None.
+			if _, inherited := class.BaseClass.LookupMember("__doc__"); inherited {
+				class.Methods["__doc__"] = NULL
 			}
 		}
 
@@ -3950,6 +4140,9 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 			}
 			class.Methods[mname] = val
 		})
+		if class.IsABC {
+			class.AbstractMethods = abstractMethodNames(class)
+		}
 
 		// enum.Enum derivation: promote the class's plain assignments to
 		// singleton member instances, in source order.
@@ -3968,7 +4161,7 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 			if propagates(dec) {
 				return dec
 			}
-			result = applyFunctionWithContext(ctx, dec, []object.Object{result}, nil, env)
+			result = applyFunctionWithContext(ctx, dec, []object.Object{result}, object.Kwargs{}, env)
 			if propagates(result) {
 				return result
 			}

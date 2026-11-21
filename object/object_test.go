@@ -1390,22 +1390,22 @@ func TestClassBuilderRecoversPanics(t *testing.T) {
 func TestNewKwargs(t *testing.T) {
 	// Test with nil map
 	kwargs := NewKwargs(nil)
-	if len(kwargs.Kwargs) != 0 {
-		t.Errorf("len(kwargs.Kwargs) = %d, want 0", len(kwargs.Kwargs))
+	if kwargs.Len() != 0 {
+		t.Errorf("kwargs.Len() = %d, want 0", kwargs.Len())
 	}
 
 	// Test with empty map
 	kwargs = NewKwargs(map[string]Object{})
-	if len(kwargs.Kwargs) != 0 {
-		t.Errorf("len(kwargs.Kwargs) = %d, want 0", len(kwargs.Kwargs))
+	if kwargs.Len() != 0 {
+		t.Errorf("kwargs.Len() = %d, want 0", kwargs.Len())
 	}
 
 	// Test with values
 	kwargs = NewKwargs(map[string]Object{
 		"foo": NewString("bar"),
 	})
-	if len(kwargs.Kwargs) != 1 {
-		t.Errorf("len(kwargs.Kwargs) = %d, want 1", len(kwargs.Kwargs))
+	if kwargs.Len() != 1 {
+		t.Errorf("kwargs.Len() = %d, want 1", kwargs.Len())
 	}
 }
 
@@ -1419,9 +1419,9 @@ func TestKwargsMustGetString(t *testing.T) {
 	}{
 		{
 			name: "key exists",
-			kwargs: Kwargs{Kwargs: map[string]Object{
+			kwargs: NewKwargs(map[string]Object{
 				"foo": NewString("bar"),
-			}},
+			}),
 			key:      "foo",
 			default_: "",
 			want:     "bar",

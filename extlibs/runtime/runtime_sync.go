@@ -275,7 +275,7 @@ Example:
 					maxsize = int(m)
 				}
 			}
-			if m, ok := kwargs.Kwargs["maxsize"]; ok {
+			if m, ok := kwargs.Lookup("maxsize"); ok {
 				if mInt, err := m.AsInt(); err == nil {
 					maxsize = int(mInt)
 				}

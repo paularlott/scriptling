@@ -1,6 +1,7 @@
 package ast
 
 import (
+	"sort"
 	"strings"
 )
 
@@ -253,11 +254,16 @@ func collectAssignedNamesFromStatement(stmt Statement, globals map[string]bool, 
 				addLocal(name.Value())
 			}
 		}
+	case *YieldStatement:
+		if s.Target != nil {
+			collectAssignedNamesFromExpression(s.Target, addLocal)
+		}
 	case *MatchStatement:
 		for _, caseClause := range s.Cases {
 			if caseClause.CaptureAs != nil {
 				addLocal(caseClause.CaptureAs.Value())
 			}
+			CollectPatternCaptures(caseClause.Pattern, addLocal)
 			collectAssignedNamesFromBlock(caseClause.Body, globals, nonlocals, addName)
 		}
 	}
@@ -274,6 +280,50 @@ func collectAssignedNamesFromExpression(expr Expression, addName func(string)) {
 	case *ListLiteral:
 		for _, elem := range e.Elements {
 			collectAssignedNamesFromExpression(elem, addName)
+		}
+	}
+}
+
+// CollectPatternCaptures reports the names a match pattern binds: bare names
+// other than _, starred and ** rest names, and the names in the sub-patterns
+// of sequence, mapping, class and OR patterns. Literal and dotted values,
+// mapping keys and class names bind nothing.
+func CollectPatternCaptures(pattern Expression, addName func(string)) {
+	switch p := pattern.(type) {
+	case *Identifier:
+		if p.Value() != "_" {
+			addName(p.Value())
+		}
+	case *StarredElement:
+		CollectPatternCaptures(p.Value, addName)
+	case *TupleLiteral:
+		for _, elem := range p.Elements {
+			CollectPatternCaptures(elem, addName)
+		}
+	case *ListLiteral:
+		for _, elem := range p.Elements {
+			CollectPatternCaptures(elem, addName)
+		}
+	case *OrPattern:
+		for _, alt := range p.Patterns {
+			CollectPatternCaptures(alt, addName)
+		}
+	case *DictLiteral:
+		for _, pair := range p.Pairs {
+			CollectPatternCaptures(pair.Value, addName)
+		}
+	case *CallExpression:
+		for _, arg := range p.Arguments {
+			CollectPatternCaptures(arg, addName)
+		}
+		keywords := p.GetKeywords()
+		names := make([]string, 0, len(keywords))
+		for name := range keywords {
+			names = append(names, name)
+		}
+		sort.Strings(names) // slot order must not depend on map order
+		for _, name := range names {
+			CollectPatternCaptures(keywords[name], addName)
 		}
 	}
 }

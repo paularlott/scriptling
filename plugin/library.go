@@ -542,9 +542,9 @@ func callRawFunction(ctx context.Context, client *Client, name string, kwargs ob
 
 func rawParamsFromObjects(kwargs object.Kwargs, args ...object.Object) any {
 	switch {
-	case len(kwargs.Kwargs) > 0:
-		m := make(map[string]any, len(kwargs.Kwargs))
-		for k, v := range kwargs.Kwargs {
+	case kwargs.Len() > 0:
+		m := make(map[string]any, kwargs.Len())
+		for k, v := range kwargs.All() {
 			m[k] = conversion.ToGo(v)
 		}
 		return m
@@ -567,7 +567,7 @@ func rejectBatchCallbacks(args []object.Object, kwargs object.Kwargs) error {
 			return fmt.Errorf("batch_call does not support callback arguments")
 		}
 	}
-	for _, arg := range kwargs.Kwargs {
+	for _, arg := range kwargs.All() {
 		if containsCallable(arg) {
 			return fmt.Errorf("batch_call does not support callback arguments")
 		}

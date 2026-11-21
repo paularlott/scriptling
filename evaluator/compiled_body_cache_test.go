@@ -40,7 +40,7 @@ func TestFunctionBodyCompiledOnFirstCallAndCached(t *testing.T) {
 	if defs[0].Function.Body.Compiled.Load() != nil || fn.CompiledBody != nil {
 		t.Fatal("defining a function must not compile its body")
 	}
-	if got := applyUserFunction(ctx, fn, []object.Object{object.NewInteger(1)}, nil, env); got.Inspect() != "2" {
+	if got := applyUserFunction(ctx, fn, []object.Object{object.NewInteger(1)}, object.Kwargs{}, env); got.Inspect() != "2" {
 		t.Fatalf("used(1) = %s", got.Inspect())
 	}
 	if defs[0].Function.Body.Compiled.Load() == nil {

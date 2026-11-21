@@ -42,7 +42,7 @@ func TestHandBuiltFunctionSharedAcrossTreesIsRaceFree(t *testing.T) {
 			local := *fn // each tree holds its own view of the shared definition
 			local.Env = env
 			for i := 0; i < 50; i++ {
-				got := applyUserFunction(context.Background(), &local, []object.Object{object.NewInteger(int64(i))}, nil, env)
+				got := applyUserFunction(context.Background(), &local, []object.Object{object.NewInteger(int64(i))}, object.Kwargs{}, env)
 				if iv, ok := got.(*object.Integer); !ok || iv.IntValue() != int64(2*i) {
 					t.Errorf("worker %d: f(%d) = %v", w, i, got)
 					return

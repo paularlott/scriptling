@@ -25,7 +25,7 @@ var FunctoolsLibrary = object.NewLibrary(FunctoolsLibraryName, map[string]*objec
 				}
 			}
 			maxsize := int64(128)
-			if v, ok := kwargs.Kwargs["maxsize"]; ok {
+			if v, ok := kwargs.Lookup("maxsize"); ok {
 				switch mv := v.(type) {
 				case *object.Integer:
 					maxsize = mv.IntValue()
@@ -94,19 +94,30 @@ arguments bypass the cache, as in Python.`,
 							wr.Attributes = map[string]object.Object{}
 						}
 						wr.Attributes["__name__"] = object.NewString(name)
+						wr.Attributes["__wrapped__"] = wrapped
 					case *object.Instance:
 						wr.SetField("__name__", object.NewString(name))
+						wr.SetField("__wrapped__", wrapped)
 					case *object.Function:
-						// The name is the method-lookup key; keep it and
-						// expose the original via an attribute instead.
-						_ = wr
+						// Each call of the decorator defines a new wrapper
+						// function, so renaming it changes only this one; a
+						// method wrapped in a class body is then registered
+						// under the method's own name, as in Python. __doc__
+						// and __wrapped__ read through Wrapped.
+						if name != "<unknown>" {
+							wr.Name = name
+						}
+						wr.SetWrapped(wrapped)
 					}
 					return args[0]
 				},
 				HelpText: "wraps decorator - copy identity onto the wrapper",
 			}
 		},
-		HelpText: `wraps(wrapped) - Decorator factory preserving the wrapped function's name
+		HelpText: `wraps(wrapped) - Decorator factory preserving the wrapped function's identity
+
+The wrapper takes the wrapped function's __name__ and __doc__, and
+__wrapped__ refers to the wrapped function.
 
 The standard decorator pattern:
 
@@ -145,14 +156,19 @@ The standard decorator pattern:
 
 			list, ok := args[1].(*object.List)
 			if !ok {
-				return errors.NewTypeError("LIST", args[1].Type().String())
+				// Any other built-in iterable (tuple, range, set, ...).
+				elems, isIterable := object.IterableToSlice(args[1])
+				if !isIterable {
+					return errors.NewTypeErrorTagged("reduce() arg 2 must support iteration")
+				}
+				list = &object.List{Elements: elems}
 			}
 
 			if len(list.Elements) == 0 {
 				if len(args) == 3 {
 					return args[2]
 				}
-				return errors.NewError("reduce() of empty sequence with no initial value")
+				return errors.NewTypeErrorTagged("reduce() of empty iterable with no initial value")
 			}
 
 			var accumulator object.Object
@@ -223,10 +239,9 @@ Example:
 			// buffer (the closure retains partialArgs across the call).
 			partialArgs := make([]object.Object, len(args)-1)
 			copy(partialArgs, args[1:])
-			partialKwargs := make(map[string]object.Object)
-			for k, v := range kwargs.Kwargs {
-				partialKwargs[k] = v
-			}
+			// The Kwargs a builtin is called with owns its storage and never
+			// changes, so the partial keeps it as it is.
+			partialKwargs := kwargs
 
 			// A partial holds its arguments, which can be another partial:
 			// account for it so a chain of them is within the memory limit.
@@ -235,33 +250,31 @@ Example:
 					allArgs := make([]object.Object, len(partialArgs)+len(args))
 					copy(allArgs, partialArgs)
 					copy(allArgs[len(partialArgs):], args)
-					allKwargs := make(map[string]object.Object)
-					for k, v := range partialKwargs {
-						allKwargs[k] = v
-					}
-					for k, v := range kwargs.Kwargs {
-						allKwargs[k] = v
-					}
+					allKwargs := partialKwargs.Merge(kwargs)
 
-					if fn != nil {
+					if fn != nil || lambda != nil {
 						eval := evaliface.FromContext(ctx)
 						if eval == nil {
 							return errors.NewError("evaluator not available in context")
 						}
-						return eval.CallFunction(ctx, fn, allArgs, allKwargs)
-					}
-					if lambda != nil {
-						eval := evaliface.FromContext(ctx)
-						if eval == nil {
-							return errors.NewError("evaluator not available in context")
+						var callee object.Object = lambda
+						var env *object.Environment
+						if fn != nil {
+							callee, env = fn, fn.Env
 						}
-						return eval.CallObjectFunction(ctx, lambda, allArgs, allKwargs, nil)
+						if kc, ok := eval.(evaliface.KwargsCaller); ok {
+							return kc.CallObjectFunctionKwargs(ctx, callee, allArgs, allKwargs, env)
+						}
+						if fn != nil {
+							return eval.CallFunction(ctx, fn, allArgs, allKwargs.Map())
+						}
+						return eval.CallObjectFunction(ctx, lambda, allArgs, allKwargs.Map(), nil)
 					}
-					return builtin.Fn(ctx, object.NewKwargs(allKwargs), allArgs...)
+					return builtin.Fn(ctx, allKwargs, allArgs...)
 				},
 				HelpText: "Partial function application",
 			}
-			object.TrackAlloc(partial, partialObjectSize+int64(len(partialArgs)+len(partialKwargs))*16)
+			object.TrackAlloc(partial, partialObjectSize+int64(len(partialArgs)+partialKwargs.Len())*16)
 			return partial
 		},
 		HelpText: `partial(func, *args, **kwargs) - Create a partial function application

@@ -30,7 +30,7 @@ func TestBuiltinMethodTablesMatchDispatch(t *testing.T) {
 			t.Fatalf("no sample value for %s", typ)
 		}
 		for _, name := range names {
-			result := callStringMethodWithKeywords(ctx, sample, name, nil, nil, env)
+			result := callStringMethodWithKeywords(ctx, sample, name, nil, object.Kwargs{}, env)
 			if exc, ok := result.(*object.Exception); ok && strings.Contains(exc.Message, "has no attribute") {
 				t.Errorf("%s.%s is listed but not dispatched: %s", typ, name, exc.Message)
 			}

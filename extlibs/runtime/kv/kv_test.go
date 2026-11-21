@@ -69,7 +69,7 @@ func kvCall(store *object.Builtin, method string, args ...object.Object) object.
 
 func kvCallKw(store *object.Builtin, method string, kwargs map[string]object.Object, args ...object.Object) object.Object {
 	fn := store.Attributes[method].(*object.Builtin)
-	return fn.Fn(context.Background(), object.Kwargs{Kwargs: kwargs}, args...)
+	return fn.Fn(context.Background(), object.NewKwargs(kwargs), args...)
 }
 
 func kvOpen(name string) *object.Builtin {

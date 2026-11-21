@@ -81,7 +81,7 @@ Iterating yields rows (lists of strings).`,
 					fields["_fieldnames"] = list
 					fields["fieldnames"] = list
 				}
-				if names, ok := kwargs.Kwargs["fieldnames"]; ok {
+				if names, ok := kwargs.Lookup("fieldnames"); ok {
 					nl, errObj := names.AsList()
 					if errObj != nil {
 						return errObj
@@ -90,7 +90,7 @@ Iterating yields rows (lists of strings).`,
 					fields["_fieldnames"] = list
 					fields["fieldnames"] = list
 				}
-				if rv, ok := kwargs.Kwargs["restval"]; ok {
+				if rv, ok := kwargs.Lookup("restval"); ok {
 					fields["_restval"] = rv
 				}
 				return object.NewInstanceWithFields(csvDictReaderClass, fields)
@@ -117,7 +117,7 @@ The first row is the header unless fieldnames is given.`,
 					"_delimiter":  object.NewString(string(delimiter)),
 					"_fieldnames": &object.List{Elements: append([]object.Object{}, names...)},
 				}
-				if rv, ok := kwargs.Kwargs["restval"]; ok {
+				if rv, ok := kwargs.Lookup("restval"); ok {
 					fields["_restval"] = rv
 				}
 				return object.NewInstanceWithFields(csvDictWriterClass, fields)

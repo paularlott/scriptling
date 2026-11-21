@@ -49,6 +49,8 @@ var (
 	iterTypeNameReversed   = object.NewString("reversed")
 	iterTypeNameListRev    = object.NewString("list_reverseiterator")
 	iterTypeNameDictRev    = object.NewString("dict_reversekeyiterator")
+	iterTypeNameCallable   = object.NewString("callable_iterator")
+	typeNameEllipsis       = object.NewString("ellipsis")
 )
 
 // typeOf is type(obj): the type's Python name.
@@ -134,6 +136,9 @@ func typeOf(obj object.Object) object.Object {
 	case object.FLOAT_ARRAY_OBJ:
 		return typeNameFloatArray
 	case object.SENTINEL_OBJ:
+		if obj == ellipsisValue {
+			return typeNameEllipsis
+		}
 		return typeNameSentinel
 	}
 	return object.NewString(obj.Type().String())

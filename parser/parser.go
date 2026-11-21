@@ -451,9 +451,10 @@ func (p *Parser) parseStatementInner() ast.Statement {
 		// a statement and is not part of an assignment is a yield; Python
 		// reserves the word entirely, so an explicit yield-as-name use
 		// (yield = 5) still parses as an assignment for compatibility.
+		// yield (x,) and yield [x] are yields, as in Python.
 		if p.curToken.Literal == "yield" &&
 			!p.peekTokenIs(token.ASSIGN) && !p.peekTokenIs(token.COMMA) && !p.isAugmentedAssign() &&
-			!p.peekTokenIs(token.DOT) && !p.peekTokenIs(token.LPAREN) && !p.peekTokenIs(token.LBRACKET) {
+			!p.peekTokenIs(token.DOT) {
 			return p.parseYieldStatement()
 		}
 		if p.curToken.Literal == "match" && !p.peekTokenIs(token.ASSIGN) && !p.peekTokenIs(token.COMMA) && !p.peekTokenIs(token.COLON) && !p.peekTokenIs(token.WALRUS) && !p.isAugmentedAssign() && !p.peekTokenIs(token.LPAREN) && !p.peekTokenIs(token.DOT) && !p.peekTokenIs(token.LBRACKET) {
@@ -490,7 +491,7 @@ func isAugmentedAssignToken(t token.TokenType) bool {
 		t == token.LSHIFT_EQ || t == token.RSHIFT_EQ
 }
 
-func (p *Parser) parseAssignStatement() *ast.AssignStatement {
+func (p *Parser) parseAssignStatement() ast.Statement {
 	stmt := &ast.AssignStatement{Token: p.nodeLine()}
 	stmt.Left = p.parseExpression(LOWEST)
 
@@ -499,6 +500,9 @@ func (p *Parser) parseAssignStatement() *ast.AssignStatement {
 	}
 
 	p.nextToken()
+	if p.yieldAtValue() {
+		return p.parseYieldAssign(stmt.Token, stmt.Left)
+	}
 
 	// The value may chain: a = b = 5, a = (b, c) = (1, 2). parseAssignValue
 	// detects another '=' after the candidate value and links the chain.
@@ -594,6 +598,20 @@ func (p *Parser) parseMultipleAssignStatement() ast.Statement {
 	}
 
 	p.nextToken()
+
+	if p.yieldAtValue() {
+		if starredIndex != -1 {
+			p.errors = append(p.errors, fmt.Sprintf("line %d: starred assignment from a yield is not supported", p.curToken.Line))
+			return nil
+		}
+		if !complex {
+			elements = make([]ast.Expression, len(names))
+			for i, name := range names {
+				elements[i] = name
+			}
+		}
+		return p.parseYieldAssign(p.nodeLine(), &ast.TupleLiteral{Elements: elements})
+	}
 
 	if complex {
 		firstValue := p.parseExpressionWithConditional()
@@ -864,7 +882,7 @@ func (p *Parser) parseDottedName() (string, ast.LineInfo, bool) {
 func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 	stmt := &ast.ReturnStatement{Token: p.nodeLine()}
 
-	if !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.SEMICOLON) && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.DEDENT) {
+	if !p.skippedNewline && !p.peekTokenIs(token.NEWLINE) && !p.peekTokenIs(token.SEMICOLON) && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.DEDENT) {
 		p.nextToken()
 		first := p.parseExpressionWithConditional()
 		stmt.ReturnValue = p.parseTuplePackingTail(stmt.Token, first)
@@ -902,14 +920,31 @@ func (p *Parser) parseDelStatement() *ast.DelStatement {
 }
 
 func (p *Parser) parseExpressionStatement() ast.Statement {
+	tok := p.nodeLine()
+	bareEllipsis := p.curTokenIs(token.ELLIPSIS)
 	expr := p.parseExpressionWithConditional()
+	if bareEllipsis {
+		// "..." alone as a statement is a stub body: it stands for nothing,
+		// so a function whose body is "..." returns None.
+		if id, ok := expr.(*ast.Identifier); ok && id.Value() == "Ellipsis" {
+			expr = ast.NoneLiteral
+		}
+	}
 	if p.peekTokenIs(token.COLON) {
+		// match (a, b): and match [a, b]: parse as a call or subscript of
+		// the soft keyword; the colon shows they are match statements.
+		if subject := matchSubjectFrom(expr); subject != nil {
+			return p.parseMatchCases(&ast.MatchStatement{Token: tok, Subject: subject})
+		}
 		return p.parseAnnotatedTail(expr)
 	}
 	if p.peekTokenIs(token.ASSIGN) {
 		stmt := &ast.AssignStatement{Token: p.nodeLine(), Left: expr}
 		p.nextToken() // consume =
 		p.nextToken() // move to value
+		if p.yieldAtValue() {
+			return p.parseYieldAssign(stmt.Token, expr)
+		}
 		first := p.parseExpressionWithConditional()
 		stmt.Value, stmt.Chained = p.parseAssignValue(p.nodeLine(), first)
 		return stmt
@@ -932,6 +967,9 @@ func (p *Parser) parseExpressionStatement() ast.Statement {
 		stmt := &ast.AssignStatement{Token: p.nodeLine(), Left: expr}
 		p.nextToken() // consume =
 		p.nextToken() // move to value
+		if p.yieldAtValue() {
+			return p.parseYieldAssign(stmt.Token, expr)
+		}
 		first := p.parseExpressionWithConditional()
 		stmt.Value, stmt.Chained = p.parseAssignValue(p.nodeLine(), first)
 		return stmt
@@ -939,22 +977,65 @@ func (p *Parser) parseExpressionStatement() ast.Statement {
 	return &ast.ExpressionStatement{Token: p.nodeLine(), Expression: expr}
 }
 
-// parseYieldStatement parses `yield` / `yield value` as a statement. Phase 1
-// generators support yields as statements only; a yield in expression
-// position still parses as a plain identifier reference and fails at compile.
+// parseYieldStatement parses `yield`, `yield value`, `yield a, b` and
+// `yield from iterable` as a statement. A yield is otherwise only accepted as
+// the whole right-hand side of an assignment (see parseYieldAssign); in any
+// other expression position it parses as a plain name and fails at compile.
 func (p *Parser) parseYieldStatement() ast.Statement {
 	stmt := &ast.YieldStatement{Token: p.nodeLine()}
-	// `yield from` delegation is not supported in phase 1 generators.
-	if p.peekTokenIs(token.FROM) {
-		p.errors = append(p.errors, "yield from is not supported yet (delegate manually: for item in it: yield item)")
+	if !p.parseYieldValue(stmt) {
 		return nil
 	}
-	// A bare yield (end of line) yields None.
-	if p.peekTokenIs(token.NEWLINE) || p.peekTokenIs(token.EOF) || p.peekTokenIs(token.DEDENT) || p.peekTokenIs(token.SEMICOLON) || p.skippedNewline {
-		return stmt
+	return stmt
+}
+
+// parseYieldValue parses what follows the yield keyword (the current token)
+// into stmt: nothing (yield None), a value or implicit tuple, or `from` and
+// the iterable to delegate to.
+func (p *Parser) parseYieldValue(stmt *ast.YieldStatement) bool {
+	if p.skippedNewline || p.peekTokenIs(token.NEWLINE) || p.peekTokenIs(token.EOF) || p.peekTokenIs(token.DEDENT) || p.peekTokenIs(token.SEMICOLON) || p.peekTokenIs(token.RPAREN) {
+		return true
+	}
+	if p.peekTokenIs(token.FROM) {
+		p.nextToken() // consume from
+		p.nextToken() // move to the iterable
+		stmt.From = true
+		stmt.Value = p.parseExpressionWithConditional()
+		return stmt.Value != nil
 	}
 	p.nextToken() // move to the value expression
-	stmt.Value = p.parseExpressionWithConditional()
+	first := p.parseExpressionWithConditional()
+	if first == nil {
+		return false
+	}
+	stmt.Value = p.parseTuplePackingTail(stmt.Token, first)
+	return true
+}
+
+// yieldAtValue reports whether an assignment's value (the current token)
+// is a yield: `x = yield v` or `x = (yield v)`.
+func (p *Parser) yieldAtValue() bool {
+	if p.curTokenIs(token.IDENT) {
+		return p.curToken.Literal == "yield" && !p.peekTokenIs(token.ASSIGN)
+	}
+	return p.curTokenIs(token.LPAREN) && p.peekTokenIs(token.IDENT) && p.peekToken.Literal == "yield"
+}
+
+// parseYieldAssign parses the yield forming an assignment's whole value, the
+// current token being `yield` or the `(` before it; target receives the
+// value sent into the generator.
+func (p *Parser) parseYieldAssign(tok ast.LineInfo, target ast.Expression) ast.Statement {
+	stmt := &ast.YieldStatement{Token: tok, Target: target}
+	paren := p.curTokenIs(token.LPAREN)
+	if paren {
+		p.nextToken() // move to yield
+	}
+	if !p.parseYieldValue(stmt) {
+		return nil
+	}
+	if paren && !p.expectPeek(token.RPAREN) {
+		return nil
+	}
 	return stmt
 }
 
@@ -1010,8 +1091,24 @@ func (p *Parser) parseExpression(precedence int) ast.Expression {
 	}
 	startDepth := p.exprDepth
 	p.exprDepth++
-	leftExp := prefix(p)
+	return p.parseInfixTail(prefix(p), precedence, startDepth)
+}
 
+// parseExpressionFrom continues an expression whose leading operand has
+// already been parsed (the current token ends it).
+func (p *Parser) parseExpressionFrom(leftExp ast.Expression, precedence int) ast.Expression {
+	if p.exprDepth >= maxExprDepth {
+		p.stopTooDeep("expression too complex")
+		return nil
+	}
+	startDepth := p.exprDepth
+	p.exprDepth++
+	return p.parseInfixTail(leftExp, precedence, startDepth)
+}
+
+// parseInfixTail applies infix and postfix operators to leftExp while they
+// bind tighter than precedence, then restores the expression depth.
+func (p *Parser) parseInfixTail(leftExp ast.Expression, precedence, startDepth int) ast.Expression {
 	for {
 		peekType := p.peekToken.Type
 		switch peekType {
@@ -1473,11 +1570,11 @@ func (p *Parser) parseNone() ast.Expression {
 	return ast.NoneLiteral
 }
 
-// parseEllipsis maps the "..." placeholder (stub bodies, tuple[int, ...]
-// annotations) onto the None literal: annotations are never evaluated and a
-// stub body returning None matches the Python convention closely enough.
+// parseEllipsis reads the "..." literal as the name Ellipsis. A stub body
+// "def f(): ..." still returns None, since the value of an expression
+// statement is discarded.
 func (p *Parser) parseEllipsis() ast.Expression {
-	return ast.NoneLiteral
+	return ast.NewIdentifier(p.curToken, p.symbols, "Ellipsis")
 }
 
 // parseWalrusExpression parses an assignment expression (name := value) after
@@ -1596,6 +1693,10 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 	// Check for empty tuple
 	if p.curTokenIs(token.RPAREN) {
 		return &ast.TupleLiteral{Elements: nil}
+	}
+	if p.curTokenIs(token.IDENT) && p.curToken.Literal == "yield" {
+		p.errors = append(p.errors, fmt.Sprintf("line %d: yield inside an expression is not supported (use it as a statement, or as the whole value of an assignment: x = yield v)", p.curToken.Line))
+		return nil
 	}
 
 	// A leading *iterable makes this a tuple display: (*t,), (*a, *b).
@@ -1980,6 +2081,13 @@ func (p *Parser) parseClassStatement() *ast.ClassStatement {
 		p.nextToken() // consume (
 		p.nextToken() // move to base class expression
 		stmt.BaseClass = p.parseExpression(LOWEST)
+		if p.peekTokenIs(token.COMMA) && p.tooDeep == "" {
+			p.errors = append(p.errors, fmt.Sprintf("line %d: multiple inheritance is not supported: a class has one base class", p.peekToken.Line))
+			// Skip the other bases so this is the only error reported.
+			for !p.peekTokenIs(token.RPAREN) && !p.peekTokenIs(token.EOF) && !p.peekTokenIs(token.NEWLINE) {
+				p.nextToken()
+			}
+		}
 		if !p.expectPeek(token.RPAREN) {
 			return nil
 		}
@@ -2800,22 +2908,89 @@ func (p *Parser) parseDecoratedStatement() ast.Statement {
 	}
 }
 
+// parseWithStatement parses a with statement. Several context managers —
+// with a() as x, b() as y: or the parenthesised with (a() as x, b() as y): —
+// desugar to nested with statements, which is exactly Python's semantics:
+// enter left to right, exit right to left, each __exit__ seeing (and able to
+// suppress) what the inner ones let through.
 func (p *Parser) parseWithStatement() *ast.WithStatement {
-	stmt := &ast.WithStatement{Token: p.nodeLine()}
+	tok := p.nodeLine()
 	p.nextToken()
-	stmt.ContextExpr = p.parseExpression(LOWEST)
+	var items []*ast.WithStatement
+	if p.curTokenIs(token.LPAREN) && !p.peekTokenIs(token.RPAREN) {
+		// A parenthesised item list, or a parenthesised expression that
+		// starts the context expression: (a() as x, b()) vs (a or b).c().
+		p.nextToken()
+		first := p.parseWithItem(tok, p.parseExpression(LOWEST))
+		if first == nil {
+			return nil
+		}
+		items = append(items, first)
+		grouped := first.Target != nil
+		for p.peekTokenIs(token.COMMA) {
+			p.nextToken() // consume comma
+			grouped = true
+			if p.peekTokenIs(token.RPAREN) {
+				break // trailing comma
+			}
+			p.nextToken()
+			item := p.parseWithItem(tok, p.parseExpression(LOWEST))
+			if item == nil {
+				return nil
+			}
+			items = append(items, item)
+		}
+		if !p.expectPeek(token.RPAREN) {
+			return nil
+		}
+		if !grouped && !p.peekTokenIs(token.COLON) {
+			// (expr) begins a longer context expression: continue it.
+			items = items[:0]
+			expr := p.parseExpressionFrom(first.ContextExpr, LOWEST)
+			if expr == nil {
+				return nil
+			}
+			items = append(items, p.parseWithItem(tok, expr))
+		}
+	} else {
+		items = append(items, p.parseWithItem(tok, p.parseExpression(LOWEST)))
+	}
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken() // consume comma
+		p.nextToken()
+		items = append(items, p.parseWithItem(tok, p.parseExpression(LOWEST)))
+	}
+	for _, item := range items {
+		if item == nil {
+			return nil
+		}
+	}
+	if !p.expectPeek(token.COLON) {
+		return nil
+	}
+	body := p.parseBlockStatement()
+	for i := len(items) - 1; i >= 0; i-- {
+		items[i].Body = body
+		body = &ast.BlockStatement{Token: tok, Statements: []ast.Statement{items[i]}}
+	}
+	return items[0]
+}
+
+// parseWithItem finishes one with item whose context expression has been
+// parsed, reading an optional `as name`.
+func (p *Parser) parseWithItem(tok ast.LineInfo, expr ast.Expression) *ast.WithStatement {
+	if expr == nil {
+		return nil
+	}
+	item := &ast.WithStatement{Token: tok, ContextExpr: expr}
 	if p.peekTokenIs(token.AS) {
 		p.nextToken() // consume 'as'
 		if !p.expectPeek(token.IDENT) {
 			return nil
 		}
-		stmt.Target = p.ident(p.curToken.Literal)
+		item.Target = p.ident(p.curToken.Literal)
 	}
-	if !p.expectPeek(token.COLON) {
-		return nil
-	}
-	stmt.Body = p.parseBlockStatement()
-	return stmt
+	return item
 }
 
 func (p *Parser) parseAssertStatement() *ast.AssertStatement {
@@ -2953,8 +3128,36 @@ func (p *Parser) parseMatchStatement() *ast.MatchStatement {
 	stmt := &ast.MatchStatement{Token: p.nodeLine()}
 
 	p.nextToken()
-	stmt.Subject = p.parseExpression(LOWEST_PRECEDENCE)
+	stmt.Subject = p.parseTuplePackingTail(stmt.Token, p.parseExpression(LOWEST_PRECEDENCE))
+	return p.parseMatchCases(stmt)
+}
 
+// matchSubjectFrom recognises `match (a, b)` and `match [a, b]`, which parse
+// as a call or subscript of the name match, and returns the subject they
+// spell; nil for anything else.
+func matchSubjectFrom(expr ast.Expression) ast.Expression {
+	switch e := expr.(type) {
+	case *ast.CallExpression:
+		if id, ok := e.Function.(*ast.Identifier); ok && id.Value() == "match" && !e.HasOverflow() {
+			if len(e.Arguments) == 1 {
+				return e.Arguments[0]
+			}
+			return &ast.TupleLiteral{Elements: e.Arguments}
+		}
+	case *ast.IndexExpression:
+		if id, ok := e.Left.(*ast.Identifier); ok && id.Value() == "match" && !e.IsDotAccess {
+			if t, ok := e.Index.(*ast.TupleLiteral); ok {
+				return &ast.ListLiteral{Elements: t.Elements}
+			}
+			return &ast.ListLiteral{Elements: []ast.Expression{e.Index}}
+		}
+	}
+	return nil
+}
+
+// parseMatchCases parses a match statement's colon and case clauses once
+// its subject has been parsed.
+func (p *Parser) parseMatchCases(stmt *ast.MatchStatement) *ast.MatchStatement {
 	if !p.expectPeek(token.COLON) {
 		return nil
 	}
@@ -3025,8 +3228,78 @@ func (p *Parser) parseCaseClause() *ast.CaseClause {
 	return clause
 }
 
-// parseCasePattern parses a pattern in a case clause, stopping at 'if', 'as', or ':'
+// parseCasePattern parses a case clause's pattern, stopping at 'if', 'as'
+// or ':'. Patterns reuse expression syntax: a comma-separated open sequence
+// (case a, *rest:) becomes a tuple pattern, and `|` inside a sequence,
+// mapping or class pattern becomes an OR pattern rather than a bitwise or.
 func (p *Parser) parseCasePattern() ast.Expression {
+	first := p.parseCaseAlternatives()
+	if !p.peekTokenIs(token.COMMA) {
+		return orPatterns(first)
+	}
+	elements := []ast.Expression{first}
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken() // consume comma
+		if p.peekTokenIs(token.COLON) || p.peekTokenIs(token.IF) || p.peekTokenIs(token.AS) {
+			break // trailing comma
+		}
+		p.nextToken()
+		elements = append(elements, p.parseCaseAlternatives())
+	}
+	return orPatterns(&ast.TupleLiteral{Elements: elements})
+}
+
+// orPatterns rewrites a | b inside a pattern as an OR pattern, recursing
+// into sequence, mapping and class sub-patterns.
+func orPatterns(pattern ast.Expression) ast.Expression {
+	switch e := pattern.(type) {
+	case *ast.InfixExpression:
+		if e.Operator == ast.OpBitOr {
+			left, right := orPatterns(e.Left), orPatterns(e.Right)
+			alts := []ast.Expression{left}
+			if or, ok := left.(*ast.OrPattern); ok {
+				alts = or.Patterns
+			}
+			return &ast.OrPattern{Patterns: append(alts, right)}
+		}
+	case *ast.OrPattern:
+		for i, alt := range e.Patterns {
+			e.Patterns[i] = orPatterns(alt)
+		}
+	case *ast.TupleLiteral:
+		for i, elem := range e.Elements {
+			e.Elements[i] = orPatterns(elem)
+		}
+	case *ast.ListLiteral:
+		for i, elem := range e.Elements {
+			e.Elements[i] = orPatterns(elem)
+		}
+	case *ast.DictLiteral:
+		for i := range e.Pairs {
+			e.Pairs[i].Value = orPatterns(e.Pairs[i].Value)
+		}
+	case *ast.CallExpression:
+		for i, arg := range e.Arguments {
+			e.Arguments[i] = orPatterns(arg)
+		}
+		for name, kw := range e.GetKeywords() {
+			e.GetKeywords()[name] = orPatterns(kw)
+		}
+	}
+	return pattern
+}
+
+// parseCaseAlternatives parses one pattern of a case clause, or of its open
+// sequence, with its | alternatives.
+func (p *Parser) parseCaseAlternatives() ast.Expression {
+	if p.curTokenIs(token.ASTERISK) {
+		// *rest in an open sequence pattern (case first, *rest:)
+		tok := p.nodeLine()
+		if !p.expectPeek(token.IDENT) {
+			return nil
+		}
+		return &ast.StarredElement{Token: tok, Value: p.ident(p.curToken.Literal)}
+	}
 	// We need to parse an expression but stop at 'if' or 'as' keywords
 	// These are used for guards and captures, not part of the pattern itself
 	// Use BIT_OR precedence to stop before '|' (used for OR patterns)

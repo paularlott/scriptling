@@ -1409,7 +1409,7 @@ func TestServerMethodWithKwargs(t *testing.T) {
 		}).
 		Method("set_kwargs", func(self *object.Instance, kwargs object.Kwargs) {
 			dict := self.Field("data").(*object.Dict)
-			for k, v := range kwargs.Kwargs {
+			for k, v := range kwargs.All() {
 				dict.SetByString(k, v)
 			}
 		})

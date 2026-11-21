@@ -832,9 +832,6 @@ func (as *AnnotatedAssignStatement) statementNode()       {}
 func (as *AnnotatedAssignStatement) TokenLiteral() string { return as.Target.TokenLiteral() }
 func (as *AnnotatedAssignStatement) Line() int            { return int(as.Token.Line) }
 
-// YieldStatement suspends a generator, producing Value (or None). Phase 1
-// supports yields as statements at the top level of a generator body or of a
-// single top-level loop in it.
 // StarredElement is an unpacking element inside a list or set display:
 // [*rest, 3] / {*items, 4}. Evaluation splices the iterable's elements.
 type StarredElement struct {
@@ -846,9 +843,16 @@ func (se *StarredElement) expressionNode()      {}
 func (se *StarredElement) TokenLiteral() string { return "*" }
 func (se *StarredElement) Line() int            { return int(se.Token.Line) }
 
+// YieldStatement suspends a generator, producing Value (or None). It is a
+// statement, or the whole right-hand side of an assignment (x = yield v), in
+// which case Target receives the value sent into the generator. From marks
+// `yield from Value`, which delegates to an iterable and evaluates to the
+// delegated generator's return value.
 type YieldStatement struct {
-	Token LineInfo
-	Value Expression // nil yields None
+	Token  LineInfo
+	Value  Expression // nil yields None
+	Target Expression // optional: assignment target receiving the sent value
+	From   bool
 }
 
 func (ys *YieldStatement) statementNode()       {}

@@ -384,8 +384,8 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 				}
 			}
 			// Strip control kwargs so they are not forwarded to the handler.
-			handlerKwargs := make(map[string]object.Object, len(kwargs.Kwargs))
-			for k, v := range kwargs.Kwargs {
+			handlerKwargs := make(map[string]object.Object, kwargs.Len())
+			for k, v := range kwargs.All() {
 				if k == "shared" || k == "daemon" {
 					continue
 				}
@@ -432,7 +432,7 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 				// reference, preserving shared-thread live semantics.
 				liveArgs := make([]object.Object, len(args)-2)
 				copy(liveArgs, args[2:])
-				return startSharedTask(ctx, handler, liveArgs, kwargs.Kwargs, env, eval, daemon, promise)
+				return startSharedTask(ctx, handler, liveArgs, handlerKwargs, env, eval, daemon, promise)
 			}
 
 			// Validate that all args/kwargs are transferable types
@@ -442,7 +442,7 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 					return errors.NewError("background arg %d: %s", i, err)
 				}
 			}
-			for k, v := range kwargs.Kwargs {
+			for k, v := range kwargs.All() {
 				if err := object.ValidateTransferable(v); err != nil {
 					return errors.NewError("background kwarg '%s': %s", k, err)
 				}
@@ -453,8 +453,8 @@ var RuntimeLibraryFunctions = map[string]*object.Builtin{
 			for i, a := range args[2:] {
 				fnArgs[i] = object.CloneObject(a)
 			}
-			fnKwargs := make(map[string]object.Object, len(kwargs.Kwargs))
-			for k, v := range kwargs.Kwargs {
+			fnKwargs := make(map[string]object.Object, kwargs.Len())
+			for k, v := range kwargs.All() {
 				fnKwargs[k] = object.CloneObject(v)
 			}
 

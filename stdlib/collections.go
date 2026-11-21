@@ -232,7 +232,7 @@ Example:
 					}
 					values := make([]object.Object, len(fieldNames))
 					copy(values, positional)
-					for name, v := range kwargs.Kwargs {
+					for name, v := range kwargs.All() {
 						idx := -1
 						for i, fn := range fieldNames {
 							if fn == name {
@@ -393,7 +393,7 @@ Example:
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 					nt := args[0].(*object.Instance)
 					fields := nt.FieldsSnapshot()
-					for name, v := range kwargs.Kwargs {
+					for name, v := range kwargs.All() {
 						known := false
 						for _, fn := range fieldNames {
 							if fn == name {

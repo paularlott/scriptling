@@ -41,10 +41,10 @@ var DataclassesLibrary = object.NewLibrary(DataclassesLibraryName, map[string]*o
 						return errors.NewTypeError("class", args[0].Type().String())
 					}
 					merged := map[string]object.Object{}
-					for k, v := range opts.Kwargs {
+					for k, v := range opts.All() {
 						merged[k] = v
 					}
-					for k, v := range kwargs.Kwargs {
+					for k, v := range kwargs.All() {
 						merged[k] = v
 					}
 					return buildDataclass(cls, object.NewKwargs(merged))
@@ -63,12 +63,12 @@ defaults, and field(default=..., default_factory=...) customises them.`,
 				return err
 			}
 			inst := object.NewInstance(fieldSpecClass)
-			def, hasDefault := kwargs.Kwargs["default"]
+			def, hasDefault := kwargs.Lookup("default")
 			if !hasDefault {
 				def = dataclassesMissing
 			}
 			inst.SetField("default", def)
-			factory, hasFactory := kwargs.Kwargs["default_factory"]
+			factory, hasFactory := kwargs.Lookup("default_factory")
 			if !hasFactory {
 				factory = &object.Null{}
 			}
@@ -127,7 +127,7 @@ type dcField struct {
 // fields. init/repr/eq options default to True, as in Python.
 func buildDataclass(cls *object.Class, kwargs object.Kwargs) object.Object {
 	opt := func(name string) bool {
-		if v, ok := kwargs.Kwargs[name]; ok {
+		if v, ok := kwargs.Lookup(name); ok {
 			if b, ok := v.(*object.Boolean); ok {
 				return b.BoolValue()
 			}
@@ -159,7 +159,7 @@ func buildDataclass(cls *object.Class, kwargs object.Kwargs) object.Object {
 	}
 
 	frozen := false
-	if v, ok := kwargs.Kwargs["frozen"]; ok {
+	if v, ok := kwargs.Lookup("frozen"); ok {
 		if b, ok := v.(*object.Boolean); ok {
 			frozen = b.BoolValue()
 		}
@@ -205,7 +205,7 @@ func buildDataclass(cls *object.Class, kwargs object.Kwargs) object.Object {
 				}
 				positional := args[1:]
 				byName := map[string]object.Object{}
-				for k, v := range kwargs.Kwargs {
+				for k, v := range kwargs.All() {
 					known := false
 					for _, n := range names {
 						if n == k {

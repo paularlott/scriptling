@@ -29,6 +29,7 @@ var StringLibrary = object.NewLibrary(StringLibraryName,
 		"punctuation":     object.NewString(punctuation),
 		"whitespace":      object.NewString(whitespace),
 		"printable":       object.NewString(printable),
+		"Template":        TemplateClass,
 	},
-	"String constants for character classification",
+	"String constants for character classification, and Template for $-substitution",
 )

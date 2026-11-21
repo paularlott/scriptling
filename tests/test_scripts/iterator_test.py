@@ -80,7 +80,7 @@ for ch in reversed("abc"):
 assert result == ["c", "b", "a"], "reversed should work with strings"
 
 # Test iterator consumption - iterators can only be consumed once
-r = range(3)
+r = iter(range(3))
 first_pass = []
 for i in r:
     first_pass.append(i)
@@ -91,6 +91,10 @@ second_pass = []
 for i in r:
     second_pass.append(i)
 assert second_pass == [], "Second iteration should be empty (iterator exhausted)"
+
+# A range is a sequence, not an iterator: it can be walked again
+r = range(3)
+assert list(r) == [0, 1, 2] and [i for i in r] == [0, 1, 2], "range should be re-iterable"
 
 # Test list comprehension with iterator
 squares = [x * x for x in range(5)]

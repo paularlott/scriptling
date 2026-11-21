@@ -77,7 +77,7 @@ func builtinMethodRef(obj object.Object, name string) object.Object {
 	}
 	return &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			return callStringMethodWithKeywords(ctx, obj, name, args, kwargs.Kwargs, GetEnvFromContext(ctx))
+			return callStringMethodWithKeywords(ctx, obj, name, args, kwargs, GetEnvFromContext(ctx))
 		},
 		HelpText: fmt.Sprintf("%s.%s - bound method", getTypeName(obj), name),
 		Repr:     fmt.Sprintf("<built-in method %s of %s object>", name, getTypeName(obj)),
@@ -90,7 +90,7 @@ func unboundTypeMethod(t object.ObjectType, typeName, name string) object.Object
 	if receiver, ok := staticTypeMethods[t][name]; ok {
 		return &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				return callStringMethodWithKeywords(ctx, receiver, name, args, kwargs.Kwargs, GetEnvFromContext(ctx))
+				return callStringMethodWithKeywords(ctx, receiver, name, args, kwargs, GetEnvFromContext(ctx))
 			},
 			HelpText: fmt.Sprintf("%s.%s", typeName, name),
 			Repr:     fmt.Sprintf("<built-in method %s of type object>", name),
@@ -109,7 +109,7 @@ func unboundTypeMethod(t object.ObjectType, typeName, name string) object.Object
 					Raised:        true,
 				}
 			}
-			return callStringMethodWithKeywords(ctx, args[0], name, args[1:], kwargs.Kwargs, GetEnvFromContext(ctx))
+			return callStringMethodWithKeywords(ctx, args[0], name, args[1:], kwargs, GetEnvFromContext(ctx))
 		},
 		HelpText: fmt.Sprintf("%s.%s(self, ...)", typeName, name),
 		Repr:     fmt.Sprintf("<method '%s' of '%s' objects>", name, typeName),

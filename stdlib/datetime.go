@@ -53,6 +53,10 @@ func getTimeFromInstance(instance *object.Instance) (time.Time, object.Object) {
 					t = t.UTC()
 				}
 			}
+			// An aware datetime renders in its own zone.
+			if k, ok := timezoneKey(instance.Field("tzinfo")); ok {
+				t = t.In(tzLocation(k))
+			}
 			return t, nil
 		}
 	}
@@ -67,7 +71,8 @@ func createDatetimeInstance(t time.Time) *object.Instance {
 	return object.NewInstanceWithFields(DatetimeClass, map[string]object.Object{
 		"_time":        object.NewInteger(t.UnixNano()),
 		"_utc":         object.NewBoolean(t.Location() == time.UTC),
-		"__str_repr__": object.NewString(t.Format("2006-01-02 15:04:05")),
+		"__str_repr__": object.NewString(pyDatetimeString(t, " ")),
+		"tzinfo":       tzinfoOf(t),
 		"year":         object.NewInteger(int64(t.Year())),
 		"month":        object.NewInteger(int64(t.Month())),
 		"day":          object.NewInteger(int64(t.Day())),
@@ -119,7 +124,7 @@ func init() {
 					if err != nil {
 						return err
 					}
-					return object.NewString(t.Format("2006-01-02 15:04:05"))
+					return object.NewString(pyDatetimeString(t, " "))
 				},
 				HelpText: "__str__() - Return string representation of datetime",
 			},
@@ -324,9 +329,23 @@ func init() {
 					if err != nil {
 						return err
 					}
-					return object.NewString(t.Format("2006-01-02T15:04:05"))
+					sep := "T"
+					if len(args) > 1 {
+						s, ok := args[1].(*object.String)
+						if !ok {
+							return errors.NewTypeError("STRING", args[1].Type().String())
+						}
+						sep = s.StringValue()
+					} else if v := kwargs.Get("sep"); v != nil {
+						s, ok := v.(*object.String)
+						if !ok {
+							return errors.NewTypeError("STRING", v.Type().String())
+						}
+						sep = s.StringValue()
+					}
+					return object.NewString(pyDatetimeString(t, sep))
 				},
-				HelpText: "isoformat() - Return ISO 8601 formatted string",
+				HelpText: "isoformat(sep='T') - Return ISO 8601 formatted string (with the UTC offset when aware)",
 			},
 			"replace": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -345,8 +364,21 @@ func init() {
 					// Apply replacements from kwargs
 					year, month, day := t.Year(), t.Month(), t.Day()
 					hour, minute, second, nsec := t.Hour(), t.Minute(), t.Second(), t.Nanosecond()
+					loc := t.Location()
 
-					for key, val := range kwargs.Kwargs {
+					for key, val := range kwargs.All() {
+						if key == "tzinfo" {
+							// Same wall time, new zone (None makes it naive).
+							tzLoc, err := tzinfoLocation(val)
+							if err != nil {
+								return err
+							}
+							loc = time.Local
+							if tzLoc != nil {
+								loc = tzLoc
+							}
+							continue
+						}
 						intVal, ok := val.(*object.Integer)
 						if !ok {
 							return errors.NewTypeError("INTEGER", val.Type().String())
@@ -371,10 +403,10 @@ func init() {
 						}
 					}
 
-					newTime := time.Date(year, month, day, hour, minute, second, nsec, t.Location())
+					newTime := time.Date(year, month, day, hour, minute, second, nsec, loc)
 					return createDatetimeInstance(newTime)
 				},
-				HelpText: "replace(**kwargs) - Return datetime with replaced fields",
+				HelpText: "replace(**kwargs) - Return datetime with replaced fields (tzinfo= sets or, with None, removes the zone)",
 			},
 			// Comparison dunder methods
 			"__lt__": &object.Builtin{
@@ -658,7 +690,7 @@ func init() {
 
 					year, month, day := t.Year(), t.Month(), t.Day()
 
-					for key, val := range kwargs.Kwargs {
+					for key, val := range kwargs.All() {
 						intVal, ok := val.(*object.Integer)
 						if !ok {
 							return errors.NewTypeError("INTEGER", val.Type().String())
@@ -772,8 +804,8 @@ var datetimeConstructorBuiltin = &object.Builtin{
 		if len(args) < 3 {
 			return errors.NewError("datetime() requires at least 3 arguments: year, month, day")
 		}
-		if len(args) > 7 {
-			return errors.NewError("datetime() takes at most 7 arguments")
+		if len(args) > 8 {
+			return errors.NewError("datetime() takes at most 8 arguments")
 		}
 
 		yearObj, ok := args[0].(*object.Integer)
@@ -793,7 +825,17 @@ var datetimeConstructorBuiltin = &object.Builtin{
 		month := time.Month(monthObj.IntValue())
 		day := int(dayObj.IntValue())
 		hour, minute, second, nsec := 0, 0, 0, 0
+		loc := time.Local
 
+		if len(args) > 7 {
+			tzLoc, err := tzinfoLocation(args[7])
+			if err != nil {
+				return err
+			}
+			if tzLoc != nil {
+				loc = tzLoc
+			}
+		}
 		if len(args) > 3 {
 			if h, ok := args[3].(*object.Integer); ok {
 				hour = int(h.IntValue())
@@ -823,7 +865,17 @@ var datetimeConstructorBuiltin = &object.Builtin{
 			}
 		}
 
-		for key, val := range kwargs.Kwargs {
+		for key, val := range kwargs.All() {
+			if key == "tzinfo" {
+				tzLoc, err := tzinfoLocation(val)
+				if err != nil {
+					return err
+				}
+				if tzLoc != nil {
+					loc = tzLoc
+				}
+				continue
+			}
 			intVal, ok := val.(*object.Integer)
 			if !ok {
 				return errors.NewTypeError("INTEGER", val.Type().String())
@@ -842,12 +894,13 @@ var datetimeConstructorBuiltin = &object.Builtin{
 			}
 		}
 
-		t := time.Date(year, month, day, hour, minute, second, nsec, time.Local)
+		t := time.Date(year, month, day, hour, minute, second, nsec, loc)
 		return createDatetimeInstance(t)
 	},
-	HelpText: `datetime(year, month, day, hour=0, minute=0, second=0, microsecond=0)
+	HelpText: `datetime(year, month, day, hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
 
-Creates a datetime instance for the specified date and time.`,
+Creates a datetime instance for the specified date and time. With tzinfo (a
+datetime.timezone) the datetime is aware and isoformat() shows its offset.`,
 	Attributes: map[string]object.Object{
 		"fromisoformat": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -857,6 +910,18 @@ Creates a datetime instance for the specified date and time.`,
 				text, err := args[0].AsString()
 				if err != nil {
 					return err
+				}
+				// With a UTC offset (or Z) the result is aware.
+				for _, layout := range []string{
+					"2006-01-02T15:04:05.999999999Z07:00",
+					"2006-01-02T15:04:05Z07:00",
+					"2006-01-02 15:04:05.999999999Z07:00",
+					"2006-01-02 15:04:05Z07:00",
+				} {
+					if t, parseErr := time.Parse(layout, text); parseErr == nil {
+						_, off := t.Zone()
+						return createDatetimeInstance(t.In(tzLocation(tzKey{offset: off})))
+					}
 				}
 				for _, layout := range []string{
 					"2006-01-02T15:04:05.999999999",
@@ -877,9 +942,20 @@ Creates a datetime instance for the specified date and time.`,
 		},
 		"now": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				tz := kwargs.Get("tz")
+				if len(args) > 0 {
+					tz = args[0]
+				}
+				loc, err := tzinfoLocation(tz)
+				if err != nil {
+					return err
+				}
+				if loc != nil {
+					return createDatetimeInstance(time.Now().In(loc))
+				}
 				return createDatetimeInstance(time.Now())
 			},
-			HelpText: "now() - Return current local datetime",
+			HelpText: "now(tz=None) - Return the current local datetime, or the current time in tz (aware)",
 		},
 		"utcnow": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -940,7 +1016,7 @@ Creates a datetime instance for the specified date and time.`,
 		},
 		"fromtimestamp": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if err := errors.ExactArgs(args, 1); err != nil {
+				if err := errors.RangeArgs(args, 1, 2); err != nil {
 					return err
 				}
 				var timestamp float64
@@ -952,9 +1028,21 @@ Creates a datetime instance for the specified date and time.`,
 				default:
 					return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 				}
-				return createDatetimeInstance(time.Unix(int64(timestamp), 0))
+				t := time.Unix(int64(timestamp), 0)
+				tz := kwargs.Get("tz")
+				if len(args) > 1 {
+					tz = args[1]
+				}
+				loc, err := tzinfoLocation(tz)
+				if err != nil {
+					return err
+				}
+				if loc != nil {
+					t = t.In(loc)
+				}
+				return createDatetimeInstance(t)
 			},
-			HelpText: "fromtimestamp(timestamp) - Create datetime from Unix timestamp",
+			HelpText: "fromtimestamp(timestamp, tz=None) - Create datetime from Unix timestamp (aware in tz when given)",
 		},
 	},
 }
@@ -1020,8 +1108,10 @@ Creates a date instance for the specified date.`,
 // timedeltaBuiltinNew provides Python-compatible datetime.timedelta function
 var timedeltaBuiltinNew = &object.Builtin{
 	Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) > 0 {
-			return errors.NewError("timedelta() takes no positional arguments")
+		// Positional arguments in Python's order.
+		positional := []string{"days", "seconds", "microseconds", "milliseconds", "minutes", "hours", "weeks"}
+		if len(args) > len(positional) {
+			return errors.NewTypeErrorTagged("timedelta() takes at most 7 arguments (%d given)", len(args))
 		}
 
 		var days, seconds, microseconds, milliseconds, minutes, hours, weeks float64
@@ -1037,7 +1127,17 @@ var timedeltaBuiltinNew = &object.Builtin{
 			}
 		}
 
-		for key, val := range kwargs.Kwargs {
+		values := make(map[string]object.Object, len(args)+kwargs.Len())
+		for i, v := range args {
+			values[positional[i]] = v
+		}
+		for key, val := range kwargs.All() {
+			if _, dup := values[key]; dup {
+				return errors.NewTypeErrorTagged("argument for timedelta() given by name ('%s') and position", key)
+			}
+			values[key] = val
+		}
+		for key, val := range values {
 			num, err := extractNum(val)
 			if err != nil {
 				return err
@@ -1174,8 +1274,11 @@ var DatetimeLibrary = object.NewLibrary(DatetimeLibraryName,
 		"timedelta": timedeltaBuiltinNew,
 		"datetime":  datetimeConstructorBuiltin,
 		"date":      dateConstructorBuiltin,
+		"timezone":  timezoneConstructorBuiltin,
 	},
-	nil,
+	map[string]object.Object{
+		"UTC": utcTimezone,
+	},
 	"Date and time manipulation library.",
 )
 

@@ -94,14 +94,14 @@ func fastStringLower(s string) string {
 	return s
 }
 
-func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method string, args []object.Object, keywords object.Kwargs, env *object.Environment) object.Object {
 	// Handle universal methods
 	switch method {
 	case "type":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(keywords) > 0 {
+		if keywords.Len() > 0 {
 			return errors.NewError("type() does not accept keyword arguments")
 		}
 		return typeOf(obj)
@@ -187,10 +187,23 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 		return checkResult(callBytesMethod(ctx, obj.(*object.Bytes), method, args, keywords, env))
 	}
 
+	// range objects: index and count
+	if it, ok := obj.(*object.Iterator); ok && (method == "index" || method == "count") {
+		if _, _, _, isRange := it.RangeObject(); isRange {
+			return applyFunctionWithContext(ctx, rangeMethod(it, method), args, keywords, env)
+		}
+	}
+	// A callable attribute of a function: f.__wrapped__(x)
+	if t := obj.Type(); t == object.FUNCTION_OBJ || t == object.LAMBDA_OBJ {
+		if attr := functionAttribute(ctx, obj, method); !propagates(attr) {
+			return applyFunctionWithContext(ctx, attr, args, keywords, env)
+		}
+	}
+
 	return attributeError(obj, method)
 }
 
-func callSuperMethod(ctx context.Context, super *object.Super, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+func callSuperMethod(ctx context.Context, super *object.Super, method string, args []object.Object, keywords object.Kwargs, env *object.Environment) object.Object {
 	if super.Class.BaseClass != nil {
 		if fn, ok := super.Class.BaseClass.LookupMember(method); ok {
 			// A static method takes no receiver and a class method takes the
@@ -217,22 +230,35 @@ func callSuperMethod(ctx context.Context, super *object.Super, method string, ar
 // super() call that no user base class handles: super().__init__() in a class
 // whose base defines no __init__, and super().__repr__/__str__/__eq__/__ne__.
 // Returns nil when method is not one of them.
-func callObjectDefault(self object.Object, method string, args []object.Object, keywords map[string]object.Object) object.Object {
+func callObjectDefault(self object.Object, method string, args []object.Object, keywords object.Kwargs) object.Object {
 	switch method {
 	case "__init__":
 		// A class deriving directly from a built-in exception has that
 		// exception's __init__ as its base: it keeps the arguments as e.args.
 		if inst, ok := self.(*object.Instance); ok && inst.Class != nil && inst.Class.ExceptionBase != "" {
-			if len(keywords) > 0 {
+			if keywords.Len() > 0 {
 				return errors.NewTypeErrorTagged("%s() takes no keyword arguments", inst.Class.ExceptionBase)
 			}
 			inst.SetField("args", &object.Tuple{Elements: append([]object.Object{}, args...)})
 			return NULL
 		}
 		// object.__init__ takes only self; extra arguments are a TypeError.
-		if len(args) > 0 || len(keywords) > 0 {
+		if len(args) > 0 || keywords.Len() > 0 {
 			return errors.NewTypeErrorTagged("object.__init__() takes exactly one argument (the instance to initialize)")
 		}
+		return NULL
+	case "__setattr__":
+		// object.__setattr__: store the attribute directly.
+		inst, ok := self.(*object.Instance)
+		if !ok || len(args) != 2 {
+			return errors.NewTypeErrorTagged("__setattr__() takes a name and a value")
+		}
+		name, ok := args[0].(*object.String)
+		if !ok {
+			return errors.NewTypeErrorTagged("attribute name must be string, not '%s'", getTypeName(args[0]))
+		}
+		inst.SetField(name.StringValue(), args[1])
+		inst.InvalidateBoundMethod(name.StringValue())
 		return NULL
 	case "__repr__", "__str__":
 		return object.NewString(self.Inspect())
@@ -262,7 +288,7 @@ func prependSelf(self object.Object, args []object.Object) []object.Object {
 	return newArgs
 }
 
-func callInstanceMethod(ctx context.Context, instance *object.Instance, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+func callInstanceMethod(ctx context.Context, instance *object.Instance, method string, args []object.Object, keywords object.Kwargs, env *object.Environment) object.Object {
 	// First check if it's an instance field (which might be a callable)
 	if val, ok := instance.GetField(method); ok {
 		// If it's callable, call it without prepending self
@@ -294,7 +320,7 @@ func callInstanceMethod(ctx context.Context, instance *object.Instance, method s
 
 	// As in Python, __getattr__ supplies attributes normal lookup misses.
 	if getattr, ok := instance.Class.LookupMember("__getattr__"); ok {
-		attr := applyFunctionWithContext(ctx, getattr, []object.Object{instance, object.NewString(method)}, nil, env)
+		attr := applyFunctionWithContext(ctx, getattr, []object.Object{instance, object.NewString(method)}, object.Kwargs{}, env)
 		if propagates(attr) {
 			return attr
 		}
@@ -303,14 +329,14 @@ func callInstanceMethod(ctx context.Context, instance *object.Instance, method s
 	return attributeError(instance, method)
 }
 
-func callDictMethod(ctx context.Context, dict *object.Dict, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+func callDictMethod(ctx context.Context, dict *object.Dict, method string, args []object.Object, keywords object.Kwargs, env *object.Environment) object.Object {
 	// First check for library methods (callable functions stored in dict)
 	// This takes priority over dict instance methods like get, pop, etc.
 	if pair, ok := dict.GetByString(method); ok {
 		switch fn := pair.Value.(type) {
 		case *object.Builtin:
 			ctxWithEnv := SetEnvInContext(ctx, env)
-			return checkResult(fn.Fn(ctxWithEnv, object.NewKwargs(keywords), args...))
+			return checkResult(fn.Fn(ctxWithEnv, keywords, args...))
 		case *object.Function:
 			return applyFunctionWithContext(ctx, fn, args, keywords, env)
 		case *object.LambdaFunction:
@@ -322,7 +348,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if dict.Module != "" {
 			// Documented Scriptling convenience: a module constant called
 			// with no arguments returns itself (os.environ()).
-			if len(args) == 0 && len(keywords) == 0 {
+			if len(args) == 0 && keywords.Len() == 0 {
 				return pair.Value
 			}
 			return notCallableError(pair.Value)
@@ -339,7 +365,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(keywords) > 0 {
+		if keywords.Len() > 0 {
 			return errors.NewError("keys() does not accept keyword arguments")
 		}
 		if builtin, ok := builtins["keys"]; ok {
@@ -350,7 +376,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(keywords) > 0 {
+		if keywords.Len() > 0 {
 			return errors.NewError("values() does not accept keyword arguments")
 		}
 		if builtin, ok := builtins["values"]; ok {
@@ -361,7 +387,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(keywords) > 0 {
+		if keywords.Len() > 0 {
 			return errors.NewError("items() does not accept keyword arguments")
 		}
 		if builtin, ok := builtins["items"]; ok {
@@ -372,7 +398,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(args) < 1 || len(args) > 2 {
 			return errors.NewError("get() takes 1-2 arguments (%d given)", len(args))
 		}
-		if len(keywords) > 0 {
+		if keywords.Len() > 0 {
 			return errors.NewError("get() does not accept keyword arguments")
 		}
 		key, rerr := evalHashKeyChecked(ctx, args[0])
@@ -390,7 +416,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(args) < 1 || len(args) > 2 {
 			return errors.NewError("pop() takes 1-2 arguments (%d given)", len(args))
 		}
-		if len(keywords) > 0 {
+		if keywords.Len() > 0 {
 			return errors.NewError("pop() does not accept keyword arguments")
 		}
 		key, rerr := evalHashKeyChecked(ctx, args[0])
@@ -419,7 +445,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 			return errors.NewError("update() takes at most 1 argument (%d given)", len(args))
 		}
 		// Handle kwargs
-		for k, v := range keywords {
+		for k, v := range keywords.All() {
 			dict.SetByString(k, v)
 		}
 		// Handle positional argument (another dict or list of pairs)
@@ -462,7 +488,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(keywords) > 0 {
+		if keywords.Len() > 0 {
 			return errors.NewError("clear() does not accept keyword arguments")
 		}
 		dict.Clear()
@@ -471,7 +497,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(keywords) > 0 {
+		if keywords.Len() > 0 {
 			return errors.NewError("copy() does not accept keyword arguments")
 		}
 		copied := object.NewDictSized(dict.Len())
@@ -482,7 +508,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(args) < 1 || len(args) > 2 {
 			return errors.NewError("setdefault() takes 1-2 arguments (%d given)", len(args))
 		}
-		if len(keywords) > 0 {
+		if keywords.Len() > 0 {
 			return errors.NewError("setdefault() does not accept keyword arguments")
 		}
 		key, rerr := evalHashKeyChecked(ctx, args[0])
@@ -552,7 +578,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if len(args) < 1 || len(args) > 2 {
 			return errors.NewError("fromkeys() takes 1-2 arguments (%d given)", len(args))
 		}
-		if len(keywords) > 0 {
+		if keywords.Len() > 0 {
 			return errors.NewError("fromkeys() does not accept keyword arguments")
 		}
 		var defaultVal object.Object = NULL
@@ -593,7 +619,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 	dictKey := object.DictKey(object.NewString(method))
 	if pair, ok := dict.Lookup(dictKey); ok {
 		// If it's not a callable, just return the value
-		if len(args) == 0 && len(keywords) == 0 {
+		if len(args) == 0 && keywords.Len() == 0 {
 			return pair.Value
 		}
 		return notCallableError(pair.Value)
@@ -601,7 +627,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 	return attributeError(dict, method)
 }
 
-func callListMethod(ctx context.Context, list *object.List, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+func callListMethod(ctx context.Context, list *object.List, method string, args []object.Object, keywords object.Kwargs, env *object.Environment) object.Object {
 	switch method {
 	case "append":
 		if err := errors.ExactArgs(args, 1); err != nil {
@@ -797,11 +823,11 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		// Check for key and reverse kwargs
 		var keyFunc object.Object
 		reverse := false
-		if keywords != nil {
-			if kf, ok := keywords["key"]; ok {
-				keyFunc = kf
+		if keywords.Len() > 0 {
+			if kf, ok := keywords.Lookup("key"); ok && kf.Type() != object.NULL_OBJ {
+				keyFunc = kf // key=None means no key function
 			}
-			if rev, ok := keywords["reverse"]; ok {
+			if rev, ok := keywords.Lookup("reverse"); ok {
 				if b, err := rev.AsBool(); err == nil {
 					reverse = b
 				}
@@ -817,7 +843,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 				var callArg [1]object.Object // reused: a callee never keeps its args slice
 				for i, elem := range list.Elements {
 					callArg[0] = elem
-					key := applyFunctionWithContext(ctx, keyFunc, callArg[:], nil, env)
+					key := applyFunctionWithContext(ctx, keyFunc, callArg[:], object.Kwargs{}, env)
 					if object.IsError(key) {
 						return key
 					}
@@ -878,8 +904,8 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 // callBytesMethod handles method dispatch on Bytes values. The method set is
 // intentionally minimal — decode/hex/base64 cover the round-trips users
 // actually need in glue scripts.
-func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
-	if len(keywords) > 0 && (method == "split" || method == "rsplit") {
+func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args []object.Object, keywords object.Kwargs, env *object.Environment) object.Object {
+	if keywords.Len() > 0 && (method == "split" || method == "rsplit") {
 		var errObj object.Object
 		if args, errObj = splitKeywordArgs(method, args, keywords); errObj != nil {
 			return errObj
@@ -979,8 +1005,8 @@ func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args [
 				return err
 			}
 			encoding = s
-		} else if keywords != nil {
-			if encObj, ok := keywords["encoding"]; ok {
+		} else if keywords.Len() > 0 {
+			if encObj, ok := keywords.Lookup("encoding"); ok {
 				s, err := encObj.AsString()
 				if err != nil {
 					return err
@@ -994,8 +1020,8 @@ func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args [
 				return err
 			}
 			errorsMode = s
-		} else if keywords != nil {
-			if errObj, ok := keywords["errors"]; ok {
+		} else if keywords.Len() > 0 {
+			if errObj, ok := keywords.Lookup("errors"); ok {
 				s, err := errObj.AsString()
 				if err != nil {
 					return err
@@ -1076,13 +1102,13 @@ func stringsToBytes(parts []string) [][]byte {
 // into positional arguments (sep, maxsplit), so s.split(",", maxsplit=1) is
 // s.split(",", 1). Any other keyword, or one that repeats a positional
 // argument, is a TypeError.
-func splitKeywordArgs(method string, args []object.Object, keywords map[string]object.Object) ([]object.Object, object.Object) {
+func splitKeywordArgs(method string, args []object.Object, keywords object.Kwargs) ([]object.Object, object.Object) {
 	out := []object.Object{NULL, object.NewInteger(-1)}
 	n := copy(out, args)
 	if len(args) > 2 {
 		return args, nil // the method reports the arity error
 	}
-	for name, val := range keywords {
+	for name, val := range keywords.All() {
 		idx := 0
 		switch name {
 		case "sep":
@@ -1262,8 +1288,8 @@ func splitArgs(method string, args []object.Object, length int) (sep string, whi
 	return s.StringValue(), false, maxsplit, nil
 }
 
-func callStringMethod(ctx context.Context, str *object.String, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
-	if len(keywords) > 0 && (method == "split" || method == "rsplit") {
+func callStringMethod(ctx context.Context, str *object.String, method string, args []object.Object, keywords object.Kwargs, env *object.Environment) object.Object {
+	if keywords.Len() > 0 && (method == "split" || method == "rsplit") {
 		var errObj object.Object
 		if args, errObj = splitKeywordArgs(method, args, keywords); errObj != nil {
 			return errObj
@@ -1710,8 +1736,8 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				return errors.ParameterError("keepends", errObj)
 			}
 			keepends = b
-		} else if keywords != nil {
-			if kw := keywords["keepends"]; kw != nil {
+		} else if keywords.Len() > 0 {
+			if kw := keywords.Get("keepends"); kw != nil {
 				b, errObj := kw.AsBool()
 				if errObj != nil {
 					return errors.ParameterError("keepends", errObj)
@@ -1845,8 +1871,8 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				return errors.ParameterError("encoding", errObj)
 			}
 			encoding = enc
-		} else if keywords != nil {
-			if encObj, ok := keywords["encoding"]; ok {
+		} else if keywords.Len() > 0 {
+			if encObj, ok := keywords.Lookup("encoding"); ok {
 				enc, errObj := encObj.AsString()
 				if errObj != nil {
 					return errors.ParameterError("encoding", errObj)
@@ -1860,8 +1886,8 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 				return errors.ParameterError("errors", errObj)
 			}
 			errorsMode = em
-		} else if keywords != nil {
-			if emObj, ok := keywords["errors"]; ok {
+		} else if keywords.Len() > 0 {
+			if emObj, ok := keywords.Lookup("errors"); ok {
 				em, errObj := emObj.AsString()
 				if errObj != nil {
 					return errors.ParameterError("errors", errObj)
@@ -2188,7 +2214,7 @@ func callFloatArrayMethod(fa *object.FloatArray, method string, args []object.Ob
 	}
 }
 
-func callSetMethod(ctx context.Context, set *object.Set, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+func callSetMethod(ctx context.Context, set *object.Set, method string, args []object.Object, keywords object.Kwargs, env *object.Environment) object.Object {
 	// Frozen sets have no mutating methods at all, exactly as Python's
 	// frozenset: calling one is an AttributeError naming the method.
 	if set.Frozen {
@@ -2378,7 +2404,7 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 // with an optional ":spec" format spec applied via formatWithSpec. "{{" and
 // "}}" are literal braces. Values render the way str() would: exceptions use
 // their message, instances dispatch __str__ (whose raise propagates).
-func evalStringFormatMethod(ctx context.Context, format string, args []object.Object, keywords map[string]object.Object, env *object.Environment) (string, object.Object) {
+func evalStringFormatMethod(ctx context.Context, format string, args []object.Object, keywords object.Kwargs, env *object.Environment) (string, object.Object) {
 	var b strings.Builder
 	auto := 0
 	for i := 0; i < len(format); {
@@ -2428,26 +2454,41 @@ func evalStringFormatMethod(ctx context.Context, format string, args []object.Ob
 				}
 			}
 
+			// {0[key]} and {name.attr}: the argument part ends at the first
+			// '.' or '['; the rest is an access chain applied to it.
+			access := ""
+			for k := 0; k < len(name); k++ {
+				if name[k] == '.' || name[k] == '[' {
+					name, access = name[:k], name[k:]
+					break
+				}
+			}
 			var val object.Object
 			switch {
 			case name == "":
 				if auto >= len(args) {
-					return "", errors.NewError("not enough arguments for format string")
+					return "", &object.Exception{Message: fmt.Sprintf("Replacement index %d out of range for positional args tuple", auto), ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 				}
 				val = args[auto]
 				auto++
 			case name[0] >= '0' && name[0] <= '9':
 				idx, err := strconv.Atoi(name)
 				if err != nil || idx < 0 || idx >= len(args) {
-					return "", errors.NewError("format index %s out of range (%d arguments)", name, len(args))
+					return "", &object.Exception{Message: fmt.Sprintf("Replacement index %s out of range for positional args tuple", name), ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 				}
 				val = args[idx]
 			default:
-				kw, ok := keywords[name]
+				kw, ok := keywords.Lookup(name)
 				if !ok {
-					return "", errors.NewError("format field '%s' has no matching keyword argument", name)
+					return "", &object.Exception{Message: "'" + name + "'", ExceptionType: object.ExceptionTypeKeyError, Raised: true}
 				}
 				val = kw
+			}
+			if access != "" {
+				var aerr object.Object
+				if val, aerr = formatFieldAccess(ctx, val, access); aerr != nil {
+					return "", aerr
+				}
 			}
 
 			// Nested spec fields ({x:>{w}}) resolve against the same
@@ -2480,6 +2521,49 @@ func evalStringFormatMethod(ctx context.Context, format string, args []object.Ob
 	return b.String(), nil
 }
 
+// formatFieldAccess applies a str.format field's access chain (".attr",
+// "[index]", "[key]", repeated) to val, as Python does: a bracketed
+// all-digit index is an integer, anything else a string key.
+func formatFieldAccess(ctx context.Context, val object.Object, access string) (object.Object, object.Object) {
+	for access != "" {
+		switch access[0] {
+		case '.':
+			k := strings.IndexAny(access[1:], ".[")
+			attr := access[1:]
+			if k >= 0 {
+				attr, access = access[1:1+k], access[1+k:]
+			} else {
+				access = ""
+			}
+			if attr == "" {
+				return nil, errors.NewValueError("Empty attribute in format string")
+			}
+			val = getAttributeFn(ctx, val, attr)
+		case '[':
+			k := strings.IndexByte(access, ']')
+			if k < 0 {
+				return nil, errors.NewValueError("Missing ']' in format string")
+			}
+			key := access[1:k]
+			access = access[k+1:]
+			if access != "" && access[0] != '.' && access[0] != '[' {
+				return nil, errors.NewValueError("Only '.' or '[' may follow ']' in format field specifier")
+			}
+			var idx object.Object = object.NewString(key)
+			if n, err := strconv.Atoi(key); err == nil && key[0] != '-' && key[0] != '+' {
+				idx = object.NewInteger(int64(n))
+			}
+			val = evalIndexExpression(ctx, val, idx, false)
+		default:
+			return nil, errors.NewValueError("Only '.' or '[' may follow ']' in format field specifier")
+		}
+		if propagates(val) {
+			return nil, val
+		}
+	}
+	return val, nil
+}
+
 // renderFormatArg renders one format value: an optional !r/!s/!a conversion
 // is applied first (repr or str semantics, dunder raises propagating), then
 // an optional format spec. Without a conversion, exceptions use their message
@@ -2502,7 +2586,7 @@ func renderFormatArg(ctx context.Context, val object.Object, spec string, conv s
 // expandFormatSpecArgs resolves nested replacement fields inside a str.format
 // spec (dynamic widths like "{x:>{w}}") against the positional and keyword
 // arguments, mirroring the top-level field resolution.
-func expandFormatSpecArgs(ctx context.Context, spec string, args []object.Object, keywords map[string]object.Object, env *object.Environment) (string, object.Object) {
+func expandFormatSpecArgs(ctx context.Context, spec string, args []object.Object, keywords object.Kwargs, env *object.Environment) (string, object.Object) {
 	var b strings.Builder
 	for i := 0; i < len(spec); {
 		c := spec[i]
@@ -2528,7 +2612,7 @@ func expandFormatSpecArgs(ctx context.Context, spec string, args []object.Object
 			}
 			val = args[idx]
 		default:
-			kw, ok := keywords[name]
+			kw, ok := keywords.Lookup(name)
 			if !ok {
 				return "", errors.NewError("nested format field '%s' has no matching keyword argument", name)
 			}
@@ -2696,13 +2780,13 @@ func bytesFields(data []byte) [][]byte {
 
 // dictLastArg reads the optional `last` flag of popitem/move_to_end: the
 // positional argument at index pos, or the last= keyword; default True.
-func dictLastArg(args []object.Object, keywords map[string]object.Object, pos int, method string) (bool, object.Object) {
+func dictLastArg(args []object.Object, keywords object.Kwargs, pos int, method string) (bool, object.Object) {
 	last := true
 	given := false
 	if len(args) > pos {
 		last, given = isTruthy(args[pos]), true
 	}
-	for name, v := range keywords {
+	for name, v := range keywords.All() {
 		if name != "last" {
 			return false, errors.NewTypeErrorTagged("%s() got an unexpected keyword argument '%s'", method, name)
 		}

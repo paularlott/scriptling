@@ -12,9 +12,9 @@ type Iterator struct {
 	// otherwise. len() reports it, matching Python where only range among
 	// the lazy iterators has a length.
 	length int64
-	// rangeState, for range iterators, reports the next value, the stop
-	// and the step, so the values left can be indexed without iterating.
-	rangeState func() (next, stop, step int64)
+	// rng, for range iterators, holds the bounds and the next value, so the
+	// values left can be indexed without iterating.
+	rng *rangeInfo
 	// typeName is what type() reports ("range", "map"); nil is "iterator".
 	typeName *String
 	consumed bool // Track if iterator has been exhausted
@@ -27,10 +27,16 @@ type Iterator struct {
 // RangeRemaining reports, for a range iterator, the values it has yet to
 // produce: next, next+step, ... (n of them). ok is false for other iterators.
 func (it *Iterator) RangeRemaining() (next, step, n int64, ok bool) {
-	if it.rangeState == nil || it.consumed {
+	if it.rng == nil {
 		return 0, 0, 0, false
 	}
-	next, stop, step := it.rangeState()
+	if it.rng.origin {
+		return it.rng.start, it.rng.step, it.length, true
+	}
+	if it.consumed {
+		return 0, 0, 0, false
+	}
+	next, stop, step := it.rng.cur, it.rng.stop, it.rng.step
 	if step > 0 && stop > next {
 		n = (stop - next + step - 1) / step
 	} else if step < 0 && stop < next {
@@ -54,7 +60,7 @@ func NewInfiniteIterator(nextFn func() (Object, bool)) *Iterator {
 
 // Len returns the iterator's length when statically known (range iterators).
 func (it *Iterator) Len() (int64, bool) {
-	if it.length >= 0 && !it.consumed {
+	if it.length >= 0 && (!it.consumed || it.rng != nil && it.rng.origin) {
 		return it.length, true
 	}
 	return 0, false
@@ -95,6 +101,7 @@ func IterableToSlice(obj Object) ([]Object, bool) {
 		if iter.infinite {
 			return nil, false
 		}
+		iter = iter.Iter()
 		elements := make([]Object, 0)
 		for {
 			val, hasNext := iter.Next()
@@ -155,14 +162,28 @@ func IterableToSlice(obj Object) ([]Object, bool) {
 }
 
 func (it *Iterator) Type() ObjectType { return ITERATOR_OBJ }
-func (it *Iterator) Inspect() string  { return "<iterator>" }
+func (it *Iterator) Inspect() string {
+	if start, stop, step, ok := it.RangeObject(); ok {
+		if step == 1 {
+			return fmt.Sprintf("range(%d, %d)", start, stop)
+		}
+		return fmt.Sprintf("range(%d, %d, %d)", start, stop, step)
+	}
+	return "<iterator>"
+}
 
 func (it *Iterator) AsString() (string, Object)          { return "", errMustBeString }
 func (it *Iterator) AsInt() (int64, Object)              { return 0, errMustBeInteger }
 func (it *Iterator) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
-func (it *Iterator) AsBool() (bool, Object)              { return !it.consumed, nil }
 func (it *Iterator) AsList() ([]Object, Object)          { return nil, errMustBeList }
 func (it *Iterator) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
+
+func (it *Iterator) AsBool() (bool, Object) {
+	if it.rng != nil && it.rng.origin {
+		return it.length > 0, nil
+	}
+	return !it.consumed, nil
+}
 
 func (it *Iterator) CoerceString() (string, Object) { return it.Inspect(), nil }
 func (it *Iterator) CoerceInt() (int64, Object)     { return 0, errMustBeInteger }
@@ -174,7 +195,8 @@ func (it *Iterator) Next() (Object, bool) {
 		return nil, false
 	}
 	val, hasNext := it.next()
-	if !hasNext {
+	if !hasNext && (it.rng == nil || !it.rng.origin) {
+		// A range object is never used up: its next rewinds at the end.
 		it.consumed = true
 	}
 	return val, hasNext
@@ -207,36 +229,115 @@ func NewIterator(nextFn func() (Object, bool)) *Iterator {
 	})
 }
 
+// rangeInfo is a range's bounds and, for a cursor, the next value.
+type rangeInfo struct {
+	start, stop, step, cur int64
+	// origin marks the value range() returns. Python's range is a
+	// re-iterable sequence, not an iterator: loops, list() and iter() walk a
+	// fresh cursor (Iter), so the range itself keeps its values. A consumer
+	// that pulls Next on it directly sees it rewind once exhausted.
+	origin bool
+}
+
+func rangeLength(start, stop, step int64) int64 {
+	if step > 0 && stop > start {
+		return (stop - start + step - 1) / step
+	} else if step < 0 && stop < start {
+		return (start - stop - step - 1) / -step
+	}
+	return 0
+}
+
+// NewRange creates the value of range(start, stop, step): a re-iterable
+// range object (see rangeInfo.origin) that len(), indexing, slicing and
+// `in` answer arithmetically.
+func NewRange(start, stop, step int64) *Iterator {
+	it := NewRangeIterator(start, stop, step)
+	it.rng.origin = true
+	return it
+}
+
+// RangeObject reports the bounds of a range object made by NewRange; ok is
+// false for every other iterator, range cursors included.
+func (it *Iterator) RangeObject() (start, stop, step int64, ok bool) {
+	if it.rng == nil || !it.rng.origin {
+		return 0, 0, 0, false
+	}
+	return it.rng.start, it.rng.stop, it.rng.step, true
+}
+
+// RangeEqual is == between iterators: two range objects are equal when they
+// produce the same values, as in Python; other iterators only when they are
+// the same object.
+func (it *Iterator) RangeEqual(o *Iterator) bool {
+	if it == o {
+		return true
+	}
+	a, ok1 := it.rangeOrigin()
+	b, ok2 := o.rangeOrigin()
+	if !ok1 || !ok2 || it.length != o.length {
+		return false
+	}
+	return it.length == 0 || a.start == b.start && (it.length == 1 || a.step == b.step)
+}
+
+func (it *Iterator) rangeOrigin() (*rangeInfo, bool) {
+	if it.rng == nil || !it.rng.origin {
+		return nil, false
+	}
+	return it.rng, true
+}
+
+// RangeContains reports whether the range object it holds the integer v.
+func (it *Iterator) RangeContains(v int64) bool {
+	r := it.rng
+	if r.step > 0 {
+		if v < r.start || v >= r.stop {
+			return false
+		}
+	} else if v > r.start || v <= r.stop {
+		return false
+	}
+	return (v-r.start)%r.step == 0
+}
+
+// Iter returns the iterator to walk for one pass over it: a fresh cursor for
+// a range object, it itself otherwise.
+func (it *Iterator) Iter() *Iterator {
+	if it.rng != nil && it.rng.origin {
+		return NewRangeIterator(it.rng.start, it.rng.stop, it.rng.step)
+	}
+	return it
+}
+
 // RangeIterator creates an iterator for range(start, stop, step). Range is
 // the one lazy iterator with a known length (Python defines len() for it and
 // nothing else lazy), so the count is computed up front.
 func NewRangeIterator(start, stop, step int64) *Iterator {
-	current := start
-
-	length := int64(0)
-	if step > 0 && stop > start {
-		length = (stop - start + step - 1) / step
-	} else if step < 0 && stop < start {
-		length = (start - stop - step - 1) / -step
-	}
-
+	r := &rangeInfo{start: start, stop: stop, step: step, cur: start}
 	return &Iterator{
-		typeName:   rangeTypeName,
-		length:     length,
-		rangeState: func() (int64, int64, int64) { return current, stop, step },
+		typeName: rangeTypeName,
+		length:   rangeLength(start, stop, step),
+		rng:      r,
 		next: func() (Object, bool) {
 			if step > 0 {
-				if current >= stop {
+				if r.cur >= stop {
+					if r.origin {
+						r.cur = r.start
+					}
 					return nil, false
 				}
 			} else {
-				if current <= stop {
+				if r.cur <= stop {
+					if r.origin {
+						r.cur = r.start
+					}
 					return nil, false
 				}
 			}
 
-			val := NewInteger(current)
-			current += step
+			val := NewInteger(r.cur)
+			r.cur += step
 			return val, true
 		},
 	}
@@ -261,7 +362,7 @@ func isPropagatingValue(obj Object) bool {
 // other iterables are materialized once. ok is false for non-iterables.
 func IterSource(iterable Object) (func() (Object, bool), bool) {
 	if it, isIter := iterable.(*Iterator); isIter {
-		return it.Next, true
+		return it.Iter().Next, true
 	}
 	elements, ok := IterableToSlice(iterable)
 	if !ok {
@@ -418,6 +519,12 @@ func NewEnumerateIterator(iterable Object, start int64) *Iterator {
 
 // ReversedIterator creates an iterator that returns elements in reverse order
 func NewReversedIterator(iterable Object) *Iterator {
+	if it, ok := iterable.(*Iterator); ok {
+		if start, step, n, isRange := it.RangeRemaining(); isRange {
+			last := start + (n-1)*step
+			return NewRangeIterator(last, last-n*step, -step)
+		}
+	}
 	if fa, ok := iterable.(*FloatArray); ok {
 		if fa.Is2D() {
 			index := fa.Rows() - 1

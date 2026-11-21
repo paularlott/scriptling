@@ -340,7 +340,7 @@ func extractRequestArgs(kwargs object.Kwargs, args []object.Object, hasData bool
 	options := make(map[string]object.Object)
 
 	// 1. Handle kwargs
-	for k, v := range kwargs.Kwargs {
+	for k, v := range kwargs.All() {
 		if k == "url" {
 			if s, err := v.AsString(); err == nil {
 				url = s

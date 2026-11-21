@@ -1200,15 +1200,15 @@ func pipelineMethod(self *object.Instance, ctx context.Context, kwargs object.Kw
 
 // filterPipelineKwargs strips pipeline-control keys, leaving only completion kwargs.
 func filterPipelineKwargs(kwargs object.Kwargs) object.Kwargs {
-	filtered := object.NewKwargs(map[string]object.Object{})
-	for key, value := range kwargs.Kwargs {
+	filtered := map[string]object.Object{}
+	for key, value := range kwargs.All() {
 		switch key {
 		case "max_parallel", "ask":
 			continue
 		}
-		filtered.Kwargs[key] = value
+		filtered[key] = value
 	}
-	return filtered
+	return object.NewKwargs(filtered)
 }
 
 func resultAsMap(obj object.Object) (map[string]any, bool) {
@@ -1239,14 +1239,14 @@ func toSlice(input any) ([]any, error) {
 }
 
 func filterParallelKwargs(kwargs object.Kwargs) object.Kwargs {
-	filtered := object.NewKwargs(map[string]object.Object{})
-	for key, value := range kwargs.Kwargs {
+	filtered := map[string]object.Object{}
+	for key, value := range kwargs.All() {
 		if key == "max_parallel" {
 			continue
 		}
-		filtered.Kwargs[key] = value
+		filtered[key] = value
 	}
-	return filtered
+	return object.NewKwargs(filtered)
 }
 
 // createClientInstance creates a new scriptling Instance wrapping an AI client
