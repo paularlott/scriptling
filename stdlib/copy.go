@@ -86,8 +86,8 @@ func shallowCopy(obj object.Object) object.Object {
 		if isDeque(o) {
 			return copyDeque(o)
 		}
-		if _, ok := o.NativeData.(*decimal); ok {
-			return o // immutable, safe to share
+		if _, ok := o.NativeData.(*decimal); ok || o.Class.IsEnum {
+			return o // immutable or a singleton (an enum member), shared
 		}
 		clone := object.NewInstance(o.Class)
 		o.RangeFields(func(k string, v object.Object) bool {
@@ -211,6 +211,9 @@ func deepCopyDepth(ctx context.Context, obj object.Object, memo map[object.Objec
 	case *object.Instance:
 		if c, ok := memo[obj]; ok {
 			return c
+		}
+		if _, ok := v.NativeData.(*decimal); ok || v.Class.IsEnum {
+			return v // immutable or a singleton (an enum member), shared
 		}
 		// A __deepcopy__ method takes over completely, as in Python. Python's
 		// signature is __deepcopy__(self, memo); the one-argument form is

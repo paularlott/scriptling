@@ -1373,6 +1373,9 @@ func generatorStep(ctx context.Context, g *object.Instance, st *genState, it *ge
 		if !ok {
 			return st.fail(ctx, g, it.region, errors.NewTypeErrorTagged("with statement requires an object with __enter__ and __exit__ methods"))
 		}
+		if errObj := checkContextManager(inst); errObj != nil {
+			return st.fail(ctx, g, it.region, errObj)
+		}
 		enter := callDunderMethod(ctx, inst, "__enter__", nil, genv)
 		if enter == nil {
 			enter = NULL

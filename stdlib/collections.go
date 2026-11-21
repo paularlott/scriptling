@@ -37,11 +37,11 @@ var defaultDictBuiltin = &object.Builtin{
 			case *object.Dict:
 				dd.StoreFrom(init)
 			case *object.List:
-				if err := defaultDictAddPairs(dd, init.Elements); err != nil {
+				if err := defaultDictAddPairs(ctx, dd, init.Elements); err != nil {
 					return err
 				}
 			case *object.Tuple:
-				if err := defaultDictAddPairs(dd, init.Elements); err != nil {
+				if err := defaultDictAddPairs(ctx, dd, init.Elements); err != nil {
 					return err
 				}
 			default:
@@ -50,7 +50,7 @@ var defaultDictBuiltin = &object.Builtin{
 				if errObj != nil {
 					return errObj
 				}
-				if err := defaultDictAddPairs(dd, elems); err != nil {
+				if err := defaultDictAddPairs(ctx, dd, elems); err != nil {
 					return err
 				}
 			}
@@ -76,7 +76,7 @@ Example:
   nested = defaultdict(lambda: defaultdict(int))`,
 }
 
-func defaultDictAddPairs(dd *object.Dict, items []object.Object) object.Object {
+func defaultDictAddPairs(ctx context.Context, dd *object.Dict, items []object.Object) object.Object {
 	for _, item := range items {
 		var pair []object.Object
 		switch p := item.(type) {
@@ -88,7 +88,11 @@ func defaultDictAddPairs(dd *object.Dict, items []object.Object) object.Object {
 		if len(pair) != 2 {
 			return errors.NewValueError("dictionary update sequence element must be a (key, value) pair")
 		}
-		dd.Store(object.DictKey(pair[0]), pair[0], pair[1])
+		k, errObj := object.HashKey(ctx, pair[0])
+		if errObj != nil {
+			return errObj
+		}
+		dd.Store(k, pair[0], pair[1])
 	}
 	return nil
 }
@@ -135,11 +139,11 @@ Example:
 			if len(args) == 1 {
 				switch arg := args[0].(type) {
 				case *object.List:
-					if err := defaultDictAddPairs(od, arg.Elements); err != nil {
+					if err := defaultDictAddPairs(ctx, od, arg.Elements); err != nil {
 						return err
 					}
 				case *object.Tuple:
-					if err := defaultDictAddPairs(od, arg.Elements); err != nil {
+					if err := defaultDictAddPairs(ctx, od, arg.Elements); err != nil {
 						return err
 					}
 				case *object.Dict:
@@ -150,7 +154,7 @@ Example:
 					if errObj != nil {
 						return errObj
 					}
-					if err := defaultDictAddPairs(od, elems); err != nil {
+					if err := defaultDictAddPairs(ctx, od, elems); err != nil {
 						return err
 					}
 				}
@@ -304,9 +308,9 @@ Example:
 					// datetime uses) so print() shows P(x=1, y='hi').
 					// A display form past the output limit is left to
 					// __repr__, which reports it when asked.
-					if display, errObj := fieldsRepr(nt.Class.Name, fieldNames, func(name string) (object.Object, bool) {
+					if display, ok := fieldsDisplay(nt.Class.Name, fieldNames, func(name string) (object.Object, bool) {
 						return nt.GetField(name)
-					}); errObj == nil {
+					}); ok {
 						nt.SetField("__str_repr__", object.NewString(display))
 					}
 					return &object.Null{}
@@ -416,7 +420,7 @@ Example:
 						return err
 					}
 					nt := args[0].(*object.Instance)
-					display, errObj := fieldsRepr(nt.Class.Name, fieldNames, nt.GetField)
+					display, errObj := fieldsRepr(ctx, nt.Class.Name, fieldNames, nt.GetField)
 					if errObj != nil {
 						return errObj
 					}
@@ -445,9 +449,9 @@ Example:
 					}
 					// Recompute the precomputed display form for the new values.
 					delete(fields, "__str_repr__")
-					if display, errObj := fieldsRepr(nt.Class.Name, fieldNames, func(name string) (object.Object, bool) {
+					if display, ok := fieldsDisplay(nt.Class.Name, fieldNames, func(name string) (object.Object, bool) {
 						return fields[name], true
-					}); errObj == nil {
+					}); ok {
 						fields["__str_repr__"] = object.NewString(display)
 					}
 					return object.NewInstanceWithFields(nt.Class, fields)
@@ -507,6 +511,81 @@ Example:
 				return nil, false
 			}
 
+			// + and * make plain tuples, as on any tuple.
+			methods["__add__"] = &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__add__", kwargs); err != nil {
+						return err
+					}
+					if err := errors.ExactArgs(args, 2); err != nil {
+						return err
+					}
+					ov, ok := otherValues(args[1])
+					if !ok {
+						return errors.NewTypeErrorTagged("can only concatenate tuple (not \"%s\") to tuple", object.PythonTypeName(args[1]))
+					}
+					return &object.Tuple{Elements: append(fieldValues(args[0].(*object.Instance)), ov...)}
+				},
+				HelpText: `__add__(other) - Concatenate as tuples`,
+			}
+			methods["__radd__"] = &object.Builtin{
+				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__radd__", kwargs); err != nil {
+						return err
+					}
+					if err := errors.ExactArgs(args, 2); err != nil {
+						return err
+					}
+					ov, ok := otherValues(args[1])
+					if !ok {
+						return errors.NewTypeErrorTagged("can only concatenate tuple (not \"%s\") to tuple", object.PythonTypeName(args[1]))
+					}
+					return &object.Tuple{Elements: append(append([]object.Object(nil), ov...), fieldValues(args[0].(*object.Instance))...)}
+				},
+				HelpText: `__radd__(other) - Concatenate as tuples`,
+			}
+			repeat := func(name string) *object.Builtin {
+				return &object.Builtin{
+					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+						if err := errors.NoKwargs(name, kwargs); err != nil {
+							return err
+						}
+						if err := errors.ExactArgs(args, 2); err != nil {
+							return err
+						}
+						var n int64
+						switch c := args[1].(type) {
+						case *object.Integer:
+							n = c.IntValue()
+						case *object.Boolean:
+							if c.BoolValue() {
+								n = 1
+							}
+						default:
+							return errors.NewTypeErrorTagged("can't multiply sequence by non-int of type '%s'", object.PythonTypeName(args[1]))
+						}
+						vals := fieldValues(args[0].(*object.Instance))
+						if n <= 0 || len(vals) == 0 {
+							return &object.Tuple{Elements: []object.Object{}}
+						}
+						if n > (1<<27)/int64(len(vals)) {
+							return errors.NewMemoryError("repeated tuple is too large")
+						}
+						if errObj := object.CheckElements(int64(len(vals)) * n); errObj != nil {
+							return errObj
+						}
+						out := make([]object.Object, 0, int64(len(vals))*n)
+						for i := int64(0); i < n; i++ {
+							out = append(out, vals...)
+						}
+						return &object.Tuple{Elements: out}
+					},
+					HelpText: name + `(n) - Repeat as a tuple`,
+				}
+			}
+			methods["__mul__"] = repeat("__mul__")
+			methods["__rmul__"] = repeat("__rmul__")
+
 			// Named tuples compare by value, as tuples do (and equal a plain
 			// tuple with the same values).
 			methods["__eq__"] = &object.Builtin{
@@ -522,7 +601,11 @@ Example:
 						return object.NewBoolean(false)
 					}
 					for i, av := range fieldValues(args[0].(*object.Instance)) {
-						if av.Inspect() != ov[i].Inspect() {
+						eq, errObj := object.Equal(ctx, av, ov[i])
+						if errObj != nil {
+							return errObj
+						}
+						if !eq {
 							return object.NewBoolean(false)
 						}
 					}
@@ -568,7 +651,7 @@ Example:
 
 			// Named tuples are immutable: field writes raise AttributeError
 			// (shares the marker frozen dataclasses use).
-			methods["__frozen__"] = object.NewBoolean(true)
+			methods["__frozen__"] = object.NewString("namedtuple")
 
 			// P._fields on the class itself, as in Python.
 			classFields := make([]object.Object, len(fieldNames))
@@ -576,6 +659,9 @@ Example:
 				classFields[i] = object.NewString(name)
 			}
 			methods["_fields"] = &object.Tuple{Elements: classFields}
+			// Class patterns match positional sub-patterns by field, as in
+			// Python: case P(x, y).
+			methods["__match_args__"] = &object.Tuple{Elements: classFields}
 
 			// ...and hash by content, as tuples do (consistent with __eq__).
 			methods["__hash__"] = &object.Builtin{
@@ -588,7 +674,10 @@ Example:
 					}
 					// Hash as the tuple of the values does, so a named
 					// tuple and the equal plain tuple hash alike.
-					str := object.DictKey(&object.Tuple{Elements: fieldValues(args[0].(*object.Instance))})
+					str, errObj := object.HashKey(ctx, &object.Tuple{Elements: fieldValues(args[0].(*object.Instance))})
+					if errObj != nil {
+						return errObj
+					}
 					h := uint64(14695981039346656037)
 					for i := 0; i < len(str); i++ {
 						h ^= uint64(str[i])
@@ -640,7 +729,11 @@ Example:
 					}
 					n := 0
 					for _, v := range fieldValues(args[0].(*object.Instance)) {
-						if objectsEqual(v, args[1]) {
+						eq, errObj := object.Equal(ctx, v, args[1])
+						if errObj != nil {
+							return errObj
+						}
+						if eq {
 							n++
 						}
 					}
@@ -657,7 +750,11 @@ Example:
 						return err
 					}
 					for i, v := range fieldValues(args[0].(*object.Instance)) {
-						if objectsEqual(v, args[1]) {
+						eq, errObj := object.Equal(ctx, v, args[1])
+						if errObj != nil {
+							return errObj
+						}
+						if eq {
 							return object.NewInteger(int64(i))
 						}
 					}
@@ -755,10 +852,16 @@ type reprBuilder struct {
 	b     strings.Builder
 	limit int64
 	err   object.Object
+	// ctx, when set, renders values as repr() does in a script, so an
+	// instance held as a value shows its own __repr__.
+	ctx context.Context
+	// sawInstance records that, without a context, an instance was
+	// rendered in its default form.
+	sawInstance bool
 }
 
-func newReprBuilder() *reprBuilder {
-	return &reprBuilder{limit: object.OutputLimit()}
+func newReprBuilder(ctx context.Context) *reprBuilder {
+	return &reprBuilder{limit: object.OutputLimit(), ctx: ctx}
 }
 
 // WriteString appends s, recording a MemoryError once over the limit.
@@ -772,14 +875,15 @@ func (r *reprBuilder) WriteString(s string) {
 	}
 }
 
-// Value appends v as reprValue renders it, with containers rendered within
-// the limit (a raise while rendering is recorded).
+// Value appends v's repr (a raise while rendering is recorded). Without a
+// context an instance, at any depth, cannot be asked for its __repr__: it
+// renders its default form and sawInstance is set.
 func (r *reprBuilder) Value(v object.Object) {
 	if r.err != nil {
 		return
 	}
-	if object.IsReprContainer(v) {
-		s, errObj := object.InspectRepr(v, nil)
+	if r.ctx != nil {
+		s, errObj := object.Repr(r.ctx, v)
 		if errObj != nil {
 			r.err = errObj
 			return
@@ -787,7 +891,22 @@ func (r *reprBuilder) Value(v object.Object) {
 		r.WriteString(s)
 		return
 	}
-	r.WriteString(reprValue(v))
+	switch x := v.(type) {
+	case *object.String:
+		r.WriteString(object.ReprString(x.StringValue()))
+		return
+	case *object.Instance:
+		r.sawInstance = true
+	}
+	s, errObj := object.InspectRepr(v, func(inst *object.Instance) (string, object.Object) {
+		r.sawInstance = true
+		return inst.Inspect(), nil
+	})
+	if errObj != nil {
+		r.err = errObj
+		return
+	}
+	r.WriteString(s)
 }
 
 // Result returns the repr, or the error that stopped it.
@@ -796,8 +915,22 @@ func (r *reprBuilder) Result() (string, object.Object) {
 }
 
 // fieldsRepr renders Typename(name=value, ...) for the fields get returns.
-func fieldsRepr(typename string, names []string, get func(string) (object.Object, bool)) (string, object.Object) {
-	r := newReprBuilder()
+func fieldsRepr(ctx context.Context, typename string, names []string, get func(string) (object.Object, bool)) (string, object.Object) {
+	return fieldsReprBuilder(ctx, typename, names, get).Result()
+}
+
+// fieldsDisplay is fieldsRepr without a context, for a display form
+// computed ahead of time. ok is false when that form would be wrong: it
+// passed the output limit, or a field holds an instance, whose __repr__
+// needs a context (repr() and str() call the type's __repr__ instead).
+func fieldsDisplay(typename string, names []string, get func(string) (object.Object, bool)) (display string, ok bool) {
+	r := fieldsReprBuilder(nil, typename, names, get)
+	out, errObj := r.Result()
+	return out, errObj == nil && !r.sawInstance
+}
+
+func fieldsReprBuilder(ctx context.Context, typename string, names []string, get func(string) (object.Object, bool)) *reprBuilder {
+	r := newReprBuilder(ctx)
 	r.WriteString(typename)
 	r.WriteString("(")
 	first := true
@@ -815,20 +948,7 @@ func fieldsRepr(typename string, names []string, get func(string) (object.Object
 		r.Value(v)
 	}
 	r.WriteString(")")
-	return r.Result()
-}
-
-// reprValue renders a value for a namedtuple repr: strings use Python
-// quoting, everything else uses its Inspect.
-func reprValue(v object.Object) string {
-	if s, ok := v.(*object.String); ok {
-		q := "'"
-		if strings.Contains(s.StringValue(), "'") && !strings.Contains(s.StringValue(), "\"") {
-			q = "\""
-		}
-		return q + s.StringValue() + q
-	}
-	return v.Inspect()
+	return r
 }
 
 // sliceElements applies Python slice semantics (start/end/step, negative

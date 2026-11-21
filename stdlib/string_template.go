@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/paularlott/scriptling/errors"
-	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -84,23 +83,7 @@ func parseTemplate(tmpl, delim string) []templatePart {
 
 // templateValueString is str(v) for a substituted value.
 func templateValueString(ctx context.Context, v object.Object) (string, object.Object) {
-	switch x := v.(type) {
-	case *object.String:
-		return x.StringValue(), nil
-	case *object.Instance:
-		if m, ok := x.Class.LookupMember("__str__"); ok {
-			if eval := evaliface.FromContext(ctx); eval != nil {
-				r := eval.CallObjectFunction(ctx, m, []object.Object{x}, nil, nil)
-				if object.IsPropagating(r) {
-					return "", r
-				}
-				if s, ok := r.(*object.String); ok {
-					return s.StringValue(), nil
-				}
-			}
-		}
-	}
-	return v.Inspect(), nil
+	return object.Str(ctx, v)
 }
 
 // templateSubstitute implements substitute (safe=false) and safe_substitute.

@@ -12,6 +12,12 @@ import (
 // held to maxCompareDepth.
 func init() {
 	object.SetCompareHooks(hookEqual, hookCompare)
+	object.SetReprHook(func(ctx context.Context, obj object.Object) (string, object.Object) {
+		return renderConvertedValue(ctx, obj, "r", GetEnvFromContext(ctx))
+	})
+	object.SetStrHook(func(ctx context.Context, obj object.Object) (string, object.Object) {
+		return renderConvertedValue(ctx, obj, "s", GetEnvFromContext(ctx))
+	})
 }
 
 func hookEqual(ctx context.Context, a, b object.Object) (bool, object.Object) {

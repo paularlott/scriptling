@@ -25,6 +25,8 @@ import (
 // Forward declarations for complex builtins
 // These are defined after the builtins map for better organization
 var (
+	// instanceHashFn is instanceHash; set in init() to break the init cycle.
+	instanceHashFn func(ctx context.Context, inst *object.Instance) (object.Object, int64, object.Object)
 	mapFunction    func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 	filterFunction func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
 	sortedFunction func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object
@@ -45,8 +47,6 @@ var (
 	// getAttributeFn is getAttribute, set in init() to break the init cycle
 	getAttributeFn func(ctx context.Context, obj object.Object, name string) object.Object
 
-	// hashInstanceFn calls __hash__ on an instance; set in init() to break init cycle
-	hashInstanceFn func(ctx context.Context, inst *object.Instance) object.Object
 	// instanceDunderFn is callDunderMethod (round() and divmod() call
 	// __round__ and __divmod__); set in init() to break the init cycle.
 	instanceDunderFn func(ctx context.Context, inst *object.Instance, method string, args []object.Object, env *object.Environment) object.Object
@@ -447,9 +447,9 @@ For exceptions, returns just the exception message.`,
 						}
 					}
 				}
-				return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
+				return errors.NewTypeErrorTagged("int() argument must be a string, a bytes-like object or a real number, not '%s'", getTypeName(arg))
 			default:
-				return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
+				return errors.NewTypeErrorTagged("int() argument must be a string, a bytes-like object or a real number, not '%s'", getTypeName(arg))
 			}
 		},
 		HelpText: `int(x[, base]) - Convert an object to an integer
@@ -494,9 +494,9 @@ Examples: int("ff", 16) == 255, int("0b1010", 2) == 10, int("77", 8) == 63`,
 						}
 					}
 				}
-				return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
+				return errors.NewTypeErrorTagged("float() argument must be a string or a real number, not '%s'", getTypeName(arg))
 			default:
-				return errors.NewTypeError("INTEGER, FLOAT, or STRING", arg.Type().String())
+				return errors.NewTypeErrorTagged("float() argument must be a string or a real number, not '%s'", getTypeName(arg))
 			}
 		},
 		HelpText: `float(obj) - Convert an object to a float
@@ -545,6 +545,11 @@ Converts an integer, string, or float to a float.`,
 				case *object.Bytes:
 					return errors.NewTypeErrorTagged("sum() can't sum bytes [use b''.join(seq) instead]")
 				default:
+					if v, ok := valueMember(start); ok {
+						if _, isStr := v.(*object.String); isStr {
+							return errors.NewTypeErrorTagged("sum() can't sum strings [use ''.join(seq) instead]")
+						}
+					}
 					// Any other start (a list, a tuple, an instance with
 					// __add__) sums with +, as Python does.
 					return sumGenericFn(ctx, start, args[0])
@@ -663,6 +668,12 @@ Example:
 			}
 			var vals [3]int64
 			for i, a := range args {
+				if v, errObj, ok := instanceIndex(ctx, a); ok {
+					if errObj != nil {
+						return errObj
+					}
+					a = object.NewInteger(v)
+				}
 				v, errObj := rangeArg(a)
 				if errObj != nil {
 					return errObj
@@ -850,9 +861,13 @@ Use list(zip(...)) to get a list.`,
 					return errors.NewRuntimeError("super(): __class__ is not a class")
 				}
 
-				// Find instance (conventionally 'self')
-				// Note: This relies on the first argument being named 'self'
-				obj, ok = env.Get("self")
+				// The instance is the method's first argument, whatever it
+				// is named (slot 0 holds the first parameter); else a
+				// variable named self, for super() in a nested scope.
+				obj, ok = env.GetSlotByIndex(0)
+				if inst, isInst := obj.(*object.Instance); !ok || !isInst || !instanceOfClass(inst, classObj) {
+					obj, ok = env.Get("self")
+				}
 				if !ok {
 					return &object.Exception{Message: "super(): 'self' not found - parameterless super() requires 'self' argument", ExceptionType: object.ExceptionTypeRuntimeError, Raised: true}
 				}
@@ -1142,6 +1157,12 @@ like Python. Returns an integer if ndigits is omitted or 0.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
+			if v, errObj, ok := instanceIndex(ctx, args[0]); ok {
+				if errObj != nil {
+					return errObj
+				}
+				args = []object.Object{object.NewInteger(v)}
+			}
 			num, err := args[0].AsInt()
 			if err != nil {
 				return errors.ParameterError("x", err)
@@ -1161,6 +1182,12 @@ like Python. Returns an integer if ndigits is omitted or 0.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
+			if v, errObj, ok := instanceIndex(ctx, args[0]); ok {
+				if errObj != nil {
+					return errObj
+				}
+				args = []object.Object{object.NewInteger(v)}
+			}
 			num, err := args[0].AsInt()
 			if err != nil {
 				return errors.ParameterError("x", err)
@@ -1179,6 +1206,12 @@ like Python. Returns an integer if ndigits is omitted or 0.`,
 			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
+			}
+			if v, errObj, ok := instanceIndex(ctx, args[0]); ok {
+				if errObj != nil {
+					return errObj
+				}
+				args = []object.Object{object.NewInteger(v)}
 			}
 			num, err := args[0].AsInt()
 			if err != nil {
@@ -1505,6 +1538,34 @@ The argument must be a string of exactly one character.`,
 				if result := callDunderMethodFn(ctx, inst, "__reversed__", nil, GetEnvFromContext(ctx)); result != nil {
 					return result
 				}
+				// The sequence protocol: __len__ and __getitem__ give the
+				// items last first.
+				_, hasLen := inst.Class.LookupMember("__len__")
+				_, hasItem := inst.Class.LookupMember("__getitem__")
+				if hasLen && hasItem {
+					env := GetEnvFromContext(ctx)
+					lenResult := callDunderMethodFn(ctx, inst, "__len__", nil, env)
+					if propagates(lenResult) {
+						return lenResult
+					}
+					n, errObj := checkLenResult(lenResult)
+					if errObj != nil {
+						return errObj
+					}
+					if errObj := checkElementCount(int(n)); errObj != nil {
+						return errObj
+					}
+					elems := make([]object.Object, 0, n)
+					for i := int64(0); i < n; i++ {
+						item := callDunderMethodFn(ctx, inst, "__getitem__", []object.Object{object.NewInteger(i)}, env)
+						if propagates(item) {
+							return item
+						}
+						elems = append(elems, item)
+					}
+					return object.NewReversedIterator(&object.List{Elements: elems}).SetTypeName(object.NewString("reversed"))
+				}
+				return errors.NewTypeErrorTagged("'%s' object is not reversible", inst.Class.Name)
 			}
 			switch args[0].(type) {
 			case *object.List, *object.Tuple, *object.String, *object.Iterator, *object.FloatArray,
@@ -1843,31 +1904,27 @@ For other objects, returns the same as str().`,
 			}
 			// Call __hash__ on instances that define it
 			if inst, ok := args[0].(*object.Instance); ok {
-				if _, hasHash := inst.Class.Methods["__hash__"]; hasHash {
-					return hashInstanceFn(ctx, inst)
+				fn, n, errObj := instanceHashFn(ctx, inst)
+				if errObj != nil {
+					return errObj
 				}
-			}
-			if !hashableAsKey(args[0]) {
-				return &object.Exception{
-					Message:       fmt.Sprintf("unhashable type: '%s'", getTypeName(args[0])),
-					ExceptionType: object.ExceptionTypeTypeError,
-					Raised:        true,
+				if fn != nil {
+					return object.NewInteger(n)
+				}
+				// The identity hash, as object.__hash__ gives it: id >> 4.
+				if id, ok := builtinByName("id").Fn(ctx, object.Kwargs{}, inst).(*object.Integer); ok {
+					return object.NewInteger(id.IntValue() >> 4)
 				}
 			}
 			// FNV-1a hash algorithm - fast and good distribution. It runs over
 			// the value's dict key, so values that are equal as dict keys
-			// (1, 1.0 and True) hash alike.
-			str := object.DictKey(args[0])
-			const (
-				offset64 = 14695981039346656037
-				prime64  = 1099511628211
-			)
-			h := uint64(offset64)
-			for i := 0; i < len(str); i++ {
-				h ^= uint64(str[i])
-				h *= prime64
+			// (1, 1.0 and True, or equal instances in equal tuples) hash
+			// alike.
+			str, errObj := evalHashKeyChecked(ctx, args[0])
+			if errObj != nil {
+				return errObj
 			}
-			return object.NewInteger(int64(h))
+			return object.NewInteger(hashKeyText(str))
 		},
 		HelpText: `hash(object) - Return the hash value of an object
 
@@ -2052,6 +2109,13 @@ Only works on dict-like objects.`,
 			// Delete attribute from object
 			switch obj := args[0].(type) {
 			case *object.Instance:
+				if _, ok := obj.Class.LookupMember("__delattr__"); ok {
+					result := callDunderMethodFn(ctx, obj, "__delattr__", []object.Object{object.NewString(name)}, GetEnvFromContext(ctx))
+					if propagates(result) {
+						return result
+					}
+					return NULL
+				}
 				if _, ok := obj.GetField(name); ok {
 					obj.DeleteField(name)
 					obj.InvalidateBoundMethod(name)
@@ -2673,7 +2737,11 @@ func compareForSortDepth(ctx context.Context, left, right object.Object, env *ob
 		if depth > 0 {
 			ctx = object.WithCompareDepth(ctx, depth+1)
 		}
-		return compareObjectsCtx(ctx, left, right, env)
+		c, errObj := compareObjectsCtx(ctx, left, right, env)
+		if errObj != nil && unorderedButEqual(budget, left, right, depth) {
+			return 0, nil
+		}
+		return c, errObj
 	case *object.Tuple:
 		if r, ok := right.(*object.Tuple); ok {
 			if l == r {
@@ -2701,13 +2769,30 @@ func compareForSortDepth(ctx context.Context, left, right object.Object, env *ob
 		if depth > 0 {
 			ctx = object.WithCompareDepth(ctx, depth+1)
 		}
-		return compareObjectsCtx(ctx, left, right, env)
+		c, errObj := compareObjectsCtx(ctx, left, right, env)
+		if errObj != nil && unorderedButEqual(budget, left, right, depth) {
+			return 0, nil
+		}
+		return c, errObj
+	}
+	if unorderedButEqual(budget, left, right, depth) {
+		return 0, nil
 	}
 	return 0, &object.Exception{
 		Message:       fmt.Sprintf("'<' not supported between instances of '%s' and '%s'", getTypeName(left), getTypeName(right)),
 		ExceptionType: object.ExceptionTypeTypeError,
 		Raised:        true,
 	}
+}
+
+// instanceOfClass reports whether inst's class is cls or derives from it.
+func instanceOfClass(inst *object.Instance, cls *object.Class) bool {
+	for c := inst.Class; c != nil; c = c.BaseClass {
+		if c == cls {
+			return true
+		}
+	}
+	return false
 }
 
 // cmpFloats compares two numbers for the boolean/number ordering arms.
@@ -2762,6 +2847,27 @@ func compareElements(ctx context.Context, a, b []object.Object, env *object.Envi
 		return 1, nil
 	}
 	return 0, nil
+}
+
+// unorderedButEqual is compareForSortDepth's answer for two elements of
+// sequences being compared (depth > 0) that cannot be ordered: as Python
+// compares sequences by their first unequal elements, equal ones (equal
+// instances, two Nones) compare as 0 and the comparison goes on. Kept out
+// of line: it is the error path.
+//
+//go:noinline
+func unorderedButEqual(budget *cmpBudget, a, b object.Object, depth int) bool {
+	if depth == 0 {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	if budget == nil {
+		budget = &cmpBudget{}
+	}
+	eq, errObj := deepEqual(budget, a, b, depth)
+	return errObj == nil && eq
 }
 
 // Initialize the complex builtin functions
@@ -2840,10 +2946,8 @@ func init() {
 	getAttributeFn = getAttribute
 	attachTypeMethods()
 	instanceDunderFn = callDunderMethod
-	hashInstanceFn = func(ctx context.Context, inst *object.Instance) object.Object {
-		hashFn := inst.Class.Methods["__hash__"]
-		return applyFunctionWithContext(ctx, hashFn, []object.Object{inst}, object.Kwargs{}, nil)
-	}
+	object.SetHashKeyHook(evalHashKeyChecked)
+	instanceHashFn = instanceHash
 
 	// Build reverse lookup for isinstance() to support bare type names
 	typeTypeBuiltin = builtins["type"]
@@ -2914,6 +3018,30 @@ func init() {
 			b.Repr = "<class '" + name + "'>"
 		}
 	}
+}
+
+// instanceIndex converts an instance to an integer through its __index__,
+// where Python requires an integer (a sequence index, range(), hex()). ok
+// is false when obj is not an instance with __index__.
+func instanceIndex(ctx context.Context, obj object.Object) (v int64, errObj object.Object, ok bool) {
+	inst, isInst := obj.(*object.Instance)
+	if !isInst {
+		return 0, nil, false
+	}
+	if _, has := inst.Class.LookupMember("__index__"); !has {
+		return 0, nil, false
+	}
+	result := callDunderMethodFn(ctx, inst, "__index__", nil, GetEnvFromContext(ctx))
+	if propagates(result) {
+		return 0, result, true
+	}
+	switch r := result.(type) {
+	case *object.Integer:
+		return r.IntValue(), nil, true
+	case *object.Boolean:
+		return boolToInt64(r.BoolValue()), nil, true
+	}
+	return 0, errors.NewTypeErrorTagged("__index__ returned non-int (type %s)", getTypeName(result)), true
 }
 
 // rangeArg is one argument of range(): an int (or a bool). A float or any

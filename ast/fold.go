@@ -308,6 +308,9 @@ func foldExpression(expr Expression) Expression {
 			e.Patterns[i] = foldExpression(p)
 		}
 
+	case *AsPattern:
+		e.Pattern = foldExpression(e.Pattern)
+
 	// Literals and identifiers are already constants, nothing to fold
 	case *IntegerLiteral, *FloatLiteral, *StringLiteral, *Boolean, *None, *Identifier:
 		// pass through

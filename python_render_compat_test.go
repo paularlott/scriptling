@@ -27,7 +27,7 @@ func TestContainerRenderMatchesPythonEverywhere(t *testing.T) {
 		"str dict keys view":        {"result = str({'a': 1}.keys())", "dict_keys(['a'])"},
 		"str dict values view":      {"result = str({'a': 1}.values())", "dict_values([1])"},
 		"str dict items view":       {"result = str({'a': 1}.items())", "dict_items([('a', 1)])"},
-		"str cyclic list":           {"l = []\nl.append(l)\nresult = str(l)", "[<cyclic reference>]"},
+		"str cyclic list":           {"l = []\nl.append(l)\nresult = str(l)", "[[...]]"},
 		"container uses repr":       {"class P:\n    def __str__(self):\n        return 'S'\n    def __repr__(self):\n        return 'R'\nresult = str([P()])", "[R]"},
 		"fstring instance repr":     {"class P:\n    def __repr__(self):\n        return 'P!'\nresult = f\"{[P()]}\"", "[P!]"},
 		"default instance in list":  {"class P:\n    pass\nresult = str([P()])", ""},

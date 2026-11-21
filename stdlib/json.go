@@ -301,6 +301,10 @@ func (e *jsonEncoder) value(obj object.Object, seen map[object.Object]struct{}, 
 		if vals, ok := namedTupleValues(obj); ok {
 			return e.sequence(obj, vals, seen, depth)
 		}
+		// An IntEnum or StrEnum member is an int or a str.
+		if v, ok := enumPlainValue(obj); ok {
+			return e.value(v, seen, depth-1)
+		}
 		return e.unsupported(obj, seen, depth)
 	case *object.FloatArray:
 		// math.array values render as (nested) arrays of numbers.
@@ -478,6 +482,10 @@ func jsonKey(k object.Object) (string, object.Object) {
 		return "false", nil
 	case *object.Null:
 		return "null", nil
+	case *object.Instance:
+		if v, ok := enumPlainValue(k); ok {
+			return jsonKey(v)
+		}
 	}
 	return "", errors.NewTypeErrorTagged("keys must be str, int, float, bool or None, not %s", jsonTypeName(k))
 }
@@ -712,4 +720,22 @@ func jsonKeyLess(a, b object.Object) (bool, object.Object) {
 		}
 	}
 	return false, errors.NewTypeErrorTagged("'<' not supported between instances of '%s' and '%s'", object.PythonTypeName(a), object.PythonTypeName(b))
+}
+
+// enumPlainValue returns the value of an IntEnum, IntFlag or StrEnum
+// member, which JSON writes as the int or str it is; ok is false for any
+// other value.
+func enumPlainValue(inst *object.Instance) (object.Object, bool) {
+	if !inst.Class.IsEnum {
+		return nil, false
+	}
+	isValue := inst.Class.IsIntEnum
+	for c := inst.Class; c != nil && !isValue; c = c.BaseClass {
+		isValue = c == strEnumBaseClass
+	}
+	if !isValue {
+		return nil, false
+	}
+	v, ok := inst.GetField("value")
+	return v, ok
 }

@@ -3322,107 +3322,221 @@ func (p *Parser) parseCaseClause() *ast.CaseClause {
 	return clause
 }
 
-// parseCasePattern parses a case clause's pattern, stopping at 'if', 'as'
-// or ':'. Patterns reuse expression syntax: a comma-separated open sequence
-// (case a, *rest:) becomes a tuple pattern, and `|` inside a sequence,
-// mapping or class pattern becomes an OR pattern rather than a bitwise or.
+// parseCasePattern parses a case clause's pattern, following Python's
+// pattern grammar: an open sequence (case a, *rest:) becomes a tuple
+// pattern; or-patterns, "as" captures, groups, sequences, mappings and class
+// patterns nest at any depth. Patterns are built from the expression nodes
+// the matcher walks: literals, names (captures), dotted names (values),
+// list/tuple/dict literals, calls (class patterns), OrPattern and AsPattern.
+// It leaves the current token on the pattern's last token.
 func (p *Parser) parseCasePattern() ast.Expression {
-	first := p.parseCaseAlternatives()
+	first := p.parseMaybeStarPattern()
 	if !p.peekTokenIs(token.COMMA) {
-		return orPatterns(first)
+		return first
 	}
 	elements := []ast.Expression{first}
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken() // consume comma
-		if p.peekTokenIs(token.COLON) || p.peekTokenIs(token.IF) || p.peekTokenIs(token.AS) {
+		if p.peekTokenIs(token.COLON) || p.peekTokenIs(token.IF) {
 			break // trailing comma
 		}
 		p.nextToken()
-		elements = append(elements, p.parseCaseAlternatives())
+		elements = append(elements, p.parseMaybeStarPattern())
 	}
-	return orPatterns(&ast.TupleLiteral{Elements: elements})
+	return &ast.TupleLiteral{Elements: elements}
 }
 
-// orPatterns rewrites a | b inside a pattern as an OR pattern, recursing
-// into sequence, mapping and class sub-patterns.
-func orPatterns(pattern ast.Expression) ast.Expression {
-	switch e := pattern.(type) {
-	case *ast.InfixExpression:
-		if e.Operator == ast.OpBitOr {
-			left, right := orPatterns(e.Left), orPatterns(e.Right)
-			alts := []ast.Expression{left}
-			if or, ok := left.(*ast.OrPattern); ok {
-				alts = or.Patterns
-			}
-			return &ast.OrPattern{Patterns: append(alts, right)}
-		}
-	case *ast.OrPattern:
-		for i, alt := range e.Patterns {
-			e.Patterns[i] = orPatterns(alt)
-		}
-	case *ast.TupleLiteral:
-		for i, elem := range e.Elements {
-			e.Elements[i] = orPatterns(elem)
-		}
-	case *ast.ListLiteral:
-		for i, elem := range e.Elements {
-			e.Elements[i] = orPatterns(elem)
-		}
-	case *ast.DictLiteral:
-		for i := range e.Pairs {
-			e.Pairs[i].Value = orPatterns(e.Pairs[i].Value)
-		}
-	case *ast.CallExpression:
-		for i, arg := range e.Arguments {
-			e.Arguments[i] = orPatterns(arg)
-		}
-		for name, kw := range e.GetKeywords() {
-			e.GetKeywords()[name] = orPatterns(kw)
-		}
-	}
-	return pattern
-}
-
-// parseCaseAlternatives parses one pattern of a case clause, or of its open
-// sequence, with its | alternatives.
-func (p *Parser) parseCaseAlternatives() ast.Expression {
+// parseMaybeStarPattern parses *name (a sequence's rest) or a pattern.
+func (p *Parser) parseMaybeStarPattern() ast.Expression {
 	if p.curTokenIs(token.ASTERISK) {
-		// *rest in an open sequence pattern (case first, *rest:)
 		tok := p.nodeLine()
 		if !p.expectPeek(token.IDENT) {
 			return nil
 		}
 		return &ast.StarredElement{Token: tok, Value: p.ident(p.curToken.Literal)}
 	}
-	// We need to parse an expression but stop at 'if' or 'as' keywords
-	// These are used for guards and captures, not part of the pattern itself
-	// Use BIT_OR precedence to stop before '|' (used for OR patterns)
-	var first ast.Expression
-	switch p.curToken.Type {
-	case token.IDENT:
-		// Check if next token is 'if' or 'as' - if so, this is just an identifier
-		if p.peekTokenIs(token.IF) || p.peekTokenIs(token.AS) || p.peekTokenIs(token.COLON) || p.peekTokenIs(token.PIPE) {
-			first = p.ident(p.curToken.Literal)
-		} else {
-			// Otherwise parse as normal expression, stopping before '|'
-			first = p.parseExpression(BIT_OR)
-		}
-	default:
-		first = p.parseExpression(BIT_OR)
-	}
+	return p.parseAsPattern()
+}
 
-	// Check for OR pattern: case 1 | 2 | 3
-	if p.peekTokenIs(token.PIPE) {
-		patterns := make([]ast.Expression, 1, 4)
-		patterns[0] = first
-		for p.peekTokenIs(token.PIPE) {
-			p.nextToken() // consume '|'
-			p.nextToken() // move to next pattern
-			patterns = append(patterns, p.parseExpression(BIT_OR))
+// parseAsPattern parses an or-pattern and an optional "as name".
+func (p *Parser) parseAsPattern() ast.Expression {
+	pattern := p.parseOrPattern()
+	for p.peekTokenIs(token.AS) {
+		p.nextToken() // consume 'as'
+		if !p.expectPeek(token.IDENT) {
+			return nil
 		}
-		return &ast.OrPattern{Patterns: patterns}
+		if p.curToken.Literal == "_" {
+			p.errors = append(p.errors, fmt.Sprintf("line %d: cannot use '_' as a target", p.curToken.Line))
+			return nil
+		}
+		pattern = &ast.AsPattern{Pattern: pattern, Name: p.ident(p.curToken.Literal)}
 	}
-	return first
+	return pattern
+}
+
+// parseOrPattern parses closed patterns separated by |.
+func (p *Parser) parseOrPattern() ast.Expression {
+	first := p.parseClosedPattern()
+	if !p.peekTokenIs(token.PIPE) {
+		return first
+	}
+	alts := []ast.Expression{first}
+	for p.peekTokenIs(token.PIPE) {
+		p.nextToken() // consume '|'
+		p.nextToken()
+		alts = append(alts, p.parseClosedPattern())
+	}
+	return &ast.OrPattern{Patterns: alts}
+}
+
+// parseClosedPattern parses a literal, capture, wildcard, value, group,
+// sequence, mapping or class pattern.
+func (p *Parser) parseClosedPattern() ast.Expression {
+	switch p.curToken.Type {
+	case token.MINUS, token.INT, token.FLOAT, token.STRING, token.BYTES, token.TRUE, token.FALSE, token.NONE:
+		// A literal: parsed at prefix precedence so -1 is one literal and
+		// the parse stops at |, as, a comma or a closing bracket.
+		return p.parseExpression(PREFIX)
+	case token.IDENT:
+		// A bare name captures; a dotted name is a value pattern.
+		var name ast.Expression = p.ident(p.curToken.Literal)
+		for p.peekTokenIs(token.DOT) {
+			p.nextToken() // consume '.'
+			if !p.expectPeek(token.IDENT) {
+				return nil
+			}
+			name = &ast.IndexExpression{Token: p.nodeLine(), Left: name, IsDotAccess: true, Index: &ast.StringLiteral{Value: strings.Clone(p.curToken.Literal)}}
+		}
+		if p.peekTokenIs(token.LPAREN) {
+			p.nextToken()
+			return p.parseClassPattern(name)
+		}
+		return name
+	case token.LPAREN:
+		if p.peekTokenIs(token.RPAREN) {
+			p.nextToken()
+			return &ast.TupleLiteral{}
+		}
+		p.nextToken()
+		first := p.parseMaybeStarPattern()
+		if !p.peekTokenIs(token.COMMA) {
+			// A group: (pattern).
+			if _, starred := first.(*ast.StarredElement); starred {
+				p.errors = append(p.errors, fmt.Sprintf("line %d: cannot use starred expression here", p.curToken.Line))
+				return nil
+			}
+			if !p.expectPeek(token.RPAREN) {
+				return nil
+			}
+			return first
+		}
+		elements := []ast.Expression{first}
+		for p.peekTokenIs(token.COMMA) {
+			p.nextToken() // consume comma
+			if p.peekTokenIs(token.RPAREN) {
+				break
+			}
+			p.nextToken()
+			elements = append(elements, p.parseMaybeStarPattern())
+		}
+		if !p.expectPeek(token.RPAREN) {
+			return nil
+		}
+		return &ast.TupleLiteral{Elements: elements}
+	case token.LBRACKET:
+		elements := []ast.Expression{}
+		for !p.peekTokenIs(token.RBRACKET) {
+			p.nextToken()
+			elements = append(elements, p.parseMaybeStarPattern())
+			if !p.peekTokenIs(token.COMMA) {
+				break
+			}
+			p.nextToken() // consume comma
+		}
+		if !p.expectPeek(token.RBRACKET) {
+			return nil
+		}
+		return &ast.ListLiteral{Elements: elements}
+	case token.LBRACE:
+		return p.parseMappingPattern()
+	}
+	p.errors = append(p.errors, fmt.Sprintf("line %d: invalid pattern: unexpected %q", p.curToken.Line, p.curToken.Literal))
+	return nil
+}
+
+// parseMappingPattern parses {key: pattern, ..., **rest}.
+func (p *Parser) parseMappingPattern() ast.Expression {
+	dict := &ast.DictLiteral{}
+	for !p.peekTokenIs(token.RBRACE) {
+		p.nextToken()
+		if p.curTokenIs(token.POW) {
+			if !p.expectPeek(token.IDENT) {
+				return nil
+			}
+			dict.Pairs = append(dict.Pairs, ast.DictPairLiteral{Value: p.ident(p.curToken.Literal)})
+		} else {
+			// A key is a literal or a dotted value name in Python; any
+			// expression is accepted here, evaluated when the case is tried.
+			key := p.parseExpression(LOWEST)
+			if !p.expectPeek(token.COLON) {
+				return nil
+			}
+			p.nextToken()
+			dict.Pairs = append(dict.Pairs, ast.DictPairLiteral{Key: key, Value: p.parseAsPattern()})
+		}
+		if !p.peekTokenIs(token.COMMA) {
+			break
+		}
+		p.nextToken() // consume comma
+	}
+	if !p.expectPeek(token.RBRACE) {
+		return nil
+	}
+	return dict
+}
+
+// parseClassPattern parses Cls(p1, p2, attr=p3) with the current token on
+// the opening parenthesis.
+func (p *Parser) parseClassPattern(cls ast.Expression) ast.Expression {
+	call := &ast.CallExpression{Function: cls, Arguments: []ast.Expression{}}
+	var keywords map[string]ast.Expression
+	var order []string
+	for !p.peekTokenIs(token.RPAREN) {
+		p.nextToken()
+		if p.curTokenIs(token.IDENT) && p.peekTokenIs(token.ASSIGN) {
+			name := p.curToken.Literal
+			p.nextToken() // consume '='
+			p.nextToken()
+			if keywords == nil {
+				keywords = make(map[string]ast.Expression)
+			}
+			if _, dup := keywords[name]; dup {
+				p.errors = append(p.errors, fmt.Sprintf("line %d: attribute name repeated in class pattern: %s", p.curToken.Line, name))
+				return nil
+			}
+			keywords[name] = p.parseAsPattern()
+			order = append(order, name)
+		} else {
+			if keywords != nil {
+				p.errors = append(p.errors, fmt.Sprintf("line %d: positional patterns follow keyword patterns", p.curToken.Line))
+				return nil
+			}
+			call.Arguments = append(call.Arguments, p.parseAsPattern())
+		}
+		if !p.peekTokenIs(token.COMMA) {
+			break
+		}
+		p.nextToken() // consume comma
+	}
+	if !p.expectPeek(token.RPAREN) {
+		return nil
+	}
+	if keywords != nil {
+		call.SetOverflow(keywords, nil, nil)
+		call.SetKeywordOrder(order)
+	}
+	return call
 }
 
 func (p *Parser) isKeyword(t token.TokenType) bool {

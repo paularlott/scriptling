@@ -527,7 +527,8 @@ func evalObjectsEqualChecked(ctx context.Context, a, b object.Object, env *objec
 				return bl.BoolValue(), nil
 			}
 			if result != notImplementedValue {
-				return false, nil
+				// Any other result counts by its truth, as in Python.
+				return evalTruthy(ctx, result, env)
 			}
 		}
 	}
@@ -541,7 +542,8 @@ func evalObjectsEqualChecked(ctx context.Context, a, b object.Object, env *objec
 				return bl.BoolValue(), nil
 			}
 			if result != notImplementedValue {
-				return false, nil
+				// Any other result counts by its truth, as in Python.
+				return evalTruthy(ctx, result, env)
 			}
 		}
 	}
@@ -588,12 +590,63 @@ func errCompareTooDeep() object.Object {
 // deeper than maxCompareDepth.
 func objectsDeepEqual(ctx context.Context, a, b object.Object) (bool, object.Object) {
 	switch a.(type) {
-	case *object.List, *object.Tuple, *object.Dict:
-		// Only container walks need the cancellation budget.
+	case *object.List, *object.Tuple, *object.Dict, *object.Instance:
+		// Container walks need the cancellation budget, and a script
+		// __eq__ its context.
+		budget := cmpBudget{ctx: ctx}
+		return deepEqual(&budget, a, b, 0)
+	}
+	if _, ok := b.(*object.Instance); ok {
 		budget := cmpBudget{ctx: ctx}
 		return deepEqual(&budget, a, b, 0)
 	}
 	return deepEqual(nil, a, b, 0)
+}
+
+// instanceEqual asks an instance's __eq__ whether it equals other, for an
+// instance met inside a container (or compared without a call context of
+// its own). handled is false when the class has no __eq__, it returned
+// NotImplemented, or a script __eq__ has no call context to run in (budget
+// is nil outside container walks).
+func instanceEqual(budget *cmpBudget, inst *object.Instance, other object.Object, depth int) (eq, handled bool, errObj object.Object) {
+	method, has := inst.Class.Methods["__eq__"]
+	if !has {
+		return false, false, nil
+	}
+	if eqFn, isBuiltin := method.(*object.Builtin); isBuiltin {
+		// A Go-native __eq__ (dataclasses, namedtuples, enums). The depth
+		// travels with the call, so a Go-backed container comparing its own
+		// elements stays within the nesting limit.
+		ctx := context.Background()
+		if budget != nil && budget.ctx != nil {
+			ctx = budget.ctx
+		}
+		r := eqFn.Fn(object.WithCompareDepth(ctx, depth+1), object.NewKwargs(nil), inst, other)
+		if propagates(r) {
+			return false, true, r
+		}
+		if r == notImplementedValue {
+			return false, false, nil
+		}
+		r2, ok := r.(*object.Boolean)
+		return ok && r2.BoolValue(), true, nil
+	}
+	if budget == nil || budget.ctx == nil {
+		return false, false, nil
+	}
+	ctx := object.WithCompareDepth(budget.ctx, depth+1)
+	result := applyFunctionWithContext(ctx, method, []object.Object{inst, other}, object.Kwargs{}, GetEnvFromContext(budget.ctx))
+	if propagates(result) {
+		return false, true, result
+	}
+	if result == notImplementedValue {
+		return false, false, nil
+	}
+	if bl, ok := result.(*object.Boolean); ok {
+		return bl.BoolValue(), true, nil
+	}
+	truthy, errObj := evalTruthy(ctx, result, GetEnvFromContext(budget.ctx))
+	return truthy, true, errObj
 }
 
 // deepEqual is objectsDeepEqual at a nesting depth. Values that are the same
@@ -618,13 +671,8 @@ func deepEqual(budget *cmpBudget, a, b object.Object, depth int) (bool, object.O
 			other = a
 		}
 		if isInst {
-			if eqFn, isBuiltin := inst.Class.Methods["__eq__"].(*object.Builtin); isBuiltin {
-				r := eqFn.Fn(object.WithCompareDepth(context.Background(), depth+1), object.NewKwargs(nil), inst, other)
-				if propagates(r) {
-					return false, r
-				}
-				r2, ok := r.(*object.Boolean)
-				return ok && r2.BoolValue(), nil
+			if eq, handled, errObj := instanceEqual(budget, inst, other, depth); handled {
+				return eq, errObj
 			}
 		}
 		// Same bridge as objectsEqual: type-name strings and type builtins
@@ -641,18 +689,14 @@ func deepEqual(budget *cmpBudget, a, b object.Object, depth int) (bool, object.O
 		if depth > 0 && a == b {
 			return true, nil
 		}
-		if method, has := aInst.Class.Methods["__eq__"]; has {
-			if eqFn, isBuiltin := method.(*object.Builtin); isBuiltin {
-				// The depth travels with the call, so a Go-backed container
-				// comparing its own elements stays within the nesting limit.
-				r := eqFn.Fn(object.WithCompareDepth(context.Background(), depth+1), object.NewKwargs(nil), a, b)
-				if propagates(r) {
-					return false, r
-				}
-				if r, ok := r.(*object.Boolean); ok {
-					return r.BoolValue(), nil
-				}
-				return false, nil
+		if eq, handled, errObj := instanceEqual(budget, aInst, b, depth); handled {
+			return eq, errObj
+		}
+		// a's __eq__ is missing or returned NotImplemented: ask b's, as
+		// Python's reflected comparison does.
+		if bInst := b.(*object.Instance); bInst != aInst {
+			if eq, handled, errObj := instanceEqual(budget, bInst, a, depth); handled {
+				return eq, errObj
 			}
 		}
 		return a == b, nil
@@ -876,12 +920,11 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			if result := evalReflectedArithmetic(ctx, operator, left, rInst, env); result != nil {
 				return result
 			}
-			// Rich comparisons reflect too: 1 < x is x.__gt__(1). Equality
-			// keeps its own path (builtins compare unequal to instances).
-			if operator != ast.OpEq && operator != ast.OpNeq {
-				if result := evalReflectedInstanceComparison(ctx, operator, left, right, env); result != nil {
-					return result
-				}
+			// Rich comparisons reflect too: 1 < x is x.__gt__(1), and
+			// 1 == x is x.__eq__(1), since a builtin left operand returns
+			// NotImplemented for an instance it does not know.
+			if result := evalReflectedInstanceComparison(ctx, operator, left, right, env); result != nil {
+				return result
 			}
 		}
 	}
@@ -2443,7 +2486,21 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 			}
 			// Frozen dataclasses refuse field writes after construction
 			// (Python's FrozenInstanceError, an AttributeError subclass).
-			if _, frozen := o.Class.Methods["__frozen__"]; frozen {
+			if marker, frozen := o.Class.Methods["__frozen__"]; frozen {
+				if kind, ok := marker.(*object.String); ok {
+					// A named tuple is a tuple, and a date or a Decimal an
+					// immutable value: their attributes cannot be set.
+					name := key.StringValue()
+					if kind.StringValue() == "namedtuple" {
+						return raisedAssignmentError(object.ExceptionTypeAttributeError, "can't set attribute")
+					}
+					if _, exists := o.GetField(name); exists || findPropertyInClass(name, o.Class) != nil {
+						return raisedAssignmentError(object.ExceptionTypeAttributeError,
+							fmt.Sprintf("attribute '%s' of '%s' objects is not writable", name, object.PythonTypeName(o)))
+					}
+					return raisedAssignmentError(object.ExceptionTypeAttributeError,
+						fmt.Sprintf("'%s' object has no attribute '%s'", object.PythonTypeName(o), name))
+				}
 				return raisedAssignmentError("FrozenInstanceError",
 					fmt.Sprintf("cannot assign to field '%s'", key.StringValue()))
 			}
@@ -3432,12 +3489,12 @@ func renderConvertedValue(ctx context.Context, val object.Object, conv string, e
 		case *object.String:
 			return object.ReprString(v.StringValue()), nil
 		case *object.Exception:
-			return object.ReprException(v), nil
+			return exceptionReprChecked(ctx, v, env)
 		}
 	default: // "s" or none: str semantics
 		switch v := val.(type) {
 		case *object.Exception:
-			return v.Message, nil
+			return exceptionStrChecked(ctx, v, env)
 		case *object.Instance:
 			return strInstanceChecked(ctx, v, env)
 		}
@@ -3516,7 +3573,7 @@ func reprInstanceChecked(ctx context.Context, inst *object.Instance, env *object
 	if inst.Class.ExceptionBase != "" {
 		if exc, _, args := exceptionFromClassInstance(ctx, inst, env); exc != nil {
 			exc.Args = args
-			return object.ReprException(exc), nil
+			return exceptionReprChecked(ctx, exc, env)
 		}
 	}
 	return inst.Inspect(), nil
@@ -3525,8 +3582,14 @@ func reprInstanceChecked(ctx context.Context, inst *object.Instance, env *object
 // containerReprChecked renders a list, tuple, dict, set or dict view as
 // Python does, calling __repr__ on nested instances.
 func containerReprChecked(ctx context.Context, val object.Object, env *object.Environment) (string, object.Object) {
-	return object.InspectRepr(val, func(inst *object.Instance) (string, object.Object) {
+	return object.InspectReprCtx(val, ctx, env)
+}
+
+func init() {
+	object.SetContainerReprHooks(func(ctx context.Context, env *object.Environment, inst *object.Instance) (string, object.Object) {
 		return reprInstanceChecked(ctx, inst, env)
+	}, func(ctx context.Context, env *object.Environment, exc *object.Exception) (string, object.Object) {
+		return exceptionReprChecked(ctx, exc, env)
 	})
 }
 
@@ -3547,10 +3610,67 @@ func strInstanceChecked(ctx context.Context, inst *object.Instance, env *object.
 	}
 	// An exception instance with no __str__ of its own reads as its
 	// arguments, raised or not: str(MyError("boom")) is "boom".
-	if exc, _, _ := exceptionFromClassInstance(ctx, inst, env); exc != nil {
-		return exc.Message, nil
+	if exc, _, args := exceptionFromClassInstance(ctx, inst, env); exc != nil {
+		exc.Args = args
+		return exceptionStrChecked(ctx, exc, env)
 	}
 	return inst.Inspect(), nil
+}
+
+// argsHoldInstances reports whether an exception's arguments include an
+// instance or a container (which may hold one), whose text needs a call
+// context: its message, built without one, would show the default form.
+func argsHoldInstances(args []object.Object) bool {
+	for _, a := range args {
+		if _, ok := a.(*object.Instance); ok || object.IsReprContainer(a) {
+			return true
+		}
+	}
+	return false
+}
+
+// exceptionStrChecked is str() of an exception, as Python builds it from
+// the arguments: none is "", one is str(arg) (repr(arg) for KeyError), more
+// are the tuple's repr. Arguments of plain values keep the message the
+// exception was made with.
+func exceptionStrChecked(ctx context.Context, exc *object.Exception, env *object.Environment) (string, object.Object) {
+	if !argsHoldInstances(exc.Args) {
+		return exc.Message, nil
+	}
+	if len(exc.Args) == 1 {
+		if exc.ExceptionType == object.ExceptionTypeKeyError {
+			return renderConvertedValue(ctx, exc.Args[0], "r", env)
+		}
+		return renderConvertedValue(ctx, exc.Args[0], "s", env)
+	}
+	return renderConvertedValue(ctx, &object.Tuple{Elements: exc.Args}, "r", env)
+}
+
+// exceptionReprChecked is repr() of an exception: its type and arguments'
+// reprs, calling __repr__ on instances among them.
+func exceptionReprChecked(ctx context.Context, exc *object.Exception, env *object.Environment) (string, object.Object) {
+	if !argsHoldInstances(exc.Args) {
+		return object.ReprException(exc), nil
+	}
+	name := exc.ExceptionType
+	if name == "" {
+		name = "Exception"
+	}
+	var b strings.Builder
+	b.WriteString(name)
+	b.WriteByte('(')
+	for i, a := range exc.Args {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		part, errObj := renderConvertedValue(ctx, a, "r", env)
+		if errObj != nil {
+			return "", errObj
+		}
+		b.WriteString(part)
+	}
+	b.WriteByte(')')
+	return b.String(), nil
 }
 
 // expandNestedSpecFields resolves nested replacement fields inside a format
@@ -5141,6 +5261,16 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			if !ok {
 				return raisedAssignmentError(object.ExceptionTypeTypeError, "attribute name must be string")
 			}
+			if delattr, ok := o.Class.LookupMember("__delattr__"); ok {
+				result := applyFunctionWithContext(ctx, delattr, []object.Object{obj, key}, object.Kwargs{}, nil)
+				if object.IsError(result) {
+					return &objectError{err: result.(*object.Error)}
+				}
+				if isRaised(result) {
+					return &assignmentExceptionError{ex: result.(*object.Exception)}
+				}
+				return nil
+			}
 			if _, exists := o.GetField(key.StringValue()); exists {
 				o.DeleteField(key.StringValue())
 				o.InvalidateBoundMethod(key.StringValue())
@@ -5402,7 +5532,7 @@ func assignUnpackTargets(ctx context.Context, targets []ast.Expression, value ob
 		}
 		if !ok {
 			return raisedAssignmentError(object.ExceptionTypeTypeError,
-				fmt.Sprintf("cannot unpack non-iterable %s object", value.Type().String()))
+				fmt.Sprintf("cannot unpack non-iterable %s object", getTypeName(value)))
 		}
 		elements = elems
 	}
@@ -5549,7 +5679,7 @@ func setForVariables(variables []ast.Expression, value object.Object, env *objec
 		// Any other iterable unpacks per iteration too: for a, b in ["xy"].
 		elems, ok := object.IterableToSlice(value)
 		if !ok {
-			return raisedAssignmentError(object.ExceptionTypeTypeError, fmt.Sprintf("cannot unpack non-iterable %s object", value.Type().String()))
+			return raisedAssignmentError(object.ExceptionTypeTypeError, fmt.Sprintf("cannot unpack non-iterable %s object", getTypeName(value)))
 		}
 		elements = elems
 	}
@@ -5586,7 +5716,7 @@ func setForTargets(variables []ast.Expression, value object.Object, env *object.
 		default:
 			elems, ok := object.IterableToSlice(value)
 			if !ok {
-				return raisedAssignmentError(object.ExceptionTypeTypeError, fmt.Sprintf("cannot unpack non-iterable %s object", value.Type().String()))
+				return raisedAssignmentError(object.ExceptionTypeTypeError, fmt.Sprintf("cannot unpack non-iterable %s object", getTypeName(value)))
 			}
 			elements = elems
 		}
@@ -6556,6 +6686,14 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 		}
 		return FALSE, NULL
 
+	case *ast.AsPattern:
+		matched, _ := matchPattern(ctx, subject, p.Pattern, capturedVars, env)
+		if matched != TRUE {
+			return matched, NULL
+		}
+		capturedVars[p.Name.Value()] = subject
+		return TRUE, subject
+
 	case *ast.Identifier:
 		// Wildcard pattern
 		if p.Value() == "_" {
@@ -6595,12 +6733,19 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 		return FALSE, NULL
 
 	case *ast.StringLiteral:
-		if strObj, ok := subject.(*object.String); ok {
-			if strObj.StringValue() == p.Value {
+		switch s := subject.(type) {
+		case *object.String:
+			if s.StringValue() == p.Value {
 				return TRUE, subject
 			}
+		case *object.Instance:
+			// A str subclass such as a StrEnum member compares with ==.
+			return matchValue(ctx, subject, object.NewString(p.Value), env)
 		}
 		return FALSE, NULL
+
+	case *ast.BytesLiteral:
+		return matchValue(ctx, subject, compileExpr(p)(ctx, env), env)
 
 	case *ast.IndexExpression, *ast.PrefixExpression:
 		// Value patterns: a dotted name (case Color.RED) or a negative

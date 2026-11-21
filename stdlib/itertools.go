@@ -1142,7 +1142,13 @@ Example:
 				if i == 0 {
 					currentKey = key
 					currentGroup = []object.Object{elem}
-				} else if objectsEqual(key, currentKey) {
+					continue
+				}
+				same, errObj := object.Equal(ctx, currentKey, key)
+				if errObj != nil {
+					return errObj
+				}
+				if same {
 					currentGroup = append(currentGroup, elem)
 				} else {
 					// Save current group and start new one
@@ -1622,35 +1628,6 @@ func (c *combinator) combinations(elements []object.Object, r int, start int, cu
 		c.combinations(elements, r, next, current, replace)
 		current = current[:len(current)-1]
 	}
-}
-
-// Helper function to compare objects for equality
-func objectsEqual(a, b object.Object) bool {
-	if a.Type() != b.Type() {
-		return false
-	}
-	switch av := a.(type) {
-	case *object.Integer:
-		if bv, ok := b.(*object.Integer); ok {
-			return av.IntValue() == bv.IntValue()
-		}
-	case *object.Float:
-		if bv, ok := b.(*object.Float); ok {
-			return av.FloatValue() == bv.FloatValue()
-		}
-	case *object.String:
-		if bv, ok := b.(*object.String); ok {
-			return av.StringValue() == bv.StringValue()
-		}
-	case *object.Boolean:
-		if bv, ok := b.(*object.Boolean); ok {
-			return av.BoolValue() == bv.BoolValue()
-		}
-	case *object.Null:
-		_, ok := b.(*object.Null)
-		return ok
-	}
-	return a.Inspect() == b.Inspect()
 }
 
 // Helper function to add two objects (for accumulate default)

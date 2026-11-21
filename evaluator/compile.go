@@ -2926,7 +2926,7 @@ func compileMultipleAssign(n *ast.MultipleAssignStatement) object.EvalFn {
 			}
 			if !ok {
 				return &object.Error{
-					Message:       fmt.Sprintf("cannot unpack non-iterable %s object", val.Type().String()),
+					Message:       fmt.Sprintf("cannot unpack non-iterable %s object", getTypeName(val)),
 					ExceptionType: object.ExceptionTypeTypeError,
 				}
 			}
@@ -3679,6 +3679,17 @@ func compileRaise(n *ast.RaiseStatement) object.EvalFn {
 	}
 }
 
+// checkContextManager raises Python's TypeError for a with statement on an
+// instance that lacks __enter__ or __exit__.
+func checkContextManager(inst *object.Instance) object.Object {
+	_, hasEnter := inst.Class.LookupMember("__enter__")
+	_, hasExit := inst.Class.LookupMember("__exit__")
+	if hasEnter && hasExit {
+		return nil
+	}
+	return errors.NewTypeErrorTagged("'%s' object does not support the context manager protocol", inst.Class.Name)
+}
+
 func compileWith(n *ast.WithStatement) object.EvalFn {
 	contextExpr := compileExpr(n.ContextExpr)
 	body := compileStmt(n.Body)
@@ -3694,6 +3705,9 @@ func compileWith(n *ast.WithStatement) object.EvalFn {
 		// Call __enter__
 		var enterResult object.Object
 		if inst, ok := ctxObj.(*object.Instance); ok {
+			if errObj := checkContextManager(inst); errObj != nil {
+				return errObj
+			}
 			enterResult = callDunderMethod(ctx, inst, "__enter__", nil, env)
 			if enterResult == nil {
 				enterResult = NULL
@@ -4227,15 +4241,27 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 
 		// Promote class-body bindings (e.g. `x = 5`) to class attributes. Skip the
 		// synthetic __class__ marker and anything already registered as a method.
+		ownEq, ownHash := false, false
 		classEnv.EachLocal(func(mname string, val object.Object) {
-			if mname == "__class__" {
+			switch mname {
+			case "__class__":
 				return
+			case "__eq__":
+				ownEq = true
+			case "__hash__":
+				ownHash = true
 			}
 			if _, isOwnDef := ownDefs[mname]; isOwnDef {
 				return
 			}
 			class.Methods[mname] = val
 		})
+		// As in Python, a class that defines __eq__ but not __hash__ has
+		// __hash__ None: its instances are unhashable, even when a base
+		// class defined a __hash__.
+		if ownEq && !ownHash {
+			class.Methods["__hash__"] = NULL
+		}
 		if class.IsABC {
 			class.AbstractMethods = abstractMethodNames(class)
 		}

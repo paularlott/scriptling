@@ -1789,6 +1789,22 @@ func (op *OrPattern) expressionNode()      {}
 func (op *OrPattern) TokenLiteral() string { return "|" }
 func (op *OrPattern) Line() int            { return lineOfExprSlice(op.Patterns) }
 
+// AsPattern is a sub-pattern whose match is also bound to a name, at any
+// depth of a pattern: case {"status": (404 | 410) as code}:
+type AsPattern struct {
+	Pattern Expression
+	Name    *Identifier
+}
+
+func (ap *AsPattern) expressionNode()      {}
+func (ap *AsPattern) TokenLiteral() string { return "as" }
+func (ap *AsPattern) Line() int {
+	if line := lineOfExpr(ap.Pattern); line != 0 {
+		return line
+	}
+	return ap.Name.Line()
+}
+
 // unpackOutOfOrder reports whether any *unpack is followed by a positional
 // argument, i.e. needs interleaving rather than appending.
 func unpackOutOfOrder(at []int, positional int) bool {

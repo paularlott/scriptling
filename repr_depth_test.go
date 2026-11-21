@@ -95,7 +95,7 @@ d["self"] = d
 	if err != nil {
 		t.Fatalf("eval: %v", err)
 	}
-	want := `["[1, (2, 3), {'k': [4]}, {5}]", '[1, <cyclic reference>]', "{'self': <cyclic reference>}", '[[1]]']`
+	want := `["[1, (2, 3), {'k': [4]}, {5}]", '[1, [...]]', "{'self': {...}}", '[[1]]']`
 	if got := result.Inspect(); got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}

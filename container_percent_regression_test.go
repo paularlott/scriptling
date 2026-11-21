@@ -364,6 +364,8 @@ class B:
         self.v = v
     def __hash__(self):
         return self.v
+    def __eq__(self, other):
+        return self.v == other.v
 s = set([B(1), B(2)])
 s.discard(B(1))
 len(s)

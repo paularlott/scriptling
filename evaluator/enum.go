@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/paularlott/scriptling/ast"
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
@@ -123,9 +124,14 @@ func buildEnumMembers(class *object.Class) object.Object {
 				return object.NewBoolean(sn.StringValue() == on.StringValue())
 			}
 			if class.IsIntEnum {
-				sv, _ := self.Field("value").(*object.Integer)
-				if ov, ok := args[1].(*object.Integer); ok && sv != nil {
-					return object.NewBoolean(sv.IntValue() == ov.IntValue())
+				// IntEnum members equal numbers of their value: 200,
+				// 200.0, and members of other IntEnums.
+				other := args[1]
+				if oi, ok := other.(*object.Instance); ok && oi.Class.IsIntEnum {
+					other = oi.Field("value")
+				}
+				if eq, numeric := mixedNumbersEqual(self.Field("value"), other); numeric {
+					return object.NewBoolean(eq)
 				}
 			}
 			return object.NewBoolean(false)
@@ -151,69 +157,9 @@ func buildEnumMembers(class *object.Class) object.Object {
 	class.Methods["__eq__"] = eq
 	class.Methods["__hash__"] = hash
 
-	// IntEnum members behave as ints in arithmetic and comparisons.
+	// IntEnum members convert to their int values (operators: see
+	// addValueOperators).
 	if class.IsIntEnum {
-		memberInt := func(self *object.Instance) (int64, bool) {
-			v, isInt := self.Field("value").(*object.Integer)
-			if !isInt {
-				return 0, false
-			}
-			return v.IntValue(), true
-		}
-		binop := func(name string, f func(a, b int64) int64) {
-			class.Methods[name] = &object.Builtin{
-				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) != 2 {
-						return errors.NewArgumentError(len(args), 2)
-					}
-					self, ok := args[0].(*object.Instance)
-					other, isInt := args[1].(*object.Integer)
-					if !ok || !isInt {
-						return errors.NewTypeErrorTagged("unsupported operand types for %s", name)
-					}
-					a, okA := memberInt(self)
-					if !okA {
-						return errors.NewTypeErrorTagged("unsupported operand types for %s", name)
-					}
-					return object.NewInteger(f(a, other.IntValue()))
-				},
-				HelpText: name + "(other) - integer arithmetic on the member value",
-			}
-		}
-		binop("__add__", func(a, b int64) int64 { return a + b })
-		binop("__sub__", func(a, b int64) int64 { return a - b })
-		binop("__mul__", func(a, b int64) int64 { return a * b })
-		binop("__floordiv__", func(a, b int64) int64 { return a / b })
-		binop("__mod__", func(a, b int64) int64 { return a % b })
-		binop("__truediv__", func(a, b int64) int64 { return a / b })
-		cmp := func(name string, f func(a, b int64) bool) {
-			class.Methods[name] = &object.Builtin{
-				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					if len(args) != 2 {
-						return errors.NewArgumentError(len(args), 2)
-					}
-					self, ok := args[0].(*object.Instance)
-					other, isInt := args[1].(*object.Integer)
-					if o, isMember := args[1].(*object.Instance); isMember && o.Class == class {
-						// Two members compare by value: sorted() and max().
-						other, isInt = o.Field("value").(*object.Integer)
-					}
-					if !ok || !isInt {
-						return notImplementedValue
-					}
-					a, okA := memberInt(self)
-					if !okA {
-						return object.NewBoolean(false)
-					}
-					return object.NewBoolean(f(a, other.IntValue()))
-				},
-				HelpText: name + "(other) - integer comparison on the member value",
-			}
-		}
-		cmp("__lt__", func(a, b int64) bool { return a < b })
-		cmp("__le__", func(a, b int64) bool { return a <= b })
-		cmp("__gt__", func(a, b int64) bool { return a > b })
-		cmp("__ge__", func(a, b int64) bool { return a >= b })
 		toInt := &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				return args[0].(*object.Instance).Field("value")
@@ -248,6 +194,33 @@ func buildEnumMembers(class *object.Class) object.Object {
 			return object.NewString(fmt.Sprintf("<%s.%s: %s>", class.Name, name.StringValue(), object.ValueRepr(value)))
 		},
 		HelpText: "__repr__() - <Member: value> form",
+	}
+	// format() of a member formats its str(), as in Python (the value
+	// kinds replace this with their value's format below).
+	class.Methods["__format__"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("__format__", kwargs); err != nil {
+				return err
+			}
+			if len(args) != 2 {
+				return errors.NewArgumentError(len(args), 2)
+			}
+			text, errObj := renderConvertedValue(ctx, args[0], "s", GetEnvFromContext(ctx))
+			if errObj != nil {
+				return errObj
+			}
+			spec, _ := args[1].AsString()
+			out, err := formatWithSpec(object.NewString(text), spec)
+			if err != nil {
+				return err
+			}
+			return object.NewString(out)
+		},
+		HelpText: "__format__(spec) - Format the member's str()",
+	}
+	if kind == "StrEnum" || class.IsIntEnum {
+		class.Methods["__hash__"] = enumValueHash
+		addValueOperators(class, kind == "StrEnum", isFlag)
 	}
 	switch {
 	case kind == "StrEnum":
@@ -498,11 +471,21 @@ func sliceNext(elems []object.Object) func() (object.Object, bool) {
 	}
 }
 
+// enumValuesEqual reports whether two member values are equal, as == sees
+// them: 1 and 1.0 are, "1" and 1 are not.
+func enumValuesEqual(a, b object.Object) bool {
+	if a == b {
+		return true
+	}
+	eq, errObj := deepEqual(nil, a, b, 0)
+	return errObj == nil && eq
+}
+
 // aliasEnumMember returns the existing member whose value equals v, if any.
 func aliasEnumMember(members []object.Object, v object.Object) *object.Instance {
 	for _, m := range members {
 		member := m.(*object.Instance)
-		if member.Field("value").Inspect() == v.Inspect() {
+		if enumValuesEqual(member.Field("value"), v) {
 			return member
 		}
 	}
@@ -517,13 +500,12 @@ func enumValueLookup(class *object.Class, value object.Object) object.Object {
 	}
 	for _, m := range class.EnumMembers {
 		member := m.(*object.Instance)
-		mv := member.Field("value")
-		if mv.Inspect() == value.Inspect() {
+		if enumValuesEqual(member.Field("value"), value) {
 			return member
 		}
 	}
 	return &object.Exception{
-		Message:       fmt.Sprintf("%s is not a valid %s", value.Inspect(), class.Name),
+		Message:       fmt.Sprintf("%s is not a valid %s", object.ValueRepr(value), class.Name),
 		ExceptionType: object.ExceptionTypeValueError,
 		Raised:        true,
 	}
@@ -667,5 +649,149 @@ func enumMissing(ctx context.Context, class *object.Class, value, notFound objec
 		Message:       fmt.Sprintf("error in %s._missing_: returned %s instead of None or a valid member", class.Name, r.Inspect()),
 		ExceptionType: object.ExceptionTypeTypeError,
 		Raised:        true,
+	}
+}
+
+// valueMember returns the value of an IntEnum, IntFlag or StrEnum member,
+// which acts as its int or str value; ok is false for anything else.
+func valueMember(o object.Object) (object.Object, bool) {
+	m, ok := o.(*object.Instance)
+	if !ok || !m.Class.IsEnum {
+		return nil, false
+	}
+	if fn, _ := object.InstanceHashMethod(m.Class); fn != enumValueHash {
+		return nil, false
+	}
+	v, ok := m.GetField("value")
+	return v, ok
+}
+
+// valueOf is o's value when o is a value member, else o.
+func valueOf(o object.Object) object.Object {
+	if v, ok := valueMember(o); ok {
+		return v
+	}
+	return o
+}
+
+// addValueOperators gives the members of an IntEnum, IntFlag or StrEnum
+// the operators of their values, as members of an int or str subclass:
+// arithmetic and ordering (with plain values and other members), and for
+// a StrEnum concatenation, len(), iteration, membership and indexing.
+// Results are plain values, as in Python. A Flag keeps its own | & ^ ~.
+func addValueOperators(class *object.Class, isStr, isFlag bool) {
+	binary := func(name string, op ast.Op, reflected bool) {
+		if isFlag {
+			switch op {
+			case ast.OpBitOr, ast.OpBitAnd, ast.OpBitXor:
+				return
+			}
+		}
+		class.Methods[name] = &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs(name, kwargs); err != nil {
+					return err
+				}
+				if len(args) != 2 {
+					return errors.NewArgumentError(len(args), 2)
+				}
+				a, b := valueOf(args[0]), valueOf(args[1])
+				if reflected {
+					a, b = b, a
+				}
+				return evalInfixExpression(ctx, op, a, b, GetEnvFromContext(ctx))
+			},
+			HelpText: name + "(other) - the operator on the member's value",
+		}
+	}
+	for _, c := range []struct {
+		name string
+		op   ast.Op
+	}{{"__lt__", ast.OpLt}, {"__le__", ast.OpLte}, {"__gt__", ast.OpGt}, {"__ge__", ast.OpGte}} {
+		binary(c.name, c.op, false)
+	}
+	arith := []struct {
+		name string
+		op   ast.Op
+	}{{"add", ast.OpAdd}, {"mul", ast.OpMul}, {"mod", ast.OpMod}}
+	if !isStr {
+		arith = append(arith, []struct {
+			name string
+			op   ast.Op
+		}{{"sub", ast.OpSub}, {"truediv", ast.OpDiv}, {"floordiv", ast.OpFloorDiv}, {"pow", ast.OpPow},
+			{"and", ast.OpBitAnd}, {"or", ast.OpBitOr}, {"xor", ast.OpBitXor}, {"lshift", ast.OpLShift}, {"rshift", ast.OpRShift}}...)
+	}
+	for _, a := range arith {
+		binary("__"+a.name+"__", a.op, false)
+		binary("__r"+a.name+"__", a.op, true)
+	}
+	unary := func(name string, op ast.Op) {
+		class.Methods[name] = &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs(name, kwargs); err != nil {
+					return err
+				}
+				if len(args) != 1 {
+					return errors.NewArgumentError(len(args), 1)
+				}
+				return evalPrefixExpression(ctx, op, valueOf(args[0]), GetEnvFromContext(ctx))
+			},
+			HelpText: name + "() - the operator on the member's value",
+		}
+	}
+	if !isStr {
+		unary("__neg__", ast.OpSub)
+		unary("__pos__", ast.OpPos)
+		class.Methods["__abs__"] = &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__abs__", kwargs); err != nil {
+					return err
+				}
+				return builtins["abs"].Fn(ctx, object.NewKwargs(nil), valueOf(args[0]))
+			},
+			HelpText: "__abs__() - abs() of the member's value",
+		}
+		if !isFlag {
+			unary("__invert__", ast.OpBitNot)
+		}
+		return
+	}
+	// A StrEnum member is a str: len(), iteration, `in` and indexing.
+	delegate := func(name, builtin string) {
+		class.Methods[name] = &object.Builtin{
+			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs(name, kwargs); err != nil {
+					return err
+				}
+				return builtins[builtin].Fn(ctx, object.NewKwargs(nil), valueOf(args[0]))
+			},
+			HelpText: name + "() - " + builtin + "() of the member's value",
+		}
+	}
+	delegate("__len__", "len")
+	delegate("__iter__", "iter")
+	class.Methods["__contains__"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("__contains__", kwargs); err != nil {
+				return err
+			}
+			if len(args) != 2 {
+				return errors.NewArgumentError(len(args), 2)
+			}
+			return evalInOperator(ctx, valueOf(args[1]), valueOf(args[0]), GetEnvFromContext(ctx))
+		},
+		HelpText: "__contains__(x) - x in the member's value",
+	}
+	class.Methods["__getitem__"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("__getitem__", kwargs); err != nil {
+				return err
+			}
+			if len(args) != 2 {
+				return errors.NewArgumentError(len(args), 2)
+			}
+			return evalIndexExpression(ctx, valueOf(args[0]), args[1], false)
+		},
+		HelpText: "__getitem__(i) - indexing the member's value",
 	}
 }

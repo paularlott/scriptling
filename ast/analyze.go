@@ -308,6 +308,9 @@ func CollectPatternCaptures(pattern Expression, addName func(string)) {
 		for _, alt := range p.Patterns {
 			CollectPatternCaptures(alt, addName)
 		}
+	case *AsPattern:
+		CollectPatternCaptures(p.Pattern, addName)
+		CollectPatternCaptures(p.Name, addName)
 	case *DictLiteral:
 		for _, pair := range p.Pairs {
 			CollectPatternCaptures(pair.Value, addName)

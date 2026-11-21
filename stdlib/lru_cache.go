@@ -13,10 +13,19 @@ import (
 // lruCache is the mutable state behind one lru_cache wrapper.
 type lruCache struct {
 	maxsize int64 // <= 0 means unbounded (or no caching for 0 handled below)
-	entries map[string]object.Object
+	entries map[string]lruEntry
 	order   []string // least-recently-used first
 	hits    int64
 	misses  int64
+}
+
+// lruEntry is one cached call: its result, and the arguments it was made
+// with, held as Python's cache holds its key, so an argument keyed by
+// identity or by its equality group is not collected (and its key reused)
+// while the entry lives.
+type lruEntry struct {
+	value object.Object
+	args  []object.Object
 }
 
 // lruEntrySize approximates what one cached call costs beyond its key text: the
@@ -44,7 +53,7 @@ func (c *lruCache) account(key string) {
 func newLRUCacheWrapper(fn object.Object, maxsize int64) object.Object {
 	c := &lruCache{
 		maxsize: maxsize,
-		entries: make(map[string]object.Object),
+		entries: make(map[string]lruEntry),
 	}
 	var wrapper *object.Builtin
 	wrapper = &object.Builtin{
@@ -56,15 +65,15 @@ func newLRUCacheWrapper(fn object.Object, maxsize int64) object.Object {
 				callKwargs[k] = v
 			}
 
-			key, keyErr := c.key(callArgs, callKwargs)
+			key, keyErr := c.key(ctx, callArgs, callKwargs)
 			if keyErr != nil {
 				return keyErr
 			}
 			if c.maxsize != 0 {
-				if v, ok := c.entries[key]; ok {
+				if e, ok := c.entries[key]; ok {
 					c.touch(key)
 					c.hits++
-					return v
+					return e.value
 				}
 			}
 			c.misses++
@@ -78,7 +87,11 @@ func newLRUCacheWrapper(fn object.Object, maxsize int64) object.Object {
 				return result
 			}
 			if c.maxsize != 0 {
-				c.store(key, result)
+				held := callArgs
+				for _, v := range callKwargs {
+					held = append(held, v)
+				}
+				c.store(key, lruEntry{value: result, args: held})
 			}
 			return result
 		},
@@ -93,7 +106,7 @@ func newLRUCacheWrapper(fn object.Object, maxsize int64) object.Object {
 				if err := errors.NoKwargs("cache_clear", kwargs); err != nil {
 					return err
 				}
-				c.entries = make(map[string]object.Object)
+				c.entries = make(map[string]lruEntry)
 				c.order = nil
 				c.hits = 0
 				c.misses = 0
@@ -130,17 +143,14 @@ func newLRUCacheWrapper(fn object.Object, maxsize int64) object.Object {
 
 // key builds the cache key from the call arguments. Unhashable arguments
 // produce the TypeError Python's lru_cache raises.
-func (c *lruCache) key(args []object.Object, kwargs map[string]object.Object) (string, object.Object) {
+func (c *lruCache) key(ctx context.Context, args []object.Object, kwargs map[string]object.Object) (string, object.Object) {
 	var b strings.Builder
 	for _, a := range args {
-		if !object.IsHashable(a) {
-			return "", &object.Exception{
-				Message:       "unhashable type: '" + object.PythonTypeName(a) + "'",
-				ExceptionType: object.ExceptionTypeTypeError,
-				Raised:        true,
-			}
+		k, errObj := object.HashKey(ctx, a)
+		if errObj != nil {
+			return "", errObj
 		}
-		b.WriteString(object.DictKey(a))
+		b.WriteString(k)
 		b.WriteByte(0x1f)
 	}
 	if len(kwargs) > 0 {
@@ -150,16 +160,13 @@ func (c *lruCache) key(args []object.Object, kwargs map[string]object.Object) (s
 		}
 		sort.Strings(names)
 		for _, k := range names {
-			if !object.IsHashable(kwargs[k]) {
-				return "", &object.Exception{
-					Message:       "unhashable type: '" + object.PythonTypeName(kwargs[k]) + "'",
-					ExceptionType: object.ExceptionTypeTypeError,
-					Raised:        true,
-				}
+			vk, errObj := object.HashKey(ctx, kwargs[k])
+			if errObj != nil {
+				return "", errObj
 			}
 			b.WriteString(k)
 			b.WriteByte('=')
-			b.WriteString(object.DictKey(kwargs[k]))
+			b.WriteString(vk)
 			b.WriteByte(0x1f)
 		}
 	}
@@ -176,7 +183,7 @@ func (c *lruCache) touch(key string) {
 	}
 }
 
-func (c *lruCache) store(key string, value object.Object) {
+func (c *lruCache) store(key string, value lruEntry) {
 	if _, exists := c.entries[key]; !exists {
 		c.order = append(c.order, key)
 		c.account(key)

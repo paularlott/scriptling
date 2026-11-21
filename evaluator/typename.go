@@ -219,6 +219,12 @@ func isinstanceOfTypeName(obj object.Object, name string) bool {
 				return true
 			}
 		}
+		// An IntEnum or StrEnum member is an int or a str.
+		if name == "int" || name == "str" {
+			if v, ok := valueMember(o); ok {
+				return isinstanceOfTypeName(v, name)
+			}
+		}
 		return false
 	case *object.Boolean:
 		return name == "bool" || name == "int"

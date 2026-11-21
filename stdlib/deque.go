@@ -538,13 +538,22 @@ func dequeOrder(name, op string, keep func(int) bool) *object.Builtin {
 	})
 }
 
-func dequeRepr(self *object.Instance, d *dequeBuf) object.Object {
+func dequeRepr(ctx context.Context, self *object.Instance, d *dequeBuf) object.Object {
 	name := "deque"
 	if self.Class != dequeClassRef {
 		name = self.Class.Name
 	}
+	// A deque holding itself renders the inner one as [...], as in Python.
+	rctx, entered, errObj := object.EnterRepr(ctx, self)
+	if errObj != nil {
+		return errObj
+	}
+	if !entered {
+		return object.NewString("[...]")
+	}
+	defer object.LeaveRepr()
 	// A list renders its elements as Python's repr does.
-	r := newReprBuilder()
+	r := newReprBuilder(rctx)
 	r.WriteString(name)
 	r.WriteString("(")
 	r.Value(&object.List{Elements: d.elements()})
@@ -830,10 +839,10 @@ var DequeClass = &object.Class{
 		"__rmul__": dequeMultiply("__rmul__", false),
 		"__imul__": dequeMultiply("__imul__", true),
 		"__str__": dequeMethod("__str__", 0, func(ctx context.Context, d *dequeBuf, self *object.Instance, _ []object.Object) object.Object {
-			return dequeRepr(self, d)
+			return dequeRepr(ctx, self, d)
 		}),
 		"__repr__": dequeMethod("__repr__", 0, func(ctx context.Context, d *dequeBuf, self *object.Instance, _ []object.Object) object.Object {
-			return dequeRepr(self, d)
+			return dequeRepr(ctx, self, d)
 		}),
 	},
 }

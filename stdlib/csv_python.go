@@ -507,20 +507,9 @@ func csvFormatRow(ctx context.Context, row []object.Object, d *csvDialect) (stri
 	return b.String(), nil
 }
 
-// renderStr is str(v) for a cell: an instance's __str__ when it has one.
+// renderStr is str(v) for a cell.
 func renderStr(ctx context.Context, v object.Object) (string, object.Object) {
-	if inst, ok := v.(*object.Instance); ok {
-		if fn, has := inst.Class.LookupMember("__str__"); has {
-			r := callCallable(ctx, fn, inst)
-			if object.IsPropagating(r) {
-				return "", r
-			}
-			if s, ok := r.(*object.String); ok {
-				return s.StringValue(), nil
-			}
-		}
-	}
-	return v.Inspect(), nil
+	return object.Str(ctx, v)
 }
 
 // csvWriteText writes text through the target's write().
@@ -747,7 +736,11 @@ func csvDictRow(ctx context.Context, self *object.Instance, rowObj object.Object
 		for _, pair := range d.All() {
 			found := false
 			for _, n := range names {
-				if eq, _ := objectsEqualChecked(n, pair.Key); eq {
+				eq, errObj := object.Equal(ctx, n, pair.Key)
+				if errObj != nil {
+					return nil, errObj
+				}
+				if eq {
 					found = true
 					break
 				}
@@ -773,10 +766,6 @@ func csvDictRow(ctx context.Context, self *object.Instance, rowObj object.Object
 		}
 	}
 	return row, nil
-}
-
-func objectsEqualChecked(a, b object.Object) (bool, object.Object) {
-	return objectsEqual(a, b), nil
 }
 
 var pyCSVDictReaderClass = &object.Class{

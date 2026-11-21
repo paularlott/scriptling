@@ -1601,7 +1601,7 @@ func TestInspectHandlesCyclicContainers(t *testing.T) {
 	t.Run("list", func(t *testing.T) {
 		l := &List{Elements: []Object{NewInteger(1)}}
 		l.Elements = append(l.Elements, l)
-		want := "[1, <cyclic reference>]"
+		want := "[1, [...]]"
 		if got := l.Inspect(); got != want {
 			t.Fatalf("Inspect() = %q, want %q", got, want)
 		}
@@ -1611,7 +1611,7 @@ func TestInspectHandlesCyclicContainers(t *testing.T) {
 		d := NewDict()
 		key := NewString("self")
 		d.Store(DictKey(key), key, d)
-		want := "{'self': <cyclic reference>}"
+		want := "{'self': {...}}"
 		if got := d.Inspect(); got != want {
 			t.Fatalf("Inspect() = %q, want %q", got, want)
 		}
@@ -1626,7 +1626,7 @@ func TestInspectHandlesCyclicContainers(t *testing.T) {
 			t.Fatal("Inspect() returned empty string")
 		}
 		// Must terminate and mention the placeholder somewhere on the cycle.
-		if !containsSubstr(got, "<cyclic reference>") {
+		if !containsSubstr(got, "(...)") {
 			t.Fatalf("Inspect() = %q, want it to contain the cyclic placeholder", got)
 		}
 	})
@@ -1636,7 +1636,7 @@ func TestInspectHandlesCyclicContainers(t *testing.T) {
 		l := &List{Elements: []Object{d}}
 		key := NewString("k")
 		d.Store(DictKey(key), key, l)
-		want := "{'k': [<cyclic reference>]}"
+		want := "{'k': [{...}]}"
 		if got := d.Inspect(); got != want {
 			t.Fatalf("Inspect() = %q, want %q", got, want)
 		}

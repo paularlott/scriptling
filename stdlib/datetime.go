@@ -1468,21 +1468,24 @@ func timedeltaCompare(name, op string) *object.Builtin {
 			if !ok {
 				return errors.NewTypeError("timedelta instance", args[0].Type().String())
 			}
+			// Only another timedelta compares; anything else is unequal and
+			// unordered, as in Python.
 			var rt float64
-			switch v := args[1].(type) {
-			case *object.Float:
-				rt = v.FloatValue()
-			case *object.Integer:
-				rt = float64(v.IntValue())
-			case *object.Instance:
-				total, ok := v.Field("_total").(*object.Float)
-				if !ok {
-					return errors.NewTypeError("timedelta or number", args[1].Type().String())
-				}
-				rt = total.FloatValue()
-			default:
-				return errors.NewTypeError("timedelta or number", args[1].Type().String())
+			other, isInst := args[1].(*object.Instance)
+			var total *object.Float
+			if isInst && other.Class == left.Class {
+				total, _ = other.Field("_total").(*object.Float)
 			}
+			if total == nil {
+				switch op {
+				case "==":
+					return object.NewBoolean(false)
+				case "!=":
+					return object.NewBoolean(true)
+				}
+				return errors.NewTypeErrorTagged("'%s' not supported between instances of 'datetime.timedelta' and '%s'", op, object.PythonTypeName(args[1]))
+			}
+			rt = total.FloatValue()
 			l, r := lt.FloatValue(), rt
 			var result bool
 			switch op {

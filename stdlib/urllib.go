@@ -240,8 +240,13 @@ Parses a URL query string and returns a list of (key, value) tuples.`,
 				if b, ok := val.(*object.Bytes); ok {
 					text, err = string(b.BytesValue()), nil
 				}
-				if err != nil {
-					text = val.Inspect()
+				if _, isInst := val.(*object.Instance); isInst || err != nil {
+					// str(), so an instance shows its __str__ or __repr__.
+					if s, errObj := object.Str(ctx, val); errObj == nil {
+						text = s
+					} else {
+						text = val.Inspect()
+					}
 				}
 				if out.Len() > 0 {
 					out.WriteByte('&')

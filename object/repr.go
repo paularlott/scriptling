@@ -1,8 +1,10 @@
 package object
 
 import (
+	"context"
 	"sort"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 )
@@ -131,6 +133,75 @@ func InspectRepr(obj Object, instanceRepr InstanceReprFunc) (string, Object) {
 	return r.out.String(), r.err
 }
 
+// Script-side renderers for the instances and exceptions nested in a
+// container, registered by the evaluator (SetContainerReprHooks) for
+// InspectReprCtx.
+var (
+	ctxInstanceRepr  func(ctx context.Context, env *Environment, inst *Instance) (string, Object)
+	ctxExceptionRepr func(ctx context.Context, env *Environment, exc *Exception) (string, Object)
+)
+
+// SetContainerReprHooks registers how InspectReprCtx renders a nested
+// instance (its __repr__) and exception (its arguments' reprs).
+func SetContainerReprHooks(instance func(ctx context.Context, env *Environment, inst *Instance) (string, Object), exception func(ctx context.Context, env *Environment, exc *Exception) (string, Object)) {
+	ctxInstanceRepr, ctxExceptionRepr = instance, exception
+}
+
+// InspectReprCtx is InspectRepr for a script's repr(): nested instances and
+// exceptions are rendered by the registered hooks in ctx. A container met
+// again through an instance's repr (a named tuple holding the list that
+// holds it) prints as a cycle, as in Python: the container joins ctx's repr
+// path (EnterRepr) before the first nested instance is rendered.
+func InspectReprCtx(obj Object, ctx context.Context, env *Environment) (string, Object) {
+	path := ReprPathOf(ctx)
+	if path.Has(obj) {
+		return cyclicPlaceholder(obj), nil
+	}
+	r := reprPool.Get().(*reprRenderer)
+	seen := r.seen
+	if seen == nil {
+		seen = make(map[Object]struct{})
+	} else {
+		clear(seen)
+	}
+	*r = reprRenderer{seen: seen, limit: OutputLimit(), ctx: ctx, env: env, path: path, root: obj, withCtx: true}
+	r.container(obj)
+	r.over()
+	if r.entered {
+		LeaveRepr()
+	}
+	out, err := r.out.String(), r.err
+	// The text is the caller's now: the renderer keeps only its (empty)
+	// seen map for the next use.
+	*r = reprRenderer{seen: seen}
+	reprPool.Put(r)
+	return out, err
+}
+
+// reprPool recycles InspectReprCtx's renderers, which repr() and str() of
+// every container use.
+var reprPool = sync.Pool{New: func() any { return new(reprRenderer) }}
+
+// enterCtx puts the root container on the repr path, once, before a nested
+// instance or exception is rendered.
+func (r *reprRenderer) enterCtx() Object {
+	top := r
+	if r.top != nil {
+		top = r.top
+	}
+	if top.entered {
+		r.ctx = top.ctx
+		return nil
+	}
+	next, _, errObj := EnterRepr(top.ctx, top.root)
+	if errObj != nil {
+		return errObj
+	}
+	top.ctx, top.entered = next, true
+	r.ctx = next
+	return nil
+}
+
 // IsReprContainer reports whether obj is a container whose display renders
 // its elements with repr.
 func IsReprContainer(obj Object) bool {
@@ -141,11 +212,20 @@ func IsReprContainer(obj Object) bool {
 	return false
 }
 
-// cyclicInspectPlaceholder is rendered in place of a container that refers to
-// itself (directly or through a chain). Without this guard a self-referential
-// list/tuple/dict recurses until the Go stack overflows, which no recover()
-// can catch and which aborts the whole host process.
-const cyclicInspectPlaceholder = "<cyclic reference>"
+// cyclicPlaceholder is rendered in place of a container that refers to
+// itself (directly or through a chain), as Python renders it: [...] for a
+// list, {...} for a dict or set, (...) for a tuple. Without this guard a
+// self-referential container recurses until the Go stack overflows, which no
+// recover() can catch and which aborts the whole host process.
+func cyclicPlaceholder(obj Object) string {
+	switch obj.(type) {
+	case *List:
+		return "[...]"
+	case *Tuple:
+		return "(...)"
+	}
+	return "{...}"
+}
 
 // MaxReprDepth caps how deeply nested a container repr()/str() will render.
 // Rendering recurses in Go, and a stack overflow is a fatal error that ends
@@ -161,6 +241,17 @@ type reprRenderer struct {
 	depth        int   // containers on the path from the root
 	limit        int64 // longest text allowed, 0 for no limit (see OutputLimit)
 	used         int64 // text written by enclosing renderers (set elements)
+	// InspectReprCtx's state: nested instances and exceptions render
+	// through the registered hooks in ctx; path is ctx's repr path when
+	// rendering began; root joins it once (entered) on the top renderer,
+	// which a set element's sub-renderer reaches through top.
+	withCtx bool
+	entered bool
+	ctx     context.Context
+	env     *Environment
+	path    ReprPath
+	root    Object
+	top     *reprRenderer
 }
 
 // over reports, once the text has passed the limit, that rendering must stop,
@@ -194,13 +285,34 @@ func (r *reprRenderer) element(obj Object) {
 	case *String:
 		r.out.WriteString(ReprString(o.value))
 	case *Exception:
-		r.out.WriteString(ReprException(o))
+		if !r.withCtx || ctxExceptionRepr == nil {
+			r.out.WriteString(ReprException(o))
+			return
+		}
+		if err := r.enterCtx(); err != nil {
+			r.err = err
+			return
+		}
+		s, err := ctxExceptionRepr(r.ctx, r.env, o)
+		if err != nil {
+			r.err = err
+			return
+		}
+		r.out.WriteString(s)
 	case *Instance:
-		if r.instanceRepr == nil {
+		var s string
+		var err Object
+		switch {
+		case r.withCtx && ctxInstanceRepr != nil:
+			if err = r.enterCtx(); err == nil {
+				s, err = ctxInstanceRepr(r.ctx, r.env, o)
+			}
+		case r.instanceRepr != nil:
+			s, err = r.instanceRepr(o)
+		default:
 			r.out.WriteString(o.Inspect())
 			return
 		}
-		s, err := r.instanceRepr(o)
 		if err != nil {
 			r.err = err
 			return
@@ -221,8 +333,8 @@ func (r *reprRenderer) container(obj Object) {
 		r.out.WriteString("<module '" + d.Module + "'>")
 		return
 	}
-	if _, cyclic := r.seen[obj]; cyclic {
-		r.out.WriteString(cyclicInspectPlaceholder)
+	if _, cyclic := r.seen[obj]; cyclic || (r.withCtx && r.path.Has(obj)) {
+		r.out.WriteString(cyclicPlaceholder(obj))
 		return
 	}
 	if r.depth >= MaxReprDepth {
@@ -298,7 +410,11 @@ func (r *reprRenderer) container(obj Object) {
 		parts := make([]string, 0, o.Len())
 		used := r.used + int64(r.out.Len())
 		for _, e := range o.All() {
-			sub := reprRenderer{seen: r.seen, instanceRepr: r.instanceRepr, depth: r.depth, limit: r.limit, used: used}
+			sub := reprRenderer{seen: r.seen, instanceRepr: r.instanceRepr, depth: r.depth, limit: r.limit, used: used,
+				withCtx: r.withCtx, ctx: r.ctx, env: r.env, path: r.path, top: r.top}
+			if sub.top == nil {
+				sub.top = r
+			}
 			sub.element(e)
 			if sub.err == nil {
 				sub.over()

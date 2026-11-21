@@ -92,6 +92,10 @@ const tupleKeyMemoAfter = 64
 type tupleKeyer struct {
 	visited int
 	memo    map[*Tuple]string
+	// inst, when set, keys instance elements (TupleKeyWith); err holds the
+	// first error it returned.
+	inst func(*Instance) (string, Object)
+	err  Object
 }
 
 func (k *tupleKeyer) key(t *Tuple) string {
@@ -108,9 +112,20 @@ func (k *tupleKeyer) key(t *Tuple) string {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		if et, ok := e.(*Tuple); ok {
+		switch et := e.(type) {
+		case *Tuple:
 			b.WriteString(k.key(et))
-		} else {
+		case *Instance:
+			if k.inst != nil && k.err == nil {
+				s, errObj := k.inst(et)
+				if errObj != nil {
+					k.err = errObj
+				}
+				b.WriteString(s)
+			} else {
+				b.WriteString(DictKey(e))
+			}
+		default:
 			b.WriteString(DictKey(e))
 		}
 		if b.Len() > tupleKeyHashAt {
@@ -138,6 +153,31 @@ func (k *tupleKeyer) key(t *Tuple) string {
 	return key
 }
 
+// TupleKeyWith is DictKey for a tuple whose instance elements, at any
+// depth, are keyed by inst. The second return is the first error inst
+// returned.
+func TupleKeyWith(t *Tuple, inst func(*Instance) (string, Object)) (string, Object) {
+	k := tupleKeyer{inst: inst}
+	key := k.key(t)
+	if k.err != nil {
+		return "", k.err
+	}
+	return key, nil
+}
+
+// TupleKeyInfo reports whether t is hashable, and whether it holds an
+// instance at any depth (so its key needs TupleKeyWith).
+func TupleKeyInfo(t *Tuple) (hashable, hasInstance bool) {
+	var c hashableChecker
+	hashable = c.tuple(t)
+	return hashable, c.instances
+}
+
+// unhashableError is Python's TypeError for an unhashable value.
+func unhashableError(obj Object) Object {
+	return &Exception{Message: "unhashable type: '" + PythonTypeName(obj) + "'", ExceptionType: ExceptionTypeTypeError, Raised: true}
+}
+
 // DictStringKey returns the canonical dict key for a string key without
 // requiring a temporary String object allocation. It must agree with the *String
 // case of DictKey.
@@ -161,9 +201,10 @@ func stringDictKey(s string) string {
 }
 
 // IsHashable reports whether obj can be used as a set element or dict key.
-// Matches Python semantics: int, float, bool, string, bytes, None, and tuples
-// of hashable elements are hashable; lists, dicts, sets, and instances are
-// not unless the instance defines __hash__.
+// Matches Python semantics: int, float, bool, string, bytes, None, classes,
+// functions, frozensets and tuples of hashable elements are hashable; lists,
+// dicts and sets are not; an instance is unless its class sets __hash__ to
+// None or defines __eq__ without __hash__.
 func IsHashable(obj Object) bool {
 	switch o := obj.(type) {
 	case *Integer, *Float, *Boolean, *String, *Bytes, *Null:
@@ -184,8 +225,11 @@ func IsHashable(obj Object) bool {
 		// frozenset); mutable sets are unhashable.
 		return o.Frozen
 	case *Instance:
-		_, ok := o.Class.Methods["__hash__"]
-		return ok
+		_, hashable := InstanceHashMethod(o.Class)
+		return hashable
+	case *Class, *Function, *LambdaFunction, *Builtin:
+		// Classes and functions hash by identity, as in Python.
+		return true
 	default:
 		return false
 	}
@@ -198,6 +242,8 @@ func IsHashable(obj Object) bool {
 type hashableChecker struct {
 	visited int
 	ok      map[*Tuple]struct{}
+	// instances records whether an instance element was met.
+	instances bool
 }
 
 func (c *hashableChecker) tuple(t *Tuple) bool {
@@ -212,8 +258,13 @@ func (c *hashableChecker) tuple(t *Tuple) bool {
 			if !c.tuple(et) {
 				return false
 			}
-		} else if !IsHashable(e) {
-			return false
+		} else {
+			if _, isInst := e.(*Instance); isInst {
+				c.instances = true
+			}
+			if !IsHashable(e) {
+				return false
+			}
 		}
 	}
 	if c.ok == nil && c.visited > tupleKeyMemoAfter {
@@ -2895,6 +2946,9 @@ type Class struct {
 	// answer was computed under (plus one) shifted left, and the answer in
 	// the low bit.
 	setattr atomic.Uint64
+	// hashGroups groups the instances this class's __hash__ keys; see
+	// InstanceKey.
+	hashGroups atomic.Pointer[hashGroups]
 }
 
 func (c *Class) Type() ObjectType { return CLASS_OBJ }

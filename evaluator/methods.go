@@ -337,6 +337,9 @@ func callInstanceMethod(ctx context.Context, instance *object.Instance, method s
 		return applyFunctionWithContext(ctx, fn, newArgs, keywords, env)
 	}
 
+	if m := boundObjectDunder(instance, method); m != nil {
+		return applyFunctionWithContext(ctx, m, args, keywords, env)
+	}
 	// As in Python, __getattr__ supplies attributes normal lookup misses.
 	if getattr, ok := instance.Class.LookupMember("__getattr__"); ok {
 		attr := applyFunctionWithContext(ctx, getattr, []object.Object{instance, object.NewString(method)}, object.Kwargs{}, env)
@@ -344,6 +347,15 @@ func callInstanceMethod(ctx context.Context, instance *object.Instance, method s
 			return attr
 		}
 		return applyFunctionWithContext(ctx, attr, args, keywords, env)
+	}
+	// An IntEnum or StrEnum member has its value's methods (T.X.upper()).
+	if v, ok := valueMember(instance); ok {
+		if attr := evalIndexExpression(ctx, v, object.NewString(method), true); !isAttributeError(attr) {
+			if propagates(attr) {
+				return attr
+			}
+			return applyFunctionWithContext(ctx, attr, args, keywords, env)
+		}
 	}
 	return attributeError(instance, method)
 }

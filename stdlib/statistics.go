@@ -252,7 +252,10 @@ Always a member of the data.`,
 			var order []string
 			elements := make(map[string]object.Object)
 			for _, elem := range list.Elements {
-				key := object.DictKey(elem)
+				key, errObj := object.HashKey(ctx, elem)
+				if errObj != nil {
+					return errObj
+				}
 				if _, seen := counts[key]; !seen {
 					order = append(order, key)
 					elements[key] = elem

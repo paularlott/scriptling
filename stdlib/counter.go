@@ -37,8 +37,17 @@ func newCounter() *object.Instance {
 // Python allows. counterZero is the count of a missing element.
 var counterZero = object.NewInteger(0)
 
-func counterCount(d *object.Dict, key object.Object) object.Object {
-	if pair, ok := d.Lookup(object.DictKey(key)); ok {
+func counterCount(ctx context.Context, d *object.Dict, key object.Object) (object.Object, object.Object) {
+	k, errObj := object.HashKey(ctx, key)
+	if errObj != nil {
+		return nil, errObj
+	}
+	return counterCountKeyed(d, k), nil
+}
+
+// counterCountKeyed is counterCount for a key's canonical form.
+func counterCountKeyed(d *object.Dict, canonical string) object.Object {
+	if pair, ok := d.Lookup(canonical); ok {
 		return pair.Value
 	}
 	return counterZero
@@ -79,15 +88,21 @@ func addCounts(a, b object.Object, sign int64) (object.Object, object.Object) {
 	return object.NewFloat(af + float64(sign)*bf), nil
 }
 
-func counterAdd(d *object.Dict, key, n object.Object, sign int64) object.Object {
-	if !object.IsHashable(key) {
-		return &object.Exception{Message: "unhashable type: '" + object.PythonTypeName(key) + "'", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
+func counterAdd(ctx context.Context, d *object.Dict, key, n object.Object, sign int64) object.Object {
+	k, errObj := object.HashKey(ctx, key)
+	if errObj != nil {
+		return errObj
 	}
-	sum, err := addCounts(counterCount(d, key), n, sign)
+	return counterAddKeyed(d, k, key, n, sign)
+}
+
+// counterAddKeyed is counterAdd for a key's canonical form.
+func counterAddKeyed(d *object.Dict, canonical string, key, n object.Object, sign int64) object.Object {
+	sum, err := addCounts(counterCountKeyed(d, canonical), n, sign)
 	if err != nil {
 		return err
 	}
-	d.Store(object.DictKey(key), key, sum)
+	d.Store(canonical, key, sum)
 	return nil
 }
 
@@ -103,8 +118,8 @@ func counterApply(ctx context.Context, d *object.Dict, src object.Object, sign i
 		return nil
 	case *object.Instance:
 		if s.Class == counterClassRef {
-			for _, pair := range counterData(s).All() {
-				if err := counterAdd(d, pair.Key, pair.Value, sign); err != nil {
+			for canonical, pair := range counterData(s).All() {
+				if err := counterAddKeyed(d, canonical, pair.Key, pair.Value, sign); err != nil {
 					return err
 				}
 			}
@@ -115,8 +130,8 @@ func counterApply(ctx context.Context, d *object.Dict, src object.Object, sign i
 			return errObj
 		}
 	case *object.Dict:
-		for _, pair := range s.OrderedPairs() {
-			if err := counterAdd(d, pair.Key, pair.Value, sign); err != nil {
+		for canonical, pair := range s.All() {
+			if err := counterAddKeyed(d, canonical, pair.Key, pair.Value, sign); err != nil {
 				return err
 			}
 		}
@@ -128,7 +143,7 @@ func counterApply(ctx context.Context, d *object.Dict, src object.Object, sign i
 		}
 	}
 	for _, e := range elems {
-		if err := counterAdd(d, e, counterOne, sign); err != nil {
+		if err := counterAdd(ctx, d, e, counterOne, sign); err != nil {
 			return err
 		}
 	}
@@ -173,7 +188,7 @@ func instanceElements(ctx context.Context, inst *object.Instance) ([]object.Obje
 // counterApplyKwargs adds keyword counts: Counter(a=1, b=2).
 func counterApplyKwargs(d *object.Dict, kwargs object.Kwargs, sign int64) object.Object {
 	for _, key := range kwargs.Keys() {
-		if err := counterAdd(d, object.NewString(key), kwargs.Get(key), sign); err != nil {
+		if err := counterAddKeyed(d, object.DictStringKey(key), object.NewString(key), kwargs.Get(key), sign); err != nil {
 			return err
 		}
 	}
@@ -181,29 +196,12 @@ func counterApplyKwargs(d *object.Dict, kwargs object.Kwargs, sign int64) object
 }
 
 // counterKeyRepr renders a key as Python's repr would.
-func counterKeyRepr(k object.Object) string {
+func counterKeyRepr(ctx context.Context, k object.Object) string {
 	if s, ok := k.(*object.String); ok {
 		return object.ReprString(s.StringValue())
 	}
-	r, _ := object.InspectRepr(k, nil)
+	r, _ := object.Repr(ctx, k)
 	return r
-}
-
-// counterValue appends a key or count as counterKeyRepr renders it.
-func (r *reprBuilder) counterValue(v object.Object) {
-	if r.err != nil {
-		return
-	}
-	if s, ok := v.(*object.String); ok {
-		r.WriteString(object.ReprString(s.StringValue()))
-		return
-	}
-	out, errObj := object.InspectRepr(v, nil)
-	if errObj != nil {
-		r.err = errObj
-		return
-	}
-	r.WriteString(out)
 }
 
 type counterEntry struct {
@@ -281,7 +279,7 @@ func counterArithmetic(op byte, a, b *object.Instance) object.Object {
 	}
 	for _, ok := range keys {
 		key := ok.key
-		x, y := counterCount(ad, key), counterCount(bd, key)
+		x, y := counterCountKeyed(ad, ok.canonical), counterCountKeyed(bd, ok.canonical)
 		var v object.Object
 		switch op {
 		case '+', '-':
@@ -349,7 +347,7 @@ func counterUnary(name string, sign int64) *object.Builtin {
 		_, d := counterSelf(args)
 		out := newCounter()
 		od := counterData(out)
-		for _, p := range d.OrderedPairs() {
+		for canonical, p := range d.All() {
 			f, ok := countValue(p.Value)
 			if !ok || f*float64(sign) <= 0 {
 				continue
@@ -362,7 +360,7 @@ func counterUnary(name string, sign int64) *object.Builtin {
 				}
 				v = neg
 			}
-			od.Store(object.DictKey(p.Key), p.Key, v)
+			od.Store(canonical, p.Key, v)
 		}
 		return out
 	}, HelpText: name + "() - " + map[bool]string{true: "+c: the positive counts", false: "-c: the negative counts, negated"}[sign > 0]}
@@ -389,9 +387,9 @@ func counterCompare(name, op string, reverse, strict bool) *object.Builtin {
 		}
 		le, equal := true, true
 		for _, d := range []*object.Dict{a, b} {
-			for _, p := range d.All() {
-				x, _ := countValue(counterCount(a, p.Key))
-				y, _ := countValue(counterCount(b, p.Key))
+			for canonical := range d.All() {
+				x, _ := countValue(counterCountKeyed(a, canonical))
+				y, _ := countValue(counterCountKeyed(b, canonical))
 				le, equal = le && x <= y, equal && x == y
 			}
 		}
@@ -429,7 +427,11 @@ var CounterClass = &object.Class{
 				return err
 			}
 			_, d := counterSelf(args)
-			return counterCount(d, args[1])
+			n, errObj := counterCount(ctx, d, args[1])
+			if errObj != nil {
+				return errObj
+			}
+			return n
 		}),
 		"__setitem__": counterMethod("c[key] = count", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.NoKwargs("__setitem__", kwargs); err != nil {
@@ -438,11 +440,12 @@ var CounterClass = &object.Class{
 			if err := errors.ExactArgs(args, 3); err != nil {
 				return err
 			}
-			if !object.IsHashable(args[1]) {
-				return &object.Exception{Message: "unhashable type: '" + object.PythonTypeName(args[1]) + "'", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
+			k, errObj := object.HashKey(ctx, args[1])
+			if errObj != nil {
+				return errObj
 			}
 			_, d := counterSelf(args)
-			d.Store(object.DictKey(args[1]), args[1], args[2])
+			d.Store(k, args[1], args[2])
 			return &object.Null{}
 		}),
 		"__delitem__": counterMethod("del c[key]", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -452,8 +455,12 @@ var CounterClass = &object.Class{
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
+			k, errObj := object.HashKey(ctx, args[1])
+			if errObj != nil {
+				return errObj
+			}
 			_, d := counterSelf(args)
-			d.Delete(object.DictKey(args[1]))
+			d.Delete(k)
 			return &object.Null{}
 		}),
 		"__len__": counterMethod("len(c)", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -477,8 +484,12 @@ var CounterClass = &object.Class{
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
+			k, errObj := object.HashKey(ctx, args[1])
+			if errObj != nil {
+				return errObj
+			}
 			_, d := counterSelf(args)
-			_, ok := d.Lookup(object.DictKey(args[1]))
+			_, ok := d.Lookup(k)
 			return object.NewBoolean(ok)
 		}),
 		"__iter__": counterMethod("iter(c) - the keys", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -522,7 +533,7 @@ var CounterClass = &object.Class{
 						if x != y {
 							return false
 						}
-					} else if p.Value.Inspect() != q.Inspect() {
+					} else if eq, _ := object.Equal(ctx, p.Value, q); !eq {
 						return false
 					}
 				}
@@ -539,15 +550,24 @@ var CounterClass = &object.Class{
 			if len(entries) == 0 {
 				return object.NewString("Counter()")
 			}
-			r := newReprBuilder()
+			// A Counter holding itself renders the inner one as "...".
+			rctx, entered, errObj := object.EnterRepr(ctx, args[0].(*object.Instance))
+			if errObj != nil {
+				return errObj
+			}
+			if !entered {
+				return object.NewString("...")
+			}
+			defer object.LeaveRepr()
+			r := newReprBuilder(rctx)
 			r.WriteString("Counter({")
 			for i, e := range entries {
 				if i > 0 {
 					r.WriteString(", ")
 				}
-				r.counterValue(e.key)
+				r.Value(e.key)
 				r.WriteString(": ")
-				r.counterValue(e.count)
+				r.Value(e.count)
 			}
 			r.WriteString("})")
 			out, errObj := r.Result()
@@ -594,8 +614,12 @@ var CounterClass = &object.Class{
 			if err := errors.RangeArgs(args, 2, 3); err != nil {
 				return err
 			}
+			k, errObj := object.HashKey(ctx, args[1])
+			if errObj != nil {
+				return errObj
+			}
 			_, d := counterSelf(args)
-			if pair, ok := d.Lookup(object.DictKey(args[1])); ok {
+			if pair, ok := d.Lookup(k); ok {
 				return pair.Value
 			}
 			if len(args) == 3 {
@@ -610,8 +634,11 @@ var CounterClass = &object.Class{
 			if err := errors.RangeArgs(args, 2, 3); err != nil {
 				return err
 			}
+			k, errObj := object.HashKey(ctx, args[1])
+			if errObj != nil {
+				return errObj
+			}
 			_, d := counterSelf(args)
-			k := object.DictKey(args[1])
 			if pair, ok := d.Lookup(k); ok {
 				d.Delete(k)
 				return pair.Value
@@ -619,7 +646,7 @@ var CounterClass = &object.Class{
 			if len(args) == 3 {
 				return args[2]
 			}
-			return object.NewKeyError(args[1], counterKeyRepr(args[1]))
+			return object.NewKeyError(args[1], counterKeyRepr(ctx, args[1]))
 		}),
 		"update": counterMethod("update([iterable_or_mapping], **kwargs) - add counts", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.RangeArgs(args, 1, 2); err != nil {

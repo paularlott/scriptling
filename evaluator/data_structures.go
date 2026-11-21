@@ -12,49 +12,149 @@ import (
 
 // evalHashKeyChecked returns obj's dict key, surfacing a raise/error from a
 // user-defined __hash__ instead of silently falling back to the identity hash.
-// The second return is non-nil exactly when __hash__ raised or errored, or the
-// value is unhashable (Python's TypeError: unhashable type).
+// The second return is non-nil exactly when __hash__ or __eq__ raised or
+// errored, or the value is unhashable (Python's TypeError: unhashable type).
+// An instance that hashes by __hash__, alone or inside a tuple, is keyed so
+// that equal instances share a key and unequal ones with the same hash do
+// not (object.InstanceKey).
 func evalHashKeyChecked(ctx context.Context, obj object.Object) (string, object.Object) {
-	if inst, ok := obj.(*object.Instance); ok {
-		if _, hasHash := inst.Class.Methods["__hash__"]; hasHash {
-			result := hashInstanceFn(ctx, inst)
-			if object.IsError(result) || result.Type() == object.EXCEPTION_OBJ {
-				return "", result
-			}
-			if n, ok := result.(*object.Integer); ok {
-				return fmt.Sprintf("h:%d", n.IntValue()), nil
-			}
-			// __hash__ returned a non-integer — Python raises TypeError.
-			return "", &object.Exception{Message: "__hash__ method should return an integer", ExceptionType: object.ExceptionTypeTypeError, Raised: true}
+	switch o := obj.(type) {
+	case *object.Instance:
+		return instanceHashKeyFn(ctx, o)
+	case *object.Tuple:
+		hashable, hasInstance := object.TupleKeyInfo(o)
+		if !hashable {
+			return "", unhashableTypeError(obj)
 		}
+		if hasInstance {
+			return object.TupleKeyWith(o, func(inst *object.Instance) (string, object.Object) {
+				return instanceHashKeyFn(ctx, inst)
+			})
+		}
+		return object.DictKey(obj), nil
 	}
-	if !hashableAsKey(obj) {
-		return "", &object.Exception{
-			Message:       fmt.Sprintf("unhashable type: '%s'", getTypeName(obj)),
-			ExceptionType: object.ExceptionTypeTypeError,
-			Raised:        true,
-		}
+	if !object.IsHashable(obj) {
+		return "", unhashableTypeError(obj)
 	}
 	return object.DictKey(obj), nil
 }
 
-// hashableAsKey reports whether obj may serve as a dict key / set member.
-// object.IsHashable is the strict content-hashability allowlist (used by
-// sentinel machinery); dict and set keys additionally accept anything Python
-// identity-hashes by default: plain instances, classes, functions. As in
-// Python, an instance that defines __eq__ without __hash__ is unhashable.
-func hashableAsKey(obj object.Object) bool {
-	switch o := obj.(type) {
-	case *object.Instance:
-		if _, hasEq := o.Class.Methods["__eq__"]; hasEq {
-			_, hasHash := o.Class.Methods["__hash__"]
-			return hasHash
-		}
-		return true
-	case *object.Class, *object.Function, *object.LambdaFunction, *object.Builtin:
-		return true
+// instanceHashKeyFn is instanceHashKey, set in init to break the
+// initialization cycle through the builtins table.
+var instanceHashKeyFn func(ctx context.Context, inst *object.Instance) (string, object.Object)
+
+func init() { instanceHashKeyFn = instanceHashKey }
+
+// unhashableTypeError is Python's TypeError for an unhashable value.
+func unhashableTypeError(obj object.Object) object.Object {
+	return &object.Exception{
+		Message:       fmt.Sprintf("unhashable type: '%s'", getTypeName(obj)),
+		ExceptionType: object.ExceptionTypeTypeError,
+		Raised:        true,
 	}
-	return object.IsHashable(obj)
+}
+
+// instanceHash calls inst's __hash__. fn is nil (and the error too) for an
+// instance that hashes by identity.
+func instanceHash(ctx context.Context, inst *object.Instance) (fn object.Object, n int64, errObj object.Object) {
+	fn, hashable := object.InstanceHashMethod(inst.Class)
+	if !hashable {
+		return nil, 0, unhashableTypeError(inst)
+	}
+	if fn == nil {
+		return nil, 0, nil
+	}
+	result := applyFunctionWithContext(ctx, fn, []object.Object{inst}, object.Kwargs{}, GetEnvFromContext(ctx))
+	if propagates(result) {
+		return nil, 0, result
+	}
+	switch r := result.(type) {
+	case *object.Integer:
+		return fn, r.IntValue(), nil
+	case *object.Boolean:
+		return fn, boolToInt64(r.BoolValue()), nil
+	}
+	return nil, 0, errors.NewTypeErrorTagged("__hash__ method should return an integer")
+}
+
+// hashKeyText is hash() of a value whose dict key is key: FNV-1a over the
+// key, so values that are equal as dict keys (1, 1.0 and True) hash alike.
+func hashKeyText(key string) int64 {
+	h := uint64(14695981039346656037)
+	for i := 0; i < len(key); i++ {
+		h ^= uint64(key[i])
+		h *= 1099511628211
+	}
+	return int64(h)
+}
+
+// enumValueHash is the __hash__ of IntEnum, IntFlag and StrEnum members:
+// they hash, and key dicts, as their values do, so Code.OK and 200 are the
+// same key, as in Python.
+var enumValueHash = &object.Builtin{HelpText: "__hash__() - Hash of the member's value"}
+
+func init() {
+	enumValueHash.Fn = func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		if err := errors.NoKwargs("__hash__", kwargs); err != nil {
+			return err
+		}
+		self, ok := args[0].(*object.Instance)
+		if !ok || len(args) != 1 {
+			return errors.NewTypeErrorTagged("__hash__ requires an enum member")
+		}
+		key, errObj := evalHashKeyChecked(ctx, self.Field("value"))
+		if errObj != nil {
+			return errObj
+		}
+		return object.NewInteger(hashKeyText(key))
+	}
+}
+
+// namedTupleValues returns a named tuple's field values; ok is false for
+// any other instance. collections.namedtuple marks its classes with a
+// __frozen__ of "namedtuple" and lists the fields in _fields.
+func namedTupleValues(inst *object.Instance) ([]object.Object, bool) {
+	if kind, ok := inst.Class.Methods["__frozen__"].(*object.String); !ok || kind.StringValue() != "namedtuple" {
+		return nil, false
+	}
+	fields, ok := inst.Class.Methods["_fields"].(*object.Tuple)
+	if !ok {
+		return nil, false
+	}
+	values := make([]object.Object, len(fields.Elements))
+	for i, f := range fields.Elements {
+		name, _ := f.(*object.String)
+		if name == nil {
+			return nil, false
+		}
+		v, _ := inst.GetField(name.StringValue())
+		if v == nil {
+			v = NULL
+		}
+		values[i] = v
+	}
+	return values, true
+}
+
+// instanceHashKey is evalHashKeyChecked for an instance.
+func instanceHashKey(ctx context.Context, inst *object.Instance) (string, object.Object) {
+	if fn, _ := object.InstanceHashMethod(inst.Class); fn == enumValueHash {
+		return evalHashKeyChecked(ctx, inst.Field("value"))
+	}
+	if values, ok := namedTupleValues(inst); ok {
+		// A named tuple is a tuple: it keys as the tuple of its values.
+		return evalHashKeyChecked(ctx, &object.Tuple{Elements: values})
+	}
+	fn, n, errObj := instanceHash(ctx, inst)
+	if errObj != nil {
+		return "", errObj
+	}
+	if fn == nil {
+		return object.DictKey(inst), nil
+	}
+	return object.InstanceKey(inst, fn, n, func(stored *object.Instance) (bool, object.Object) {
+		return evalObjectsEqualChecked(ctx, stored, inst, GetEnvFromContext(ctx))
+	})
 }
 
 // evalSetAdd adds obj to set s, using __hash__ for instances.
@@ -83,9 +183,6 @@ func iterableToSet(ctx context.Context, obj object.Object, env *object.Environme
 }
 
 func evalSetAdd(ctx context.Context, s *object.Set, obj object.Object) object.Object {
-	if !hashableAsKey(obj) {
-		return &object.Exception{Message: fmt.Sprintf("unhashable type: '%s'", getTypeName(obj)), ExceptionType: object.ExceptionTypeTypeError, Raised: true}
-	}
 	hk, raised := evalHashKeyChecked(ctx, obj)
 	if raised != nil {
 		return raised
@@ -103,6 +200,20 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 	// per-case comparisons, each calling Type() again, is a measurable share
 	// of method-call cost.
 	leftType := left.Type()
+	if !isDotAccess {
+		if _, isInst := index.(*object.Instance); isInst {
+			switch leftType {
+			case object.LIST_OBJ, object.TUPLE_OBJ, object.STRING_OBJ, object.BYTES_OBJ:
+				// A sequence index may be any object with __index__.
+				if v, errObj, ok := instanceIndex(ctx, index); ok {
+					if errObj != nil {
+						return errObj
+					}
+					index = object.NewInteger(v)
+				}
+			}
+		}
+	}
 	switch leftType {
 	case object.LIST_OBJ:
 		switch index.Type() {
@@ -659,11 +770,41 @@ func evalInstanceIndexExpression(ctx context.Context, instance, index object.Obj
 	if field == "__doc__" {
 		return NULL // a class without a docstring
 	}
+	// The defaults every object has: obj.__repr__, obj.__eq__, ...
+	if m := boundObjectDunder(inst, field); m != nil {
+		return m
+	}
 	// As in Python, __getattr__ is consulted only when normal lookup fails.
 	if getattr, ok := inst.Class.LookupMember("__getattr__"); ok {
 		return applyFunctionWithContext(ctx, getattr, []object.Object{instance, index}, object.Kwargs{}, nil)
 	}
+	// An IntEnum or StrEnum member has its value's methods (T.X.upper()).
+	if v, ok := valueMember(inst); ok {
+		if r := evalIndexExpression(ctx, v, index, true); !isAttributeError(r) {
+			return r
+		}
+	}
 	return attributeError(inst, field)
+}
+
+// boundObjectDunder is object's default dunder (object.__repr__,
+// object.__hash__, ...) bound to inst, for an instance whose class does
+// not define it; nil for any other name.
+func boundObjectDunder(inst *object.Instance, name string) object.Object {
+	if len(name) < 5 || name[0] != '_' || name[1] != '_' {
+		return nil
+	}
+	fn, _ := objectDunder(name).(*object.Builtin)
+	if fn == nil || name == "__getattribute__" {
+		return nil
+	}
+	return &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			return fn.Fn(ctx, kwargs, append([]object.Object{inst}, args...)...)
+		},
+		HelpText: fn.HelpText,
+		Repr:     fmt.Sprintf("<method-wrapper '%s' of %s object>", name, inst.Class.Name),
+	}
 }
 
 // instanceDictView returns an instance's attributes as a dict in assignment

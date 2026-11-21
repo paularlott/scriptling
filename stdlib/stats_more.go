@@ -121,7 +121,10 @@ func init() {
 			var order []object.Object
 			var keys []string
 			for _, e := range elems {
-				k := object.DictKey(e)
+				k, errObj := object.HashKey(ctx, e)
+				if errObj != nil {
+					return errObj
+				}
 				if _, seen := counts[k]; !seen {
 					order = append(order, e)
 					keys = append(keys, k)
