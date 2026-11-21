@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -19,6 +20,9 @@ var csvWriterClass = &object.Class{
 	Methods: map[string]object.Object{
 		"writerow": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("writerow", kwargs); err != nil {
+					return err
+				}
 				if len(args) < 2 {
 					return csvSimpleError("writerow() requires a row argument")
 				}
@@ -32,6 +36,9 @@ var csvWriterClass = &object.Class{
 		},
 		"writerows": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("writerows", kwargs); err != nil {
+					return err
+				}
 				if len(args) < 2 {
 					return csvSimpleError("writerows() requires a rows argument")
 				}
@@ -55,12 +62,18 @@ var csvReaderClass = &object.Class{
 	Methods: map[string]object.Object{
 		"__iter__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__iter__", kwargs); err != nil {
+					return err
+				}
 				return args[0]
 			},
 			HelpText: "__iter__() - Readers are their own iterator",
 		},
 		"__next__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__next__", kwargs); err != nil {
+					return err
+				}
 				self, ok := args[0].(*object.Instance)
 				if !ok {
 					return csvSimpleError("__next__() must be called on a csv.reader")
@@ -72,8 +85,10 @@ var csvReaderClass = &object.Class{
 	},
 }
 
+// csvSimpleError is the TypeError for a csv reader or writer used with the
+// wrong arguments, receiver or row type.
 func csvSimpleError(format string, a ...any) object.Object {
-	return &object.Error{Message: fmt.Sprintf(format, a...)}
+	return &object.Error{Message: fmt.Sprintf(format, a...), ExceptionType: object.ExceptionTypeTypeError}
 }
 
 // csvCellString stringifies one cell as Python's csv writer does: strings
@@ -116,7 +131,7 @@ func csvWriteRows(ctx context.Context, self *object.Instance, rows []object.Obje
 	for _, rowObj := range rows {
 		row, ok := rowObj.(*object.List)
 		if !ok {
-			return csvSimpleError("csv row must be a list")
+			return &object.Error{Message: "iterable expected: csv row must be a list"}
 		}
 		strs := make([]string, len(row.Elements))
 		for i, cell := range row.Elements {
@@ -130,7 +145,7 @@ func csvWriteRows(ctx context.Context, self *object.Instance, rows []object.Obje
 			if buf.err != nil {
 				return buf.err
 			}
-			return csvSimpleError("csv write: %s", e.Error())
+			return &object.Error{Message: "csv write: " + e.Error()}
 		}
 	}
 	w.Flush()
@@ -181,6 +196,9 @@ func csvNextRecord(self *object.Instance) ([]string, object.Object) {
 		return nil, &object.Exception{Message: "StopIteration", ExceptionType: object.ExceptionTypeStopIteration, Raised: true}
 	}
 	r := csv.NewReader(strings.NewReader(line))
+	if d, _ := self.Field("_delimiter").(*object.String); d != nil && d.StringValue() != "" {
+		r.Comma = []rune(d.StringValue())[0]
+	}
 	record, err := r.Read()
 	if err != nil {
 		return nil, &object.Exception{Message: "StopIteration", ExceptionType: object.ExceptionTypeStopIteration, Raised: true}
@@ -195,12 +213,18 @@ var csvDictReaderClass = &object.Class{
 	Methods: map[string]object.Object{
 		"__iter__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__iter__", kwargs); err != nil {
+					return err
+				}
 				return args[0]
 			},
 			HelpText: "__iter__() - Readers are their own iterator",
 		},
 		"fieldnames": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("fieldnames", kwargs); err != nil {
+					return err
+				}
 				self, ok := args[0].(*object.Instance)
 				if !ok {
 					return csvSimpleError("fieldnames must be accessed on a csv.DictReader")
@@ -216,6 +240,9 @@ var csvDictReaderClass = &object.Class{
 		},
 		"__next__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__next__", kwargs); err != nil {
+					return err
+				}
 				self, ok := args[0].(*object.Instance)
 				if !ok {
 					return csvSimpleError("__next__() must be called on a csv.DictReader")
@@ -292,6 +319,9 @@ var csvDictWriterClass = &object.Class{
 	Methods: map[string]object.Object{
 		"writeheader": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("writeheader", kwargs); err != nil {
+					return err
+				}
 				self, ok := args[0].(*object.Instance)
 				if !ok {
 					return csvSimpleError("writeheader() must be called on a csv.DictWriter")
@@ -307,6 +337,9 @@ var csvDictWriterClass = &object.Class{
 		},
 		"writerow": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("writerow", kwargs); err != nil {
+					return err
+				}
 				if len(args) < 2 {
 					return csvSimpleError("writerow() requires a row argument")
 				}
@@ -324,6 +357,9 @@ var csvDictWriterClass = &object.Class{
 		},
 		"writerows": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("writerows", kwargs); err != nil {
+					return err
+				}
 				if len(args) < 2 {
 					return csvSimpleError("writerows() requires a rows argument")
 				}

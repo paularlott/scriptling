@@ -24,6 +24,11 @@ func newCSVLibrary() *object.Library {
 	return object.NewLibrary(CSVLibraryName, map[string]*object.Builtin{
 		"writer": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if kwargs.Len() > 0 {
+					if err := errors.CheckKwargs("writer", kwargs, "delimiter"); err != nil {
+						return err
+					}
+				}
 				if err := minOneInstanceArg(args, "writer"); err != nil {
 					return err
 				}
@@ -40,6 +45,11 @@ writerow(row) writes one row; writerows(rows) writes many.`,
 		},
 		"reader": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if kwargs.Len() > 0 {
+					if err := errors.CheckKwargs("reader", kwargs, "delimiter"); err != nil {
+						return err
+					}
+				}
 				if err := minOneInstanceArg(args, "reader"); err != nil {
 					return err
 				}
@@ -47,9 +57,11 @@ writerow(row) writes one row; writerows(rows) writes many.`,
 				if lines == nil {
 					return csvSimpleError("csv.reader source must have read(), getvalue() or readline()")
 				}
+				delimiter, _ := csvDelimiter(kwargs)
 				inst := object.NewInstanceWithFields(csvReaderClass, map[string]object.Object{
-					"_lines": &object.List{Elements: lines},
-					"_pos":   object.NewInteger(0),
+					"_lines":     &object.List{Elements: lines},
+					"_pos":       object.NewInteger(0),
+					"_delimiter": object.NewString(string(delimiter)),
 				})
 				return inst
 			},
@@ -59,6 +71,11 @@ Iterating yields rows (lists of strings).`,
 		},
 		"DictReader": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if kwargs.Len() > 0 {
+					if err := errors.CheckKwargs("DictReader", kwargs, "fieldnames", "restval", "delimiter"); err != nil {
+						return err
+					}
+				}
 				if err := minOneInstanceArg(args, "DictReader"); err != nil {
 					return err
 				}
@@ -66,9 +83,11 @@ Iterating yields rows (lists of strings).`,
 				if lines == nil {
 					return csvSimpleError("csv.DictReader source must have read(), getvalue() or readline()")
 				}
+				delimiter, _ := csvDelimiter(kwargs)
 				fields := map[string]object.Object{
 					"_lines":     &object.List{Elements: lines},
 					"_pos":       object.NewInteger(0),
+					"_delimiter": object.NewString(string(delimiter)),
 					"fieldnames": &object.Null{},
 				}
 				// Positional or keyword fieldnames; restval fills short rows.
@@ -101,11 +120,20 @@ The first row is the header unless fieldnames is given.`,
 		},
 		"DictWriter": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if kwargs.Len() > 0 {
+					if err := errors.CheckKwargs("DictWriter", kwargs, "fieldnames", "restval", "delimiter", "extrasaction"); err != nil {
+						return err
+					}
+				}
 				if err := minOneInstanceArg(args, "DictWriter"); err != nil {
 					return err
 				}
 				if len(args) < 2 {
-					return csvSimpleError("csv.DictWriter requires fieldnames")
+					if fn, ok := kwargs.Lookup("fieldnames"); ok {
+						args = append(args[:1:1], fn)
+					} else {
+						return csvSimpleError("csv.DictWriter requires fieldnames")
+					}
 				}
 				names, errObj := args[1].AsList()
 				if errObj != nil {
@@ -128,6 +156,11 @@ writerow(dict) writes rows ordered by fieldnames; writeheader() writes the heade
 		},
 		"loads": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if kwargs.Len() > 0 {
+					if err := errors.CheckKwargs("loads", kwargs, "delimiter"); err != nil {
+						return err
+					}
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -185,6 +218,11 @@ Returns:
 		},
 		"loads_dict": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if kwargs.Len() > 0 {
+					if err := errors.CheckKwargs("loads_dict", kwargs, "delimiter"); err != nil {
+						return err
+					}
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -235,6 +273,11 @@ Returns:
 		},
 		"dumps": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if kwargs.Len() > 0 {
+					if err := errors.CheckKwargs("dumps", kwargs, "delimiter"); err != nil {
+						return err
+					}
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -248,13 +291,13 @@ Returns:
 				for i, row := range list {
 					rowList, ok := row.(*object.List)
 					if !ok {
-						return errors.NewError("csv.dumps: row %d is not a list", i)
+						return errors.NewTypeErrorTagged("csv.dumps: row %d is not a list", i)
 					}
 					strs := make([]string, len(rowList.Elements))
 					for j, cell := range rowList.Elements {
 						s, e := cell.AsString()
 						if e != nil {
-							return errors.NewError("csv.dumps: cell [%d][%d] is not a string", i, j)
+							return errors.NewTypeErrorTagged("csv.dumps: cell [%d][%d] is not a string", i, j)
 						}
 						strs[j] = s
 					}
@@ -283,6 +326,11 @@ Returns:
 		},
 		"dumps_dict": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if kwargs.Len() > 0 {
+					if err := errors.CheckKwargs("dumps_dict", kwargs, "delimiter", "columns"); err != nil {
+						return err
+					}
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -299,19 +347,19 @@ Returns:
 				// Collect header order from the first dict.
 				first, ok := list[0].(*object.Dict)
 				if !ok {
-					return errors.NewError("csv.dumps_dict: expected a list of dicts")
+					return errors.NewTypeErrorTagged("csv.dumps_dict: expected a list of dicts")
 				}
 				// Collect header order: explicit columns kwarg, or sorted keys.
 				var headers []string
 				if v := kwargs.Get("columns"); v != nil {
 					colList, ok := v.(*object.List)
 					if !ok {
-						return errors.NewError("csv.dumps_dict: columns must be a list of strings")
+						return errors.NewTypeErrorTagged("csv.dumps_dict: columns must be a list of strings")
 					}
 					for _, c := range colList.Elements {
 						s, e := c.AsString()
 						if e != nil {
-							return errors.NewError("csv.dumps_dict: column name is not a string")
+							return errors.NewTypeErrorTagged("csv.dumps_dict: column name is not a string")
 						}
 						headers = append(headers, s)
 					}
@@ -332,7 +380,7 @@ Returns:
 				for _, item := range list {
 					d, ok := item.(*object.Dict)
 					if !ok {
-						return errors.NewError("csv.dumps_dict: row is not a dict")
+						return errors.NewTypeErrorTagged("csv.dumps_dict: row is not a dict")
 					}
 					row := make([]string, len(headers))
 					for i, h := range headers {

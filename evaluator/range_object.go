@@ -121,6 +121,9 @@ func evalRangeIndexExpression(r *object.Iterator, index object.Object, isDotAcce
 func rangeMethod(r *object.Iterator, name string) object.Object {
 	return &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("range."+name, kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}

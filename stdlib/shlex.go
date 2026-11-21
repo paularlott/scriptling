@@ -16,6 +16,9 @@ func newShlexLibrary() *object.Library {
 	return object.NewLibrary(ShlexLibraryName, map[string]*object.Builtin{
 		"quote": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("quote", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -34,6 +37,9 @@ quotes with any embedded single quotes escaped.`,
 		},
 		"split": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("split", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -43,7 +49,7 @@ quotes with any embedded single quotes escaped.`,
 				}
 				tokens, e := shlexSplit(s)
 				if e != nil {
-					return errors.NewError("shlex.split: %s", e.Error())
+					return errors.NewValueError("%s", e.Error())
 				}
 				elements := make([]object.Object, len(tokens))
 				for i, t := range tokens {
@@ -60,6 +66,9 @@ quotes a backslash escapes the next character.`,
 		},
 		"join": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("join", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}

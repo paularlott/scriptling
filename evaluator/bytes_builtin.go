@@ -13,14 +13,18 @@ import (
 // 0-255), mirroring Python's bytes([104, 105]) constructor.
 func bytesFromListInternal(list *object.List) (*object.Bytes, object.Object) {
 	out := make([]byte, 0, len(list.Elements))
-	for i, el := range list.Elements {
-		iv, ok := el.(*object.Integer)
-		if !ok {
-			return nil, errors.NewError("bytes: element %d is not an integer", i)
+	for _, el := range list.Elements {
+		var v int64
+		switch n := el.(type) {
+		case *object.Integer:
+			v = n.IntValue()
+		case *object.Boolean:
+			v = boolToInt64(n.BoolValue())
+		default:
+			return nil, errors.NewTypeErrorTagged("'%s' object cannot be interpreted as an integer", getTypeName(el))
 		}
-		v := iv.IntValue()
 		if v < 0 || v > 255 {
-			return nil, errors.NewError("bytes: element %d out of range (0-255): %d", i, v)
+			return nil, errors.NewValueError("bytes must be in range(0, 256)")
 		}
 		out = append(out, byte(v))
 	}
@@ -30,18 +34,25 @@ func bytesFromListInternal(list *object.List) (*object.Bytes, object.Object) {
 // bytesConstructorFn implements bytes(source, encoding="utf-8"). It is the
 // primary Python-compatible entry point and is registered as a global builtin.
 func bytesConstructorFn(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	if kwargs.Len() > 0 {
+		// errors applies when a str is encoded with a codec other than
+		// utf-8 (encoding a str to utf-8 cannot fail).
+		if err := errors.CheckKwargs("bytes", kwargs, "encoding", "errors"); err != nil {
+			return err
+		}
+	}
 	if len(args) == 0 {
 		return object.NewBytes(nil)
 	}
 	if len(args) > 2 {
-		return errors.NewError("bytes() takes at most 2 arguments (%d given)", len(args))
+		return errors.NewTypeErrorTagged("bytes() takes at most 2 arguments (%d given)", len(args))
 	}
-	switch v := args[0].(type) {
+	switch v := boolAsInt(args[0]).(type) {
 	case *object.Integer:
 		// Python bytes(n) is n zero bytes.
 		n := v.IntValue()
 		if n < 0 {
-			return errors.NewError("negative count in bytes(): %d", n)
+			return errors.NewValueError("negative count")
 		}
 		if errObj := checkSize("bytes", n); errObj != nil {
 			return errObj
@@ -54,10 +65,21 @@ func bytesConstructorFn(ctx context.Context, kwargs object.Kwargs, args ...objec
 				encoding = s
 			}
 		}
-		if enc := kwargs.MustGetString("encoding", encoding); enc != "utf-8" && enc != "utf8" {
-			return errors.NewError("bytes: unsupported encoding %q (only utf-8 is supported)", enc)
+		enc := kwargs.MustGetString("encoding", encoding)
+		if enc == "utf-8" || enc == "utf8" {
+			return object.NewBytesFromString(v.StringValue())
 		}
-		return object.NewBytesFromString(v.StringValue())
+		errorsMode := "strict"
+		if em, ok := kwargs.Lookup("errors"); ok {
+			if m, err := em.AsString(); err == nil {
+				errorsMode = m
+			}
+		}
+		out, errObj := encodeStr(v.StringValue(), enc, errorsMode)
+		if errObj != nil {
+			return errObj
+		}
+		return object.NewBytes(out)
 	case *object.Bytes:
 		return object.NewBytes(v.BytesValue())
 	case *object.List:
@@ -75,6 +97,18 @@ func bytesConstructorFn(ctx context.Context, kwargs object.Kwargs, args ...objec
 	case *object.Null:
 		return object.NewBytes(nil)
 	default:
+		// Any other iterable of ints: a generator, range, iterator, ...
+		elems, ok, rerr := iterableToSliceCheckedFn(ctx, args[0], GetEnvFromContext(ctx))
+		if rerr != nil {
+			return rerr
+		}
+		if ok {
+			out, errObj := bytesFromListInternal(&object.List{Elements: elems})
+			if errObj != nil {
+				return errObj
+			}
+			return out
+		}
 		return errors.NewTypeError("STRING, LIST, TUPLE, or BYTES", args[0].Type().String())
 	}
 }
@@ -108,6 +142,9 @@ Example:
 	Attributes: map[string]object.Object{
 		"fromhex": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("fromhex", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -117,7 +154,7 @@ Example:
 				}
 				decoded, decodeErr := hex.DecodeString(s)
 				if decodeErr != nil {
-					return errors.NewError("bytes.fromhex: %s", decodeErr.Error())
+					return errors.NewValueError("bytes.fromhex: %s", decodeErr.Error())
 				}
 				return object.NewBytes(decoded)
 			},
@@ -130,6 +167,9 @@ Example:
 		},
 		"frombase64": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("frombase64", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -139,7 +179,7 @@ Example:
 				}
 				decoded, decodeErr := base64.StdEncoding.DecodeString(s)
 				if decodeErr != nil {
-					return errors.NewError("bytes.frombase64: %s", decodeErr.Error())
+					return errors.NewValueError("bytes.frombase64: %s", decodeErr.Error())
 				}
 				return object.NewBytes(decoded)
 			},

@@ -12,23 +12,35 @@ import (
 
 	"github.com/paularlott/scriptling/conversion"
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/evaliface"
 	"github.com/paularlott/scriptling/object"
 )
 
 func jsonLoads(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	if err := errors.NoKwargs("loads", kwargs); err != nil {
+		return err
+	}
 	if len(args) != 1 {
-		return errors.NewError("wrong number of arguments. got=%d, want=1", len(args))
+		return errors.NewArgumentError(len(args), 1)
 	}
-	if args[0].Type() != object.STRING_OBJ {
-		return errors.NewError("argument to loads/parse must be STRING")
+	switch v := args[0].(type) {
+	case *object.String:
+		return conversion.MustParseJSON(v.StringValue())
+	case *object.Bytes:
+		// Python accepts bytes holding UTF-8 JSON text.
+		return conversion.MustParseJSON(string(v.BytesValue()))
 	}
-	str, _ := args[0].AsString()
-	return conversion.MustParseJSON(str)
+	return errors.NewTypeErrorTagged("the JSON object must be str, bytes or bytearray, not %s", object.PythonTypeName(args[0]))
 }
 
 func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	if kwargs.Len() > 0 {
+		if err := errors.CheckKwargs("dumps", kwargs, "indent", "separators", "sort_keys", "ensure_ascii", "default", "check_circular", "allow_nan"); err != nil {
+			return err
+		}
+	}
 	if len(args) != 1 {
-		return errors.NewError("wrong number of arguments. got=%d, want=1", len(args))
+		return errors.NewArgumentError(len(args), 1)
 	}
 
 	// indent accepts a string (used verbatim, like Python) or a number of
@@ -43,23 +55,18 @@ func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 		case *object.String:
 			indent = v.StringValue()
 		case *object.Integer:
-			if v.IntValue() < 0 {
-				return errors.NewError("json.dumps: indent must not be negative")
-			}
+			// A negative indent is no indent, with newlines, as in Python.
 			if errObj := object.CheckAllocFor("JSON indent", v.IntValue()); errObj != nil {
 				return errObj
 			}
-			indent = strings.Repeat(" ", int(v.IntValue()))
+			indent = strings.Repeat(" ", int(max(v.IntValue(), 0)))
 		case *object.Float:
-			if v.FloatValue() < 0 {
-				return errors.NewError("json.dumps: indent must not be negative")
-			}
 			if errObj := object.CheckAllocFor("JSON indent", int64(v.FloatValue())); errObj != nil {
 				return errObj
 			}
-			indent = strings.Repeat(" ", int(v.FloatValue()))
+			indent = strings.Repeat(" ", int(max(v.FloatValue(), 0)))
 		default:
-			return errors.NewError("json.dumps: indent must be a string or a number of spaces")
+			return errors.NewTypeErrorTagged("json.dumps: indent must be a string or a number of spaces")
 		}
 	}
 
@@ -79,10 +86,10 @@ func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 		case *object.Tuple:
 			elems = s.Elements
 		default:
-			return errors.NewError("json.dumps: separators must be a (item, key) pair")
+			return errors.NewTypeErrorTagged("json.dumps: separators must be a (item, key) pair")
 		}
 		if len(elems) != 2 {
-			return errors.NewError("json.dumps: separators must be a (item, key) pair")
+			return errors.NewValueError("json.dumps: separators must be a (item, key) pair")
 		}
 		item, err := elems[0].AsString()
 		if err != nil {
@@ -97,14 +104,18 @@ func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 	if sk := kwargs.Get("sort_keys"); sk != nil {
 		b, err := sk.AsBool()
 		if err != nil {
-			return errors.NewError("json.dumps: sort_keys must be a boolean")
+			return errors.NewTypeErrorTagged("json.dumps: sort_keys must be a boolean")
 		}
 		opts.sortKeys = b
+	}
+	opts.allowNaN = true
+	if an := kwargs.Get("allow_nan"); an != nil {
+		opts.allowNaN = isTruthy(an)
 	}
 	if ea := kwargs.Get("ensure_ascii"); ea != nil {
 		b, err := ea.AsBool()
 		if err != nil {
-			return errors.NewError("json.dumps: ensure_ascii must be a boolean")
+			return errors.NewTypeErrorTagged("json.dumps: ensure_ascii must be a boolean")
 		}
 		opts.ensureAscii = b
 	}
@@ -112,7 +123,17 @@ func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 	if errObj := object.CheckAllocFor("JSON indent", int64(len(indent))); errObj != nil {
 		return errObj
 	}
-	enc := jsonEncoder{opts: opts}
+	// When indenting, the text is rendered compact and indentJSON lays it
+	// out, writing the separators: each item separator is followed by a
+	// newline and the indent, as in Python (so a trailing space in it stays).
+	encOpts := opts
+	if hasIndent {
+		encOpts.itemSep, encOpts.keySep = ",", ":"
+	}
+	enc := jsonEncoder{opts: encOpts, ctx: ctx}
+	if d := kwargs.Get("default"); d != nil && d.Type() != object.NULL_OBJ {
+		enc.defaultFn = d
+	}
 	if errObj := enc.value(args[0], make(map[object.Object]struct{}), 0); errObj != nil {
 		return errObj
 	}
@@ -120,7 +141,7 @@ func jsonDumps(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 	// hasIndent distinguishes indent=0 (newline-separated, no spaces, as in
 	// Python) from no indent argument at all (fully compact).
 	if hasIndent {
-		ind, errObj := indentJSON(out, indent)
+		ind, errObj := indentJSON(out, indent, opts.itemSep, opts.keySep)
 		if errObj != nil {
 			return errObj
 		}
@@ -164,8 +185,11 @@ Optional indent parameter for pretty-printing.`,
 }, map[string]object.Object{
 	// json.JSONDecodeError: a ValueError subclass, as in Python, so
 	// `except json.JSONDecodeError:` matches parse failures.
-	"JSONDecodeError": &object.Builtin{
+	"JSONDecodeError": object.RegisterExceptionClass(&object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("JSONDecodeError", kwargs); err != nil {
+				return err
+			}
 			message := ""
 			if len(args) > 0 {
 				if str, err := args[0].AsString(); err == nil {
@@ -177,7 +201,8 @@ Optional indent parameter for pretty-printing.`,
 			return &object.Exception{Message: message, ExceptionType: "JSONDecodeError"}
 		},
 		HelpText: `JSONDecodeError([message]) - Create a JSON decode error`,
-	},
+		Repr:     "<class 'json.decoder.JSONDecodeError'>",
+	}, "JSONDecodeError"),
 }, "JSON encoding and decoding library")
 
 // jsonOpts carries Python dumps() formatting: the item separator (between
@@ -188,6 +213,9 @@ type jsonOpts struct {
 	keySep      string
 	sortKeys    bool
 	ensureAscii bool
+	// allowNaN is dumps(allow_nan=...): False makes a non-finite float a
+	// ValueError instead of a NaN/Infinity token.
+	allowNaN bool
 }
 
 // maxJSONDumpDepth bounds nesting when rendering, as maxJSONDepth does when
@@ -208,6 +236,10 @@ const maxJSONDumpDepth = 10000
 type jsonEncoder struct {
 	buf  bytes.Buffer
 	opts jsonOpts
+	// defaultFn is dumps(default=...): called for a value JSON has no type
+	// for, and its result rendered in the value's place.
+	defaultFn object.Object
+	ctx       context.Context
 }
 
 // check holds the text written so far to the limits.
@@ -227,6 +259,9 @@ func (e *jsonEncoder) value(obj object.Object, seen map[object.Object]struct{}, 
 		// Python writes non-finite floats as bare NaN/Infinity/-Infinity
 		// tokens.
 		f := obj.FloatValue()
+		if !e.opts.allowNaN && (math.IsInf(f, 0) || math.IsNaN(f)) {
+			return errors.NewValueError("Out of range float values are not JSON compliant: %s", obj.Inspect())
+		}
 		switch {
 		case math.IsInf(f, 1):
 			e.buf.WriteString("Infinity")
@@ -253,39 +288,175 @@ func (e *jsonEncoder) value(obj object.Object, seen map[object.Object]struct{}, 
 		// Python serializes tuples as JSON arrays.
 		return e.sequence(obj, obj.Elements, seen, depth)
 	case *object.Dict:
-		if _, cyclic := seen[obj]; cyclic {
-			return e.goString("<cyclic reference>")
-		}
-		seen[obj] = struct{}{}
-		defer delete(seen, obj)
-		pairs := obj.OrderedPairs()
-		if e.opts.sortKeys {
-			sorted := make([]object.DictPair, len(pairs))
-			copy(sorted, pairs)
-			sort.Slice(sorted, func(i, j int) bool {
-				return sorted[i].StringKey() < sorted[j].StringKey()
-			})
-			pairs = sorted
-		}
-		e.buf.WriteByte('{')
-		for i, pair := range pairs {
-			if i > 0 {
-				e.buf.WriteString(e.opts.itemSep)
-			}
-			writeJSONString(&e.buf, pair.StringKey(), e.opts.ensureAscii)
-			e.buf.WriteString(e.opts.keySep)
-			if errObj := e.value(pair.Value, seen, depth); errObj != nil {
-				return errObj
-			}
-			if errObj := e.check(); errObj != nil {
-				return errObj
+		return e.dict(obj, obj.OrderedPairs(), seen, depth)
+	case *object.Instance:
+		// Counter is a dict and a namedtuple a tuple, in Python as here.
+		if jsonIsCounter(obj.Class) {
+			if d, ok := obj.GetField(counterField); ok {
+				if dd, ok := d.(*object.Dict); ok {
+					return e.dict(obj, dd.OrderedPairs(), seen, depth)
+				}
 			}
 		}
-		e.buf.WriteByte('}')
+		if vals, ok := namedTupleValues(obj); ok {
+			return e.sequence(obj, vals, seen, depth)
+		}
+		return e.unsupported(obj, seen, depth)
+	case *object.FloatArray:
+		// math.array values render as (nested) arrays of numbers.
+		return e.sequence(obj, floatArrayElements(obj), seen, depth)
 	default:
-		return e.goString(obj.Inspect())
+		return e.unsupported(obj, seen, depth)
 	}
 	return e.check()
+}
+
+func (e *jsonEncoder) dict(obj object.Object, pairs []object.DictPair, seen map[object.Object]struct{}, depth int) object.Object {
+	if _, cyclic := seen[obj]; cyclic {
+		return e.goString("<cyclic reference>")
+	}
+	seen[obj] = struct{}{}
+	defer delete(seen, obj)
+	if e.opts.sortKeys {
+		sorted := make([]object.DictPair, len(pairs))
+		copy(sorted, pairs)
+		sort.Slice(sorted, func(i, j int) bool {
+			return sorted[i].StringKey() < sorted[j].StringKey()
+		})
+		pairs = sorted
+	}
+	e.buf.WriteByte('{')
+	for i, pair := range pairs {
+		if i > 0 {
+			e.buf.WriteString(e.opts.itemSep)
+		}
+		key, errObj := jsonKey(pair.Key)
+		if errObj != nil {
+			return errObj
+		}
+		writeJSONString(&e.buf, key, e.opts.ensureAscii)
+		e.buf.WriteString(e.opts.keySep)
+		if errObj := e.value(pair.Value, seen, depth); errObj != nil {
+			return errObj
+		}
+		if errObj := e.check(); errObj != nil {
+			return errObj
+		}
+	}
+	e.buf.WriteByte('}')
+	return e.check()
+}
+
+// jsonIsCounter reports whether c is Counter or a subclass of it.
+func jsonIsCounter(c *object.Class) bool {
+	for ; c != nil; c = c.BaseClass {
+		if c == counterClassRef {
+			return true
+		}
+	}
+	return false
+}
+
+// namedTupleValues returns a namedtuple instance's values in field order.
+func namedTupleValues(inst *object.Instance) ([]object.Object, bool) {
+	if _, ok := inst.GetField("__typename__"); !ok {
+		return nil, false
+	}
+	fs, ok := inst.GetField("__fields__")
+	if !ok {
+		return nil, false
+	}
+	ft, ok := fs.(*object.Tuple)
+	if !ok {
+		return nil, false
+	}
+	vals := make([]object.Object, len(ft.Elements))
+	for i, f := range ft.Elements {
+		name, _ := f.AsString()
+		v, _ := inst.GetField(name)
+		if v == nil {
+			v = &object.Null{}
+		}
+		vals[i] = v
+	}
+	return vals, true
+}
+
+// floatArrayElements returns a FloatArray's values as list elements, one
+// array per row for a 2D array.
+func floatArrayElements(fa *object.FloatArray) []object.Object {
+	if fa.Is2D() {
+		rows := make([]object.Object, fa.Rows())
+		for i := range rows {
+			rows[i] = object.NewFloatArray1D(fa.Row(i))
+		}
+		return rows
+	}
+	elems := make([]object.Object, len(fa.Data))
+	for i, f := range fa.Data {
+		elems[i] = object.NewFloat(f)
+	}
+	return elems
+}
+
+// unsupported renders a value JSON has no type for: through default= when
+// given, as Python does, and otherwise Python's TypeError.
+func (e *jsonEncoder) unsupported(obj object.Object, seen map[object.Object]struct{}, depth int) object.Object {
+	if e.defaultFn == nil {
+		return errors.NewTypeErrorTagged("Object of type %s is not JSON serializable", jsonTypeName(obj))
+	}
+	eval := evaliface.FromContext(e.ctx)
+	if eval == nil {
+		return errors.NewError("evaluator not available in context")
+	}
+	res := eval.CallObjectFunction(e.ctx, e.defaultFn, []object.Object{obj}, nil, nil)
+	if res == nil {
+		res = &object.Null{}
+	}
+	if object.IsError(res) || res.Type() == object.EXCEPTION_OBJ {
+		return res
+	}
+	return e.value(res, seen, depth)
+}
+
+// jsonTypeName is the type name Python's "not JSON serializable" message
+// uses: the class name for an instance.
+func jsonTypeName(obj object.Object) string {
+	if inst, ok := obj.(*object.Instance); ok && inst.Class != nil {
+		return inst.Class.Name
+	}
+	return object.PythonTypeName(obj)
+}
+
+// jsonKey renders a dict key as Python does: strings as they are, numbers in
+// their repr, True/False/None as true/false/null; any other key is a
+// TypeError.
+func jsonKey(k object.Object) (string, object.Object) {
+	switch k := k.(type) {
+	case *object.String:
+		return k.StringValue(), nil
+	case *object.Integer:
+		return strconv.FormatInt(k.IntValue(), 10), nil
+	case *object.Float:
+		f := k.FloatValue()
+		switch {
+		case math.IsInf(f, 1):
+			return "Infinity", nil
+		case math.IsInf(f, -1):
+			return "-Infinity", nil
+		case math.IsNaN(f):
+			return "NaN", nil
+		}
+		return object.FloatStr(f), nil
+	case *object.Boolean:
+		if k.BoolValue() {
+			return "true", nil
+		}
+		return "false", nil
+	case *object.Null:
+		return "null", nil
+	}
+	return "", errors.NewTypeErrorTagged("keys must be str, int, float, bool or None, not %s", jsonTypeName(k))
 }
 
 func (e *jsonEncoder) sequence(obj object.Object, elements []object.Object, seen map[object.Object]struct{}, depth int) object.Object {
@@ -404,7 +575,7 @@ func writeUnicodeEscape(b *bytes.Buffer, r rune) {
 // limit and the memory left as it goes: the indentation grows with nesting
 // depth as well as size, so deeply nested text can indent to many times its
 // compact length.
-func indentJSON(src []byte, indent string) ([]byte, object.Object) {
+func indentJSON(src []byte, indent, itemSep, keySep string) ([]byte, object.Object) {
 	var dst bytes.Buffer
 	if errObj := object.CheckAllocFor("JSON", int64(len(src))); errObj != nil {
 		return nil, errObj
@@ -455,14 +626,15 @@ func indentJSON(src []byte, indent string) ([]byte, object.Object) {
 		case '{', '[':
 			needIndent = true
 		case ',':
-			dst.Write(src[start : i+1])
+			dst.Write(src[start:i])
+			dst.WriteString(itemSep)
 			start = i + 1
 			if errObj := newline(); errObj != nil {
 				return nil, errObj
 			}
 		case ':':
-			dst.Write(src[start : i+1])
-			dst.WriteByte(' ')
+			dst.Write(src[start:i])
+			dst.WriteString(keySep)
 			start = i + 1
 		case '}', ']':
 			if needIndent {

@@ -176,13 +176,13 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 		return evalSuperIndexExpression(left, index)
 	case object.FUNCTION_OBJ:
 		if !isDotAccess {
-			return errors.NewError("index operator not supported: %s", leftType)
+			return errors.NewTypeErrorTagged("'function' object is not subscriptable")
 		}
 		attr, _ := index.AsString()
 		return functionAttribute(ctx, left, attr)
 	case object.LAMBDA_OBJ:
 		if !isDotAccess {
-			return errors.NewError("index operator not supported: %s", leftType)
+			return errors.NewTypeErrorTagged("'function' object is not subscriptable")
 		}
 		attr, _ := index.AsString()
 		return functionAttribute(ctx, left, attr)
@@ -270,6 +270,8 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 					name = "Exception"
 				}
 				return object.NewString(name)
+			case "__class__":
+				return exceptionTypeObject(exc)
 			case "__cause__":
 				if exc.Cause != nil {
 					return exc.Cause
@@ -291,6 +293,13 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 		}
 		return attributeError(left, attr)
 	}
+	// bool is an int in Python: seq[True] is seq[1].
+	if b, ok := index.(*object.Boolean); ok && !isDotAccess {
+		switch leftType {
+		case object.LIST_OBJ, object.TUPLE_OBJ, object.STRING_OBJ, object.BYTES_OBJ:
+			return evalIndexExpression(ctx, left, object.NewInteger(boolToInt64(b.BoolValue())), false)
+		}
+	}
 	// Python's wording: sequences reject the index type, other values
 	// cannot be indexed at all.
 	message := fmt.Sprintf("'%s' object is not subscriptable", getTypeName(left))
@@ -311,7 +320,7 @@ func evalIndexExpression(ctx context.Context, left, index object.Object, isDotAc
 
 func evalSuperIndexExpression(superObj, index object.Object) object.Object {
 	if index.Type() != object.STRING_OBJ {
-		return errors.NewError("super index must be string")
+		return errors.NewTypeErrorTagged("'super' object is not subscriptable")
 	}
 	field, err := index.AsString()
 	if err != nil {
@@ -333,7 +342,7 @@ func evalListIndexExpression(list, index object.Object) object.Object {
 	listObject := list.(*object.List)
 	idx, err := index.AsInt()
 	if err != nil {
-		return errors.NewError("list index must be integer")
+		return errors.NewTypeErrorTagged("list indices must be integers or slices, not %s", getTypeName(index))
 	}
 	length := int64(len(listObject.Elements))
 
@@ -353,7 +362,7 @@ func evalFloatArrayIndexExpression(faObj, index object.Object) object.Object {
 	fa := faObj.(*object.FloatArray)
 	idx, err := index.AsInt()
 	if err != nil {
-		return errors.NewError("float_array index must be integer")
+		return errors.NewTypeErrorTagged("float_array index must be integer")
 	}
 
 	if fa.Is2D() {
@@ -420,7 +429,7 @@ func evalFloatArraySliceExpression(faObj, sliceObj object.Object) object.Object 
 			step = slice.Step.IntValue()
 		}
 		if step <= 0 {
-			return errors.NewError("slice step cannot be zero or negative")
+			return errors.NewValueError("slice step cannot be zero or negative")
 		}
 
 		var data []float64
@@ -468,7 +477,7 @@ func evalFloatArraySliceExpression(faObj, sliceObj object.Object) object.Object 
 		step = slice.Step.IntValue()
 	}
 	if step <= 0 {
-		return errors.NewError("slice step cannot be zero or negative")
+		return errors.NewValueError("slice step cannot be zero or negative")
 	}
 
 	var data []float64
@@ -482,7 +491,7 @@ func evalTupleIndexExpression(tuple, index object.Object) object.Object {
 	tupleObject := tuple.(*object.Tuple)
 	idx, err := index.AsInt()
 	if err != nil {
-		return errors.NewError("tuple index must be integer")
+		return errors.NewTypeErrorTagged("tuple indices must be integers or slices, not %s", getTypeName(index))
 	}
 	length := int64(len(tupleObject.Elements))
 
@@ -521,11 +530,7 @@ func evalDictIndexExpression(ctx context.Context, dict, index object.Object) obj
 				return val
 			}
 		}
-		keyMsg := index.Inspect()
-		if ks, ok := index.(*object.String); ok {
-			keyMsg = object.ReprString(ks.StringValue())
-		}
-		return &object.Exception{Message: keyMsg, ExceptionType: object.ExceptionTypeKeyError, Raised: true}
+		return object.NewKeyError(index, object.ValueRepr(index))
 	}
 
 	return pair.Value
@@ -545,7 +550,7 @@ func evalStringIndexExpression(str, index object.Object) object.Object {
 	strObject := str.(*object.String)
 	idx, err := index.AsInt()
 	if err != nil {
-		return errors.NewError("string index must be integer")
+		return errors.NewTypeErrorTagged("string indices must be integers, not '%s'", getTypeName(index))
 	}
 
 	// ASCII fast-path: avoid []rune conversion
@@ -658,7 +663,7 @@ func instanceDictView(inst *object.Instance) *object.Dict {
 
 func evalClassIndexExpression(class, index object.Object) object.Object {
 	if index.Type() != object.STRING_OBJ {
-		return errors.NewError("class index must be string")
+		return errors.NewTypeErrorTagged("'type' object is not subscriptable")
 	}
 	field, err := index.AsString()
 	if err != nil {
@@ -693,7 +698,7 @@ func evalClassIndexExpression(class, index object.Object) object.Object {
 func evalPropertyIndexExpression(prop, index object.Object) object.Object {
 	field, err := index.AsString()
 	if err != nil {
-		return errors.NewError("property attribute must be string")
+		return errors.NewTypeErrorTagged("'property' object is not subscriptable")
 	}
 	if field != "setter" {
 		return attributeError(prop, field)
@@ -702,8 +707,11 @@ func evalPropertyIndexExpression(prop, index object.Object) object.Object {
 	// Return a callable: setter(fn) -> new Property{Getter: p.Getter, Setter: fn}
 	return &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("setter", kwargs); err != nil {
+				return err
+			}
 			if len(args) != 1 {
-				return errors.NewError("setter() takes exactly 1 argument")
+				return errors.NewTypeErrorTagged("setter() takes exactly 1 argument")
 			}
 			return trackWrapper(&object.Property{Getter: p.Getter, Setter: args[0]})
 		},
@@ -712,7 +720,7 @@ func evalPropertyIndexExpression(prop, index object.Object) object.Object {
 
 func evalBuiltinIndexExpression(builtin, index object.Object) object.Object {
 	if index.Type() != object.STRING_OBJ {
-		return errors.NewError("builtin index must be string")
+		return errors.NewTypeErrorTagged("'builtin_function_or_method' object is not subscriptable")
 	}
 	field, err := index.AsString()
 	if err != nil {
@@ -727,7 +735,7 @@ func evalBuiltinIndexExpression(builtin, index object.Object) object.Object {
 	// Types (int, ValueError, ...) have a __name__, as in Python: an
 	// __exit__ often logs exc_type.__name__.
 	if field == "__name__" {
-		if name, ok := exceptionBuiltins[b]; ok {
+		if name, ok := exceptionClassName(b); ok {
 			return object.NewString(name)
 		}
 		if name, ok := typeBuiltins[b]; ok {
@@ -891,7 +899,7 @@ func sliceBytes(b *object.Bytes, start, end, step int64, hasStart, hasEnd bool) 
 
 func sliceFloatArray(fa *object.FloatArray, start, end, step int64, hasStart, hasEnd bool) object.Object {
 	if step <= 0 {
-		return errors.NewError("slice step cannot be zero or negative for FloatArray")
+		return errors.NewValueError("slice step cannot be zero or negative for FloatArray")
 	}
 
 	if fa.Is2D() {
@@ -1097,7 +1105,7 @@ func evalListSliceExpression(list, index object.Object) object.Object {
 	if hasStep {
 		step = sliceObj.Step.IntValue()
 		if step == 0 {
-			return errors.NewError("slice step cannot be zero")
+			return errors.NewValueError("slice step cannot be zero")
 		}
 	}
 
@@ -1128,7 +1136,7 @@ func evalTupleSliceExpression(tuple, index object.Object) object.Object {
 	if hasStep {
 		step = sliceObj.Step.IntValue()
 		if step == 0 {
-			return errors.NewError("slice step cannot be zero")
+			return errors.NewValueError("slice step cannot be zero")
 		}
 	}
 
@@ -1164,7 +1172,7 @@ func evalStringSliceExpression(str, index object.Object) object.Object {
 	if hasStep {
 		step = sliceObj.Step.IntValue()
 		if step == 0 {
-			return errors.NewError("slice step cannot be zero")
+			return errors.NewValueError("slice step cannot be zero")
 		}
 	}
 
@@ -1179,7 +1187,7 @@ func evalBytesIndexExpression(b, index object.Object) object.Object {
 	bObj := b.(*object.Bytes)
 	idx, err := index.AsInt()
 	if err != nil {
-		return errors.NewError("bytes index must be integer")
+		return errors.NewTypeErrorTagged("byte indices must be integers or slices, not %s", getTypeName(index))
 	}
 	length := int64(bObj.Len())
 	if idx < 0 {
@@ -1210,7 +1218,7 @@ func evalBytesSliceExpression(b, index object.Object) object.Object {
 	if hasStep {
 		step = sliceObj.Step.IntValue()
 		if step == 0 {
-			return errors.NewError("slice step cannot be zero")
+			return errors.NewValueError("slice step cannot be zero")
 		}
 	}
 

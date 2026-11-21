@@ -364,6 +364,11 @@ func dequeTypeName(obj object.Object) string {
 
 // dequeInit implements deque([iterable[, maxlen]]): it (re)initialises self.
 func dequeInit(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	if kwargs.Len() > 0 {
+		if err := errors.CheckKwargs("deque", kwargs, "iterable", "maxlen"); err != nil {
+			return err
+		}
+	}
 	if len(args) < 1 || len(args) > 3 {
 		return errors.NewTypeErrorTagged("deque() takes at most 2 arguments (%d given)", len(args)-1)
 	}
@@ -376,6 +381,9 @@ func dequeInit(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 	mlObj := object.Object(nil)
 	if len(args) == 2 {
 		mlObj = args[1]
+		if kwargs.Has("maxlen") {
+			return errors.NewTypeErrorTagged("argument for deque() given by name ('maxlen') and position (2)")
+		}
 	} else if v := kwargs.Get("maxlen"); v != nil {
 		mlObj = v
 	}
@@ -392,6 +400,9 @@ func dequeInit(ctx context.Context, kwargs object.Kwargs, args ...object.Object)
 	var initial object.Object
 	if len(args) >= 1 {
 		initial = args[0]
+		if kwargs.Has("iterable") {
+			return errors.NewTypeErrorTagged("argument for deque() given by name ('iterable') and position (1)")
+		}
 	} else if v := kwargs.Get("iterable"); v != nil {
 		initial = v
 	}
@@ -513,8 +524,8 @@ func dequeIterator(d *dequeBuf, reverse bool) object.Object {
 }
 
 // dequeOrder implements the ordering operators between two deques.
-func dequeOrder(op string, keep func(int) bool) *object.Builtin {
-	return dequeMethod(1, func(ctx context.Context, d *dequeBuf, self *object.Instance, args []object.Object) object.Object {
+func dequeOrder(name, op string, keep func(int) bool) *object.Builtin {
+	return dequeMethod(name, 1, func(ctx context.Context, d *dequeBuf, self *object.Instance, args []object.Object) object.Object {
 		o := dequeOf(args[0])
 		if o == nil {
 			return errors.NewTypeErrorTagged("'%s' not supported between instances of '%s' and '%s'", op, dequeTypeName(self), pyTypeName(args[0]))
@@ -550,10 +561,10 @@ func dequeRepr(self *object.Instance, d *dequeBuf) object.Object {
 
 // dequeMethod adapts a method body taking the deque's buffer; nargs < 0
 // skips the argument count check.
-func dequeMethod(nargs int, fn func(ctx context.Context, d *dequeBuf, self *object.Instance, args []object.Object) object.Object) *object.Builtin {
+func dequeMethod(name string, nargs int, fn func(ctx context.Context, d *dequeBuf, self *object.Instance, args []object.Object) object.Object) *object.Builtin {
 	return &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if kwargs.Len() > 0 {
-			return errors.NewTypeErrorTagged("deque methods take no keyword arguments")
+		if err := errors.NoKwargs(name, kwargs); err != nil {
+			return err
 		}
 		if nargs >= 0 {
 			if err := errors.ExactArgs(args, nargs+1); err != nil {
@@ -573,37 +584,37 @@ var DequeClass = &object.Class{
 	Name: "deque",
 	Methods: map[string]object.Object{
 		"__init__": &object.Builtin{Fn: dequeInit, HelpText: `deque([iterable[, maxlen]]) - Double-ended queue`},
-		"maxlen": &object.Property{Getter: dequeMethod(0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
+		"maxlen": &object.Property{Getter: dequeMethod("maxlen", 0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
 			if d.maxlen < 0 {
 				return &object.Null{}
 			}
 			return object.NewInteger(d.maxlen)
 		})},
-		"append": dequeMethod(1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
+		"append": dequeMethod("append", 1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
 			if errObj := d.pushRight(args[0]); errObj != nil {
 				return errObj
 			}
 			return &object.Null{}
 		}),
-		"appendleft": dequeMethod(1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
+		"appendleft": dequeMethod("appendleft", 1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
 			if errObj := d.pushLeft(args[0]); errObj != nil {
 				return errObj
 			}
 			return &object.Null{}
 		}),
-		"pop": dequeMethod(0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
+		"pop": dequeMethod("pop", 0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
 			if d.n == 0 {
 				return emptyDequeError("pop")
 			}
 			return d.popRight()
 		}),
-		"popleft": dequeMethod(0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
+		"popleft": dequeMethod("popleft", 0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
 			if d.n == 0 {
 				return emptyDequeError("pop")
 			}
 			return d.popLeft()
 		}),
-		"extend": dequeMethod(1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
+		"extend": dequeMethod("extend", 1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
 			add, errObj := dequeValues(ctx, args[0])
 			if errObj != nil {
 				return errObj
@@ -613,7 +624,7 @@ var DequeClass = &object.Class{
 			}
 			return &object.Null{}
 		}),
-		"extendleft": dequeMethod(1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
+		"extendleft": dequeMethod("extendleft", 1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
 			add, errObj := dequeValues(ctx, args[0])
 			if errObj != nil {
 				return errObj
@@ -623,7 +634,7 @@ var DequeClass = &object.Class{
 			}
 			return &object.Null{}
 		}),
-		"insert": dequeMethod(2, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
+		"insert": dequeMethod("insert", 2, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
 			i, err := args[0].AsInt()
 			if err != nil {
 				return errors.ParameterError("index", err)
@@ -641,7 +652,7 @@ var DequeClass = &object.Class{
 			}
 			return &object.Null{}
 		}),
-		"remove": dequeMethod(1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
+		"remove": dequeMethod("remove", 1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
 			i, errObj := dequeFind(ctx, d, args[0], 0, d.n, "remove")
 			if errObj != nil {
 				return errObj
@@ -652,7 +663,7 @@ var DequeClass = &object.Class{
 			d.removeAt(i)
 			return &object.Null{}
 		}),
-		"index": dequeMethod(-1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
+		"index": dequeMethod("index", -1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
 			if len(args) < 1 || len(args) > 3 {
 				return errors.NewTypeErrorTagged("index expected at least 1 argument, got %d", len(args))
 			}
@@ -688,7 +699,7 @@ var DequeClass = &object.Class{
 			}
 			return object.NewInteger(int64(i))
 		}),
-		"count": dequeMethod(1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
+		"count": dequeMethod("count", 1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
 			state := d.state
 			count := int64(0)
 			for i := 0; i < d.n; i++ {
@@ -705,11 +716,11 @@ var DequeClass = &object.Class{
 			}
 			return object.NewInteger(count)
 		}),
-		"reverse": dequeMethod(0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
+		"reverse": dequeMethod("reverse", 0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
 			d.reverse()
 			return &object.Null{}
 		}),
-		"rotate": dequeMethod(-1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
+		"rotate": dequeMethod("rotate", -1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
 			if len(args) > 1 {
 				return errors.NewTypeErrorTagged("rotate expected at most 1 argument, got %d", len(args))
 			}
@@ -724,40 +735,40 @@ var DequeClass = &object.Class{
 			d.rotate(k)
 			return &object.Null{}
 		}),
-		"clear": dequeMethod(0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
+		"clear": dequeMethod("clear", 0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
 			d.clear()
 			return &object.Null{}
 		}),
-		"copy": dequeMethod(0, func(ctx context.Context, _ *dequeBuf, self *object.Instance, _ []object.Object) object.Object {
+		"copy": dequeMethod("copy", 0, func(ctx context.Context, _ *dequeBuf, self *object.Instance, _ []object.Object) object.Object {
 			return copyDequeFn(self)
 		}),
-		"__len__": dequeMethod(0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
+		"__len__": dequeMethod("__len__", 0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
 			return object.NewInteger(int64(d.n))
 		}),
-		"__bool__": dequeMethod(0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
+		"__bool__": dequeMethod("__bool__", 0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
 			return object.NewBoolean(d.n > 0)
 		}),
-		"__iter__": dequeMethod(0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
+		"__iter__": dequeMethod("__iter__", 0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
 			return dequeIterator(d, false)
 		}),
-		"__reversed__": dequeMethod(0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
+		"__reversed__": dequeMethod("__reversed__", 0, func(ctx context.Context, d *dequeBuf, _ *object.Instance, _ []object.Object) object.Object {
 			return dequeIterator(d, true)
 		}),
-		"__contains__": dequeMethod(1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
+		"__contains__": dequeMethod("__contains__", 1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
 			i, errObj := dequeFind(ctx, d, args[0], 0, d.n, "iteration")
 			if errObj != nil {
 				return errObj
 			}
 			return object.NewBoolean(i >= 0)
 		}),
-		"__getitem__": dequeMethod(1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
+		"__getitem__": dequeMethod("__getitem__", 1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
 			i, errObj := dequeIndex(d, args[0])
 			if errObj != nil {
 				return errObj
 			}
 			return d.at(i)
 		}),
-		"__setitem__": dequeMethod(2, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
+		"__setitem__": dequeMethod("__setitem__", 2, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
 			i, errObj := dequeIndex(d, args[0])
 			if errObj != nil {
 				return errObj
@@ -765,7 +776,7 @@ var DequeClass = &object.Class{
 			d.buf[d.slot(i)] = args[1]
 			return &object.Null{}
 		}),
-		"__delitem__": dequeMethod(1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
+		"__delitem__": dequeMethod("__delitem__", 1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
 			i, errObj := dequeIndex(d, args[0])
 			if errObj != nil {
 				return errObj
@@ -773,7 +784,7 @@ var DequeClass = &object.Class{
 			d.removeAt(i)
 			return &object.Null{}
 		}),
-		"__eq__": dequeMethod(1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
+		"__eq__": dequeMethod("__eq__", 1, func(ctx context.Context, d *dequeBuf, _ *object.Instance, args []object.Object) object.Object {
 			o := dequeOf(args[0])
 			if o == nil || o.n != d.n {
 				return object.NewBoolean(false)
@@ -787,11 +798,11 @@ var DequeClass = &object.Class{
 			}
 			return object.NewBoolean(eq)
 		}),
-		"__lt__": dequeOrder("<", func(c int) bool { return c < 0 }),
-		"__le__": dequeOrder("<=", func(c int) bool { return c <= 0 }),
-		"__gt__": dequeOrder(">", func(c int) bool { return c > 0 }),
-		"__ge__": dequeOrder(">=", func(c int) bool { return c >= 0 }),
-		"__add__": dequeMethod(1, func(ctx context.Context, d *dequeBuf, self *object.Instance, args []object.Object) object.Object {
+		"__lt__": dequeOrder("__lt__", "<", func(c int) bool { return c < 0 }),
+		"__le__": dequeOrder("__le__", "<=", func(c int) bool { return c <= 0 }),
+		"__gt__": dequeOrder("__gt__", ">", func(c int) bool { return c > 0 }),
+		"__ge__": dequeOrder("__ge__", ">=", func(c int) bool { return c >= 0 }),
+		"__add__": dequeMethod("__add__", 1, func(ctx context.Context, d *dequeBuf, self *object.Instance, args []object.Object) object.Object {
 			o := dequeOf(args[0])
 			if o == nil {
 				return errors.NewTypeErrorTagged("can only concatenate deque (not \"%s\") to deque", pyTypeName(args[0]))
@@ -805,7 +816,7 @@ var DequeClass = &object.Class{
 			}
 			return newDequeOf(self.Class, c)
 		}),
-		"__iadd__": dequeMethod(1, func(ctx context.Context, d *dequeBuf, self *object.Instance, args []object.Object) object.Object {
+		"__iadd__": dequeMethod("__iadd__", 1, func(ctx context.Context, d *dequeBuf, self *object.Instance, args []object.Object) object.Object {
 			add, errObj := dequeValues(ctx, args[0])
 			if errObj != nil {
 				return errObj
@@ -815,21 +826,21 @@ var DequeClass = &object.Class{
 			}
 			return self
 		}),
-		"__mul__":  dequeMultiply(false),
-		"__rmul__": dequeMultiply(false),
-		"__imul__": dequeMultiply(true),
-		"__str__": dequeMethod(0, func(ctx context.Context, d *dequeBuf, self *object.Instance, _ []object.Object) object.Object {
+		"__mul__":  dequeMultiply("__mul__", false),
+		"__rmul__": dequeMultiply("__rmul__", false),
+		"__imul__": dequeMultiply("__imul__", true),
+		"__str__": dequeMethod("__str__", 0, func(ctx context.Context, d *dequeBuf, self *object.Instance, _ []object.Object) object.Object {
 			return dequeRepr(self, d)
 		}),
-		"__repr__": dequeMethod(0, func(ctx context.Context, d *dequeBuf, self *object.Instance, _ []object.Object) object.Object {
+		"__repr__": dequeMethod("__repr__", 0, func(ctx context.Context, d *dequeBuf, self *object.Instance, _ []object.Object) object.Object {
 			return dequeRepr(self, d)
 		}),
 	},
 }
 
 // dequeMultiply implements d * k, k * d and d *= k.
-func dequeMultiply(inPlace bool) *object.Builtin {
-	return dequeMethod(1, func(ctx context.Context, d *dequeBuf, self *object.Instance, args []object.Object) object.Object {
+func dequeMultiply(name string, inPlace bool) *object.Builtin {
+	return dequeMethod(name, 1, func(ctx context.Context, d *dequeBuf, self *object.Instance, args []object.Object) object.Object {
 		k, err := args[0].AsInt()
 		if err != nil {
 			return errors.NewTypeErrorTagged("can't multiply sequence by non-int of type '%s'", pyTypeName(args[0]))

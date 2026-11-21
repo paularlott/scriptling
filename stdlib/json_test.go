@@ -2,7 +2,6 @@ package stdlib
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/paularlott/scriptling/conversion"
@@ -68,11 +67,11 @@ func TestJSONDumpsIndent(t *testing.T) {
 		t.Errorf("sort_keys: got %q", got)
 	}
 
-	// Negative indent is an error surfaced as a script error object.
-	errResult := dumps.Fn(ctx, object.NewKwargs(map[string]object.Object{"indent": object.NewInteger(-1)}), dict())
-	errObj, ok := errResult.(*object.Error)
-	if !ok || !strings.Contains(errObj.Message, "indent must not be negative") {
-		t.Fatalf("negative indent: got %s (%s)", errResult.Type(), errResult.Inspect())
+	// A negative indent is no indent with newlines, as in Python (and does
+	// not panic in strings.Repeat).
+	negResult := dumps.Fn(ctx, object.NewKwargs(map[string]object.Object{"indent": object.NewInteger(-1)}), dict("a", []any{1}))
+	if s, ok := negResult.(*object.String); !ok || s.StringValue() != "{\n\"a\": [\n1\n]\n}" {
+		t.Fatalf("negative indent: got %s (%s)", negResult.Type(), negResult.Inspect())
 	}
 }
 

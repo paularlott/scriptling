@@ -19,12 +19,17 @@ var HTMLParserLibrary = object.NewLibrary(HTMLParserLibraryName, nil, map[string
 var htmlParserMethods = map[string]object.Object{
 	"__init__": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("HTMLParser", kwargs, "convert_charrefs"); err != nil {
+					return err
+				}
+			}
 			if len(args) < 1 {
-				return errors.NewError("__init__ requires self argument")
+				return errors.NewTypeErrorTagged("__init__ requires self argument")
 			}
 			instance, ok := args[0].(*object.Instance)
 			if !ok {
-				return errors.NewError("__init__ requires instance as first argument")
+				return errors.NewTypeErrorTagged("__init__ requires instance as first argument")
 			}
 
 			// Initialize parser state
@@ -53,12 +58,15 @@ Parameters:
 	},
 	"feed": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("feed", kwargs); err != nil {
+				return err
+			}
 			if len(args) < 2 {
-				return errors.NewError("feed() requires self and data arguments")
+				return errors.NewTypeErrorTagged("feed() requires self and data arguments")
 			}
 			instance, ok := args[0].(*object.Instance)
 			if !ok {
-				return errors.NewError("feed() requires instance as first argument")
+				return errors.NewTypeErrorTagged("feed() requires instance as first argument")
 			}
 			dataStr, ok := args[1].(*object.String)
 			if !ok {
@@ -74,6 +82,9 @@ Parses the HTML data and calls handler methods for each element.`,
 	},
 	"close": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("close", kwargs); err != nil {
+				return err
+			}
 			// Process any remaining buffered data
 			return &object.Null{}
 		},
@@ -81,12 +92,15 @@ Parses the HTML data and calls handler methods for each element.`,
 	},
 	"reset": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("reset", kwargs); err != nil {
+				return err
+			}
 			if len(args) < 1 {
-				return errors.NewError("reset() requires self argument")
+				return errors.NewTypeErrorTagged("reset() requires self argument")
 			}
 			instance, ok := args[0].(*object.Instance)
 			if !ok {
-				return errors.NewError("reset() requires instance as first argument")
+				return errors.NewTypeErrorTagged("reset() requires instance as first argument")
 			}
 
 			// Reset parser state
@@ -103,12 +117,15 @@ Parses the HTML data and calls handler methods for each element.`,
 	},
 	"getpos": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("getpos", kwargs); err != nil {
+				return err
+			}
 			if len(args) < 1 {
-				return errors.NewError("getpos() requires self argument")
+				return errors.NewTypeErrorTagged("getpos() requires self argument")
 			}
 			instance, ok := args[0].(*object.Instance)
 			if !ok {
-				return errors.NewError("getpos() requires instance as first argument")
+				return errors.NewTypeErrorTagged("getpos() requires instance as first argument")
 			}
 
 			line := instance.Field("_line")
@@ -126,12 +143,15 @@ Parses the HTML data and calls handler methods for each element.`,
 	},
 	"get_starttag_text": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("get_starttag_text", kwargs); err != nil {
+				return err
+			}
 			if len(args) < 1 {
-				return errors.NewError("get_starttag_text() requires self argument")
+				return errors.NewTypeErrorTagged("get_starttag_text() requires self argument")
 			}
 			instance, ok := args[0].(*object.Instance)
 			if !ok {
-				return errors.NewError("get_starttag_text() requires instance as first argument")
+				return errors.NewTypeErrorTagged("get_starttag_text() requires instance as first argument")
 			}
 
 			lasttag := instance.Field("_lasttag")
@@ -145,6 +165,9 @@ Parses the HTML data and calls handler methods for each element.`,
 	// Default handler methods - do nothing, meant to be overridden
 	"handle_starttag": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("handle_starttag", kwargs); err != nil {
+				return err
+			}
 			return &object.Null{}
 		},
 		HelpText: `handle_starttag(tag, attrs) - Called when a start tag is encountered
@@ -154,6 +177,9 @@ tag is the tag name (lowercase), attrs is a list of (name, value) tuples.`,
 	},
 	"handle_endtag": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("handle_endtag", kwargs); err != nil {
+				return err
+			}
 			return &object.Null{}
 		},
 		HelpText: `handle_endtag(tag) - Called when an end tag is encountered
@@ -163,11 +189,14 @@ tag is the tag name (lowercase).`,
 	},
 	"handle_startendtag": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("handle_startendtag", kwargs); err != nil {
+				return err
+			}
 			// Default: call handle_starttag and handle_endtag
 			if len(args) >= 3 {
 				instance, ok := args[0].(*object.Instance)
 				if !ok {
-					return errors.NewError("handle_startendtag() requires instance as first argument")
+					return errors.NewTypeErrorTagged("handle_startendtag() requires instance as first argument")
 				}
 				if r := callHandler(ctx, instance, "handle_starttag", args[1], args[2]); object.IsPropagating(r) {
 					return r
@@ -184,6 +213,9 @@ Called for tags like <img ... />. Default calls handle_starttag and handle_endta
 	},
 	"handle_data": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("handle_data", kwargs); err != nil {
+				return err
+			}
 			return &object.Null{}
 		},
 		HelpText: `handle_data(data) - Called to process text data
@@ -192,6 +224,9 @@ Override this method to handle text content between tags.`,
 	},
 	"handle_entityref": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("handle_entityref", kwargs); err != nil {
+				return err
+			}
 			return &object.Null{}
 		},
 		HelpText: `handle_entityref(name) - Called for named character references like &gt;
@@ -200,6 +235,9 @@ Only called if convert_charrefs is False.`,
 	},
 	"handle_charref": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("handle_charref", kwargs); err != nil {
+				return err
+			}
 			return &object.Null{}
 		},
 		HelpText: `handle_charref(name) - Called for numeric character references like &#62;
@@ -208,6 +246,9 @@ Only called if convert_charrefs is False.`,
 	},
 	"handle_comment": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("handle_comment", kwargs); err != nil {
+				return err
+			}
 			return &object.Null{}
 		},
 		HelpText: `handle_comment(data) - Called when a comment is encountered
@@ -216,6 +257,9 @@ Override to handle HTML comments like <!-- comment -->.`,
 	},
 	"handle_decl": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("handle_decl", kwargs); err != nil {
+				return err
+			}
 			return &object.Null{}
 		},
 		HelpText: `handle_decl(decl) - Called for DOCTYPE declarations
@@ -224,6 +268,9 @@ Override to handle <!DOCTYPE html> and similar.`,
 	},
 	"handle_pi": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("handle_pi", kwargs); err != nil {
+				return err
+			}
 			return &object.Null{}
 		},
 		HelpText: `handle_pi(data) - Called for processing instructions
@@ -232,6 +279,9 @@ Override to handle <?xml ...?> and similar.`,
 	},
 	"unknown_decl": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("unknown_decl", kwargs); err != nil {
+				return err
+			}
 			return &object.Null{}
 		},
 		HelpText: `unknown_decl(data) - Called for CDATA sections: <![CDATA[x]]> gives "CDATA[x"`,

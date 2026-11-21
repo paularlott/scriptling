@@ -45,7 +45,7 @@ func compileNode(node ast.Node) object.EvalFn {
 			// `yield` parses as a name in expression position (it is a
 			// soft keyword); using it as one is always a mistake here.
 			return func(ctx context.Context, env *object.Environment) object.Object {
-				return errors.NewError("yield inside an expression is not supported (use it as a statement, or as the whole value of an assignment: x = yield v)")
+				return errors.NewSyntaxError("yield inside an expression is not supported (use it as a statement, or as the whole value of an assignment: x = yield v)")
 			}
 		}
 		return func(ctx context.Context, env *object.Environment) object.Object {
@@ -134,7 +134,7 @@ func compileNode(node ast.Node) object.EvalFn {
 		// Safety net: the generator plan builder intercepts legal yields;
 		// one reaching ordinary compilation is outside any function.
 		return func(ctx context.Context, env *object.Environment) object.Object {
-			return errors.NewError("yield outside a generator function is not supported")
+			return errors.NewSyntaxError("yield outside a generator function is not supported")
 		}
 	case *ast.PassStatement:
 		return func(ctx context.Context, env *object.Environment) object.Object {
@@ -708,7 +708,7 @@ func compileRangeArgs(args []object.EvalFn) func(ctx context.Context, env *objec
 			return values[0], values[1], 1, nil, true
 		default:
 			if values[2] == 0 {
-				return 0, 0, 0, errors.NewError("range step cannot be zero"), true
+				return 0, 0, 0, errors.NewValueError("range() arg 3 must not be zero"), true
 			}
 			return values[0], values[1], values[2], nil, true
 		}
@@ -753,10 +753,10 @@ func compileFor(n *ast.ForStatement) object.EvalFn {
 					return err
 				}
 				if err := setForVariable(n.Variables[0], pair.Key, env); err != nil {
-					return errors.NewError("%s", err.Error())
+					return assignErrorToObject(err)
 				}
 				if err := setForVariable(n.Variables[1], pair.Value, env); err != nil {
-					return errors.NewError("%s", err.Error())
+					return assignErrorToObject(err)
 				}
 				var act loopAction
 				act, result = loopResult(body(ctx, env))
@@ -1323,18 +1323,21 @@ func compileExprs(exps []ast.Expression) []object.EvalFn {
 }
 
 // compileKeywords compiles a call's keyword-argument values into parallel
-// slices of names and value closures, sorted by name. The AST keeps keywords
-// in a map, so their source order is not known; a fixed order makes their
-// evaluation deterministic.
-func compileKeywords(kws map[string]ast.Expression) ([]string, []object.EvalFn) {
+// slices of names and value closures, in the order the keywords were written
+// (order), as Python evaluates and passes them. A call built without that
+// order takes its keywords sorted by name, which is at least deterministic.
+func compileKeywords(kws map[string]ast.Expression, order []string) ([]string, []object.EvalFn) {
 	if len(kws) == 0 {
 		return nil, nil
 	}
-	names := make([]string, 0, len(kws))
-	for k := range kws {
-		names = append(names, k)
+	names := order
+	if len(names) != len(kws) {
+		names = make([]string, 0, len(kws))
+		for k := range kws {
+			names = append(names, k)
+		}
+		sort.Strings(names)
 	}
-	sort.Strings(names)
 	fns := make([]object.EvalFn, len(names))
 	for i, k := range names {
 		fns[i] = compileExpr(kws[k])
@@ -1369,6 +1372,9 @@ func unpackedKeywords(names []string, vals []object.Object, dict *object.Dict) (
 		b.Set(name, vals[i])
 	}
 	for _, pair := range dict.All() {
+		if _, ok := pair.Key.(*object.String); !ok {
+			return object.Kwargs{}, errors.NewTypeErrorTagged("keywords must be strings, not %s", getTypeName(pair.Key))
+		}
 		name := pair.StringKey()
 		if slices.Contains(names, name) {
 			return object.Kwargs{}, duplicateKeywordError(name)
@@ -1422,7 +1428,7 @@ func applyCompiledBuiltinFast(ctx context.Context, env *object.Environment, fn *
 // keyword and unpack evaluation — stays in the closure.
 func compileCall(n *ast.CallExpression) object.EvalFn {
 	argFns := compileExprs(n.Arguments)
-	kwNames, kwFns := compileKeywords(n.GetKeywords())
+	kwNames, kwFns := compileKeywords(n.GetKeywords(), n.GetKeywordOrder())
 	unpackFns := compileExprs(n.GetArgsUnpack())
 	unpackAt := n.GetArgsUnpackAt()
 	var kwargsUnpackFn object.EvalFn
@@ -1491,7 +1497,7 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 			}
 			dict, ok := kwargsVal.(*object.Dict)
 			if !ok {
-				return errors.NewError("argument after ** must be a dictionary, not %s", kwargsVal.Type())
+				return errors.NewTypeErrorTagged("argument after ** must be a mapping, not %s", getTypeName(kwargsVal))
 			}
 			var dupErr object.Object
 			if keywords, dupErr = unpackedKeywords(kwNames, kwVals, dict); dupErr != nil {
@@ -1616,7 +1622,7 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 	receiver := compileExpr(n.Receiver)
 	name := n.Method.Value()
 	argFns := compileExprs(n.Arguments)
-	kwNames, kwFns := compileKeywords(n.GetKeywords())
+	kwNames, kwFns := compileKeywords(n.GetKeywords(), n.GetKeywordOrder())
 	unpackFns := compileExprs(n.GetArgsUnpack())
 	unpackAt := n.GetArgsUnpackAt()
 	var kwargsUnpackFn object.EvalFn
@@ -1731,12 +1737,12 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 						}
 						b.Set(str.StringValue(), pair.Value)
 					} else {
-						return errors.NewError("keywords must be strings, not %s", pair.Key.Type())
+						return errors.NewTypeErrorTagged("keywords must be strings, not %s", getTypeName(pair.Key))
 					}
 				}
 				keywords = b.Kwargs()
 			} else {
-				return errors.NewError("argument after ** must be a dictionary, not %s", kwargsVal.Type())
+				return errors.NewTypeErrorTagged("argument after ** must be a mapping, not %s", getTypeName(kwargsVal))
 			}
 		}
 
@@ -2448,12 +2454,12 @@ func compileSlice(n *ast.SliceExpression) object.EvalFn {
 			if propagates(startObj) {
 				return startObj
 			}
-			s, err := startObj.AsInt()
+			s, has, err := sliceBound(startObj)
 			if err != nil {
 				return err
 			}
 			start = s
-			hasStart = true
+			hasStart = has
 		}
 
 		if endFn != nil {
@@ -2461,12 +2467,12 @@ func compileSlice(n *ast.SliceExpression) object.EvalFn {
 			if propagates(endObj) {
 				return endObj
 			}
-			e, err := endObj.AsInt()
+			e, has, err := sliceBound(endObj)
 			if err != nil {
 				return err
 			}
 			end = e
-			hasEnd = true
+			hasEnd = has
 		}
 
 		if stepFn != nil {
@@ -2474,14 +2480,16 @@ func compileSlice(n *ast.SliceExpression) object.EvalFn {
 			if propagates(stepObj) {
 				return stepObj
 			}
-			s, err := stepObj.AsInt()
+			s, has, err := sliceBound(stepObj)
 			if err != nil {
 				return err
 			}
-			step = s
-			hasStep = true
-			if step == 0 {
-				return errors.NewError("slice step cannot be zero")
+			if has {
+				step = s
+				hasStep = true
+				if step == 0 {
+					return sliceStepZeroError()
+				}
 			}
 		}
 
@@ -2522,9 +2530,13 @@ func compileSlice(n *ast.SliceExpression) object.EvalFn {
 				}
 				return rangeSlice(obj, start, end, step, hasStart, hasEnd)
 			}
-			return errors.NewError("slice operator not supported: %s", leftVal.Type())
+			return errors.NewTypeErrorTagged("'%s' object is not subscriptable", getTypeName(leftVal))
 		default:
-			return errors.NewError("slice operator not supported: %s", leftVal.Type())
+			return &object.Exception{
+				Message:       fmt.Sprintf("'%s' object is not subscriptable", getTypeName(leftVal)),
+				ExceptionType: object.ExceptionTypeTypeError,
+				Raised:        true,
+			}
 		}
 	}
 }
@@ -2535,7 +2547,7 @@ func compileAugmentedAssign(n *ast.AugmentedAssignStatement) object.EvalFn {
 		target = n.Name
 	}
 	if target == nil {
-		errObj := errors.NewError("invalid augmented assignment target")
+		errObj := errors.NewSyntaxError("invalid augmented assignment target")
 		return func(ctx context.Context, env *object.Environment) object.Object {
 			return errObj
 		}
@@ -2665,6 +2677,17 @@ func applyAugmentedOp(ctx context.Context, op ast.Op, currentVal, newVal object.
 				cur.StoreFrom(r)
 				return nil, true, nil
 			}
+			// dict |= an iterable of key/value pairs updates in place.
+			if _, isInst := newVal.(*object.Instance); !isInst {
+				if elems, isIter, rerr := iterableToSliceChecked(ctx, newVal, env); rerr != nil {
+					return nil, false, rerr
+				} else if isIter {
+					if errObj := storeDictPairs(ctx, cur, elems, env); errObj != nil {
+						return nil, false, errObj
+					}
+					return nil, true, nil
+				}
+			}
 		}
 	}
 
@@ -2673,7 +2696,19 @@ func applyAugmentedOp(ctx context.Context, op ast.Op, currentVal, newVal object.
 	if cur, ok := currentVal.(*object.List); ok {
 		switch op {
 		case ast.OpAddEq:
-			if r, ok := newVal.(*object.List); ok {
+			r, ok := newVal.(*object.List)
+			if !ok {
+				// list += any iterable extends in place (a tuple, a str, a
+				// generator, ...), as Python's list.__iadd__ does.
+				elems, isIter, rerr := iterableToSliceChecked(ctx, newVal, env)
+				if rerr != nil {
+					return nil, false, rerr
+				}
+				if isIter {
+					r, ok = &object.List{Elements: elems}, true
+				}
+			}
+			if ok {
 				elements, errObj := appendElements(cur.Elements, r.Elements...)
 				if errObj != nil {
 					return nil, false, errObj
@@ -2682,7 +2717,7 @@ func applyAugmentedOp(ctx context.Context, op ast.Op, currentVal, newVal object.
 				return nil, true, nil
 			}
 		case ast.OpMulEq:
-			if r, ok := newVal.(*object.Integer); ok {
+			if r, ok := boolAsInt(newVal).(*object.Integer); ok {
 				elements, errObj := repeatElements(cur.Elements, r.IntValue())
 				if errObj != nil {
 					return nil, false, errObj
@@ -2738,7 +2773,11 @@ func applyAugmentedOp(ctx context.Context, op ast.Op, currentVal, newVal object.
 		}
 	}
 	result = evalInfixExpression(ctx, baseOp, currentVal, newVal, env)
-	if object.IsError(result) {
+	if propagates(result) {
+		// Python names the augmented operator in the TypeError: "for -=".
+		if e, ok := result.(*object.Error); ok && e.ExceptionType == object.ExceptionTypeTypeError {
+			e.Message = strings.Replace(e.Message, "for "+baseOp.String()+":", "for "+op.String()+":", 1)
+		}
 		return nil, false, result
 	}
 	return result, false, nil
@@ -2790,7 +2829,7 @@ func evalAugIndexOperands(ctx context.Context, t *ast.IndexExpression, env *obje
 			row, rowOK := innerKey.(*object.Integer)
 			col, colOK := key.(*object.Integer)
 			if !rowOK || !colOK {
-				return ops, errors.NewError("float_array index must be integer")
+				return ops, errors.NewTypeErrorTagged("float_array index must be integer")
 			}
 			ops.fa, ops.row, ops.col = fa, row, col
 			return ops, nil
@@ -3112,6 +3151,9 @@ type compSource struct {
 	fastIdent *ast.Identifier
 	slotIndex map[string]int
 	slotNames []string
+	// walrus names what assignment expressions in the comprehension bind;
+	// they bind in the enclosing scope (see Environment.MarkWalrusTargets).
+	walrus []string
 	// rangeArgs is set when the iterable is a literal range(...) call, so the
 	// integers are produced directly rather than through a range iterator.
 	rangeArgs func(ctx context.Context, env *object.Environment) (start, stop, step int64, errObj object.Object, ok bool)
@@ -3163,6 +3205,9 @@ func (s *compSource) run(ctx context.Context, env *object.Environment, sized fun
 			return body(compEnv)
 		}
 	}
+	if s.walrus != nil {
+		compEnv.MarkWalrusTargets(s.walrus)
+	}
 
 	if s.rangeArgs != nil {
 		// A script may rebind range; the fast path applies only to the builtin.
@@ -3209,7 +3254,7 @@ func (s *compSource) run(ctx context.Context, env *object.Environment, sized fun
 	}
 	if it, ok := iterableVal.(*object.Iterator); ok && it.Infinite() {
 		// A comprehension collects every element, so it would never end.
-		return errors.NewError("%s", object.InfiniteIteratorMessage)
+		return errors.NewInfiniteIteratorError()
 	}
 	if sized != nil {
 		switch it := iterableVal.(type) {
@@ -3236,6 +3281,9 @@ func rangeLen(start, stop, step int64) int {
 }
 
 func compileListComprehension(n *ast.ListComprehension) object.EvalFn {
+	if n.Generator {
+		return compileGeneratorExpression(n)
+	}
 	expr := compileExpr(n.Expression)
 	var cond object.EvalFn
 	if n.Condition != nil {
@@ -3243,6 +3291,7 @@ func compileListComprehension(n *ast.ListComprehension) object.EvalFn {
 	}
 	clauses := compiledClauses(n.AdditionalClauses)
 	src := newCompSource(n.Iterable, n.Variables, len(n.AdditionalClauses))
+	src.walrus = comprehensionWalrusTargets(n.AdditionalClauses, n.Expression, n.Condition)
 
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		result := []object.Object{}
@@ -3299,6 +3348,7 @@ func compileDictComprehension(n *ast.DictComprehension) object.EvalFn {
 	}
 	clauses := compiledClauses(n.AdditionalClauses)
 	src := newCompSource(n.Iterable, n.Variables, len(n.AdditionalClauses))
+	src.walrus = comprehensionWalrusTargets(n.AdditionalClauses, n.Key, n.Value, n.Condition)
 
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		result := object.NewDict()
@@ -3360,6 +3410,7 @@ func compileSetComprehension(n *ast.SetComprehension) object.EvalFn {
 	}
 	clauses := compiledClauses(n.AdditionalClauses)
 	src := newCompSource(n.Iterable, n.Variables, len(n.AdditionalClauses))
+	src.walrus = comprehensionWalrusTargets(n.AdditionalClauses, n.Expression, n.Condition)
 
 	return func(ctx context.Context, env *object.Environment) object.Object {
 		result := object.NewSet()
@@ -3405,7 +3456,8 @@ func compileWalrus(n *ast.WalrusExpression) object.EvalFn {
 		}
 		// Bind through the same path as assignment statements so slot caching,
 		// global/nonlocal directives, and store fallbacks all behave identically.
-		if err := assignToExpression(ctx, n.Target, val, env); err != nil {
+		// Inside a comprehension the name binds in the enclosing scope.
+		if err := assignToExpression(ctx, n.Target, val, env.WalrusScope(n.Target.Value())); err != nil {
 			return assignErrorToObject(err)
 		}
 		return val
@@ -3593,7 +3645,7 @@ func compileRaise(n *ast.RaiseStatement) object.EvalFn {
 				return toRaisedException(ctx, cls, nil, env)
 			}
 			// Python 3 doesn't support raise "string", only raise Exception("string")
-			return errors.NewError("exceptions must derive from BaseException")
+			return errors.NewTypeErrorTagged("exceptions must derive from BaseException")
 		}
 
 		// Bare raise - re-raise the current exception if one exists
@@ -3602,7 +3654,7 @@ func compileRaise(n *ast.RaiseStatement) object.EvalFn {
 		}
 
 		// No current exception - error
-		return errors.NewError("No active exception to re-raise")
+		return errors.NewRuntimeError("No active exception to re-raise")
 	}
 	if cause == nil {
 		return run
@@ -3649,7 +3701,7 @@ func compileWith(n *ast.WithStatement) object.EvalFn {
 				return enterResult
 			}
 		} else {
-			return errors.NewError("with statement requires an object with __enter__ and __exit__ methods")
+			return errors.NewTypeErrorTagged("with statement requires an object with __enter__ and __exit__ methods")
 		}
 
 		// Bind 'as' target if present
@@ -3671,7 +3723,7 @@ func exceptionTypeObject(exc *object.Exception) object.Object {
 		return exc.OriginInstance.Class
 	}
 	if b, ok := builtins[exc.ExceptionType]; ok {
-		if _, isExc := exceptionBuiltins[b]; isExc {
+		if _, isExc := exceptionClassName(b); isExc {
 			return b
 		}
 	}
@@ -3863,7 +3915,7 @@ func matchExceptClause(ctx context.Context, clauses []*ast.ExceptClause, result 
 			if raised := evalExceptTypeSideEffects(ctx, exceptClause.ExceptType, env); raised != nil {
 				return -1, exceptionObj, raised
 			}
-			if !matchesExceptionType(exceptionObj, exceptClause.ExceptType, env) {
+			if !matchesExceptionType(ctx, exceptionObj, exceptClause.ExceptType, env) {
 				continue
 			}
 		}
@@ -4031,18 +4083,18 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 			if baseBuiltin, isBuiltin := baseClassObj.(*object.Builtin); isBuiltin {
 				if baseBuiltin == objectBuiltin {
 					// class C(object): the same as class C:
-				} else if excName, isExc := exceptionBuiltins[baseBuiltin]; isExc {
+				} else if excName, isExc := exceptionClassName(baseBuiltin); isExc {
 					class.ExceptionBase = excName
 					// Store constructor args so raise/`e.args` can use them,
 					// as Python's Exception.__init__ does.
 					class.Methods["__init__"] = &object.Builtin{
 						Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 							if len(args) < 1 {
-								return errors.NewError("__init__ requires self")
+								return errors.NewTypeErrorTagged("__init__ requires self")
 							}
 							inst, ok := args[0].(*object.Instance)
 							if !ok {
-								return errors.NewError("__init__ requires instance as first argument")
+								return errors.NewTypeErrorTagged("__init__ requires instance as first argument")
 							}
 							rest := make([]object.Object, 0, len(args)-1)
 							rest = append(rest, args[1:]...)
@@ -4051,12 +4103,12 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 						},
 					}
 				} else {
-					return errors.NewError("base class is not a class type, got %s", baseClassObj.Type())
+					return errors.NewTypeErrorTagged("base class is not a class type, got %s", baseClassObj.Type())
 				}
 			} else {
 				baseClass, ok := baseClassObj.(*object.Class)
 				if !ok {
-					return errors.NewError("base class is not a class type, got %s", baseClassObj.Type())
+					return errors.NewTypeErrorTagged("base class is not a class type, got %s", baseClassObj.Type())
 				}
 				class.BaseClass = baseClass
 				// User exception classes inherit their exception-ness.
@@ -4253,4 +4305,35 @@ func mergeUnpackedArgsInOrder(ctx context.Context, env *object.Environment, argF
 		next++
 	}
 	return merged, nil
+}
+
+// sliceBound converts a slice bound to an int, as Python does: None means
+// the default (has is false) and a bool counts as 0 or 1.
+func sliceBound(obj object.Object) (v int64, has bool, err object.Object) {
+	if i, ok := obj.(*object.Integer); ok {
+		return i.IntValue(), true, nil
+	}
+	switch o := obj.(type) {
+	case *object.Boolean:
+		return boolToInt64(o.BoolValue()), true, nil
+	case *object.Null:
+		return 0, false, nil
+	}
+	if v, aerr := obj.AsInt(); aerr == nil {
+		return v, true, nil
+	}
+	return 0, false, &object.Exception{
+		Message:       "slice indices must be integers or have an __index__ method",
+		ExceptionType: object.ExceptionTypeTypeError,
+		Raised:        true,
+	}
+}
+
+// sliceStepZeroError is Python's ValueError for a slice step of zero.
+func sliceStepZeroError() object.Object {
+	return &object.Exception{
+		Message:       "slice step cannot be zero",
+		ExceptionType: object.ExceptionTypeValueError,
+		Raised:        true,
+	}
 }

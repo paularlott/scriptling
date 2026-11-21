@@ -75,6 +75,47 @@ func NewTypeErrorTagged(format string, args ...interface{}) *object.Error {
 	}
 }
 
+// NoKwargs returns the TypeError "fn() takes no keyword arguments" when the
+// call passed any keywords, and nil otherwise. It is inlined, so a call with
+// no keywords pays a single length test.
+func NoKwargs(fn string, kwargs object.Kwargs) object.Object {
+	if kwargs.Len() == 0 {
+		return nil
+	}
+	return noKwargsError(fn)
+}
+
+// noKwargsError is kept out of line so NoKwargs stays cheap enough to inline.
+//
+//go:noinline
+func noKwargsError(fn string) *object.Error {
+	return NewTypeErrorTagged("%s() takes no keyword arguments", fn)
+}
+
+// CheckKwargs returns the TypeError "fn() got an unexpected keyword argument
+// 'x'" for the first keyword that is not one of allowed, and nil when every
+// keyword is allowed. With no allowed names it reports that fn takes no
+// keyword arguments.
+//
+// Building the allowed list costs a few stores even when the call has no
+// keywords, so a hot function guards the check:
+//
+//	if kwargs.Len() > 0 {
+//		if err := errors.CheckKwargs("sorted", kwargs, "key", "reverse"); err != nil {
+//			return err
+//		}
+//	}
+func CheckKwargs(fn string, kwargs object.Kwargs, allowed ...string) object.Object {
+	name, bad := kwargs.Unknown(allowed...)
+	if !bad {
+		return nil
+	}
+	if len(allowed) == 0 {
+		return noKwargsError(fn)
+	}
+	return NewTypeErrorTagged("%s() got an unexpected keyword argument '%s'", fn, name)
+}
+
 // NewTimeoutError creates a timeout error
 func NewTimeoutError() *object.Error {
 	return &object.Error{Message: ErrTimeout}
@@ -162,7 +203,8 @@ func NewIdentifierError(name string) *object.Error {
 
 // ParameterError wraps an error with a parameter name for context
 func ParameterError(name string, err object.Object) object.Object {
-	return &object.Error{Message: fmt.Sprintf("%s: %s", name, err.(*object.Error).Message)}
+	e := err.(*object.Error)
+	return &object.Error{Message: fmt.Sprintf("%s: %s", name, e.Message), ExceptionType: e.ExceptionType}
 }
 
 // Argument validation helpers return nil if validation passes, otherwise return an error
@@ -186,7 +228,7 @@ func ExactArgs(args []object.Object, n int) object.Object {
 // MinArgs checks that args has at least n elements
 func MinArgs(args []object.Object, n int) object.Object {
 	if len(args) < n {
-		return NewError("expected at least %d arguments, got %d", n, len(args))
+		return NewTypeErrorTagged("expected at least %d arguments, got %d", n, len(args))
 	}
 	return nil
 }
@@ -194,7 +236,7 @@ func MinArgs(args []object.Object, n int) object.Object {
 // MaxArgs checks that args has at most n elements
 func MaxArgs(args []object.Object, n int) object.Object {
 	if len(args) > n {
-		return NewError("expected at most %d arguments, got %d", n, len(args))
+		return NewTypeErrorTagged("expected at most %d arguments, got %d", n, len(args))
 	}
 	return nil
 }
@@ -202,10 +244,100 @@ func MaxArgs(args []object.Object, n int) object.Object {
 // RangeArgs checks that args has between min and max elements (inclusive)
 func RangeArgs(args []object.Object, min, max int) object.Object {
 	if len(args) < min {
-		return NewError("expected at least %d arguments, got %d", min, len(args))
+		return NewTypeErrorTagged("expected at least %d arguments, got %d", min, len(args))
 	}
 	if len(args) > max {
-		return NewError("expected at most %d arguments, got %d", max, len(args))
+		return NewTypeErrorTagged("expected at most %d arguments, got %d", max, len(args))
 	}
 	return nil
+}
+
+// NewOverflowError creates an error tagged so that `except OverflowError:`
+// (and ArithmeticError) matches it — for a result too large to represent,
+// such as math.exp(1000) or converting float infinity to an integer.
+func NewOverflowError(format string, args ...interface{}) *object.Error {
+	return &object.Error{
+		Message:       fmt.Sprintf(format, args...),
+		ExceptionType: object.ExceptionTypeOverflowError,
+	}
+}
+
+// NewIndexError creates an error tagged so that `except IndexError:` (and
+// LookupError) matches it.
+func NewIndexError(format string, args ...interface{}) *object.Error {
+	return &object.Error{
+		Message:       fmt.Sprintf(format, args...),
+		ExceptionType: object.ExceptionTypeIndexError,
+	}
+}
+
+// NewOSError creates an error tagged so that `except OSError:` matches it.
+func NewOSError(format string, args ...interface{}) *object.Error {
+	return &object.Error{
+		Message:       fmt.Sprintf(format, args...),
+		ExceptionType: object.ExceptionTypeOSError,
+	}
+}
+
+// newTyped creates an error tagged with exceptionType so the matching except
+// clause catches it.
+func newTyped(exceptionType, format string, args ...interface{}) *object.Error {
+	return &object.Error{
+		Message:       fmt.Sprintf(format, args...),
+		ExceptionType: exceptionType,
+	}
+}
+
+// NewKeyErrorTagged creates an error tagged so that `except KeyError:` (and
+// LookupError) matches it.
+func NewKeyErrorTagged(format string, args ...interface{}) *object.Error {
+	return newTyped(object.ExceptionTypeKeyError, format, args...)
+}
+
+// NewAttributeErrorTagged creates an error tagged so that
+// `except AttributeError:` matches it.
+func NewAttributeErrorTagged(format string, args ...interface{}) *object.Error {
+	return newTyped(object.ExceptionTypeAttributeError, format, args...)
+}
+
+// NewRuntimeError creates an error tagged so that `except RuntimeError:`
+// matches it, for an operation the interpreter's current state does not
+// allow (re-raising with no active exception, a generator already running).
+func NewRuntimeError(format string, args ...interface{}) *object.Error {
+	return newTyped(object.ExceptionTypeRuntimeError, format, args...)
+}
+
+// NewSyntaxError creates an error tagged so that `except SyntaxError:`
+// matches it, for a construct the parser accepts but the evaluator rejects.
+func NewSyntaxError(format string, args ...interface{}) *object.Error {
+	return newTyped(object.ExceptionTypeSyntaxError, format, args...)
+}
+
+// NewImportErrorTagged creates an error tagged so that `except ImportError:`
+// matches it. The message keeps the "import error" prefix.
+func NewImportErrorTagged(format string, args ...interface{}) *object.Error {
+	return newTyped(object.ExceptionTypeImportError, format, args...)
+}
+
+// NewLookupError creates an error tagged so that `except LookupError:`
+// matches it, as Python raises for an unknown codec name.
+func NewLookupError(format string, args ...interface{}) *object.Error {
+	return newTyped(object.ExceptionTypeLookupError, format, args...)
+}
+
+// NewUnicodeEncodeError and NewUnicodeDecodeError create the errors for text
+// that a codec cannot encode or bytes it cannot decode: subclasses of
+// UnicodeError and so of ValueError, which `except ValueError:` still catches.
+func NewUnicodeEncodeError(format string, args ...interface{}) *object.Error {
+	return newTyped(object.ExceptionTypeUnicodeEncodeError, format, args...)
+}
+
+func NewUnicodeDecodeError(format string, args ...interface{}) *object.Error {
+	return newTyped(object.ExceptionTypeUnicodeDecodeError, format, args...)
+}
+
+// NewInfiniteIteratorError is the RuntimeError for collecting an infinite
+// iterator (itertools.count, cycle or repeat) into a container.
+func NewInfiniteIteratorError() *object.Error {
+	return NewRuntimeError("%s", object.InfiniteIteratorMessage)
 }

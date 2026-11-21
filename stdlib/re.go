@@ -5,9 +5,11 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/evaliface"
@@ -28,6 +30,9 @@ var RegexClass = &object.Class{
 	Methods: map[string]object.Object{
 		"match": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("match", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 2); err != nil {
 					return err
 				}
@@ -40,7 +45,7 @@ var RegexClass = &object.Class{
 
 				re, err := GetCompiledRegex(pattern)
 				if err != nil {
-					return errors.NewError("regex compile error: %s", err.Error())
+					return reCompileError(err)
 				}
 
 				// Check if pattern matches at the beginning of text
@@ -49,7 +54,7 @@ var RegexClass = &object.Class{
 					return &object.Null{}
 				}
 
-				return createMatchInstance(text, groupsFromIndices(text, match), match[0], match[1], re.SubexpNames())
+				return createMatchInstance(text, match, re.SubexpNames(), &runeOffsets{text: text})
 			},
 			HelpText: `match(string) - Match pattern at start of string
 
@@ -57,6 +62,9 @@ Returns a Match object if the pattern matches at the beginning, or None if no ma
 		},
 		"search": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("search", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 2); err != nil {
 					return err
 				}
@@ -69,7 +77,7 @@ Returns a Match object if the pattern matches at the beginning, or None if no ma
 
 				re, err := GetCompiledRegex(pattern)
 				if err != nil {
-					return errors.NewError("regex compile error: %s", err.Error())
+					return reCompileError(err)
 				}
 
 				match := re.FindStringSubmatchIndex(text)
@@ -77,7 +85,7 @@ Returns a Match object if the pattern matches at the beginning, or None if no ma
 					return &object.Null{}
 				}
 
-				return createMatchInstance(text, groupsFromIndices(text, match), match[0], match[1], re.SubexpNames())
+				return createMatchInstance(text, match, re.SubexpNames(), &runeOffsets{text: text})
 			},
 			HelpText: `search(string) - Search for pattern anywhere in string
 
@@ -85,6 +93,9 @@ Returns a Match object for the first match, or None if no match found.`,
 		},
 		"findall": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("findall", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 2); err != nil {
 					return err
 				}
@@ -97,7 +108,7 @@ Returns a Match object for the first match, or None if no match found.`,
 
 				re, err := GetCompiledRegex(pattern)
 				if err != nil {
-					return errors.NewError("regex compile error: %s", err.Error())
+					return reCompileError(err)
 				}
 
 				numGroups := re.NumSubexp()
@@ -149,6 +160,9 @@ If there are no capturing groups, returns a list of strings for the full matches
 		},
 		"finditer": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("finditer", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 2); err != nil {
 					return err
 				}
@@ -161,23 +175,15 @@ If there are no capturing groups, returns a list of strings for the full matches
 
 				re, err := GetCompiledRegex(pattern)
 				if err != nil {
-					return errors.NewError("regex compile error: %s", err.Error())
+					return reCompileError(err)
 				}
 
 				allMatches := re.FindAllStringSubmatchIndex(text, -1)
 				elements := make([]object.Object, len(allMatches))
 				object.TrackSlice(elements)
+				conv := &runeOffsets{text: text}
 				for i, match := range allMatches {
-					// Build groups from submatch indices
-					groups := make([]string, 0)
-					for j := 0; j < len(match); j += 2 {
-						if match[j] >= 0 && match[j+1] >= 0 {
-							groups = append(groups, text[match[j]:match[j+1]])
-						} else {
-							groups = append(groups, "")
-						}
-					}
-					elements[i] = createMatchInstance(text, groups, match[0], match[1], re.SubexpNames())
+					elements[i] = createMatchInstance(text, match, re.SubexpNames(), conv)
 				}
 				return &object.List{Elements: elements}
 			},
@@ -194,39 +200,35 @@ var MatchClass = &object.Class{
 	Methods: map[string]object.Object{
 		"group": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) > 2 {
-					return errors.NewError("group() takes at most 1 argument (%d given)", len(args))
+				if err := errors.NoKwargs("group", kwargs); err != nil {
+					return err
 				}
 				match := args[0].(*object.Instance)
 				groups := match.Field("_groups").(*object.List).Elements
-				names := match.Field("_group_names").(*object.List).Elements
-				groupNum := 0
-				if len(args) == 2 {
-					if args[1].Type() == object.STRING_OBJ {
-						// Named group access: (?P<name>...) captures.
-						name, _ := args[1].AsString()
-						for i, n := range names {
-							if ns, ok := n.(*object.String); ok && ns.StringValue() == name {
-								return groups[i]
-							}
-						}
-						return &object.Exception{Message: "no such group", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
-					}
-					if args[1].Type() != object.INTEGER_OBJ {
-						return errors.NewTypeError("INTEGER or STRING", args[1].Type().String())
-					}
-					val, _ := args[1].AsInt()
-					groupNum = int(val)
+				if len(args) == 1 {
+					return groups[0]
 				}
-				if groupNum < 0 || groupNum >= len(groups) {
-					return &object.Exception{Message: "no such group", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
+				// group(a, b, ...) returns a tuple of the groups, as in Python.
+				out := make([]object.Object, len(args)-1)
+				for i, g := range args[1:] {
+					n, errObj := matchGroupIndex(match, g)
+					if errObj != nil {
+						return errObj
+					}
+					out[i] = groups[n]
 				}
-				return groups[groupNum]
+				if len(out) == 1 {
+					return out[0]
+				}
+				return &object.Tuple{Elements: out}
 			},
-			HelpText: `group([n]) - Return the nth matched group (0 = full match), or the group captured under a (?P<name>...) name`,
+			HelpText: `group([n, ...]) - Return the nth matched group (0 = full match, None for a group that did not take part), or the group captured under a (?P<name>...) name; with several arguments, a tuple`,
 		},
 		"groupdict": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("groupdict", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -247,6 +249,9 @@ var MatchClass = &object.Class{
 		},
 		"groups": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("groups", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -266,69 +271,33 @@ var MatchClass = &object.Class{
 		},
 		"start": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) > 2 {
-					return errors.NewError("start() takes at most 1 argument (%d given)", len(args))
+				start, _, errObj := matchSpanArgs("start", kwargs, args)
+				if errObj != nil {
+					return errObj
 				}
-				match := args[0].(*object.Instance)
-				groupNum := 0
-				if len(args) == 2 {
-					if args[1].Type() != object.INTEGER_OBJ {
-						return errors.NewTypeError("INTEGER", args[1].Type().String())
-					}
-					val, _ := args[1].AsInt()
-					groupNum = int(val)
-				}
-				if groupNum != 0 {
-					return errors.NewError("start() only supports group 0")
-				}
-				return match.Field("_start")
+				return start
 			},
-			HelpText: `start(n=0) - Return start position of nth group`,
+			HelpText: `start(n=0) - Return the start position of the nth group (-1 if it did not take part)`,
 		},
 		"end": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) > 2 {
-					return errors.NewError("end() takes at most 1 argument (%d given)", len(args))
+				_, end, errObj := matchSpanArgs("end", kwargs, args)
+				if errObj != nil {
+					return errObj
 				}
-				match := args[0].(*object.Instance)
-				groupNum := 0
-				if len(args) == 2 {
-					if args[1].Type() != object.INTEGER_OBJ {
-						return errors.NewTypeError("INTEGER", args[1].Type().String())
-					}
-					val, _ := args[1].AsInt()
-					groupNum = int(val)
-				}
-				if groupNum != 0 {
-					return errors.NewError("end() only supports group 0")
-				}
-				return match.Field("_end")
+				return end
 			},
-			HelpText: `end(n=0) - Return end position of nth group`,
+			HelpText: `end(n=0) - Return the end position of the nth group (-1 if it did not take part)`,
 		},
 		"span": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-				if len(args) > 2 {
-					return errors.NewError("span() takes at most 1 argument (%d given)", len(args))
+				start, end, errObj := matchSpanArgs("span", kwargs, args)
+				if errObj != nil {
+					return errObj
 				}
-				match := args[0].(*object.Instance)
-				groupNum := 0
-				if len(args) == 2 {
-					if args[1].Type() != object.INTEGER_OBJ {
-						return errors.NewTypeError("INTEGER", args[1].Type().String())
-					}
-					val, _ := args[1].AsInt()
-					groupNum = int(val)
-				}
-				if groupNum != 0 {
-					return errors.NewError("span() only supports group 0")
-				}
-				return &object.Tuple{Elements: []object.Object{
-					match.Field("_start"),
-					match.Field("_end"),
-				}}
+				return &object.Tuple{Elements: []object.Object{start, end}}
 			},
-			HelpText: `span(n=0) - Return (start, end) tuple for nth group`,
+			HelpText: `span(n=0) - Return (start, end) tuple for nth group ((-1, -1) if it did not take part)`,
 		},
 	},
 }
@@ -341,15 +310,97 @@ func createRegexInstance(pattern string, flags int64) *object.Instance {
 	})
 }
 
-// Helper function to create a Match instance. text is the string matched
-// against: the groups are substrings of it.
-func createMatchInstance(text string, groups []string, start, end int, groupNames []string) *object.Instance {
-	groupObjects := make([]object.Object, len(groups))
-	object.TrackSlice(groupObjects)
-	for i, group := range groups {
-		groupObjects[i] = object.NewSubstring(group, text)
+// matchGroupIndex resolves a group number or (?P<name>...) name of a match
+// to its index, with Python's IndexError for one the pattern lacks.
+func matchGroupIndex(match *object.Instance, g object.Object) (int, object.Object) {
+	groups := match.Field("_groups").(*object.List).Elements
+	switch g := g.(type) {
+	case *object.Integer:
+		if n := g.IntValue(); n >= 0 && n < int64(len(groups)) {
+			return int(n), nil
+		}
+	case *object.String:
+		names := match.Field("_group_names").(*object.List).Elements
+		for i, n := range names {
+			if ns, ok := n.(*object.String); ok && ns.StringValue() != "" && ns.StringValue() == g.StringValue() {
+				return i, nil
+			}
+		}
 	}
-	nameObjects := make([]object.Object, len(groups))
+	return 0, &object.Exception{Message: "no such group", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
+}
+
+// matchSpanArgs returns the start and end, in characters, of the group a
+// start(), end() or span() call names (group 0 by default).
+func matchSpanArgs(name string, kwargs object.Kwargs, args []object.Object) (object.Object, object.Object, object.Object) {
+	if err := errors.NoKwargs(name, kwargs); err != nil {
+		return nil, nil, err
+	}
+	if len(args) > 2 {
+		return nil, nil, errors.NewTypeErrorTagged("%s() takes at most 1 argument (%d given)", name, len(args)-1)
+	}
+	match := args[0].(*object.Instance)
+	n := 0
+	if len(args) == 2 {
+		var errObj object.Object
+		if n, errObj = matchGroupIndex(match, args[1]); errObj != nil {
+			return nil, nil, errObj
+		}
+	}
+	if n == 0 {
+		return match.Field("_start"), match.Field("_end"), nil
+	}
+	spans := match.Field("_spans").(*object.List).Elements
+	return spans[2*n], spans[2*n+1], nil
+}
+
+// runeOffsets converts byte offsets into a string to Python's character
+// offsets. Offsets asked for in increasing order (the matches of finditer
+// or sub) are counted on from the last one, so converting all of them costs
+// one pass over the text.
+type runeOffsets struct {
+	text               string
+	lastByte, lastRune int
+}
+
+func (c *runeOffsets) at(b int) int {
+	if b < 0 {
+		return -1
+	}
+	if b < c.lastByte {
+		c.lastByte, c.lastRune = 0, 0
+	}
+	c.lastRune += utf8.RuneCountInString(c.text[c.lastByte:b])
+	c.lastByte = b
+	return c.lastRune
+}
+
+// createMatchInstance creates a Match from the submatch byte indices of a
+// match in text, as regexp's Find*SubmatchIndex return them. A group that
+// did not take part in the match is None, as in Python, and positions are in
+// characters. conv may be shared by the matches of one search, in order.
+func createMatchInstance(text string, match []int, groupNames []string, conv *runeOffsets) *object.Instance {
+	n := len(match) / 2
+	groupObjects := make([]object.Object, n)
+	object.TrackSlice(groupObjects)
+	var spans []object.Object
+	if n > 1 {
+		spans = make([]object.Object, len(match))
+		object.TrackSlice(spans)
+	}
+	for i := 0; i < n; i++ {
+		s, e := match[2*i], match[2*i+1]
+		if s >= 0 && e >= 0 {
+			groupObjects[i] = object.NewSubstring(text[s:e], text)
+		} else {
+			groupObjects[i] = &object.Null{}
+		}
+		if spans != nil && i > 0 {
+			spans[2*i] = object.NewInteger(int64(conv.at(s)))
+			spans[2*i+1] = object.NewInteger(int64(conv.at(e)))
+		}
+	}
+	nameObjects := make([]object.Object, n)
 	object.TrackSlice(nameObjects)
 	for i := range nameObjects {
 		name := ""
@@ -358,12 +409,15 @@ func createMatchInstance(text string, groups []string, start, end int, groupName
 		}
 		nameObjects[i] = object.NewString(name)
 	}
+	start := conv.at(match[0])
+	end := conv.at(match[1])
 	// The fields carry underscored names: a field named "start" would shadow
 	// the start() method on the class, making m.start() an "INTEGER object is
 	// not callable" error while m.start silently returned the raw field.
 	return object.NewInstanceWithFields(MatchClass, map[string]object.Object{
 		"_groups":      &object.List{Elements: groupObjects},
 		"_group_names": &object.List{Elements: nameObjects},
+		"_spans":       &object.List{Elements: spans},
 		"_start":       object.NewInteger(int64(start)),
 		"_end":         object.NewInteger(int64(end)),
 	})
@@ -411,17 +465,6 @@ func applyFlags(pattern string, flags int64) string {
 		return builder.String()
 	}
 	return pattern
-}
-
-func groupsFromIndices(text string, match []int) []string {
-	groups := make([]string, len(match)/2)
-	for i := 0; i < len(match); i += 2 {
-		groupIdx := i / 2
-		if match[i] >= 0 && match[i+1] >= 0 {
-			groups[groupIdx] = text[match[i]:match[i+1]]
-		}
-	}
-	return groups
 }
 
 // GetCompiledRegex retrieves a compiled regex from cache or compiles and caches it
@@ -511,8 +554,13 @@ func getFlags(args []object.Object, kwargs object.Kwargs, flagsIndex int) (int64
 var ReLibrary = object.NewLibrary(ReLibraryName, map[string]*object.Builtin{
 	"match": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("match", kwargs, "flags"); err != nil {
+					return err
+				}
+			}
 			if len(args) < 2 || len(args) > 3 {
-				return errors.NewError("match() takes 2 or 3 arguments (%d given)", len(args))
+				return errors.NewTypeErrorTagged("match() takes 2 or 3 arguments (%d given)", len(args))
 			}
 			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", "mixed types")
@@ -522,13 +570,13 @@ var ReLibrary = object.NewLibrary(ReLibraryName, map[string]*object.Builtin{
 
 			flags, err := getFlags(args, kwargs, 2)
 			if err != nil {
-				return errors.NewError("%s", err.Error())
+				return errors.NewTypeErrorTagged("%s", err.Error())
 			}
 			pattern = applyFlags(pattern, flags)
 
 			re, err := GetCompiledRegex(pattern)
 			if err != nil {
-				return errors.NewError("regex compile error: %s", err.Error())
+				return reCompileError(err)
 			}
 
 			// Check if pattern matches at the beginning of text
@@ -537,17 +585,7 @@ var ReLibrary = object.NewLibrary(ReLibraryName, map[string]*object.Builtin{
 				return &object.Null{}
 			}
 
-			// Build groups from submatch indices
-			groups := make([]string, 0)
-			for i := 0; i < len(match); i += 2 {
-				if match[i] >= 0 && match[i+1] >= 0 {
-					groups = append(groups, text[match[i]:match[i+1]])
-				} else {
-					groups = append(groups, "")
-				}
-			}
-
-			return createMatchInstance(text, groups, match[0], match[1], re.SubexpNames())
+			return createMatchInstance(text, match, re.SubexpNames(), &runeOffsets{text: text})
 		},
 		HelpText: `match(pattern, string, flags=0) - Match pattern at start of string
 
@@ -568,8 +606,13 @@ Flags:
 	},
 	"search": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("search", kwargs, "flags"); err != nil {
+					return err
+				}
+			}
 			if len(args) < 2 || len(args) > 3 {
-				return errors.NewError("search() takes 2 or 3 arguments (%d given)", len(args))
+				return errors.NewTypeErrorTagged("search() takes 2 or 3 arguments (%d given)", len(args))
 			}
 			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", "mixed types")
@@ -579,13 +622,13 @@ Flags:
 
 			flags, err := getFlags(args, kwargs, 2)
 			if err != nil {
-				return errors.NewError("%s", err.Error())
+				return errors.NewTypeErrorTagged("%s", err.Error())
 			}
 			pattern = applyFlags(pattern, flags)
 
 			re, err := GetCompiledRegex(pattern)
 			if err != nil {
-				return errors.NewError("regex compile error: %s", err.Error())
+				return reCompileError(err)
 			}
 
 			match := re.FindStringSubmatchIndex(text)
@@ -593,17 +636,7 @@ Flags:
 				return &object.Null{}
 			}
 
-			// Build groups from submatch indices
-			groups := make([]string, 0)
-			for i := 0; i < len(match); i += 2 {
-				if match[i] >= 0 && match[i+1] >= 0 {
-					groups = append(groups, text[match[i]:match[i+1]])
-				} else {
-					groups = append(groups, "")
-				}
-			}
-
-			return createMatchInstance(text, groups, match[0], match[1], re.SubexpNames())
+			return createMatchInstance(text, match, re.SubexpNames(), &runeOffsets{text: text})
 		},
 		HelpText: `search(pattern, string, flags=0) - Search for pattern anywhere in string
 
@@ -624,8 +657,13 @@ Flags:
 	},
 	"findall": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("findall", kwargs, "flags"); err != nil {
+					return err
+				}
+			}
 			if len(args) < 2 || len(args) > 3 {
-				return errors.NewError("findall() takes 2 or 3 arguments (%d given)", len(args))
+				return errors.NewTypeErrorTagged("findall() takes 2 or 3 arguments (%d given)", len(args))
 			}
 			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", "mixed types")
@@ -635,13 +673,13 @@ Flags:
 
 			flags, err := getFlags(args, kwargs, 2)
 			if err != nil {
-				return errors.NewError("%s", err.Error())
+				return errors.NewTypeErrorTagged("%s", err.Error())
 			}
 			pattern = applyFlags(pattern, flags)
 
 			re, err := GetCompiledRegex(pattern)
 			if err != nil {
-				return errors.NewError("regex compile error: %s", err.Error())
+				return reCompileError(err)
 			}
 
 			matches := re.FindAllStringSubmatch(text, -1)
@@ -678,8 +716,13 @@ Flags:
 	},
 	"finditer": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("finditer", kwargs, "flags"); err != nil {
+					return err
+				}
+			}
 			if len(args) < 2 || len(args) > 3 {
-				return errors.NewError("finditer() takes 2 or 3 arguments (%d given)", len(args))
+				return errors.NewTypeErrorTagged("finditer() takes 2 or 3 arguments (%d given)", len(args))
 			}
 			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", "mixed types")
@@ -689,20 +732,21 @@ Flags:
 
 			flags, err := getFlags(args, kwargs, 2)
 			if err != nil {
-				return errors.NewError("%s", err.Error())
+				return errors.NewTypeErrorTagged("%s", err.Error())
 			}
 			pattern = applyFlags(pattern, flags)
 
 			re, err := GetCompiledRegex(pattern)
 			if err != nil {
-				return errors.NewError("regex compile error: %s", err.Error())
+				return reCompileError(err)
 			}
 
 			allMatches := re.FindAllStringSubmatchIndex(text, -1)
 			elements := make([]object.Object, len(allMatches))
 			object.TrackSlice(elements)
+			conv := &runeOffsets{text: text}
 			for i, match := range allMatches {
-				elements[i] = createMatchInstance(text, groupsFromIndices(text, match), match[0], match[1], re.SubexpNames())
+				elements[i] = createMatchInstance(text, match, re.SubexpNames(), conv)
 			}
 			return &object.List{Elements: elements}
 		},
@@ -717,8 +761,13 @@ Flags:
 	},
 	"sub": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("sub", kwargs, "count", "flags"); err != nil {
+					return err
+				}
+			}
 			if len(args) < 3 || len(args) > 5 {
-				return errors.NewError("sub() takes 3 to 5 arguments (%d given)", len(args))
+				return errors.NewTypeErrorTagged("sub() takes 3 to 5 arguments (%d given)", len(args))
 			}
 			if args[0].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", args[0].Type().String())
@@ -755,7 +804,7 @@ Flags:
 			}
 			if countObj != nil {
 				if countObj.Type() != object.INTEGER_OBJ {
-					return errors.NewError("count must be an integer")
+					return errors.NewTypeErrorTagged("count must be an integer")
 				}
 				val, _ := countObj.AsInt()
 				count = int(val)
@@ -767,13 +816,13 @@ Flags:
 			// flags parameter (optional, position 4)
 			flags, err := getFlags(args, kwargs, 4)
 			if err != nil {
-				return errors.NewError("%s", err.Error())
+				return errors.NewTypeErrorTagged("%s", err.Error())
 			}
 			pattern = applyFlags(pattern, flags)
 
 			re, err := GetCompiledRegex(pattern)
 			if err != nil {
-				return errors.NewError("regex compile error: %s", err.Error())
+				return reCompileError(err)
 			}
 
 			var result string
@@ -795,6 +844,7 @@ Flags:
 				lastEnd := 0
 				meter := libutil.NewWorkMeter(ctx)
 				grownTo := 0
+				conv := &runeOffsets{text: text}
 
 				for _, match := range allMatches {
 					if count > 0 && replaced >= count {
@@ -807,7 +857,7 @@ Flags:
 					// Add text before match
 					resultBuilder = append(resultBuilder, text[lastEnd:match[0]]...)
 
-					matchObj := createMatchInstance(text, groupsFromIndices(text, match), match[0], match[1], re.SubexpNames())
+					matchObj := createMatchInstance(text, match, re.SubexpNames(), conv)
 
 					// Call the replacement function
 					var resultObj object.Object
@@ -856,20 +906,28 @@ Flags:
 				// Add remaining text
 				resultBuilder = append(resultBuilder, text[lastEnd:]...)
 				result = string(resultBuilder)
-			} else if errObj := checkSubSize(re, text, pythonReplToGo(replacementStr), count); errObj != nil {
-				return errObj
-			} else if count < 0 {
-				result = re.ReplaceAllString(text, pythonReplToGo(replacementStr))
 			} else {
-				// Replace only 'count' occurrences
-				replaced := 0
-				result = re.ReplaceAllStringFunc(text, func(match string) string {
-					if replaced < count {
-						replaced++
-						return re.ReplaceAllString(match, pythonReplToGo(replacementStr))
+				template, errObj := pythonReplToGo(replacementStr, re)
+				if errObj != nil {
+					return errObj
+				}
+				if errObj := checkSubSize(re, text, template, count); errObj != nil {
+					return errObj
+				}
+				if count < 0 {
+					result = re.ReplaceAllString(text, template)
+				} else {
+					// Replace only the first count occurrences, expanding
+					// each against the whole text as ReplaceAllString does.
+					var out []byte
+					last := 0
+					for _, m := range re.FindAllStringSubmatchIndex(text, count) {
+						out = append(out, text[last:m[0]]...)
+						out = re.ExpandString(out, template, text, m)
+						last = m[1]
 					}
-					return match
-				})
+					result = string(append(out, text[last:]...))
+				}
 			}
 			return object.NewString(result)
 		},
@@ -887,6 +945,11 @@ Flags:
 	},
 	"subn": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("subn", kwargs, "count", "flags"); err != nil {
+					return err
+				}
+			}
 			// subn(pattern, repl, string[, count[, flags]]) returns
 			// (new_string, number_of_substitutions), like Python.
 			result := reSubBuiltin.Fn(ctx, kwargs, args...)
@@ -914,7 +977,7 @@ Flags:
 			}
 			re, err := GetCompiledRegex(pattern)
 			if err != nil {
-				return errors.NewError("regex compile error: %s", err.Error())
+				return reCompileError(err)
 			}
 			all := re.FindAllStringIndex(text, int(count))
 			return &object.Tuple{Elements: []object.Object{newText, object.NewInteger(int64(len(all)))}}
@@ -926,8 +989,13 @@ substitutions made.`,
 	},
 	"split": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("split", kwargs, "maxsplit", "flags"); err != nil {
+					return err
+				}
+			}
 			if len(args) < 2 || len(args) > 4 {
-				return errors.NewError("split() takes 2 to 4 arguments (%d given)", len(args))
+				return errors.NewTypeErrorTagged("split() takes 2 to 4 arguments (%d given)", len(args))
 			}
 			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", "mixed types")
@@ -946,7 +1014,7 @@ substitutions made.`,
 			}
 			if maxObj != nil {
 				if maxObj.Type() != object.INTEGER_OBJ {
-					return errors.NewError("maxsplit must be an integer")
+					return errors.NewTypeErrorTagged("maxsplit must be an integer")
 				}
 				val, _ := maxObj.AsInt()
 				maxsplit = int(val)
@@ -958,13 +1026,13 @@ substitutions made.`,
 			// flags parameter (optional, position 3)
 			flags, err := getFlags(args, kwargs, 3)
 			if err != nil {
-				return errors.NewError("%s", err.Error())
+				return errors.NewTypeErrorTagged("%s", err.Error())
 			}
 			pattern = applyFlags(pattern, flags)
 
 			re, err := GetCompiledRegex(pattern)
 			if err != nil {
-				return errors.NewError("regex compile error: %s", err.Error())
+				return reCompileError(err)
 			}
 
 			// Go's Split n is a result count; Python's maxsplit counts the
@@ -994,8 +1062,13 @@ Flags:
 	},
 	"compile": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("compile", kwargs, "flags"); err != nil {
+					return err
+				}
+			}
 			if len(args) < 1 || len(args) > 2 {
-				return errors.NewError("compile() takes 1 or 2 arguments (%d given)", len(args))
+				return errors.NewTypeErrorTagged("compile() takes 1 or 2 arguments (%d given)", len(args))
 			}
 			if args[0].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", args[0].Type().String())
@@ -1004,14 +1077,14 @@ Flags:
 
 			flags, err := getFlags(args, kwargs, 1)
 			if err != nil {
-				return errors.NewError("%s", err.Error())
+				return errors.NewTypeErrorTagged("%s", err.Error())
 			}
 			pattern = applyFlags(pattern, flags)
 
 			// Try to compile to validate the pattern
 			_, err = GetCompiledRegex(pattern)
 			if err != nil {
-				return errors.NewError("regex compile error: %s", err.Error())
+				return reCompileError(err)
 			}
 
 			// Return the compiled regex object
@@ -1028,6 +1101,9 @@ Flags:
 	},
 	"escape": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("escape", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -1045,8 +1121,13 @@ Returns a string with all special regex characters escaped.`,
 	},
 	"fullmatch": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("fullmatch", kwargs, "flags"); err != nil {
+					return err
+				}
+			}
 			if len(args) < 2 || len(args) > 3 {
-				return errors.NewError("fullmatch() takes 2 or 3 arguments (%d given)", len(args))
+				return errors.NewTypeErrorTagged("fullmatch() takes 2 or 3 arguments (%d given)", len(args))
 			}
 			if args[0].Type() != object.STRING_OBJ || args[1].Type() != object.STRING_OBJ {
 				return errors.NewTypeError("STRING", "mixed types")
@@ -1056,13 +1137,13 @@ Returns a string with all special regex characters escaped.`,
 
 			flags, err := getFlags(args, kwargs, 2)
 			if err != nil {
-				return errors.NewError("%s", err.Error())
+				return errors.NewTypeErrorTagged("%s", err.Error())
 			}
 			pattern = applyFlags(pattern, flags)
 
 			re, err := GetCompiledRegex(pattern)
 			if err != nil {
-				return errors.NewError("regex compile error: %s", err.Error())
+				return reCompileError(err)
 			}
 
 			// Check if the entire string matches
@@ -1072,16 +1153,8 @@ Returns a string with all special regex characters escaped.`,
 			}
 
 			// Build groups from submatch indices (same as match/search)
-			groups := make([]string, 0)
-			for i := 0; i < len(match); i += 2 {
-				if match[i] >= 0 && match[i+1] >= 0 {
-					groups = append(groups, text[match[i]:match[i+1]])
-				} else {
-					groups = append(groups, "")
-				}
-			}
 
-			return createMatchInstance(text, groups, match[0], match[1], re.SubexpNames())
+			return createMatchInstance(text, match, re.SubexpNames(), &runeOffsets{text: text})
 		},
 		HelpText: `fullmatch(pattern, string, flags=0) - Match entire string
 
@@ -1100,11 +1173,33 @@ Flags:
 	"M":          object.NewInteger(RE_MULTILINE),
 	"DOTALL":     object.NewInteger(RE_DOTALL),
 	"S":          object.NewInteger(RE_DOTALL),
+	// re.error and its Python 3.13 name re.PatternError, raised for a bad
+	// pattern or replacement template.
+	"error":        reErrorConstructor,
+	"PatternError": reErrorConstructor,
 }, "Regular expression library")
 
-// pythonReplToGo converts Python replacement-string backreferences to Go's
-// regexp replacement syntax: \1..\99 become $1..$99 and \g<name> becomes
-// ${name}; a literal \\ stays a literal backslash.
+var reErrorConstructor = object.RegisterExceptionClass(&object.Builtin{
+	Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		if kwargs.Len() > 0 {
+			if err := errors.CheckKwargs("error", kwargs, "pattern", "pos"); err != nil {
+				return err
+			}
+		}
+		message := ""
+		if len(args) > 0 {
+			if str, err := args[0].AsString(); err == nil {
+				message = str
+			} else {
+				message = args[0].Inspect()
+			}
+		}
+		return &object.Exception{Message: message, ExceptionType: "PatternError", TypeChain: []string{"PatternError", "error"}}
+	},
+	HelpText: `error(msg) - The exception raised for a bad regular expression (also re.PatternError)`,
+	Repr:     "<class 're.PatternError'>",
+}, "PatternError")
+
 // checkSubSize holds a substitution with a template replacement to the
 // output limit before it is made: each match expands the template, so a
 // long replacement over many matches can make a result far larger than
@@ -1127,10 +1222,32 @@ func checkSubSize(re *regexp.Regexp, text, template string, count int) object.Ob
 	return nil
 }
 
-func pythonReplToGo(repl string) string {
+// pythonReplToGo converts a Python replacement template to Go's regexp
+// template syntax, raising as Python does for a bad one: \1..\99 and
+// \g<n> / \g<name> become ${n} / ${name} (an error for a group the pattern
+// lacks), a $ not starting a Go-style $1 or ${name} becomes a literal $,
+// \\ is a backslash, \n, \t and the other character escapes become their
+// characters, an unknown ASCII-letter escape is an error, and any other
+// backslash stays as it is.
+func pythonReplToGo(repl string, re *regexp.Regexp) (string, object.Object) {
+	if strings.IndexByte(repl, '\\') < 0 && strings.IndexByte(repl, '$') < 0 {
+		return repl, nil
+	}
+	groups := re.NumSubexp()
 	var out strings.Builder
 	for i := 0; i < len(repl); i++ {
 		c := repl[i]
+		if c == '$' {
+			// $1 and ${name} are kept as Go-style backreferences, which
+			// scriptling has long accepted; any other $ is literal, as in
+			// Python.
+			if i+1 < len(repl) && (repl[i+1] == '{' || repl[i+1] >= '0' && repl[i+1] <= '9') {
+				out.WriteByte('$')
+			} else {
+				out.WriteString("$$")
+			}
+			continue
+		}
 		if c != '\\' || i+1 >= len(repl) {
 			out.WriteByte(c)
 			continue
@@ -1138,29 +1255,71 @@ func pythonReplToGo(repl string) string {
 		next := repl[i+1]
 		switch {
 		case next == '\\':
-			out.WriteString("\\\\")
+			out.WriteByte('\\')
 			i++
-		case next >= '0' && next <= '9':
-			j := i + 1
-			for j < len(repl) && repl[j] >= '0' && repl[j] <= '9' && j-i < 3 {
+		case next >= '1' && next <= '9':
+			j := i + 2
+			if j < len(repl) && repl[j] >= '0' && repl[j] <= '9' {
 				j++
 			}
-			out.WriteByte('$')
-			out.WriteString(repl[i+1 : j])
+			n := 0
+			for _, d := range repl[i+1 : j] {
+				n = n*10 + int(d-'0')
+			}
+			if n > groups {
+				return "", reError(fmt.Sprintf("invalid group reference %d at position %d", n, i+1))
+			}
+			fmt.Fprintf(&out, "${%d}", n)
 			i = j - 1
-		case next == 'g' && i+2 < len(repl) && repl[i+2] == '<':
-			end := strings.IndexByte(repl[i+2:], '>')
-			if end > 0 {
-				out.WriteString("${" + repl[i+3:i+2+end] + "}")
-				i = i + 2 + end
+		case next == 'g':
+			end := -1
+			if i+2 < len(repl) && repl[i+2] == '<' {
+				end = strings.IndexByte(repl[i+3:], '>')
+			}
+			if end <= 0 {
+				return "", reError(fmt.Sprintf("missing group name at position %d", i+2))
+			}
+			name := repl[i+3 : i+3+end]
+			if n, err := strconv.Atoi(name); err == nil {
+				if n < 0 || n > groups {
+					return "", reError(fmt.Sprintf("invalid group reference %d at position %d", n, i+3))
+				}
+			} else if re.SubexpIndex(name) < 0 {
+				return "", &object.Exception{Message: "unknown group name '" + name + "'", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
+			}
+			out.WriteString("${" + name + "}")
+			i = i + 3 + end
+		default:
+			if esc, ok := replEscapes[next]; ok {
+				out.WriteByte(esc)
+				i++
+			} else if next == '0' {
+				out.WriteByte(0)
+				i++
+			} else if next < utf8.RuneSelf && ('a' <= next && next <= 'z' || 'A' <= next && next <= 'Z') {
+				return "", reError(fmt.Sprintf("bad escape \\%c at position %d", next, i))
 			} else {
 				out.WriteByte(c)
 			}
-		default:
-			out.WriteByte(c)
 		}
 	}
-	return out.String()
+	return out.String(), nil
+}
+
+// replEscapes are the character escapes a Python replacement template
+// accepts.
+var replEscapes = map[byte]byte{'n': '\n', 't': '\t', 'r': '\r', 'f': '\f', 'v': '\v', 'a': '\a', 'b': '\b'}
+
+// reError is re.error (re.PatternError), raised for a bad pattern or
+// replacement template. As in Python it derives from Exception only;
+// `except re.error:` and `except re.PatternError:` both catch it.
+func reError(msg string) object.Object {
+	return &object.Exception{Message: msg, ExceptionType: "PatternError", TypeChain: []string{"PatternError", "error"}, Raised: true}
+}
+
+// reCompileError is the re.error for a pattern regexp cannot compile.
+func reCompileError(err error) object.Object {
+	return reError("regex compile error: " + err.Error())
 }
 
 // reSubBuiltin is wired in init() so subn can reuse sub's implementation

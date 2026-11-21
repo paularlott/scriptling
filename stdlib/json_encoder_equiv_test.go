@@ -130,7 +130,7 @@ func TestJSONIndentMatchesEncodingJSON(t *testing.T) {
 			if err := json.Indent(&want, compact, "", indent); err != nil {
 				t.Fatal(err)
 			}
-			got, errObj := indentJSON(compact, indent)
+			got, errObj := indentJSON(compact, indent, ",", ": ")
 			if errObj != nil {
 				t.Fatalf("indentJSON: %s", errObj.Inspect())
 			}

@@ -990,7 +990,11 @@ func (cs *ClassStatement) TokenLiteral() string { return "class" }
 func (cs *ClassStatement) Line() int            { return int(cs.Token.Line) }
 
 type CallOverflow struct {
-	Keywords     map[string]Expression
+	Keywords map[string]Expression
+	// KeywordOrder holds the keyword names in the order written. It is nil
+	// for a call built without it, whose keywords are then taken in sorted
+	// order.
+	KeywordOrder []string
 	ArgsUnpack   []Expression
 	KwargsUnpack Expression
 	// ArgsUnpackAt[i] is the number of positional arguments written before
@@ -1036,6 +1040,22 @@ func (ce *CallExpression) GetKeywords() map[string]Expression {
 		return nil
 	}
 	return ce.overflow.Keywords
+}
+
+// SetKeywordOrder records the order the call's keywords were written in.
+func (ce *CallExpression) SetKeywordOrder(order []string) {
+	if ce.overflow != nil && len(order) > 0 {
+		ce.overflow.KeywordOrder = order
+	}
+}
+
+// GetKeywordOrder returns the keyword names in the order written, or nil
+// when it was not recorded.
+func (ce *CallExpression) GetKeywordOrder() []string {
+	if ce.overflow == nil {
+		return nil
+	}
+	return ce.overflow.KeywordOrder
 }
 
 func (ce *CallExpression) GetArgsUnpack() []Expression {
@@ -1120,6 +1140,22 @@ func (mce *MethodCallExpression) GetKeywords() map[string]Expression {
 		return nil
 	}
 	return mce.overflow.Keywords
+}
+
+// SetKeywordOrder records the order the call's keywords were written in.
+func (mce *MethodCallExpression) SetKeywordOrder(order []string) {
+	if mce.overflow != nil && len(order) > 0 {
+		mce.overflow.KeywordOrder = order
+	}
+}
+
+// GetKeywordOrder returns the keyword names in the order written, or nil
+// when it was not recorded.
+func (mce *MethodCallExpression) GetKeywordOrder() []string {
+	if mce.overflow == nil {
+		return nil
+	}
+	return mce.overflow.KeywordOrder
 }
 
 func (mce *MethodCallExpression) GetArgsUnpack() []Expression {
@@ -1545,6 +1581,10 @@ type ListComprehension struct {
 	Iterable          Expression
 	Condition         Expression            // optional
 	AdditionalClauses []ComprehensionClause // additional for clauses
+
+	// Generator marks a generator expression, (expr for x in it): it
+	// evaluates lazily to a generator instead of building a list.
+	Generator bool
 }
 
 func (lc *ListComprehension) expressionNode()      {}

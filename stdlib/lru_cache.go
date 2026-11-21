@@ -90,6 +90,9 @@ func newLRUCacheWrapper(fn object.Object, maxsize int64) object.Object {
 	wrapper.Attributes = map[string]object.Object{
 		"cache_clear": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("cache_clear", kwargs); err != nil {
+					return err
+				}
 				c.entries = make(map[string]object.Object)
 				c.order = nil
 				c.hits = 0
@@ -100,6 +103,9 @@ func newLRUCacheWrapper(fn object.Object, maxsize int64) object.Object {
 		},
 		"cache_info": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("cache_info", kwargs); err != nil {
+					return err
+				}
 				eval := evaliface.FromContext(ctx)
 				if eval == nil {
 					return errors.NewError("evaluator not available in context")

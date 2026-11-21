@@ -32,7 +32,7 @@ func resolveHmacAlg(digestmod object.Object) (string, object.Object) {
 	if s, ok := digestmod.(*object.String); ok {
 		alg := s.StringValue()
 		if hashConstructor(alg) == nil {
-			return "", errors.NewError("unsupported hash algorithm: %s", alg)
+			return "", errors.NewValueError("unsupported hash type %s", alg)
 		}
 		return alg, nil
 	}
@@ -46,7 +46,7 @@ func resolveHmacAlg(digestmod object.Object) (string, object.Object) {
 	case HashlibMD5Builtin:
 		return "md5", nil
 	}
-	return "", errors.NewError("unsupported digestmod: expected a hash algorithm name (e.g. \"sha256\") or hashlib constructor")
+	return "", errors.NewTypeErrorTagged("unsupported digestmod: expected a hash algorithm name (e.g. \"sha256\") or hashlib constructor")
 }
 
 func computeHmacDigest(state *hmacState) []byte {
@@ -61,6 +61,9 @@ var HMACClass = &object.Class{
 	Methods: map[string]object.Object{
 		"update": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("update", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 2); err != nil {
 					return err
 				}
@@ -70,7 +73,7 @@ var HMACClass = &object.Class{
 				}
 				state, ok := inst.NativeData.(*hmacState)
 				if !ok {
-					return errors.NewError("invalid hmac object")
+					return errors.NewTypeErrorTagged("invalid hmac object")
 				}
 				b, errObj := toByteString(args[1])
 				if errObj != nil {
@@ -86,6 +89,9 @@ message being authenticated. Returns None.`,
 		},
 		"digest": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("digest", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -95,7 +101,7 @@ message being authenticated. Returns None.`,
 				}
 				state, ok := inst.NativeData.(*hmacState)
 				if !ok {
-					return errors.NewError("invalid hmac object")
+					return errors.NewTypeErrorTagged("invalid hmac object")
 				}
 				return object.NewBytes(computeHmacDigest(state))
 			},
@@ -106,6 +112,9 @@ Use hexdigest() for a lowercase-hex string representation.`,
 		},
 		"hexdigest": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("hexdigest", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -115,7 +124,7 @@ Use hexdigest() for a lowercase-hex string representation.`,
 				}
 				state, ok := inst.NativeData.(*hmacState)
 				if !ok {
-					return errors.NewError("invalid hmac object")
+					return errors.NewTypeErrorTagged("invalid hmac object")
 				}
 				return object.NewString(hex.EncodeToString(computeHmacDigest(state)))
 			},
@@ -127,6 +136,9 @@ Example:
 		},
 		"copy": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("copy", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -136,7 +148,7 @@ Example:
 				}
 				state, ok := inst.NativeData.(*hmacState)
 				if !ok {
-					return errors.NewError("invalid hmac object")
+					return errors.NewTypeErrorTagged("invalid hmac object")
 				}
 				newKey := make([]byte, len(state.key))
 				copy(newKey, state.key)
@@ -171,10 +183,31 @@ func CompareDigest(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
+// compareDigestArgs is compare_digest(a, b) of hmac and secrets: two
+// strings or two bytes values, as in Python; anything else is a TypeError.
+func compareDigestArgs(a, b object.Object) object.Object {
+	switch av := a.(type) {
+	case *object.String:
+		if bv, ok := b.(*object.String); ok {
+			return object.NewBoolean(CompareDigest(av.StringValue(), bv.StringValue()))
+		}
+	case *object.Bytes:
+		if bv, ok := b.(*object.Bytes); ok {
+			return object.NewBoolean(subtle.ConstantTimeCompare(av.BytesValue(), bv.BytesValue()) == 1)
+		}
+	}
+	return errors.NewTypeErrorTagged("unsupported operand types(s) or combination of types: '%s' and '%s'", object.PythonTypeName(a), object.PythonTypeName(b))
+}
+
 // HmacLibrary provides HMAC (Keyed-Hashing for Message Authentication).
 var HmacLibrary = object.NewLibrary(HmacLibraryName, map[string]*object.Builtin{
 	"new": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("new", kwargs, "msg", "digestmod"); err != nil {
+					return err
+				}
+			}
 			if err := errors.RangeArgs(args, 1, 3); err != nil {
 				return err
 			}
@@ -183,16 +216,20 @@ var HmacLibrary = object.NewLibrary(HmacLibraryName, map[string]*object.Builtin{
 				return errObj
 			}
 			var data []byte
+			msg, hasMsg := kwargs.Lookup("msg")
 			if len(args) >= 2 {
-				if _, isNull := args[1].(*object.Null); !isNull {
-					b, e := toByteString(args[1])
+				msg, hasMsg = args[1], true
+			}
+			if hasMsg {
+				if _, isNull := msg.(*object.Null); !isNull {
+					b, e := toByteString(msg)
 					if e != nil {
 						return e
 					}
 					data = b
 				}
 			}
-			var digestmod object.Object
+			digestmod := kwargs.Get("digestmod")
 			if len(args) >= 3 {
 				digestmod = args[2]
 			}
@@ -216,6 +253,9 @@ Example:
 	},
 	"digest": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("digest", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 3); err != nil {
 				return err
 			}
@@ -237,15 +277,13 @@ Example:
 	},
 	"compare_digest": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("compare_digest", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
-			a, okA := args[0].(*object.String)
-			b, okB := args[1].(*object.String)
-			if !okA || !okB {
-				return errors.NewError("compare_digest() requires two string arguments")
-			}
-			return object.NewBoolean(CompareDigest(a.StringValue(), b.StringValue()))
+			return compareDigestArgs(args[0], args[1])
 		},
 		HelpText: `compare_digest(a, b) - Constant-time string comparison
 

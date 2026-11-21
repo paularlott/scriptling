@@ -379,6 +379,11 @@ func getCloseMatches(word string, possibilities []string, n int, cutoff float64,
 var DifflibLibrary = object.NewLibrary(DifflibLibraryName, map[string]*object.Builtin{
 	"unified_diff": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("unified_diff", kwargs, "fromfile", "tofile", "n"); err != nil {
+					return err
+				}
+			}
 			if err := errors.MinArgs(args, 2); err != nil {
 				return err
 			}
@@ -403,6 +408,9 @@ var DifflibLibrary = object.NewLibrary(DifflibLibraryName, map[string]*object.Bu
 	},
 	"ratio": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("ratio", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -424,6 +432,9 @@ var DifflibLibrary = object.NewLibrary(DifflibLibraryName, map[string]*object.Bu
 	},
 	"opcodes": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("opcodes", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -455,6 +466,11 @@ var DifflibLibrary = object.NewLibrary(DifflibLibraryName, map[string]*object.Bu
 	},
 	"get_close_matches": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("get_close_matches", kwargs, "n", "cutoff"); err != nil {
+					return err
+				}
+			}
 			if err := errors.MinArgs(args, 2); err != nil {
 				return err
 			}
@@ -477,6 +493,12 @@ var DifflibLibrary = object.NewLibrary(DifflibLibraryName, map[string]*object.Bu
 				if v, err := args[3].AsFloat(); err == nil {
 					cutoff = v
 				}
+			}
+			if n <= 0 {
+				return errors.NewValueError("n must be > 0: %d", n)
+			}
+			if cutoff < 0 || cutoff > 1 {
+				return errors.NewValueError("cutoff must be in [0.0, 1.0]: %s", object.FloatStr(cutoff))
 			}
 			poss := make([]string, 0, len(possElems))
 			for _, p := range possElems {

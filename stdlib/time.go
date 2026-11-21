@@ -18,6 +18,9 @@ var startTime = time.Now()
 var TimeLibrary = object.NewLibrary(TimeLibraryName, map[string]*object.Builtin{
 	"monotonic": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("monotonic", kwargs); err != nil {
+				return err
+			}
 			// monotonic() - seconds on a clock that never goes backwards
 			// (Go's monotonic reading since process start).
 			return object.NewFloat(time.Since(processStart).Seconds())
@@ -26,6 +29,9 @@ var TimeLibrary = object.NewLibrary(TimeLibraryName, map[string]*object.Builtin{
 	},
 	"now": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("now", kwargs); err != nil {
+				return err
+			}
 			return object.NewString(time.Now().Format("2006-01-02T15:04:05.999999"))
 		},
 		HelpText: `now() - Return current date and time
@@ -34,6 +40,9 @@ Returns the current date and time as an ISO 8601 formatted string (YYYY-MM-DDTHH
 	},
 	"time": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("time", kwargs); err != nil {
+				return err
+			}
 			return object.NewFloat(float64(time.Now().UnixNano()) / 1e9)
 		},
 		HelpText: `time() - Return current time in seconds
@@ -42,6 +51,9 @@ Returns the current time as a floating point number of seconds since the Unix ep
 	},
 	"perf_counter": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("perf_counter", kwargs); err != nil {
+				return err
+			}
 			return object.NewFloat(time.Since(startTime).Seconds())
 		},
 		HelpText: `perf_counter() - Return performance counter
@@ -50,12 +62,18 @@ Returns the value of a performance counter in fractional seconds.`,
 	},
 	"sleep": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("sleep", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
 			seconds, err := args[0].AsFloat()
 			if err != nil {
 				return errors.ParameterError("seconds", err)
+			}
+			if seconds < 0 {
+				return errors.NewValueError("sleep length must be non-negative")
 			}
 
 			// Create a timer that respects context cancellation
@@ -84,6 +102,9 @@ Suspends execution for the given number of seconds.`,
 	},
 	"localtime": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("localtime", kwargs); err != nil {
+				return err
+			}
 			var t time.Time
 			if len(args) == 0 {
 				t = time.Now()
@@ -115,6 +136,9 @@ Returns a time tuple in local time. If timestamp/datetime is omitted, uses curre
 	},
 	"gmtime": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("gmtime", kwargs); err != nil {
+				return err
+			}
 			var t time.Time
 			if len(args) == 0 {
 				t = time.Now()
@@ -146,6 +170,9 @@ Returns a time tuple in UTC. If timestamp/datetime is omitted, uses current time
 	},
 	"mktime": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("mktime", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -164,6 +191,9 @@ Converts a time tuple (9 elements) to a Unix timestamp.`,
 	},
 	"strftime": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("strftime", kwargs); err != nil {
+				return err
+			}
 			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
 			}
@@ -201,6 +231,9 @@ Formats a time according to the given format string. If tuple is omitted, uses c
 	},
 	"strptime": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("strptime", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -217,7 +250,7 @@ Formats a time according to the given format string. If tuple is omitted, uses c
 
 			t, parseErr := time.Parse(pythonToGoFormat(format), str)
 			if parseErr != nil {
-				return errors.NewError("strptime() parse error: %s", parseErr.Error())
+				return errors.NewValueError("strptime() parse error: %s", parseErr.Error())
 			}
 
 			return timeToTuple(t, false)
@@ -228,6 +261,9 @@ Parses a time string according to the given format and returns a time tuple.`,
 	},
 	"asctime": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("asctime", kwargs); err != nil {
+				return err
+			}
 			var t time.Time
 			if len(args) == 0 {
 				t = time.Now()
@@ -252,6 +288,9 @@ Converts a time tuple to a string in the format 'Mon Jan 2 15:04:05 2006'. If tu
 	},
 	"ctime": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("ctime", kwargs); err != nil {
+				return err
+			}
 			var t time.Time
 			if len(args) == 0 {
 				t = time.Now()
@@ -314,7 +353,7 @@ func timeToTuple(t time.Time, utc bool) *object.Instance {
 func timeTupleValues(obj object.Object) ([]int64, object.Object) {
 	if l, ok := obj.(*object.List); ok {
 		if len(l.Elements) != 9 {
-			return nil, errors.NewError("time tuple must have exactly 9 elements")
+			return nil, errors.NewTypeErrorTagged("time tuple must have exactly 9 elements")
 		}
 		out := make([]int64, 9)
 		for i, e := range l.Elements {
@@ -349,6 +388,9 @@ var StructTimeClass = &object.Class{
 	Methods: map[string]object.Object{
 		"__getitem__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__getitem__", kwargs); err != nil {
+					return err
+				}
 				if err := errors.MinArgs(args, 2); err != nil {
 					return err
 				}
@@ -363,10 +405,13 @@ var StructTimeClass = &object.Class{
 					if v, ok := inst.GetField(name); ok {
 						return v
 					}
-					return errors.NewError("struct_time has no field %s", name)
+					return &object.Error{Message: fmt.Sprintf("'time.struct_time' object has no attribute '%s'", name), ExceptionType: object.ExceptionTypeAttributeError}
+				}
+				if order != nil && idx < 0 {
+					idx += int64(len(order.Elements))
 				}
 				if order == nil || idx < 0 || int(idx) >= len(order.Elements) {
-					return errors.NewError("struct_time index out of range")
+					return errors.NewIndexError("tuple index out of range")
 				}
 				return order.Elements[idx]
 			},
@@ -374,6 +419,9 @@ var StructTimeClass = &object.Class{
 		},
 		"__len__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__len__", kwargs); err != nil {
+					return err
+				}
 				return object.NewInteger(9)
 			},
 			HelpText: "__len__() - Always 9 fields",

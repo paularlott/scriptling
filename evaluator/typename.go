@@ -107,7 +107,7 @@ func typeOf(obj object.Object) object.Object {
 		if _, ok := typeBuiltins[o]; ok {
 			return typeNameType
 		}
-		if _, ok := exceptionBuiltins[o]; ok {
+		if _, ok := exceptionClassName(o); ok {
 			return typeNameType
 		}
 		return typeNameBuiltin

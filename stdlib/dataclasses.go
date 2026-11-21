@@ -23,6 +23,11 @@ var fieldSpecClass = &object.Class{
 var DataclassesLibrary = object.NewLibrary(DataclassesLibraryName, map[string]*object.Builtin{
 	"dataclass": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("dataclass", kwargs, "init", "repr", "eq", "order", "frozen", "unsafe_hash", "match_args", "kw_only", "slots", "weakref_slot"); err != nil {
+					return err
+				}
+			}
 			// Both decorator forms: @dataclass (the class itself) and
 			// @dataclass(init=...) returning the decorator.
 			if len(args) > 0 {
@@ -33,8 +38,13 @@ var DataclassesLibrary = object.NewLibrary(DataclassesLibraryName, map[string]*o
 			opts := kwargs
 			return &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if kwargs.Len() > 0 {
+						if err := errors.CheckKwargs("dataclass", kwargs, "init", "repr", "eq", "order", "frozen", "unsafe_hash", "match_args", "kw_only", "slots", "weakref_slot"); err != nil {
+							return err
+						}
+					}
 					if len(args) != 1 {
-						return errors.NewError("dataclass decorator requires the class")
+						return errors.NewTypeErrorTagged("dataclass decorator requires the class")
 					}
 					cls, ok := args[0].(*object.Class)
 					if !ok {
@@ -59,6 +69,11 @@ defaults, and field(default=..., default_factory=...) customises them.`,
 	},
 	"field": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("field", kwargs, "default", "default_factory", "repr", "hash", "metadata", "kw_only"); err != nil {
+					return err
+				}
+			}
 			if err := errors.ExactArgs(args, 0); err != nil {
 				return err
 			}
@@ -82,8 +97,14 @@ callable producing one (for mutable defaults like lists).`,
 	},
 	"asdict": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("asdict", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
+			}
+			if inst, ok := args[0].(*object.Instance); !ok || inst.Class.FieldNames == nil {
+				return errors.NewTypeErrorTagged("asdict() should be called on dataclass instances")
 			}
 			return dataclassesAsDict(args[0])
 		},
@@ -91,6 +112,9 @@ callable producing one (for mutable defaults like lists).`,
 	},
 	"astuple": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("astuple", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -170,9 +194,12 @@ func buildDataclass(cls *object.Class, kwargs object.Kwargs) object.Object {
 		cls.Methods["__frozen__"] = object.NewBoolean(true)
 		cls.Methods["__hash__"] = &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__hash__", kwargs); err != nil {
+					return err
+				}
 				self, ok := args[0].(*object.Instance)
 				if !ok {
-					return errors.NewError("__hash__ requires an instance")
+					return errors.NewTypeErrorTagged("__hash__ requires an instance")
 				}
 				h := uint64(14695981039346656037)
 				for _, f := range fields {
@@ -197,11 +224,11 @@ func buildDataclass(cls *object.Class, kwargs object.Kwargs) object.Object {
 		cls.Methods["__init__"] = &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 				if len(args) < 1 {
-					return errors.NewError("__init__ requires self")
+					return errors.NewTypeErrorTagged("__init__ requires self")
 				}
 				self, ok := args[0].(*object.Instance)
 				if !ok {
-					return errors.NewError("__init__ requires instance as first argument")
+					return errors.NewTypeErrorTagged("__init__ requires instance as first argument")
 				}
 				positional := args[1:]
 				byName := map[string]object.Object{}
@@ -264,9 +291,12 @@ func buildDataclass(cls *object.Class, kwargs object.Kwargs) object.Object {
 	if opt("repr") {
 		cls.Methods["__repr__"] = &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__repr__", kwargs); err != nil {
+					return err
+				}
 				self, ok := args[0].(*object.Instance)
 				if !ok {
-					return errors.NewError("__repr__ requires an instance")
+					return errors.NewTypeErrorTagged("__repr__ requires an instance")
 				}
 				names := make([]string, len(fields))
 				for i, f := range fields {
@@ -332,6 +362,9 @@ func buildDataclass(cls *object.Class, kwargs object.Kwargs) object.Object {
 		orderMethod := func(name string, keep func(cmp int) bool) object.Object {
 			return &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs(name, kwargs); err != nil {
+						return err
+					}
 					if len(args) != 2 {
 						return errors.NewArgumentError(len(args), 2)
 					}
@@ -358,6 +391,9 @@ func buildDataclass(cls *object.Class, kwargs object.Kwargs) object.Object {
 	if opt("eq") {
 		cls.Methods["__eq__"] = &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__eq__", kwargs); err != nil {
+					return err
+				}
 				if len(args) != 2 {
 					return errors.NewArgumentError(len(args), 2)
 				}

@@ -40,6 +40,9 @@ func markAbstract(fn object.Object) bool {
 var ABCLibrary = object.NewLibrary(ABCLibraryName, map[string]*object.Builtin{
 	"abstractmethod": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("abstractmethod", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}

@@ -13,7 +13,24 @@ import (
 
 // callIntegerMethod dispatches int methods: bit_length (Python 3.1),
 // bit_count (3.10) and is_integer (3.12).
-func callIntegerMethod(i *object.Integer, method string, args []object.Object) object.Object {
+func callIntegerMethod(i *object.Integer, method string, args []object.Object, keywords object.Kwargs) object.Object {
+	signed := false
+	if keywords.Len() > 0 && (method == "to_bytes" || method == "from_bytes") {
+		// length/bytes and byteorder may be given by name; signed is
+		// keyword-only. Other keywords were rejected by the dispatcher.
+		params := []string{"length", "byteorder"}
+		if method == "from_bytes" {
+			params[0] = "bytes"
+		}
+		var errObj object.Object
+		args, errObj = foldKeywords(method, args, keywords, params, []object.Object{object.NewInteger(1), object.NewString("big")})
+		if errObj != nil {
+			return errObj
+		}
+		if s, ok := keywords.Lookup("signed"); ok {
+			signed = isTruthy(s)
+		}
+	}
 	switch method {
 	case "bit_length":
 		if err := errors.ExactArgs(args, 0); err != nil {
@@ -39,16 +56,29 @@ func callIntegerMethod(i *object.Integer, method string, args []object.Object) o
 			return err
 		}
 		return TRUE
-	case "to_bytes":
-		// to_bytes(length, byteorder="big", *, signed=False). Python 3.11+
-		// allows length=None for the minimal representation; that needs
-		// arbitrary precision, so a length is required here.
-		if len(args) < 1 || len(args) > 2 {
-			return errors.NewError("to_bytes() takes 1 or 2 arguments (%d given)", len(args))
+	case "as_integer_ratio":
+		if err := errors.ExactArgs(args, 0); err != nil {
+			return err
 		}
-		length, err := args[0].AsInt()
-		if err != nil {
-			return errors.ParameterError("length", err)
+		return &object.Tuple{Elements: []object.Object{i, object.NewInteger(1)}}
+	case "conjugate":
+		if err := errors.ExactArgs(args, 0); err != nil {
+			return err
+		}
+		return i
+	case "to_bytes":
+		// to_bytes(length=1, byteorder="big", *, signed=False), the
+		// Python 3.11+ defaults.
+		if len(args) > 2 {
+			return errors.NewTypeErrorTagged("to_bytes() takes at most 2 arguments (%d given)", len(args))
+		}
+		length := int64(1)
+		if len(args) > 0 {
+			n, err := args[0].AsInt()
+			if err != nil {
+				return errors.ParameterError("length", err)
+			}
+			length = n
 		}
 		if length < 0 {
 			return errors.NewValueError("to_bytes() length must be non-negative")
@@ -69,6 +99,7 @@ func callIntegerMethod(i *object.Integer, method string, args []object.Object) o
 			byteorder = bo
 		}
 		v := i.IntValue()
+		negative := v < 0
 		out := make([]byte, length)
 		if byteorder == "big" {
 			for idx := int(length) - 1; idx >= 0; idx-- {
@@ -81,7 +112,24 @@ func callIntegerMethod(i *object.Integer, method string, args []object.Object) o
 				v >>= 8
 			}
 		}
-		if v != 0 {
+		overflow := v != 0
+		if signed {
+			// The bytes hold the value in two's complement: what is left
+			// must be the sign, and the top bit must agree with it.
+			top := byte(0)
+			if length > 0 {
+				top = out[0]
+				if byteorder != "big" {
+					top = out[length-1]
+				}
+			}
+			if negative {
+				overflow = v != -1 || length == 0 || top&0x80 == 0
+			} else {
+				overflow = v != 0 || top&0x80 != 0
+			}
+		}
+		if overflow {
 			return &object.Exception{
 				Message:       "int too big to convert",
 				ExceptionType: object.ExceptionTypeOverflowError,
@@ -94,11 +142,11 @@ func callIntegerMethod(i *object.Integer, method string, args []object.Object) o
 		// bytes value or an iterable of ints; strings are a TypeError, as
 		// in Python 3.
 		if len(args) < 1 || len(args) > 2 {
-			return errors.NewError("from_bytes() takes 1 or 2 arguments (%d given)", len(args))
+			return errors.NewTypeErrorTagged("from_bytes() takes 1 or 2 arguments (%d given)", len(args))
 		}
 		switch src := args[0].(type) {
 		case *object.Bytes:
-			return intFromBytesValue(src.BytesValue(), args)
+			return intFromBytesValue(src.BytesValue(), args, signed)
 		case *object.List:
 			raw := make([]byte, 0, len(src.Elements))
 			for _, elem := range src.Elements {
@@ -108,7 +156,7 @@ func callIntegerMethod(i *object.Integer, method string, args []object.Object) o
 				}
 				raw = append(raw, byte(n))
 			}
-			return intFromBytesValue(raw, args)
+			return intFromBytesValue(raw, args, signed)
 		case *object.Tuple:
 			raw := make([]byte, 0, len(src.Elements))
 			for _, elem := range src.Elements {
@@ -118,7 +166,7 @@ func callIntegerMethod(i *object.Integer, method string, args []object.Object) o
 				}
 				raw = append(raw, byte(n))
 			}
-			return intFromBytesValue(raw, args)
+			return intFromBytesValue(raw, args, signed)
 		case *object.String:
 			return errors.NewTypeErrorTagged("cannot convert 'str' object to bytes")
 		}
@@ -137,7 +185,7 @@ func kwargsToBytesOrder(s string) (string, bool) {
 	return "", false
 }
 
-func intFromBytesValue(raw []byte, args []object.Object) object.Object {
+func intFromBytesValue(raw []byte, args []object.Object, signed bool) object.Object {
 	byteorder := "big"
 	if len(args) == 2 {
 		s, serr := args[1].AsString()
@@ -159,6 +207,11 @@ func intFromBytesValue(raw []byte, args []object.Object) object.Object {
 		for idx := len(raw) - 1; idx >= 0; idx-- {
 			v = v<<8 | int64(raw[idx])
 		}
+	}
+	// A signed value of fewer than eight bytes is sign-extended from its top
+	// bit; eight bytes already fill the int64.
+	if n := len(raw); signed && n > 0 && n < 8 && v&(1<<(8*n-1)) != 0 {
+		v -= 1 << (8 * n)
 	}
 	return object.NewInteger(v)
 }

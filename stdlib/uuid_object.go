@@ -77,6 +77,9 @@ var UUIDClass = &object.Class{
 	Methods: map[string]object.Object{
 		"__str__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__str__", kwargs); err != nil {
+					return err
+				}
 				inst := args[0].(*object.Instance)
 				if repr, ok := inst.Field("__str_repr__").(*object.String); ok {
 					return repr
@@ -87,6 +90,9 @@ var UUIDClass = &object.Class{
 		},
 		"__eq__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__eq__", kwargs); err != nil {
+					return err
+				}
 				a, okA := uuidReprOf(args[0])
 				b, okB := uuidReprOf(args[1])
 				return object.NewBoolean(okA && okB && a == b)
@@ -95,14 +101,17 @@ var UUIDClass = &object.Class{
 		},
 		// Ordering follows the 128-bit value; the canonical lowercase hex form
 		// sorts identically, so uuid7() values order by creation time.
-		"__lt__": uuidOrderMethod("<", func(c int) bool { return c < 0 }),
-		"__le__": uuidOrderMethod("<=", func(c int) bool { return c <= 0 }),
-		"__gt__": uuidOrderMethod(">", func(c int) bool { return c > 0 }),
-		"__ge__": uuidOrderMethod(">=", func(c int) bool { return c >= 0 }),
+		"__lt__": uuidOrderMethod("__lt__", "<", func(c int) bool { return c < 0 }),
+		"__le__": uuidOrderMethod("__le__", "<=", func(c int) bool { return c <= 0 }),
+		"__gt__": uuidOrderMethod("__gt__", ">", func(c int) bool { return c > 0 }),
+		"__ge__": uuidOrderMethod("__ge__", ">=", func(c int) bool { return c >= 0 }),
 		// UUIDs hash by value (Python UUIDs hash their int), so they work as
 		// dict keys and set members.
 		"__hash__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__hash__", kwargs); err != nil {
+					return err
+				}
 				inst := args[0].(*object.Instance)
 				repr, _ := inst.Field("__str_repr__").(*object.String)
 				h := uint64(14695981039346656037)
@@ -116,6 +125,9 @@ var UUIDClass = &object.Class{
 		},
 		"__repr__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__repr__", kwargs); err != nil {
+					return err
+				}
 				inst := args[0].(*object.Instance)
 				if repr, ok := inst.Field("__str_repr__").(*object.String); ok {
 					return object.NewString("UUID('" + repr.StringValue() + "')")
@@ -140,9 +152,12 @@ func uuidReprOf(obj object.Object) (string, bool) {
 	return repr.StringValue(), true
 }
 
-func uuidOrderMethod(op string, keep func(cmp int) bool) *object.Builtin {
+func uuidOrderMethod(name, op string, keep func(cmp int) bool) *object.Builtin {
 	return &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs(name, kwargs); err != nil {
+				return err
+			}
 			a, okA := uuidReprOf(args[0])
 			b, okB := uuidReprOf(args[1])
 			if !okA || !okB {

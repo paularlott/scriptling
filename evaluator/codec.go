@@ -12,8 +12,8 @@ import (
 // decodeBytes implements bytes.decode(encoding="utf-8", errors="strict")
 // with Python's codec set: utf-8, ascii, latin-1, utf-16 (BOM-aware),
 // utf-16le/be. Invalid input under errors="strict" raises ValueError with
-// CPython-style wording (UnicodeDecodeError is a ValueError subclass there,
-// so except ValueError keeps working).
+// CPython-style wording as UnicodeDecodeError, a ValueError subclass, so
+// except ValueError keeps working.
 func decodeBytes(b []byte, encoding, errorsMode string) (string, object.Object) {
 	switch strings.ToLower(encoding) {
 	case "utf-8", "utf8", "":
@@ -41,7 +41,7 @@ func decodeBytes(b []byte, encoding, errorsMode string) (string, object.Object) 
 	case "utf-16-be", "utf-16be":
 		return decodeUTF16(b, true, errorsMode, encoding)
 	default:
-		return "", codecError("unknown encoding: %s", encoding)
+		return "", codecTypedError(object.ExceptionTypeLookupError, "unknown encoding: %s", encoding)
 	}
 }
 
@@ -59,7 +59,7 @@ func decodeUTF8(b []byte, errorsMode string) (string, object.Object) {
 				i++
 				continue
 			default:
-				return "", codecError("'utf-8' codec can't decode byte 0x%02x in position %d: invalid start byte", b[i], i)
+				return "", codecTypedError(object.ExceptionTypeUnicodeDecodeError, "'utf-8' codec can't decode byte 0x%02x in position %d: invalid start byte", b[i], i)
 			}
 		}
 		sb.WriteRune(r)
@@ -80,7 +80,7 @@ func decodeASCII(b []byte, errorsMode string) (string, object.Object) {
 		case "replace":
 			sb.WriteByte('?')
 		default:
-			return "", codecError("'ascii' codec can't decode byte 0x%02x in position %d: ordinal not in range(128)", c, i)
+			return "", codecTypedError(object.ExceptionTypeUnicodeDecodeError, "'ascii' codec can't decode byte 0x%02x in position %d: ordinal not in range(128)", c, i)
 		}
 	}
 	return sb.String(), nil
@@ -89,7 +89,7 @@ func decodeASCII(b []byte, errorsMode string) (string, object.Object) {
 func decodeUTF16(b []byte, be bool, errorsMode, encoding string) (string, object.Object) {
 	if len(b)%2 != 0 {
 		if errorsMode != "ignore" && errorsMode != "replace" {
-			return "", codecError("'%s' codec can't decode byte in position %d: truncated data", encoding, len(b)-1)
+			return "", codecTypedError(object.ExceptionTypeUnicodeDecodeError, "'%s' codec can't decode byte in position %d: truncated data", encoding, len(b)-1)
 		}
 		b = b[:len(b)-1]
 	}
@@ -123,7 +123,7 @@ func encodeStr(s string, encoding, errorsMode string) ([]byte, object.Object) {
 			case "replace":
 				out = append(out, '?')
 			default:
-				return nil, codecError("'ascii' codec can't encode character %s in position %d: ordinal not in range(128)", escapeRune(r), i)
+				return nil, codecTypedError(object.ExceptionTypeUnicodeEncodeError, "'ascii' codec can't encode character %s in position %d: ordinal not in range(128)", escapeRune(r), i)
 			}
 		}
 		return out, nil
@@ -139,7 +139,7 @@ func encodeStr(s string, encoding, errorsMode string) ([]byte, object.Object) {
 			case "replace":
 				out = append(out, '?')
 			default:
-				return nil, codecError("'latin-1' codec can't encode character %s in position %d: ordinal not in range(256)", escapeRune(r), i)
+				return nil, codecTypedError(object.ExceptionTypeUnicodeEncodeError, "'latin-1' codec can't encode character %s in position %d: ordinal not in range(256)", escapeRune(r), i)
 			}
 		}
 		return out, nil
@@ -167,7 +167,7 @@ func encodeStr(s string, encoding, errorsMode string) ([]byte, object.Object) {
 		}
 		return out, nil
 	default:
-		return nil, codecError("unknown encoding: %s", encoding)
+		return nil, codecTypedError(object.ExceptionTypeLookupError, "unknown encoding: %s", encoding)
 	}
 }
 
@@ -184,9 +184,12 @@ func escapeRune(r rune) string {
 	}
 }
 
-func codecError(format string, a ...any) object.Object {
+// codecTypedError is a codec failure of the given type: LookupError for an
+// unknown codec, UnicodeEncodeError or UnicodeDecodeError (both ValueError
+// subclasses, so except ValueError still catches them) for bad data.
+func codecTypedError(exceptionType, format string, a ...any) object.Object {
 	err := codecErrValue(format, a...)
-	err.ExceptionType = object.ExceptionTypeValueError
+	err.ExceptionType = exceptionType
 	return err
 }
 

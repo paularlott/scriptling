@@ -46,7 +46,7 @@ func toFloatMatrix(obj object.Object, fnName, paramName string) ([][]float64, bo
 			if width == -1 {
 				width = len(fa.Data)
 			} else if len(fa.Data) != width {
-				return nil, false, errors.NewError("%s: %s must be a rectangular matrix", fnName, paramName)
+				return nil, false, errors.NewValueError("%s: %s must be a rectangular matrix", fnName, paramName)
 			}
 			rowCopy := make([]float64, len(fa.Data))
 			copy(rowCopy, fa.Data)
@@ -55,12 +55,12 @@ func toFloatMatrix(obj object.Object, fnName, paramName string) ([][]float64, bo
 		}
 		row, ok := rowObj.(*object.List)
 		if !ok {
-			return nil, false, errors.NewError("%s: %s must be a list of lists", fnName, paramName)
+			return nil, false, errors.NewTypeErrorTagged("%s: %s must be a list of lists", fnName, paramName)
 		}
 		if width == -1 {
 			width = len(row.Elements)
 		} else if len(row.Elements) != width {
-			return nil, false, errors.NewError("%s: %s must be a rectangular matrix", fnName, paramName)
+			return nil, false, errors.NewValueError("%s: %s must be a rectangular matrix", fnName, paramName)
 		}
 		rows[i] = make([]float64, len(row.Elements))
 		for j, el := range row.Elements {
@@ -107,8 +107,11 @@ func toMatrixOutput(m [][]float64, useFloatArray bool, emptyCols int) object.Obj
 }
 
 // oneFloatFunc creates a math function that takes one float argument and returns a float
-func oneFloatFunc(f func(float64) float64) func(context.Context, object.Kwargs, ...object.Object) object.Object {
+func oneFloatFunc(name string, f func(float64) float64) func(context.Context, object.Kwargs, ...object.Object) object.Object {
 	return func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		if err := errors.NoKwargs(name, kwargs); err != nil {
+			return err
+		}
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
 		}
@@ -120,9 +123,87 @@ func oneFloatFunc(f func(float64) float64) func(context.Context, object.Kwargs, 
 	}
 }
 
-// twoFloatFunc creates a function that takes two floats and applies f
-func twoFloatFunc(f func(float64, float64) float64) func(context.Context, object.Kwargs, ...object.Object) object.Object {
+// mathDomainError is the ValueError CPython's math module raises for an
+// argument outside a function's domain.
+func mathDomainError() object.Object {
+	return errors.NewValueError("math domain error")
+}
+
+// mathRangeError is the OverflowError CPython's math module raises for a
+// result too large to represent.
+func mathRangeError() object.Object {
+	return errors.NewOverflowError("math range error")
+}
+
+// checkedFloatFunc creates a one-float math function that raises as CPython
+// does: ValueError ("math domain error") when a non-NaN argument gives NaN or
+// a finite argument gives an infinity, except that an infinity is an
+// OverflowError ("math range error") when canOverflow is set (exp, sinh, ...).
+// The valid path pays two comparisons on the result.
+func checkedFloatFunc(name string, f func(float64) float64, canOverflow bool) func(context.Context, object.Kwargs, ...object.Object) object.Object {
 	return func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		if err := errors.NoKwargs(name, kwargs); err != nil {
+			return err
+		}
+		if err := errors.ExactArgs(args, 1); err != nil {
+			return err
+		}
+		x, err := args[0].AsFloat()
+		if err != nil {
+			return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+		}
+		r := f(x)
+		if r != r && x == x {
+			return mathDomainError()
+		}
+		if math.IsInf(r, 0) && !math.IsInf(x, 0) {
+			if canOverflow {
+				return mathRangeError()
+			}
+			return mathDomainError()
+		}
+		return object.NewFloat(r)
+	}
+}
+
+// mathIntArg returns an integer argument of a math function that, as in
+// CPython, accepts only integers (factorial, comb, perm, gcd, lcm, isqrt): a
+// float is a TypeError even when it is whole.
+func mathIntArg(obj object.Object) (int64, object.Object) {
+	switch v := obj.(type) {
+	case *object.Integer:
+		return v.IntValue(), nil
+	case *object.Boolean:
+		if v.BoolValue() {
+			return 1, nil
+		}
+		return 0, nil
+	}
+	return 0, errors.NewTypeErrorTagged("'%s' object cannot be interpreted as an integer", object.PythonTypeName(obj))
+}
+
+// floatToIntChecked converts the result of floor, ceil or trunc to an
+// integer, raising as CPython does for NaN (ValueError) and for an infinity
+// or a value outside the integer range (OverflowError).
+func floatToIntChecked(f float64) object.Object {
+	if f != f {
+		return errors.NewValueError("cannot convert float NaN to integer")
+	}
+	if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+		if math.IsInf(f, 0) {
+			return errors.NewOverflowError("cannot convert float infinity to integer")
+		}
+		return errors.NewOverflowError("integer too large to convert")
+	}
+	return object.NewInteger(int64(f))
+}
+
+// twoFloatFunc creates a function that takes two floats and applies f
+func twoFloatFunc(name string, f func(float64, float64) float64) func(context.Context, object.Kwargs, ...object.Object) object.Object {
+	return func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		if err := errors.NoKwargs(name, kwargs); err != nil {
+			return err
+		}
 		if err := errors.ExactArgs(args, 2); err != nil {
 			return err
 		}
@@ -138,10 +219,47 @@ func twoFloatFunc(f func(float64, float64) float64) func(context.Context, object
 	}
 }
 
+// checkedTwoFloatFunc is twoFloatFunc raising as CPython's pow and remainder
+// do: ValueError when non-NaN arguments give NaN (pow(-8, 0.5),
+// remainder(1, 0)) or zero is raised to a negative power, and OverflowError
+// when finite arguments give an infinity.
+func checkedTwoFloatFunc(name string, f func(float64, float64) float64) func(context.Context, object.Kwargs, ...object.Object) object.Object {
+	return func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		if err := errors.NoKwargs(name, kwargs); err != nil {
+			return err
+		}
+		if err := errors.ExactArgs(args, 2); err != nil {
+			return err
+		}
+		x, err := args[0].AsFloat()
+		if err != nil {
+			return err
+		}
+		y, err := args[1].AsFloat()
+		if err != nil {
+			return err
+		}
+		r := f(x, y)
+		if r != r && x == x && y == y {
+			return mathDomainError()
+		}
+		if math.IsInf(r, 0) && !math.IsInf(x, 0) && !math.IsInf(y, 0) {
+			if x == 0 {
+				return mathDomainError()
+			}
+			return mathRangeError()
+		}
+		return object.NewFloat(r)
+	}
+}
+
 // oneIntOrFloatFunc creates a math function that takes one int-or-float and returns an integer or boolean.
 // intFn is called for integers, floatFn for floats; both receive the value and return an object.Object.
-func oneIntOrFloatFunc(intFn func(*object.Integer) object.Object, floatFn func(*object.Float) object.Object) func(context.Context, object.Kwargs, ...object.Object) object.Object {
+func oneIntOrFloatFunc(name string, intFn func(*object.Integer) object.Object, floatFn func(*object.Float) object.Object) func(context.Context, object.Kwargs, ...object.Object) object.Object {
 	return func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		if err := errors.NoKwargs(name, kwargs); err != nil {
+			return err
+		}
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
 		}
@@ -150,6 +268,12 @@ func oneIntOrFloatFunc(intFn func(*object.Integer) object.Object, floatFn func(*
 			return intFn(arg)
 		case *object.Float:
 			return floatFn(arg)
+		case *object.Boolean:
+			// bool is an int: math.floor(True) is 1.
+			if arg.BoolValue() {
+				return intFn(object.NewInteger(1))
+			}
+			return intFn(object.NewInteger(0))
 		default:
 			return errors.NewTypeError("INTEGER or FLOAT", arg.Type().String())
 		}
@@ -159,19 +283,17 @@ func oneIntOrFloatFunc(intFn func(*object.Integer) object.Object, floatFn func(*
 var MathLibrary = object.NewLibrary(MathLibraryName, map[string]*object.Builtin{
 	"fsum": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("fsum", kwargs); err != nil {
+				return err
+			}
 			// fsum(iterable) - exact float summation (Python's math.fsum):
 			// accumulate in arbitrary precision, round once at the end.
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			var elements []object.Object
-			switch it := args[0].(type) {
-			case *object.List:
-				elements = it.Elements
-			case *object.Tuple:
-				elements = it.Elements
-			default:
-				return errors.NewTypeError("iterable of numbers", args[0].Type().String())
+			elements, errObj := iterableElements(ctx, args[0])
+			if errObj != nil {
+				return errObj
 			}
 			acc := new(big.Float).SetPrec(128)
 			for _, e := range elements {
@@ -180,6 +302,10 @@ var MathLibrary = object.NewLibrary(MathLibraryName, map[string]*object.Builtin{
 					acc.Add(acc, big.NewFloat(v.FloatValue()))
 				case *object.Integer:
 					acc.Add(acc, big.NewFloat(float64(v.IntValue())))
+				case *object.Boolean:
+					if v.BoolValue() {
+						acc.Add(acc, big.NewFloat(1))
+					}
 				default:
 					return errors.NewTypeError("iterable of numbers", e.Type().String())
 				}
@@ -190,30 +316,30 @@ var MathLibrary = object.NewLibrary(MathLibraryName, map[string]*object.Builtin{
 		HelpText: `fsum(iterable) - Exact floating-point summation`,
 	},
 	"sqrt": {
-		Fn: oneFloatFunc(math.Sqrt),
+		Fn: checkedFloatFunc("sqrt", math.Sqrt, false),
 		HelpText: `sqrt(x) - Return the square root of x
 
 x must be a non-negative number (integer or float).
 Returns a float.`,
 	},
 	"pow": {
-		Fn: twoFloatFunc(math.Pow),
+		Fn: checkedTwoFloatFunc("pow", math.Pow),
 		HelpText: `pow(base, exp) - Return base raised to the power exp
 
 base and exp can be integers or floats.
 Returns a float.`,
 	},
 	"fabs": {
-		Fn: oneFloatFunc(math.Abs),
+		Fn: oneFloatFunc("fabs", math.Abs),
 		HelpText: `fabs(x) - Return the absolute value of x as a float
 
 x can be an integer or float.
 Always returns a float.`,
 	},
 	"floor": {
-		Fn: oneIntOrFloatFunc(
+		Fn: oneIntOrFloatFunc("floor",
 			func(i *object.Integer) object.Object { return i },
-			func(f *object.Float) object.Object { return object.NewInteger(int64(math.Floor(f.FloatValue()))) },
+			func(f *object.Float) object.Object { return floatToIntChecked(math.Floor(f.FloatValue())) },
 		),
 		HelpText: `floor(x) - Return the floor of x
 
@@ -221,9 +347,9 @@ x can be an integer or float.
 Returns the largest integer less than or equal to x.`,
 	},
 	"ceil": {
-		Fn: oneIntOrFloatFunc(
+		Fn: oneIntOrFloatFunc("ceil",
 			func(i *object.Integer) object.Object { return i },
-			func(f *object.Float) object.Object { return object.NewInteger(int64(math.Ceil(f.FloatValue()))) },
+			func(f *object.Float) object.Object { return floatToIntChecked(math.Ceil(f.FloatValue())) },
 		),
 		HelpText: `ceil(x) - Return the ceiling of x
 
@@ -232,21 +358,21 @@ Returns the smallest integer greater than or equal to x.`,
 	},
 
 	"sin": {
-		Fn: oneFloatFunc(math.Sin),
+		Fn: checkedFloatFunc("sin", math.Sin, false),
 		HelpText: `sin(x) - Return the sine of x (radians)
 
 x can be an integer or float in radians.
 Returns a float.`,
 	},
 	"cos": {
-		Fn: oneFloatFunc(math.Cos),
+		Fn: checkedFloatFunc("cos", math.Cos, false),
 		HelpText: `cos(x) - Return the cosine of x (radians)
 
 x can be an integer or float in radians.
 Returns a float.`,
 	},
 	"tan": {
-		Fn: oneFloatFunc(math.Tan),
+		Fn: checkedFloatFunc("tan", math.Tan, false),
 		HelpText: `tan(x) - Return the tangent of x (radians)
 
 x can be an integer or float in radians.
@@ -254,6 +380,9 @@ Returns a float.`,
 	},
 	"log": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("log", kwargs); err != nil {
+				return err
+			}
 			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
 			}
@@ -262,15 +391,19 @@ Returns a float.`,
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
 			if x <= 0 {
-				return errors.NewError("log: domain error")
+				return mathDomainError()
 			}
 			if len(args) == 2 {
 				base, err := args[1].AsFloat()
 				if err != nil {
 					return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
 				}
-				if base <= 0 || base == 1 {
-					return errors.NewError("log: base must be positive and not 1")
+				if base <= 0 {
+					return mathDomainError()
+				}
+				if base == 1 {
+					// log(1) is zero, so CPython divides by zero here.
+					return &object.Error{Message: "float division by zero", ExceptionType: object.ExceptionTypeZeroDivisionError}
 				}
 				return object.NewFloat(math.Log(x) / math.Log(base))
 			}
@@ -283,6 +416,9 @@ x must be positive; base must be positive and not 1.`,
 	},
 	"sinh": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("sinh", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -290,12 +426,19 @@ x must be positive; base must be positive and not 1.`,
 			if err != nil {
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
-			return object.NewFloat(math.Sinh(x))
+			r := math.Sinh(x)
+			if math.IsInf(r, 0) && !math.IsInf(x, 0) {
+				return mathRangeError()
+			}
+			return object.NewFloat(r)
 		},
 		HelpText: "sinh(x) - Hyperbolic sine",
 	},
 	"cosh": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("cosh", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -303,12 +446,19 @@ x must be positive; base must be positive and not 1.`,
 			if err != nil {
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
-			return object.NewFloat(math.Cosh(x))
+			r := math.Cosh(x)
+			if math.IsInf(r, 0) && !math.IsInf(x, 0) {
+				return mathRangeError()
+			}
+			return object.NewFloat(r)
 		},
 		HelpText: "cosh(x) - Hyperbolic cosine",
 	},
 	"exp2": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("exp2", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -316,12 +466,19 @@ x must be positive; base must be positive and not 1.`,
 			if err != nil {
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
-			return object.NewFloat(math.Exp2(x))
+			r := math.Exp2(x)
+			if math.IsInf(r, 0) && !math.IsInf(x, 0) {
+				return mathRangeError()
+			}
+			return object.NewFloat(r)
 		},
 		HelpText: "exp2(x) - 2 raised to the power x",
 	},
 	"ldexp": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("ldexp", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -339,6 +496,9 @@ x must be positive; base must be positive and not 1.`,
 	},
 	"frexp": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("frexp", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -347,26 +507,26 @@ x must be positive; base must be positive and not 1.`,
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
 			mantissa, exp := math.Frexp(x)
-			return &object.List{Elements: []object.Object{object.NewFloat(mantissa), object.NewInteger(int64(exp))}}
+			return &object.Tuple{Elements: []object.Object{object.NewFloat(mantissa), object.NewInteger(int64(exp))}}
 		},
-		HelpText: "frexp(x) - [mantissa, exponent] with x == mantissa * 2**exponent",
+		HelpText: "frexp(x) - (mantissa, exponent) with x == mantissa * 2**exponent",
 	},
 	"exp": {
-		Fn: oneFloatFunc(math.Exp),
+		Fn: checkedFloatFunc("exp", math.Exp, true),
 		HelpText: `exp(x) - Return e raised to the power x
 
 x can be an integer or float.
 Returns a float.`,
 	},
 	"degrees": {
-		Fn: oneFloatFunc(func(x float64) float64 { return x * 180.0 / math.Pi }),
+		Fn: oneFloatFunc("degrees", func(x float64) float64 { return x * 180.0 / math.Pi }),
 		HelpText: `degrees(x) - Convert radians to degrees
 
 x can be an integer or float in radians.
 Returns a float in degrees.`,
 	},
 	"radians": {
-		Fn: oneFloatFunc(func(x float64) float64 { return x * math.Pi / 180.0 }),
+		Fn: oneFloatFunc("radians", func(x float64) float64 { return x * math.Pi / 180.0 }),
 		HelpText: `radians(x) - Convert degrees to radians
 
 x can be an integer or float in degrees.
@@ -374,6 +534,9 @@ Returns a float in radians.`,
 	},
 	"fmod": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("fmod", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -390,6 +553,9 @@ Returns a float in radians.`,
 				// ZeroDivisionError, so this is tagged as a ValueError.
 				return errors.NewValueError("fmod: division by zero")
 			}
+			if math.IsInf(x, 0) && y == y {
+				return mathDomainError()
+			}
 			return object.NewFloat(math.Mod(x, y))
 		},
 		HelpText: `fmod(x, y) - Return the floating-point remainder of x/y
@@ -399,6 +565,11 @@ y must not be zero. Returns a float.`,
 	},
 	"isclose": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("isclose", kwargs, "rel_tol", "abs_tol"); err != nil {
+					return err
+				}
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -427,7 +598,7 @@ y must not be zero. Returns a float.`,
 				}
 			}
 			if relTol < 0 || absTol < 0 {
-				return errors.NewError("tolerances must be non-negative")
+				return errors.NewValueError("tolerances must be non-negative")
 			}
 			if math.IsNaN(a) || math.IsNaN(b) {
 				return object.NewBoolean(false)
@@ -452,38 +623,41 @@ absolute tolerances, matching Python's math.isclose.`,
 	},
 	"gcd": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.ExactArgs(args, 2); err != nil {
+			if err := errors.NoKwargs("gcd", kwargs); err != nil {
 				return err
 			}
-			a, err := args[0].AsInt()
-			if err != nil {
-				return errors.NewTypeError("INTEGER", args[0].Type().String())
+			result := int64(0)
+			for _, a := range args {
+				n, err := mathIntArg(a)
+				if err != nil {
+					return err
+				}
+				result = gcd(result, n)
 			}
-			b, err := args[1].AsInt()
-			if err != nil {
-				return errors.NewTypeError("INTEGER", args[1].Type().String())
-			}
-			return object.NewInteger(gcd(a, b))
+			return object.NewInteger(result)
 		},
-		HelpText: `gcd(a, b) - Return the greatest common divisor of a and b
+		HelpText: `gcd(*integers) - Return the greatest common divisor of the integers
 
-a and b must be integers.
+The arguments must be integers; with none, returns 0.
 Returns an integer.`,
 	},
 	"factorial": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("factorial", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			n, err := args[0].AsInt()
+			n, err := mathIntArg(args[0])
 			if err != nil {
-				return errors.NewTypeError("INTEGER", args[0].Type().String())
+				return err
 			}
 			if n < 0 {
-				return errors.NewError("factorial: negative number")
+				return errors.NewValueError("factorial() not defined for negative values")
 			}
 			if n > 20 {
-				return errors.NewError("factorial: result too large")
+				return errors.NewOverflowError("factorial: result too large")
 			}
 			result := int64(1)
 			for i := int64(2); i <= n; i++ {
@@ -497,7 +671,7 @@ n must be a non-negative integer <= 20.
 Returns an integer.`,
 	},
 	"isnan": {
-		Fn: oneIntOrFloatFunc(
+		Fn: oneIntOrFloatFunc("isnan",
 			func(i *object.Integer) object.Object { return object.NewBoolean(false) },
 			func(f *object.Float) object.Object { return object.NewBoolean(math.IsNaN(f.FloatValue())) },
 		),
@@ -506,7 +680,7 @@ Returns an integer.`,
 Returns True if x is NaN, False otherwise.`,
 	},
 	"isinf": {
-		Fn: oneIntOrFloatFunc(
+		Fn: oneIntOrFloatFunc("isinf",
 			func(i *object.Integer) object.Object { return object.NewBoolean(false) },
 			func(f *object.Float) object.Object { return object.NewBoolean(math.IsInf(f.FloatValue(), 0)) },
 		),
@@ -515,7 +689,7 @@ Returns True if x is NaN, False otherwise.`,
 Returns True if x is positive or negative infinity.`,
 	},
 	"isfinite": {
-		Fn: oneIntOrFloatFunc(
+		Fn: oneIntOrFloatFunc("isfinite",
 			func(i *object.Integer) object.Object { return object.NewBoolean(true) },
 			func(f *object.Float) object.Object {
 				return object.NewBoolean(!math.IsNaN(f.FloatValue()) && !math.IsInf(f.FloatValue(), 0))
@@ -526,72 +700,172 @@ Returns True if x is positive or negative infinity.`,
 Returns True if x is neither NaN nor infinite.`,
 	},
 	"copysign": {
-		Fn: twoFloatFunc(math.Copysign),
+		Fn: twoFloatFunc("copysign", math.Copysign),
 		HelpText: `copysign(x, y) - Return x with the sign of y
 
 Returns a float with magnitude of x and sign of y.`,
 	},
 	"trunc": {
-		Fn: oneIntOrFloatFunc(
+		Fn: oneIntOrFloatFunc("trunc",
 			func(i *object.Integer) object.Object { return i },
-			func(f *object.Float) object.Object { return object.NewInteger(int64(math.Trunc(f.FloatValue()))) },
+			func(f *object.Float) object.Object { return floatToIntChecked(math.Trunc(f.FloatValue())) },
 		),
 		HelpText: `trunc(x) - Truncate x to the nearest integer toward zero
 
 Returns an integer.`,
 	},
 	"log10": {
-		Fn: oneFloatFunc(math.Log10),
+		Fn: checkedFloatFunc("log10", math.Log10, false),
 		HelpText: `log10(x) - Return the base-10 logarithm of x
 
 
 x must be positive. Returns a float.`,
 	},
 	"log2": {
-		Fn: oneFloatFunc(math.Log2),
+		Fn: checkedFloatFunc("log2", math.Log2, false),
 		HelpText: `log2(x) - Return the base-2 logarithm of x
 
 x must be positive. Returns a float.`,
 	},
 	"hypot": {
-		Fn: twoFloatFunc(math.Hypot),
+		Fn: twoFloatFunc("hypot", math.Hypot),
 		HelpText: `hypot(x, y) - Return the Euclidean distance sqrt(x*x + y*y)
 
 Returns a float.`,
 	},
 	"asin": {
-		Fn: oneFloatFunc(math.Asin),
+		Fn: checkedFloatFunc("asin", math.Asin, false),
 		HelpText: `asin(x) - Return the arc sine of x in radians
 
 x must be in the range [-1, 1]. Returns a float.`,
 	},
 	"acos": {
-		Fn: oneFloatFunc(math.Acos),
+		Fn: checkedFloatFunc("acos", math.Acos, false),
 		HelpText: `acos(x) - Return the arc cosine of x in radians
 
 x must be in the range [-1, 1]. Returns a float.`,
 	},
 	"atan": {
-		Fn: oneFloatFunc(math.Atan),
+		Fn: oneFloatFunc("atan", math.Atan),
 		HelpText: `atan(x) - Return the arc tangent of x in radians
 
 Returns a float in the range [-pi/2, pi/2].`,
 	},
 	"atan2": {
-		Fn: twoFloatFunc(math.Atan2),
+		Fn: twoFloatFunc("atan2", math.Atan2),
 		HelpText: `atan2(y, x) - Return the arc tangent of y/x in radians
 
 Correctly handles the quadrant of the result.
 Returns a float in the range [-pi, pi].`,
 	},
 	"tanh": {
-		Fn: oneFloatFunc(math.Tanh),
+		Fn: oneFloatFunc("tanh", math.Tanh),
 		HelpText: `tanh(x) - Return the hyperbolic tangent of x
 
 Returns a float in the range [-1, 1].`,
 	},
+	"asinh": {
+		Fn:       checkedFloatFunc("asinh", math.Asinh, false),
+		HelpText: `asinh(x) - Return the inverse hyperbolic sine of x`,
+	},
+	"acosh": {
+		Fn: checkedFloatFunc("acosh", math.Acosh, false),
+		HelpText: `acosh(x) - Return the inverse hyperbolic cosine of x
+
+x must be at least 1.`,
+	},
+	"atanh": {
+		Fn: checkedFloatFunc("atanh", math.Atanh, false),
+		HelpText: `atanh(x) - Return the inverse hyperbolic tangent of x
+
+x must be in the open range (-1, 1).`,
+	},
+	"modf": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("modf", kwargs); err != nil {
+				return err
+			}
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			x, err := args[0].AsFloat()
+			if err != nil {
+				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+			}
+			ip, fp := math.Modf(x)
+			if math.IsInf(x, 0) {
+				fp = math.Copysign(0, x)
+			}
+			return &object.Tuple{Elements: []object.Object{object.NewFloat(fp), object.NewFloat(ip)}}
+		},
+		HelpText: `modf(x) - Return the fractional and integer parts of x as floats
+
+Both parts carry the sign of x.`,
+	},
+	"isqrt": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("isqrt", kwargs); err != nil {
+				return err
+			}
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			n, err := mathIntArg(args[0])
+			if err != nil {
+				return err
+			}
+			if n < 0 {
+				return errors.NewValueError("isqrt() argument must be nonnegative")
+			}
+			r := int64(math.Sqrt(float64(n)))
+			// The float square root can be off by one either way for large n.
+			for r > 0 && (r > 3037000499 || r*r > n) {
+				r--
+			}
+			for r < 3037000499 && (r+1)*(r+1) <= n {
+				r++
+			}
+			return object.NewInteger(r)
+		},
+		HelpText: `isqrt(n) - Return the integer square root of the non-negative integer n
+
+The largest integer r with r*r <= n.`,
+	},
+	"lcm": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("lcm", kwargs); err != nil {
+				return err
+			}
+			result := int64(1)
+			for _, a := range args {
+				n, err := mathIntArg(a)
+				if err != nil {
+					return err
+				}
+				if n < 0 {
+					n = -n
+				}
+				if n == 0 || result == 0 {
+					result = 0
+					continue
+				}
+				m := n / gcd(result, n)
+				if result > math.MaxInt64/m {
+					return errors.NewOverflowError("lcm: result too large")
+				}
+				result *= m
+			}
+			return object.NewInteger(result)
+		},
+		HelpText: `lcm(*integers) - Return the least common multiple of the integers
+
+With no arguments, returns 1.`,
+	},
 	"softmax": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("softmax", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -600,14 +874,14 @@ Returns a float in the range [-1, 1].`,
 			switch a := args[0].(type) {
 			case *object.FloatArray:
 				if a.Is2D() {
-					return errors.NewError("softmax: expected 1D array, got 2D")
+					return errors.NewValueError("softmax: expected 1D array, got 2D")
 				}
 				vals = a.Data
 				inputIsFA = true
 			case *object.List:
 				n := len(a.Elements)
 				if n == 0 {
-					return errors.NewError("softmax: input list cannot be empty")
+					return errors.NewValueError("softmax: input list cannot be empty")
 				}
 				vals = make([]float64, n)
 				for i, el := range a.Elements {
@@ -621,7 +895,7 @@ Returns a float in the range [-1, 1].`,
 				return errors.NewTypeError("LIST or FLOAT_ARRAY", args[0].Type().String())
 			}
 			if len(vals) == 0 {
-				return errors.NewError("softmax: input cannot be empty")
+				return errors.NewValueError("softmax: input cannot be empty")
 			}
 			maxVal := math.Inf(-1)
 			for _, v := range vals {
@@ -654,6 +928,9 @@ Returns a FloatArray probability distribution summing to 1.0.`,
 	},
 	"dot": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("dot", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -661,7 +938,7 @@ Returns a FloatArray probability distribution summing to 1.0.`,
 			switch a := args[0].(type) {
 			case *object.FloatArray:
 				if a.Is2D() {
-					return errors.NewError("dot: expected 1D array, got 2D")
+					return errors.NewValueError("dot: expected 1D array, got 2D")
 				}
 				aData = a.Data
 			case *object.List:
@@ -679,7 +956,7 @@ Returns a FloatArray probability distribution summing to 1.0.`,
 			switch b := args[1].(type) {
 			case *object.FloatArray:
 				if b.Is2D() {
-					return errors.NewError("dot: expected 1D array, got 2D")
+					return errors.NewValueError("dot: expected 1D array, got 2D")
 				}
 				bData = b.Data
 			case *object.List:
@@ -695,7 +972,7 @@ Returns a FloatArray probability distribution summing to 1.0.`,
 				return errors.NewTypeError("LIST or FLOAT_ARRAY", args[1].Type().String())
 			}
 			if len(aData) != len(bData) {
-				return errors.NewError("dot: vectors must have the same length")
+				return errors.NewValueError("dot: vectors must have the same length")
 			}
 			var sum float64
 			for i := range aData {
@@ -709,6 +986,9 @@ a and b must be lists or 1D FloatArrays of numbers with the same length.`,
 	},
 	"matmul": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("matmul", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -721,11 +1001,11 @@ a and b must be lists or 1D FloatArrays of numbers with the same length.`,
 				return errObj
 			}
 			if len(aRows) == 0 || len(bRows) == 0 {
-				return errors.NewError("matmul: matrices cannot be empty")
+				return errors.NewValueError("matmul: matrices cannot be empty")
 			}
 			k := len(aRows[0])
 			if len(bRows) != k {
-				return errors.NewError("matmul: inner dimensions mismatch (%d vs %d)", k, len(bRows))
+				return errors.NewValueError("matmul: inner dimensions mismatch (%d vs %d)", k, len(bRows))
 			}
 			n := len(bRows[0])
 			// An (M x 1) by (1 x N) product is M*N values from M+N inputs,
@@ -759,6 +1039,9 @@ a is (M x K), b is (K x N). Returns (M x N) matrix as list of lists.`,
 	},
 	"transpose": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("transpose", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -789,6 +1072,9 @@ Rows become columns. Returns a new matrix.`,
 	},
 	"mat_add": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("mat_add", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -801,7 +1087,7 @@ Rows become columns. Returns a new matrix.`,
 				return errObj
 			}
 			if len(aRows) != len(bRows) {
-				return errors.NewError("mat_add: matrices must have the same shape")
+				return errors.NewValueError("mat_add: matrices must have the same shape")
 			}
 			if len(aRows) == 0 {
 				if aFA || bFA {
@@ -810,7 +1096,7 @@ Rows become columns. Returns a new matrix.`,
 				return &object.List{Elements: []object.Object{}}
 			}
 			if len(aRows[0]) != len(bRows[0]) {
-				return errors.NewError("mat_add: matrices must have the same shape")
+				return errors.NewValueError("mat_add: matrices must have the same shape")
 			}
 			result := make([][]float64, len(aRows))
 			for i := range aRows {
@@ -826,25 +1112,33 @@ Rows become columns. Returns a new matrix.`,
 a and b must have the same shape. Returns a new matrix.`,
 	},
 	"erf": {
-		Fn: oneFloatFunc(math.Erf),
+		Fn: oneFloatFunc("erf", math.Erf),
 		HelpText: `erf(x) - Return the error function of x
 
 Returns a float in the range [-1, 1].`,
 	},
 	"erfc": {
-		Fn: oneFloatFunc(math.Erfc),
+		Fn: oneFloatFunc("erfc", math.Erfc),
 		HelpText: `erfc(x) - Return the complementary error function of x
 
 Returns a float in the range [0, 2].`,
 	},
 	"gamma": {
-		Fn: oneFloatFunc(math.Gamma),
+		Fn: checkedFloatFunc("gamma", func(x float64) float64 {
+			if x == 0 {
+				return math.NaN() // a pole: CPython reports a domain error
+			}
+			return math.Gamma(x)
+		}, true),
 		HelpText: `gamma(x) - Return the gamma function of x
 
 Returns a float.`,
 	},
 	"lgamma": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("lgamma", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -853,6 +1147,9 @@ Returns a float.`,
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
 			val, sign := math.Lgamma(x)
+			if math.IsInf(val, 1) && !math.IsInf(x, 0) {
+				return mathDomainError() // a pole: lgamma(0), lgamma(-1), ...
+			}
 			return &object.List{Elements: []object.Object{
 				object.NewFloat(val),
 				object.NewInteger(int64(sign)),
@@ -863,50 +1160,56 @@ Returns a float.`,
 Returns a list [log_abs_gamma, sign].`,
 	},
 	"nextafter": {
-		Fn: twoFloatFunc(math.Nextafter),
+		Fn: twoFloatFunc("nextafter", math.Nextafter),
 		HelpText: `nextafter(x, y) - Return the next floating-point value after x towards y
 
 Returns a float.`,
 	},
 	"cbrt": {
-		Fn: oneFloatFunc(math.Cbrt),
+		Fn: oneFloatFunc("cbrt", math.Cbrt),
 		HelpText: `cbrt(x) - Return the cube root of x
 
 Returns a float.`,
 	},
 	"remainder": {
-		Fn: twoFloatFunc(math.Remainder),
+		Fn: checkedTwoFloatFunc("remainder", math.Remainder),
 		HelpText: `remainder(x, y) - Return the IEEE 754-style remainder of x/y
 
 Returns a float.`,
 	},
 	"log1p": {
-		Fn: oneFloatFunc(math.Log1p),
+		Fn: checkedFloatFunc("log1p", math.Log1p, false),
 		HelpText: `log1p(x) - Return log(1+x) accurately for small x
 
 Returns a float.`,
 	},
 	"expm1": {
-		Fn: oneFloatFunc(math.Expm1),
+		Fn: checkedFloatFunc("expm1", math.Expm1, true),
 		HelpText: `expm1(x) - Return exp(x)-1 accurately for small x
 
 Returns a float.`,
 	},
 	"comb": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("comb", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
-			n, err := args[0].AsInt()
+			n, err := mathIntArg(args[0])
 			if err != nil {
 				return err
 			}
-			k, err := args[1].AsInt()
+			k, err := mathIntArg(args[1])
 			if err != nil {
 				return err
 			}
-			if n < 0 || k < 0 {
-				return errors.NewError("comb: arguments must be non-negative")
+			if n < 0 {
+				return errors.NewValueError("n must be a non-negative integer")
+			}
+			if k < 0 {
+				return errors.NewValueError("k must be a non-negative integer")
 			}
 			if k > n {
 				return object.NewInteger(0)
@@ -923,12 +1226,12 @@ Returns a float.`,
 			// would otherwise build a number of up to n bits first, which
 			// for huge n takes as long as it likes.
 			if k > 33 {
-				return errors.NewError("comb: result too large")
+				return errors.NewOverflowError("comb: result too large")
 			}
 			var result big.Int
 			result.Binomial(n, k)
 			if !result.IsInt64() {
-				return errors.NewError("comb: result too large")
+				return errors.NewOverflowError("comb: result too large")
 			}
 			return object.NewInteger(result.Int64())
 		},
@@ -938,30 +1241,36 @@ Also known as the binomial coefficient. n and k must be non-negative integers.`,
 	},
 	"perm": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("perm", kwargs); err != nil {
+				return err
+			}
 			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
 			}
-			n, err := args[0].AsInt()
+			n, err := mathIntArg(args[0])
 			if err != nil {
 				return err
 			}
 			if n < 0 {
-				return errors.NewError("perm: argument must be non-negative")
+				return errors.NewValueError("n must be a non-negative integer")
 			}
 			k := n
-			if len(args) == 2 {
-				k, err = args[1].AsInt()
+			if len(args) == 2 && args[1].Type() != object.NULL_OBJ {
+				k, err = mathIntArg(args[1])
 				if err != nil {
 					return err
 				}
 			}
-			if k < 0 || k > n {
+			if k < 0 {
+				return errors.NewValueError("k must be a non-negative integer")
+			}
+			if k > n {
 				return object.NewInteger(0)
 			}
 			var result int64 = 1
 			for i := int64(0); i < k; i++ {
 				if result > math.MaxInt64/(n-i) {
-					return errors.NewError("perm: result too large")
+					return errors.NewOverflowError("perm: result too large")
 				}
 				result *= n - i
 			}
@@ -973,13 +1282,19 @@ n and k must be non-negative integers. If k is omitted, returns n!.`,
 	},
 	"prod": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("prod", kwargs, "start"); err != nil {
+					return err
+				}
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			list, ok := args[0].(*object.List)
-			if !ok {
-				return errors.NewTypeError("LIST", args[0].Type().String())
+			elems, errObj := iterableElements(ctx, args[0])
+			if errObj != nil {
+				return errObj
 			}
+			list := &object.List{Elements: elems}
 			if len(list.Elements) == 0 {
 				return object.NewInteger(1)
 			}
@@ -1010,7 +1325,7 @@ n and k must be non-negative integers. If k is omitted, returns n!.`,
 					continue
 				}
 				if vInt.IntValue() != 0 && intResult > math.MaxInt64/vInt.IntValue() {
-					return errors.NewError("integer overflow in product")
+					return errors.NewOverflowError("integer overflow in product")
 				}
 				intResult *= vInt.IntValue()
 			}
@@ -1034,8 +1349,21 @@ Returns an integer for all-integer inputs, float otherwise.`,
 	},
 	"dist": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("dist", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
+			}
+			for i, a := range args {
+				// A point given as a generator is collected first.
+				if _, isInst := a.(*object.Instance); isInst {
+					elems, errObj := collectIterable(ctx, a)
+					if errObj != nil {
+						return errObj
+					}
+					args[i] = &object.List{Elements: elems}
+				}
 			}
 			pList, pOK := numericVector(args[0])
 			if !pOK {
@@ -1046,7 +1374,7 @@ Returns an integer for all-integer inputs, float otherwise.`,
 				return errors.NewTypeError("LIST or TUPLE", args[1].Type().String())
 			}
 			if len(pList) != len(qList) {
-				return errors.NewError("dist: points must have the same dimension")
+				return errors.NewValueError("both points must have the same number of dimensions")
 			}
 			var sum float64
 			for i := range pList {
@@ -1061,6 +1389,9 @@ p and q must be lists of numbers with the same length.`,
 	},
 	"array": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("array", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -1078,10 +1409,10 @@ p and q must be lists of numbers with the same length.`,
 					for _, rowObj := range a.Elements {
 						row, ok := rowObj.(*object.List)
 						if !ok {
-							return errors.NewError("array: cannot mix list rows with non-list rows")
+							return errors.NewValueError("array: cannot mix list rows with non-list rows")
 						}
 						if len(row.Elements) != cols {
-							return errors.NewError("array: all rows must have the same length")
+							return errors.NewValueError("array: all rows must have the same length")
 						}
 						for _, el := range row.Elements {
 							f, err := el.AsFloat()
@@ -1100,10 +1431,10 @@ p and q must be lists of numbers with the same length.`,
 					for _, rowObj := range a.Elements {
 						fa, ok := rowObj.(*object.FloatArray)
 						if !ok || fa.Is2D() {
-							return errors.NewError("array: cannot mix FloatArray rows with non-FloatArray rows")
+							return errors.NewValueError("array: cannot mix FloatArray rows with non-FloatArray rows")
 						}
 						if len(fa.Data) != cols {
-							return errors.NewError("array: all rows must have the same length")
+							return errors.NewValueError("array: all rows must have the same length")
 						}
 						data = append(data, fa.Data...)
 					}
@@ -1129,6 +1460,9 @@ Returns a FloatArray that avoids per-element boxing overhead.`,
 	},
 	"shape": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("shape", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}

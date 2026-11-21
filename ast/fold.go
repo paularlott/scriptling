@@ -574,7 +574,12 @@ func tryFoldPrefix(op Op, right Expression) Expression {
 		}
 
 	case OpPos:
-		// +x is already x, no folding needed
+		if rIsInt {
+			return &IntegerLiteral{Value: rint.Value}
+		}
+		if rIsFloat {
+			return &FloatLiteral{Value: rfloat.Value}
+		}
 	}
 
 	return nil

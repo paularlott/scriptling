@@ -21,13 +21,15 @@ const maxTokenBytes = 1 << 40
 // tokenByteCount reads a token function's byte-count argument (default 32).
 func tokenByteCount(name string, args []object.Object) (int, object.Object) {
 	n := int64(32)
-	if len(args) > 0 {
-		if intVal, ok := args[0].(*object.Integer); ok {
-			n = intVal.IntValue()
+	if len(args) > 0 && args[0].Type() != object.NULL_OBJ {
+		intVal, ok := args[0].(*object.Integer)
+		if !ok {
+			return 0, errors.NewTypeErrorTagged("'%s' object cannot be interpreted as an integer", object.PythonTypeName(args[0]))
 		}
+		n = intVal.IntValue()
 	}
-	if n < 1 {
-		return 0, errors.NewError("%s requires a positive number of bytes", name)
+	if n < 0 {
+		return 0, errors.NewValueError("negative argument not allowed")
 	}
 	if n > maxTokenBytes || n > int64(math.MaxInt) {
 		return 0, object.NewMemoryError("%s: %d bytes is too large", name, n)
@@ -48,6 +50,10 @@ func checkToken(what string, rawBytes, resultBytes int64) object.Object {
 var SecretsLibrary = object.NewLibrary(SecretsLibraryName, map[string]*object.Builtin{
 	"token_bytes": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			args, kerr := kwargsToPositional("token_bytes", args, kwargs, "nbytes")
+			if kerr != nil {
+				return kerr
+			}
 			nbytes, errObj := tokenByteCount("token_bytes", args)
 			if errObj != nil {
 				return errObj
@@ -60,7 +66,7 @@ var SecretsLibrary = object.NewLibrary(SecretsLibraryName, map[string]*object.Bu
 			bytes := make([]byte, nbytes)
 			_, err := rand.Read(bytes)
 			if err != nil {
-				return errors.NewError("failed to generate random bytes: %s", err.Error())
+				return errors.NewOSError("failed to generate random bytes: %s", err.Error())
 			}
 
 			// Return as a list of integers (bytes)
@@ -85,6 +91,10 @@ Example:
 
 	"token_hex": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			args, kerr := kwargsToPositional("token_hex", args, kwargs, "nbytes")
+			if kerr != nil {
+				return kerr
+			}
 			nbytes, errObj := tokenByteCount("token_hex", args)
 			if errObj != nil {
 				return errObj
@@ -97,7 +107,7 @@ Example:
 			bytes := make([]byte, nbytes)
 			_, err := rand.Read(bytes)
 			if err != nil {
-				return errors.NewError("failed to generate random bytes: %s", err.Error())
+				return errors.NewOSError("failed to generate random bytes: %s", err.Error())
 			}
 
 			return object.NewString(hex.EncodeToString(bytes))
@@ -116,6 +126,10 @@ Example:
 
 	"token_urlsafe": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			args, kerr := kwargsToPositional("token_urlsafe", args, kwargs, "nbytes")
+			if kerr != nil {
+				return kerr
+			}
 			nbytes, errObj := tokenByteCount("token_urlsafe", args)
 			if errObj != nil {
 				return errObj
@@ -129,7 +143,7 @@ Example:
 			bytes := make([]byte, nbytes)
 			_, err := rand.Read(bytes)
 			if err != nil {
-				return errors.NewError("failed to generate random bytes: %s", err.Error())
+				return errors.NewOSError("failed to generate random bytes: %s", err.Error())
 			}
 
 			// Use URL-safe base64 encoding without padding
@@ -152,8 +166,11 @@ Example:
 
 	"randbelow": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("randbelow", kwargs); err != nil {
+				return err
+			}
 			if len(args) != 1 {
-				return errors.NewError("randbelow() requires exactly 1 argument")
+				return errors.NewTypeErrorTagged("randbelow() takes exactly 1 argument (%d given)", len(args))
 			}
 
 			n, ok := args[0].(*object.Integer)
@@ -162,12 +179,12 @@ Example:
 			}
 
 			if n.IntValue() <= 0 {
-				return errors.NewError("randbelow requires a positive upper bound")
+				return errors.NewValueError("Upper bound must be positive.")
 			}
 
 			result, err := rand.Int(rand.Reader, big.NewInt(n.IntValue()))
 			if err != nil {
-				return errors.NewError("failed to generate random number: %s", err.Error())
+				return errors.NewOSError("failed to generate random number: %s", err.Error())
 			}
 
 			return object.NewInteger(result.Int64())
@@ -186,8 +203,11 @@ Example:
 
 	"randbits": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("randbits", kwargs); err != nil {
+				return err
+			}
 			if len(args) != 1 {
-				return errors.NewError("randbits() requires exactly 1 argument")
+				return errors.NewTypeErrorTagged("randbits() takes exactly 1 argument (%d given)", len(args))
 			}
 
 			k, ok := args[0].(*object.Integer)
@@ -195,8 +215,11 @@ Example:
 				return errors.NewTypeError("INTEGER", args[0].Type().String())
 			}
 
-			if k.IntValue() < 1 {
-				return errors.NewError("randbits requires a positive number of bits")
+			if k.IntValue() < 0 {
+				return errors.NewValueError("number of bits must be non-negative")
+			}
+			if k.IntValue() == 0 {
+				return object.NewInteger(0)
 			}
 			// Integers are 64-bit, so more bits cannot be represented; refusing
 			// them also stops a huge k sizing a huge allocation.
@@ -210,7 +233,7 @@ Example:
 			// Generate a random big integer with exactly k bits
 			result, err := rand.Int(rand.Reader, big.NewInt(0).Lsh(big.NewInt(1), uint(k.IntValue())))
 			if err != nil {
-				return errors.NewError("failed to generate random bits: %s", err.Error())
+				return errors.NewOSError("failed to generate random bits: %s", err.Error())
 			}
 
 			return object.NewInteger(result.Int64())
@@ -229,35 +252,45 @@ Example:
 
 	"choice": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("choice", kwargs); err != nil {
+				return err
+			}
 			if len(args) != 1 {
-				return errors.NewError("choice() requires exactly 1 argument")
+				return errors.NewTypeErrorTagged("choice() takes exactly 1 argument (%d given)", len(args))
 			}
 
 			// Handle string sequences (like Python)
 			if str, ok := args[0].(*object.String); ok {
 				if len(str.StringValue()) == 0 {
-					return errors.NewError("cannot choose from empty sequence")
+					return errors.NewIndexError("Cannot choose from an empty sequence")
 				}
-				idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(str.StringValue()))))
+				// Choose a character, not a byte, of non-ASCII text.
+				runes := []rune(str.StringValue())
+				idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(runes))))
 				if err != nil {
-					return errors.NewError("failed to generate random index: %s", err.Error())
+					return errors.NewOSError("failed to generate random index: %s", err.Error())
 				}
-				return object.NewString(string(str.StringValue()[idx.Int64()]))
+				return object.NewString(string(runes[idx.Int64()]))
 			}
 
-			// Handle list sequences
-			list, ok := args[0].(*object.List)
-			if !ok {
+			// Handle list and tuple sequences
+			var list *object.List
+			switch seq := args[0].(type) {
+			case *object.List:
+				list = seq
+			case *object.Tuple:
+				list = &object.List{Elements: seq.Elements}
+			default:
 				return errors.NewTypeError("LIST or STRING", args[0].Type().String())
 			}
 
 			if len(list.Elements) == 0 {
-				return errors.NewError("cannot choose from empty sequence")
+				return errors.NewIndexError("Cannot choose from an empty sequence")
 			}
 
 			idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(list.Elements))))
 			if err != nil {
-				return errors.NewError("failed to generate random index: %s", err.Error())
+				return errors.NewOSError("failed to generate random index: %s", err.Error())
 			}
 
 			return list.Elements[idx.Int64()]
@@ -277,18 +310,15 @@ Example:
 
 	"compare_digest": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("compare_digest", kwargs); err != nil {
+				return err
+			}
 			if len(args) != 2 {
-				return errors.NewError("compare_digest() requires exactly 2 arguments")
+				return errors.NewTypeErrorTagged("compare_digest() takes exactly 2 arguments (%d given)", len(args))
 			}
 
-			a, okA := args[0].(*object.String)
-			b, okB := args[1].(*object.String)
-			if !okA || !okB {
-				return errors.NewError("compare_digest() requires two string arguments")
-			}
-
-			// Delegate to the shared constant-time comparison used by hmac.
-			return object.NewBoolean(CompareDigest(a.StringValue(), b.StringValue()))
+			// The shared constant-time comparison used by hmac.
+			return compareDigestArgs(args[0], args[1])
 		},
 		HelpText: `compare_digest(a, b) - Compare two strings using constant-time comparison
 

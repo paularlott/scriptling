@@ -36,7 +36,8 @@ var builtinMethodNames = map[object.ObjectType][]string{
 	},
 	object.BYTES_OBJ:       {"base64", "decode", "hex", "join", "length", "rsplit", "split"},
 	object.FLOAT_ARRAY_OBJ: {"shape", "tolist"},
-	object.INTEGER_OBJ:     {"bit_count", "bit_length", "from_bytes", "is_integer", "to_bytes"},
+	object.INTEGER_OBJ:     {"as_integer_ratio", "bit_count", "bit_length", "conjugate", "from_bytes", "is_integer", "to_bytes"},
+	object.BOOLEAN_OBJ:     {"as_integer_ratio", "bit_count", "bit_length", "conjugate", "is_integer", "to_bytes"},
 	object.FLOAT_OBJ:       {"as_integer_ratio", "fromhex", "hex", "is_integer"},
 }
 

@@ -114,7 +114,7 @@ func buildEnumMembers(class *object.Class) object.Object {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			self, ok := args[0].(*object.Instance)
 			if !ok {
-				return errors.NewError("__hash__ requires an enum member")
+				return errors.NewTypeErrorTagged("__hash__ requires an enum member")
 			}
 			v := self.Field("value")
 			h := uint64(14695981039346656037)
@@ -195,7 +195,7 @@ func buildEnumMembers(class *object.Class) object.Object {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			self, ok := args[0].(*object.Instance)
 			if !ok {
-				return errors.NewError("__str__ requires an enum member")
+				return errors.NewTypeErrorTagged("__str__ requires an enum member")
 			}
 			name, _ := self.Field("name").(*object.String)
 			return object.NewString(class.Name + "." + name.StringValue())
@@ -207,7 +207,7 @@ func buildEnumMembers(class *object.Class) object.Object {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			self, ok := args[0].(*object.Instance)
 			if !ok {
-				return errors.NewError("__repr__ requires an enum member")
+				return errors.NewTypeErrorTagged("__repr__ requires an enum member")
 			}
 			name, _ := self.Field("name").(*object.String)
 			value := self.Field("value")

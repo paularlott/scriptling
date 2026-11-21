@@ -66,30 +66,40 @@ func newMsgpackLibraryBuiltin(c MsgpackCodec) map[string]*object.Builtin {
 		return conversion.FromGo(target)
 	}
 
-	packFn := func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if err := errors.ExactArgs(args, 1); err != nil {
-			return err
+	packFn := func(name string) object.BuiltinFunction {
+		return func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs(name, kwargs); err != nil {
+				return err
+			}
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			return pack(args[0])
 		}
-		return pack(args[0])
 	}
 
-	unpackFn := func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if err := errors.ExactArgs(args, 1); err != nil {
-			return err
+	unpackFn := func(name string) object.BuiltinFunction {
+		return func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs(name, kwargs); err != nil {
+				return err
+			}
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			b, ok := args[0].(*object.Bytes)
+			if !ok {
+				return errors.NewTypeError("BYTES", args[0].Type().String())
+			}
+			return unpack(b)
 		}
-		b, ok := args[0].(*object.Bytes)
-		if !ok {
-			return errors.NewTypeError("BYTES", args[0].Type().String())
-		}
-		return unpack(b)
 	}
 
 	return map[string]*object.Builtin{
-		"packb":   {Fn: packFn, HelpText: packHelp},
-		"unpackb": {Fn: unpackFn, HelpText: unpackHelp},
+		"packb":   {Fn: packFn("packb"), HelpText: packHelp},
+		"unpackb": {Fn: unpackFn("unpackb"), HelpText: unpackHelp},
 		// pack/unpack aliases — older Python msgpack naming.
-		"pack":   {Fn: packFn, HelpText: packHelp},
-		"unpack": {Fn: unpackFn, HelpText: unpackHelp},
+		"pack":   {Fn: packFn("pack"), HelpText: packHelp},
+		"unpack": {Fn: unpackFn("unpack"), HelpText: unpackHelp},
 	}
 }
 

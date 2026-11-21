@@ -372,6 +372,9 @@ func assignErrorToObject(err error) object.Object {
 		ae.ex.Raised = true
 		return ae.ex
 	}
+	if oe, ok := err.(*objectError); ok {
+		return oe.err
+	}
 	return errors.NewError("%s", err.Error())
 }
 
@@ -488,6 +491,10 @@ func typeBridgeEqual(a, b object.Object) bool {
 	} else {
 		return false
 	}
+	// type(obj) is C for an instance (or a raised exception) of a user class.
+	if c, ok := t.(*object.Class); ok {
+		return name == c.Name
+	}
 	bi, ok := t.(*object.Builtin)
 	if !ok {
 		return false
@@ -495,7 +502,7 @@ func typeBridgeEqual(a, b object.Object) bool {
 	var typeName string
 	if n, found := typeBuiltins[bi]; found {
 		typeName = n
-	} else if excName, isExc := exceptionBuiltins[bi]; isExc {
+	} else if excName, isExc := exceptionClassName(bi); isExc {
 		typeName = excName
 	} else {
 		return false
@@ -746,6 +753,20 @@ func evalPrefixExpression(ctx context.Context, operator ast.Op, right object.Obj
 			return evalMinusPrefixOperatorExpression(right)
 		}
 		return evalBitwiseNotOperatorExpression(right)
+	case ast.OpPos:
+		// Unary plus: numbers are returned as they are (a bool becomes an
+		// int); an instance dispatches to __pos__.
+		switch r := right.(type) {
+		case *object.Integer, *object.Float:
+			return r
+		case *object.Boolean:
+			return object.NewInteger(boolToInt64(r.BoolValue()))
+		case *object.Instance:
+			if result := callDunderMethodFn(ctx, r, "__pos__", nil, env); result != nil {
+				return result
+			}
+		}
+		return errors.NewTypeErrorTagged("bad operand type for unary +: '%s'", getTypeName(right))
 	default:
 		return errors.NewError("%s: %s%s", errors.ErrUnknownOperator, operator, right.Type())
 	}
@@ -887,6 +908,16 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 	case *object.Boolean:
 		lv := boolToInt64(l.BoolValue())
 		if rb, ok := right.(*object.Boolean); ok {
+			// bool & | ^ bool stays a bool, as in Python; other operators
+			// work on the ints.
+			switch operator {
+			case ast.OpBitAnd:
+				return nativeBoolToBooleanObject(l.BoolValue() && rb.BoolValue())
+			case ast.OpBitOr:
+				return nativeBoolToBooleanObject(l.BoolValue() || rb.BoolValue())
+			case ast.OpBitXor:
+				return nativeBoolToBooleanObject(l.BoolValue() != rb.BoolValue())
+			}
 			rv := boolToInt64(rb.BoolValue())
 			return evalIntegerInfixExpression(operator, lv, rv)
 		}
@@ -954,16 +985,16 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				object.TrackSlice(result)
 				return &object.Tuple{Elements: result}
 			}
-			return errors.NewTypeError("tuple", right.Type().String())
+			return newUnsupportedOperandError(operator, left, right)
 		case ast.OpMul:
-			if r, ok := right.(*object.Integer); ok {
+			if r, ok := boolAsInt(right).(*object.Integer); ok {
 				elements, errObj := repeatElements(l.Elements, r.IntValue())
 				if errObj != nil {
 					return errObj
 				}
 				return &object.Tuple{Elements: elements}
 			}
-			return errors.NewTypeError("int", right.Type().String())
+			return newUnsupportedOperandError(operator, left, right)
 		case ast.OpEq, ast.OpNeq:
 			eq, rerr := objectsDeepEqual(ctx, left, right)
 			if rerr != nil {
@@ -991,7 +1022,7 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			case *object.Tuple:
 				rightElems = r.Elements
 			default:
-				return errors.NewTypeError("list", right.Type().String())
+				return newUnsupportedOperandError(operator, left, right)
 			}
 			if errObj := checkElementCount(len(l.Elements) + len(rightElems)); errObj != nil {
 				return errObj
@@ -1002,14 +1033,14 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			object.TrackSlice(result)
 			return &object.List{Elements: result}
 		case ast.OpMul:
-			if r, ok := right.(*object.Integer); ok {
+			if r, ok := boolAsInt(right).(*object.Integer); ok {
 				elements, errObj := repeatElements(l.Elements, r.IntValue())
 				if errObj != nil {
 					return errObj
 				}
 				return &object.List{Elements: elements}
 			}
-			return errors.NewTypeError("int", right.Type().String())
+			return newUnsupportedOperandError(operator, left, right)
 		}
 	case *object.Dict:
 		// Dict merge (PEP 584): d1 | d2 builds a new dict with d2's keys
@@ -1018,7 +1049,7 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 		if operator == ast.OpBitOr {
 			r, ok := right.(*object.Dict)
 			if !ok {
-				return errors.NewTypeError("dict", right.Type().String())
+				return newUnsupportedOperandError(operator, left, right)
 			}
 			if errObj := checkDictMerge(l, r); errObj != nil {
 				return errObj
@@ -1036,7 +1067,7 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			if r, ok := right.(*object.Set); ok {
 				return l.Intersection(r)
 			}
-			return errors.NewTypeError("set", right.Type().String())
+			return newUnsupportedOperandError(operator, left, right)
 		case ast.OpBitOr:
 			if r, ok := right.(*object.Set); ok {
 				if errObj := checkSetMerge(l, r); errObj != nil {
@@ -1044,17 +1075,17 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				}
 				return l.Union(r)
 			}
-			return errors.NewTypeError("set", right.Type().String())
+			return newUnsupportedOperandError(operator, left, right)
 		case ast.OpSub:
 			if r, ok := right.(*object.Set); ok {
 				return l.Difference(r)
 			}
-			return errors.NewTypeError("set", right.Type().String())
+			return newUnsupportedOperandError(operator, left, right)
 		case ast.OpBitXor:
 			if r, ok := right.(*object.Set); ok {
 				return l.SymmetricDifference(r)
 			}
-			return errors.NewTypeError("set", right.Type().String())
+			return newUnsupportedOperandError(operator, left, right)
 		case ast.OpLt, ast.OpLte, ast.OpGt, ast.OpGte, ast.OpEq, ast.OpNeq:
 			// Python set comparisons are subset/superset tests, by content.
 			r, ok := right.(*object.Set)
@@ -1065,7 +1096,7 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				if operator == ast.OpNeq {
 					return TRUE
 				}
-				return errors.NewTypeError("set", right.Type().String())
+				return newUnsupportedOperandError(operator, left, right)
 			}
 			subset := l.Len() <= r.Len()
 			if subset {
@@ -1176,16 +1207,45 @@ func orderResult(operator ast.Op, cmp int) object.Object {
 	case ast.OpGte:
 		return nativeBoolToBooleanObject(cmp >= 0)
 	}
-	return errors.NewError("%s: type mismatch", errors.ErrTypeError)
+	return errors.NewTypeErrorTagged("%s: type mismatch", errors.ErrTypeError)
 }
 
 // newUnsupportedOperandError builds Python's arithmetic TypeError
 // ("unsupported operand type(s) for +: 'int' and 'str'") as a typed Error so
 // it keeps line/library stamping and converts to a catchable exception.
 func newUnsupportedOperandError(operator ast.Op, left, right object.Object) object.Object {
-	err := errors.NewError("unsupported operand type(s) for %s: '%s' and '%s'", operator.String(), getTypeName(left), getTypeName(right))
-	err.ExceptionType = object.ExceptionTypeTypeError
-	return err
+	return unsupportedOperandTypes(operator, getTypeName(left), getTypeName(right))
+}
+
+// unsupportedOperandTypes builds the TypeError for a binary operator applied
+// to operand types it does not support, with Python's wording for each kind
+// of operator.
+func unsupportedOperandTypes(operator ast.Op, lname, rname string) *object.Error {
+	var msg string
+	switch operator {
+	case ast.OpLt, ast.OpGt, ast.OpLte, ast.OpGte:
+		msg = fmt.Sprintf("'%s' not supported between instances of '%s' and '%s'", operator.String(), lname, rname)
+	case ast.OpPow:
+		msg = fmt.Sprintf("unsupported operand type(s) for ** or pow(): '%s' and '%s'", lname, rname)
+	case ast.OpMul:
+		if isSequenceTypeName(lname) {
+			msg = fmt.Sprintf("can't multiply sequence by non-int of type '%s'", rname)
+		} else if isSequenceTypeName(rname) {
+			msg = fmt.Sprintf("can't multiply sequence by non-int of type '%s'", lname)
+		}
+	case ast.OpAdd:
+		if lname == "str" || lname == "list" || lname == "tuple" {
+			msg = fmt.Sprintf("can only concatenate %s (not %q) to %s", lname, rname, lname)
+		}
+	}
+	if msg == "" {
+		msg = fmt.Sprintf("unsupported operand type(s) for %s: '%s' and '%s'", operator.String(), lname, rname)
+	}
+	return &object.Error{Message: msg, ExceptionType: object.ExceptionTypeTypeError}
+}
+
+func isSequenceTypeName(name string) bool {
+	return name == "str" || name == "list" || name == "tuple" || name == "bytes"
 }
 
 // intOverflowError is the catchable OverflowError for int64-bound arithmetic
@@ -1355,7 +1415,7 @@ func evalIntegerInfixExpression(operator ast.Op, leftVal, rightVal int64) object
 	case ast.OpNeq:
 		return nativeBoolToBooleanObject(leftVal != rightVal)
 	default:
-		return errors.NewError("unknown operator: INTEGER %s INTEGER", operator)
+		return unsupportedOperandTypes(operator, "int", "int")
 	}
 }
 
@@ -1406,6 +1466,9 @@ func evalFloatInfixValues(operator ast.Op, leftVal, rightVal float64) object.Obj
 		}
 		return object.NewFloat(m)
 	case ast.OpPow:
+		if leftVal == 0 && rightVal < 0 {
+			return &object.Error{Message: "zero to a negative power", ExceptionType: object.ExceptionTypeZeroDivisionError}
+		}
 		return object.NewFloat(math.Pow(leftVal, rightVal))
 	case ast.OpLt:
 		return nativeBoolToBooleanObject(leftVal < rightVal)
@@ -1420,7 +1483,9 @@ func evalFloatInfixValues(operator ast.Op, leftVal, rightVal float64) object.Obj
 	case ast.OpNeq:
 		return nativeBoolToBooleanObject(leftVal != rightVal)
 	default:
-		return errors.NewError("unknown operator: FLOAT %s FLOAT", operator)
+		// Only the bitwise and shift operators reach here; the operand
+		// types are not known, and at least one of them is a float.
+		return unsupportedOperandTypes(operator, "float", "float")
 	}
 }
 
@@ -1461,7 +1526,7 @@ func evalStringInfixExpression(operator ast.Op, leftVal, rightVal string) object
 	case ast.OpGte:
 		return nativeBoolToBooleanObject(leftVal >= rightVal)
 	default:
-		return errors.NewError("%s: STRING %s STRING", errors.ErrUnknownOperator, operator)
+		return unsupportedOperandTypes(operator, "str", "str")
 	}
 }
 
@@ -1487,7 +1552,7 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 		if format[i] == '%' {
 			i++
 			if i >= len(format) {
-				return errors.NewError("incomplete format string ending with %%")
+				return errors.NewValueError("incomplete format string ending with %%")
 			}
 			// Literal %%
 			if format[i] == '%' {
@@ -1506,13 +1571,13 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 			if format[i] == '(' {
 				end := strings.IndexByte(format[i:], ')')
 				if end < 0 {
-					return errors.NewError("incomplete format key in format string")
+					return errors.NewValueError("incomplete format key in format string")
 				}
 				key = format[i+1 : i+end]
 				hasKey = true
 				i += end + 1
 				if i >= len(format) {
-					return errors.NewError("incomplete format string")
+					return errors.NewValueError("incomplete format string")
 				}
 				// The spec handed to the formatter excludes the key.
 				specStart = i
@@ -1546,7 +1611,7 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 			}
 
 			if i >= len(format) {
-				return errors.NewError("incomplete format string")
+				return errors.NewValueError("incomplete format string")
 			}
 
 			// Without a key, specStart sits on the '%' itself; with a named
@@ -1570,11 +1635,7 @@ func evalStringPercentFormat(ctx context.Context, format string, right object.Ob
 				}
 				pair, found := dict.GetByString(key)
 				if !found {
-					return &object.Exception{
-						Message:       object.ReprString(key),
-						ExceptionType: object.ExceptionTypeKeyError,
-						Raised:        true,
-					}
+					return object.NewKeyError(object.NewString(key), object.ReprString(key))
 				}
 				val = pair.Value
 				usedNamedKey = true
@@ -1675,20 +1736,20 @@ func formatPercentValue(ctx context.Context, spec string, conversion byte, val o
 		return fmt.Sprintf(goSpec+string(conversion), floatVal), nil
 	case 'x':
 		intVal, err := val.AsInt()
-		if err != nil {
-			return "", errors.NewTypeErrorTagged("%%%c format: an integer is required, not %s", conversion, val.Type().String())
+		if _, isFloat := val.(*object.Float); err != nil || isFloat {
+			return "", errors.NewTypeErrorTagged("%%%c format: an integer is required, not %s", conversion, getTypeName(val))
 		}
 		return fmt.Sprintf(spec[:len(spec)-1]+"x", intVal), nil
 	case 'X':
 		intVal, err := val.AsInt()
-		if err != nil {
-			return "", errors.NewTypeErrorTagged("%%%c format: an integer is required, not %s", conversion, val.Type().String())
+		if _, isFloat := val.(*object.Float); err != nil || isFloat {
+			return "", errors.NewTypeErrorTagged("%%%c format: an integer is required, not %s", conversion, getTypeName(val))
 		}
 		return fmt.Sprintf(spec[:len(spec)-1]+"X", intVal), nil
 	case 'o':
 		intVal, err := val.AsInt()
-		if err != nil {
-			return "", errors.NewTypeErrorTagged("%%%c format: an integer is required, not %s", conversion, val.Type().String())
+		if _, isFloat := val.(*object.Float); err != nil || isFloat {
+			return "", errors.NewTypeErrorTagged("%%%c format: an integer is required, not %s", conversion, getTypeName(val))
 		}
 		out := fmt.Sprintf(spec[:len(spec)-1]+"o", intVal)
 		// Python's alternate octal form prefixes 0o (Go's prefixes 0).
@@ -1703,10 +1764,10 @@ func formatPercentValue(ctx context.Context, spec string, conversion byte, val o
 		}
 		return out, nil
 	case 'c':
-		switch v := val.(type) {
+		switch v := boolAsInt(val).(type) {
 		case *object.Integer:
 			if v.IntValue() < 0 || v.IntValue() > 0x10ffff {
-				return "", errors.NewError("%%c: ordinal out of range")
+				return "", errors.NewOverflowError("%%c arg not in range(0x110000)")
 			}
 			return string(rune(v.IntValue())), nil
 		case *object.String:
@@ -1760,7 +1821,7 @@ func evalStringMultiplication(str string, multiplier int64) object.Object {
 // Mixing Bytes with String raises a type error (strict mode).
 func evalBytesInfixExpression(operator ast.Op, left *object.Bytes, right object.Object) object.Object {
 	// int * bytes → repetition (so 3 * b"ab" == b"ababab")
-	if r, ok := right.(*object.Integer); ok && operator == ast.OpMul {
+	if r, ok := boolAsInt(right).(*object.Integer); ok && operator == ast.OpMul {
 		return evalBytesMultiplication(left, r.IntValue())
 	}
 	if r, ok := right.(*object.Bytes); ok {
@@ -1786,9 +1847,16 @@ func evalBytesInfixExpression(operator ast.Op, left *object.Bytes, right object.
 		case ast.OpGte:
 			return nativeBoolToBooleanObject(bytes.Compare(left.BytesValue(), r.BytesValue()) >= 0)
 		}
-		return errors.NewError("%s: BYTES %s BYTES", errors.ErrUnknownOperator, operator)
+		return unsupportedOperandTypes(operator, "bytes", "bytes")
 	}
-	return errors.NewTypeError("BYTES", right.Type().String())
+	// Equality with another type is False, never an error.
+	switch operator {
+	case ast.OpEq:
+		return FALSE
+	case ast.OpNeq:
+		return TRUE
+	}
+	return newUnsupportedOperandError(operator, left, right)
 }
 
 // evalBytesMultiplication returns a Bytes value whose content is the input
@@ -1986,6 +2054,13 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment) object.Object
 	if node.Value() == "Ellipsis" {
 		return ellipsisValue
 	}
+	// A function's local slot that holds no value yet: read before
+	// assignment, Python's UnboundLocalError (a NameError).
+	if _, local := env.GetSlotIndex(node.Value()); local && env != env.Root() {
+		err := errors.NewError("cannot access local variable '%s' where it is not associated with a value", node.Value())
+		err.ExceptionType = "UnboundLocalError"
+		return err
+	}
 	return errors.NewIdentifierError(node.Value())
 }
 
@@ -2015,7 +2090,7 @@ func unpackArgsFromIterable(ctx context.Context, argsVal object.Object, env *obj
 		}
 	case *object.Iterator:
 		if val.Infinite() {
-			return nil, errors.NewError("%s", object.InfiniteIteratorMessage)
+			return nil, errors.NewInfiniteIteratorError()
 		}
 		// Drain with the same size check and cancellation as list(iterator),
 		// so f(*range(n)) with a huge n stops cleanly.
@@ -2134,6 +2209,14 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 			o.Elements[i] = value
 			return nil
 		}
+		if b, ok := index.(*object.Boolean); ok {
+			return assignIndexValue(ctx, isDotAccess, obj, object.NewInteger(boolToInt64(b.BoolValue())), value)
+		}
+		if isDotAccess {
+			return builtinAttributeAssignError(obj, index)
+		}
+		return raisedAssignmentError(object.ExceptionTypeTypeError,
+			fmt.Sprintf("list indices must be integers or slices, not %s", getTypeName(index)))
 	case *object.Dict:
 		key, rerr := evalHashKeyChecked(ctx, index)
 		if rerr != nil {
@@ -2150,7 +2233,7 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 			if setitem, ok := o.Class.Methods["__setitem__"]; ok {
 				result := applyFunctionWithContext(ctx, setitem, []object.Object{obj, index, value}, object.Kwargs{}, nil)
 				if object.IsError(result) {
-					return fmt.Errorf("%s", result.(*object.Error).Message)
+					return &objectError{err: result.(*object.Error)}
 				}
 				if isRaised(result) {
 					return &assignmentExceptionError{ex: result.(*object.Exception)}
@@ -2169,7 +2252,7 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 				setattr := o.Class.Methods["__setattr__"]
 				result := applyFunctionWithContext(ctx, setattr, []object.Object{o, key, value}, object.Kwargs{}, nil)
 				if object.IsError(result) {
-					return fmt.Errorf("%s", result.(*object.Error).Message)
+					return &objectError{err: result.(*object.Error)}
 				}
 				if isRaised(result) {
 					return &assignmentExceptionError{ex: result.(*object.Exception)}
@@ -2190,7 +2273,7 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 				}
 				result := applyFunctionWithContext(ctx, p.Setter, []object.Object{o, value}, object.Kwargs{}, nil)
 				if object.IsError(result) {
-					return fmt.Errorf("%s", result.(*object.Error).Message)
+					return &objectError{err: result.(*object.Error)}
 				}
 				if isRaised(result) {
 					return &assignmentExceptionError{ex: result.(*object.Exception)}
@@ -2201,18 +2284,18 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 			o.InvalidateBoundMethod(key.StringValue())
 			return nil
 		}
-		return fmt.Errorf("instance attribute must be string")
+		return raisedAssignmentError(object.ExceptionTypeTypeError, "attribute name must be string")
 	case *object.Class:
 		if key, ok := index.(*object.String); ok {
 			o.Methods[key.StringValue()] = value
 			o.InvalidateLookupCache()
 			return nil
 		}
-		return fmt.Errorf("class attribute must be string")
+		return raisedAssignmentError(object.ExceptionTypeTypeError, "attribute name must be string")
 	case *object.FloatArray:
 		idx, ok := index.(*object.Integer)
 		if !ok {
-			return fmt.Errorf("float_array index must be integer")
+			return raisedAssignmentError(object.ExceptionTypeTypeError, "float_array index must be integer")
 		}
 		i := idx.IntValue()
 		if o.Is2D() {
@@ -2221,34 +2304,34 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 				i += rows
 			}
 			if i < 0 || i >= rows {
-				return fmt.Errorf("index out of range")
+				return raisedAssignmentError(object.ExceptionTypeIndexError, "float_array assignment index out of range")
 			}
 			switch v := value.(type) {
 			case *object.List:
 				cols := o.Cols()
 				if len(v.Elements) != cols {
-					return fmt.Errorf("row length mismatch: expected %d, got %d", cols, len(v.Elements))
+					return raisedAssignmentError(object.ExceptionTypeValueError, fmt.Sprintf("row length mismatch: expected %d, got %d", cols, len(v.Elements)))
 				}
 				off := int(i) * cols
 				for j, el := range v.Elements {
 					f, err := el.AsFloat()
 					if err != nil {
-						return fmt.Errorf("row element must be a number")
+						return raisedAssignmentError(object.ExceptionTypeTypeError, "row element must be a number")
 					}
 					o.Data[off+j] = f
 				}
 			case *object.FloatArray:
 				cols := o.Cols()
 				if v.Is2D() {
-					return fmt.Errorf("float_array row assignment requires a 1D FloatArray")
+					return raisedAssignmentError(object.ExceptionTypeTypeError, "float_array row assignment requires a 1D FloatArray")
 				}
 				if len(v.Data) != cols {
-					return fmt.Errorf("row length mismatch: expected %d, got %d", cols, len(v.Data))
+					return raisedAssignmentError(object.ExceptionTypeValueError, fmt.Sprintf("row length mismatch: expected %d, got %d", cols, len(v.Data)))
 				}
 				off := int(i) * cols
 				copy(o.Data[off:off+cols], v.Data)
 			default:
-				return fmt.Errorf("float_array row assignment requires a list or FloatArray")
+				return raisedAssignmentError(object.ExceptionTypeTypeError, "float_array row assignment requires a list or FloatArray")
 			}
 			return nil
 		}
@@ -2257,19 +2340,48 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 			i += length
 		}
 		if i < 0 || i >= length {
-			return fmt.Errorf("index out of range")
+			return raisedAssignmentError(object.ExceptionTypeIndexError, "float_array assignment index out of range")
 		}
 		f, err := value.AsFloat()
 		if err != nil {
-			return fmt.Errorf("float_array element must be a number")
+			return raisedAssignmentError(object.ExceptionTypeTypeError, "float_array element must be a number")
 		}
 		o.Data[i] = f
 		return nil
+	}
+	// obj.name = v on a value without settable attributes (an int, a str,
+	// None, a list) is an AttributeError, as in Python.
+	if isDotAccess {
+		return builtinAttributeAssignError(obj, index)
 	}
 	// Immutable or non-subscriptable targets (tuple, str, bytes, ...) raise a
 	// catchable TypeError, as in Python.
 	return raisedAssignmentError(object.ExceptionTypeTypeError,
 		fmt.Sprintf("'%s' object does not support item assignment", getTypeName(obj)))
+}
+
+// builtinAttributeAssignError is the error for obj.name = v on a value whose
+// attributes cannot be set: a TypeError for a builtin type (int.x = 1), an
+// AttributeError for a value (an int, a str, None, a list), as in Python.
+func builtinAttributeAssignError(obj, index object.Object) error {
+	name := index.Inspect()
+	if k, ok := index.(*object.String); ok {
+		name = k.StringValue()
+	}
+	if b, ok := obj.(*object.Builtin); ok && isClassLike(b) {
+		typeName, _ := typeBuiltins[b]
+		if typeName == "" {
+			typeName, _ = exceptionClassName(b)
+		}
+		return raisedAssignmentError(object.ExceptionTypeTypeError,
+			fmt.Sprintf("cannot set '%s' attribute of immutable type '%s'", name, typeName))
+	}
+	if hasBuiltinMethod(obj.Type(), name) {
+		return raisedAssignmentError(object.ExceptionTypeAttributeError,
+			fmt.Sprintf("'%s' object attribute '%s' is read-only", getTypeName(obj), name))
+	}
+	return raisedAssignmentError(object.ExceptionTypeAttributeError,
+		fmt.Sprintf("'%s' object has no attribute '%s'", getTypeName(obj), name))
 }
 
 // tryEvalFastBuiltinCall handles fast-path builtin calls (len, type, str, etc.).
@@ -2650,7 +2762,7 @@ func applyFunction(ctx context.Context, fn object.Object, args []object.Object, 
 		if callable, ok := fn.Client.(object.ScriptCallable); ok {
 			return callable.ScriptCall(ctx, args, keywords.Map())
 		}
-		return errors.NewError("cannot call %s: not callable", fn.Inspect())
+		return errors.NewTypeErrorTagged("cannot call %s: not callable", fn.Inspect())
 	default:
 		return notCallableError(fn)
 	}
@@ -2853,7 +2965,9 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 			}
 		}
 
-		var extraKwargs map[string]object.Object
+		// extraKwargs is the **kwargs dict, filled in the order the keywords
+		// arrive.
+		var extraKwargs *object.Dict
 
 		// bindKeyword binds one keyword argument, returning an error object
 		// when it cannot be bound.
@@ -2871,9 +2985,9 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 				// If **kwargs is defined, collect extra keyword arguments
 				if fp.kwargs != nil {
 					if extraKwargs == nil {
-						extraKwargs = make(map[string]object.Object, numKeywords)
+						extraKwargs = object.NewDictSized(numKeywords)
 					}
-					extraKwargs[key] = value
+					extraKwargs.SetByString(key, value)
 					return nil
 				}
 				return errors.NewTypeErrorTagged("got an unexpected keyword argument '%s'", key)
@@ -2886,9 +3000,9 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 			if paramIdx < fp.positionalOnly {
 				if fp.kwargs != nil {
 					if extraKwargs == nil {
-						extraKwargs = make(map[string]object.Object, numKeywords)
+						extraKwargs = object.NewDictSized(numKeywords)
 					}
-					extraKwargs[key] = value
+					extraKwargs.SetByString(key, value)
 					return nil
 				}
 				return &object.Exception{
@@ -2919,20 +3033,9 @@ func extendEnvWithParams(ctx context.Context, fp funcParams, args []object.Objec
 
 		// Set **kwargs dict if defined
 		if fp.kwargs != nil {
-			// Call-site keyword order is not kept (keywords arrive as a map),
-			// so the dict is filled in sorted key order: deterministic rather
-			// than random per call.
-			kwargsDict := object.NewDictSized(len(extraKwargs))
-			var keyBuf [8]string
-			names := keyBuf[:0]
-			for key := range extraKwargs {
-				names = append(names, key)
-			}
-			if len(names) > 1 {
-				sort.Strings(names)
-			}
-			for _, key := range names {
-				kwargsDict.SetByString(key, extraKwargs[key])
+			kwargsDict := extraKwargs
+			if kwargsDict == nil {
+				kwargsDict = object.NewDictSized(0)
 			}
 			env.Set(fp.kwargs.Value(), kwargsDict)
 		}
@@ -3236,6 +3339,7 @@ func strInstanceChecked(ctx context.Context, inst *object.Instance, env *object.
 			if s, ok := result.(*object.String); ok {
 				return s.StringValue(), nil
 			}
+			return "", errors.NewTypeErrorTagged("%s returned non-string (type %s)", name, getTypeName(result))
 		}
 	}
 	// An exception instance with no __str__ of its own reads as its
@@ -3318,7 +3422,7 @@ func expandNestedSpecFields(ctx context.Context, spec string, env *object.Enviro
 		name := spec[i+1 : i+end]
 		i += end + 1
 		if name == "" {
-			return "", errors.NewError("empty nested format field")
+			return "", errors.NewValueError("empty nested format field")
 		}
 		val, ok := env.Get(name)
 		if !ok {
@@ -3328,11 +3432,11 @@ func expandNestedSpecFields(ctx context.Context, spec string, env *object.Enviro
 			// not-defined error; anything else (operators, leading digits)
 			// parses as an expression.
 			if isIdentifierLikeName(name) {
-				return "", errors.NewError("nested format field '%s' is not defined", name)
+				return "", errors.NewIdentifierError(name)
 			}
 			fn := nestedSpecEvalFn(name)
 			if fn == nil {
-				return "", errors.NewError("nested format field '%s' is not defined", name)
+				return "", errors.NewIdentifierError(name)
 			}
 			val = fn(ctx, env)
 			if propagates(val) {
@@ -3367,17 +3471,35 @@ func evalTruthy(ctx context.Context, obj object.Object, env *object.Environment)
 		if b, ok := result.(*object.Boolean); ok {
 			return b.BoolValue(), nil
 		}
+		return false, errors.NewTypeErrorTagged("__bool__ should return bool, returned %s", getTypeName(result))
 	}
 	if fn, ok := findDunderMethod(inst, "__len__"); ok {
 		result := applyFunctionWithContext(ctx, fn, prependSelf(inst, nil), object.Kwargs{}, inst.Class.Env)
 		if propagates(result) {
 			return false, result
 		}
-		if i, ok := result.(*object.Integer); ok {
-			return i.IntValue() != 0, nil
+		n, errObj := checkLenResult(result)
+		if errObj != nil {
+			return false, errObj
 		}
+		return n != 0, nil
 	}
 	return true, nil
+}
+
+// checkLenResult validates what __len__ returned: an int (or bool) that is
+// not negative, as Python requires.
+func checkLenResult(result object.Object) (int64, object.Object) {
+	switch v := result.(type) {
+	case *object.Integer:
+		if v.IntValue() < 0 {
+			return 0, errors.NewValueError("__len__() should return >= 0")
+		}
+		return v.IntValue(), nil
+	case *object.Boolean:
+		return boolToInt64(v.BoolValue()), nil
+	}
+	return 0, errors.NewTypeErrorTagged("'%s' object cannot be interpreted as an integer", getTypeName(result))
 }
 
 // findDunderMethod looks up a dunder method in the instance's class hierarchy
@@ -3385,8 +3507,13 @@ func findDunderMethod(inst *object.Instance, method string) (object.Object, bool
 	return inst.Class.LookupMember(method)
 }
 
+// evalInfixFn is evalInfixExpression, set in init to break the
+// initialization cycle with the builtins map (pow and divmod use it).
+var evalInfixFn func(ctx context.Context, operator ast.Op, left, right object.Object, env *object.Environment) object.Object
+
 func init() {
 	evalTruthyFn = evalTruthy
+	evalInfixFn = evalInfixExpression
 	iterableToSliceCheckedFn = iterableToSliceChecked
 	acceptInstanceIterableFn = acceptInstanceIterable
 	isTruthyInstanceFn = func(inst *object.Instance) bool {
@@ -3424,47 +3551,121 @@ func importErrorToObject(err error, prefix string) object.Object {
 		exc.Raised = true
 		return exc
 	}
-	return errors.NewError("%s: %s", prefix, err.Error())
+	if strings.HasPrefix(err.Error(), "unknown library: ") {
+		// Python's ModuleNotFoundError, an ImportError subclass.
+		return &object.Error{Message: prefix + ": " + err.Error(), ExceptionType: "ModuleNotFoundError"}
+	}
+	return errors.NewImportErrorTagged("%s: %s", prefix, err.Error())
 }
 
 func evalImportStatement(ctx context.Context, is *ast.ImportStatement, env *object.Environment) object.Object {
 	importCallback := env.GetImportCallbackWithContext()
 	if importCallback == nil {
-		return errors.NewError("%s at line %d", errors.ErrImportError, is.Token.Line)
+		return errors.NewImportErrorTagged("%s at line %d", errors.ErrImportError, is.Token.Line)
 	}
-	err := importCallback(ctx, is.Name.Value())
-	if err != nil {
-		return importErrorToObject(err, fmt.Sprintf("%s at line %d", errors.ErrImportError, is.Token.Line))
-	}
-
-	// Handle alias if present
-	if is.GetAlias() != nil {
-		moduleObj := getModuleByPath(env, is.Name.Value())
-		if moduleObj != nil {
-			env.Set(is.GetAlias().Value(), moduleObj)
-			if _, ok := moduleObj.(*object.Dict); ok {
-				env.MarkImportedBinding(is.GetAlias().Value())
-			}
-		}
+	if errObj := importOneModule(ctx, env, is.Name.Value(), is.GetAlias(), importCallback,
+		fmt.Sprintf("%s at line %d", errors.ErrImportError, is.Token.Line)); errObj != nil {
+		return errObj
 	}
 
 	for i, name := range is.GetAdditionalNames() {
-		if err := importCallback(ctx, name.Value()); err != nil {
-			return importErrorToObject(err, errors.ErrImportError)
+		var alias *ast.Identifier
+		if i < len(is.GetAdditionalAliases()) {
+			alias = is.GetAdditionalAliases()[i]
 		}
-
-		if i < len(is.GetAdditionalAliases()) && is.GetAdditionalAliases()[i] != nil {
-			moduleObj := getModuleByPath(env, name.Value())
-			if moduleObj != nil {
-				env.Set(is.GetAdditionalAliases()[i].Value(), moduleObj)
-				if _, ok := moduleObj.(*object.Dict); ok {
-					env.MarkImportedBinding(is.GetAdditionalAliases()[i].Value())
-				}
-			}
+		if errObj := importOneModule(ctx, env, name.Value(), alias, importCallback, errors.ErrImportError); errObj != nil {
+			return errObj
 		}
 	}
 
 	return NULL
+}
+
+// importOneModule loads one module of an import statement and binds it:
+// `import a.b` binds a, `import a.b as c` binds c, as Python does. A name
+// already bound to something else (from datetime import datetime binds the
+// class) is rebound to the module.
+func importOneModule(ctx context.Context, env *object.Environment, name string, alias *ast.Identifier, importCallback func(context.Context, string) error, errPrefix string) object.Object {
+	sb, err := runImportCallback(ctx, env, name, importCallback)
+	if err != nil {
+		return importErrorToObject(err, errPrefix)
+	}
+	if alias != nil {
+		moduleObj := getModuleByPath(sb.root, name)
+		if moduleObj == nil || !isModuleValue(moduleObj) {
+			moduleObj = getModuleByPath(env, name)
+		}
+		sb.restore()
+		if moduleObj != nil {
+			env.Set(alias.Value(), moduleObj)
+			if _, ok := moduleObj.(*object.Dict); ok {
+				env.MarkImportedBinding(alias.Value())
+			}
+		}
+		return nil
+	}
+	if env != sb.root {
+		// The callback binds the module in the root scope; a function that
+		// would see another value under the name binds it locally.
+		first, _, _ := strings.Cut(name, ".")
+		mod, ok := sb.root.Get(first)
+		sb.restore()
+		if ok && isModuleValue(mod) {
+			if cur, _ := env.Get(first); cur != mod {
+				env.Set(first, mod)
+				env.MarkImportedBinding(first)
+			}
+		}
+	}
+	return nil
+}
+
+// shadowedImport is a root binding of a module's top-level name to a value
+// that is not a module, set aside while the module loads.
+type shadowedImport struct {
+	root  *object.Environment
+	name  string
+	value object.Object
+}
+
+// restore puts the set-aside binding back.
+func (s *shadowedImport) restore() {
+	if s.value != nil {
+		s.root.Set(s.name, s.value)
+		s.value = nil
+	}
+}
+
+// runImportCallback runs the import callback for name. The callback treats
+// a module whose top-level name is already bound as imported, so a binding
+// of that name in the root scope to something other than a module is set
+// aside for the load, leaving the module bound there; the caller restores
+// it or keeps the module. If the module cannot be loaded the binding is put
+// back and the import succeeds as it did before, on the bound value.
+func runImportCallback(ctx context.Context, env *object.Environment, name string, importCallback func(context.Context, string) error) (*shadowedImport, error) {
+	sb := &shadowedImport{root: env.GetGlobal()}
+	first, _, _ := strings.Cut(name, ".")
+	if prev, ok := sb.root.Get(first); ok && !isModuleValue(prev) {
+		sb.name, sb.value = first, prev
+		sb.root.Delete(first)
+	}
+	if err := importCallback(ctx, name); err != nil {
+		if sb.value != nil {
+			sb.restore()
+			return sb, nil
+		}
+		return sb, err
+	}
+	return sb, nil
+}
+
+// isModuleValue reports whether v can be a loaded module's binding.
+func isModuleValue(v object.Object) bool {
+	switch v.(type) {
+	case *object.Dict, *object.Library, *object.Instance:
+		return true
+	}
+	return false
 }
 
 // getModuleByPath gets a module from the environment, handling dotted paths
@@ -3506,7 +3707,7 @@ func getModuleByPath(env *object.Environment, name string) object.Object {
 func evalFromImportStatement(ctx context.Context, fis *ast.FromImportStatement, env *object.Environment) object.Object {
 	importCallback := env.GetImportCallbackWithContext()
 	if importCallback == nil {
-		return errors.NewError(errors.ErrImportError)
+		return errors.NewImportErrorTagged(errors.ErrImportError)
 	}
 
 	// Resolve the base module name, handling relative imports
@@ -3515,7 +3716,7 @@ func evalFromImportStatement(ctx context.Context, fis *ast.FromImportStatement, 
 		// Relative import: resolve based on current module
 		currentModule := env.GetCurrentModule()
 		if currentModule == "" {
-			return errors.NewError("%s: relative import outside of module context", errors.ErrImportError)
+			return errors.NewImportErrorTagged("%s: relative import outside of module context", errors.ErrImportError)
 		}
 
 		// Split current module path into parts
@@ -3526,7 +3727,7 @@ func evalFromImportStatement(ctx context.Context, fis *ast.FromImportStatement, 
 		// e.g., currentModule = "a.b.c", relativeLevel = 2 -> go up 2 levels -> "a"
 		// e.g., currentModule = "a.b.c", relativeLevel = 3 -> error (can't go beyond root)
 		if fis.RelativeLevel > len(parts) {
-			return errors.NewError("%s: relative import level %d exceeds module depth for '%s'", errors.ErrImportError, fis.RelativeLevel, currentModule)
+			return errors.NewImportErrorTagged("%s: relative import level %d exceeds module depth for '%s'", errors.ErrImportError, fis.RelativeLevel, currentModule)
 		}
 
 		// Strip the appropriate number of levels from the current module
@@ -3542,13 +3743,13 @@ func evalFromImportStatement(ctx context.Context, fis *ast.FromImportStatement, 
 			baseModuleName = strings.Join(resolvedParts, ".")
 			// If empty after stripping, it means we're at the package root - this is an error
 			if baseModuleName == "" {
-				return errors.NewError("%s: relative import at package root has no target", errors.ErrImportError)
+				return errors.NewImportErrorTagged("%s: relative import at package root has no target", errors.ErrImportError)
 			}
 		}
 	} else {
 		// Absolute import
 		if fis.Module == nil {
-			return errors.NewError("%s: missing module name in from-import", errors.ErrImportError)
+			return errors.NewImportErrorTagged("%s: missing module name in from-import", errors.ErrImportError)
 		}
 		baseModuleName = fis.Module.Value()
 	}
@@ -3591,7 +3792,7 @@ func evalFromImportMultipleSubmodules(ctx context.Context, fis *ast.FromImportSt
 				}
 			}
 			if !ok {
-				return errors.NewError("%s: cannot import name '%s' from '%s'", errors.ErrImportError, name.Value(), baseModule)
+				return errors.NewImportErrorTagged("%s: cannot import name '%s' from '%s'", errors.ErrImportError, name.Value(), baseModule)
 			}
 		}
 
@@ -3617,19 +3818,27 @@ func evalFromImportStandard(ctx context.Context, fis *ast.FromImportStatement, m
 	_, wasPresent := env.Get(moduleName)
 
 	// Import the module
-	err := importCallback(ctx, moduleName)
+	sb, err := runImportCallback(ctx, env, moduleName, importCallback)
 	if err != nil {
 		return importErrorToObject(err, errors.ErrImportError)
 	}
 
-	// Get the imported module from the environment
+	// Get the imported module from the environment. Where the name is bound
+	// to something else (a class of the same name), the module is the one
+	// the callback bound in the root scope.
 	moduleObj, ok := env.Get(moduleName)
+	if !ok || !isModuleValue(moduleObj) {
+		if m := getModuleByPath(sb.root, moduleName); m != nil && isModuleValue(m) {
+			moduleObj, ok = m, true
+		}
+	}
+	sb.restore()
 	if !ok {
 		// Try getting just the first part for dotted imports
 		parts := strings.Split(moduleName, ".")
 		moduleObj, ok = env.Get(parts[0])
 		if !ok {
-			return errors.NewError("%s: module '%s' not found after import", errors.ErrImportError, moduleName)
+			return errors.NewImportErrorTagged("%s: module '%s' not found after import", errors.ErrImportError, moduleName)
 		}
 		// Navigate to the sub-module
 		for i := 1; i < len(parts); i++ {
@@ -3638,10 +3847,10 @@ func evalFromImportStandard(ctx context.Context, fis *ast.FromImportStatement, m
 				if pair, exists := m.GetByString(parts[i]); exists {
 					moduleObj = pair.Value
 				} else {
-					return errors.NewError("%s: cannot find '%s' in module '%s'", errors.ErrImportError, parts[i], strings.Join(parts[:i], "."))
+					return errors.NewImportErrorTagged("%s: cannot find '%s' in module '%s'", errors.ErrImportError, parts[i], strings.Join(parts[:i], "."))
 				}
 			default:
-				return errors.NewError("%s: '%s' is not a module", errors.ErrImportError, strings.Join(parts[:i], "."))
+				return errors.NewImportErrorTagged("%s: '%s' is not a module", errors.ErrImportError, strings.Join(parts[:i], "."))
 			}
 		}
 	}
@@ -3682,7 +3891,7 @@ func evalFromImportStandard(ctx context.Context, fis *ast.FromImportStatement, m
 		}
 
 		if !found {
-			return errors.NewError("%s: cannot import name '%s' from '%s'", errors.ErrImportError, name.Value(), moduleName)
+			return errors.NewImportErrorTagged("%s: cannot import name '%s' from '%s'", errors.ErrImportError, name.Value(), moduleName)
 		}
 
 		// Use alias if provided, otherwise use the original name
@@ -3791,8 +4000,11 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 	case *object.Bytes:
 		// An integer in 0-255 checks for a byte value; a Bytes needle does
 		// substring containment. Anything else is a type error.
-		switch needle := left.(type) {
+		switch needle := boolAsInt(left).(type) {
 		case *object.Integer:
+			if needle.IntValue() < 0 || needle.IntValue() > 255 {
+				return errors.NewValueError("byte must be in range(0, 256)")
+			}
 			target := byte(needle.IntValue())
 			for _, b := range container.BytesValue() {
 				if b == target {
@@ -3899,7 +4111,27 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 			}
 			return nativeBoolToBooleanObject(isTruthy(result))
 		}
-		// No __contains__: fall back to iterating via __iter__, as Python does.
+		// No __contains__: fall back to iterating via __iter__, as Python
+		// does. A generator is pulled only up to the first match.
+		if container.Class == generatorClass {
+			it := generatorIterator(ctx, container, env)
+			for {
+				e, more := it.Next()
+				if !more {
+					return FALSE
+				}
+				if propagates(e) {
+					return e
+				}
+				eq, rerr := searchEqual(ctx, e, left, env)
+				if rerr != nil {
+					return rerr
+				}
+				if eq {
+					return TRUE
+				}
+			}
+		}
 		elems, ok, rerr := iterableToSliceChecked(ctx, container, env)
 		if rerr != nil {
 			return rerr
@@ -4157,7 +4389,7 @@ func errorExceptionType(err *object.Error) string {
 	return object.ExceptionTypeException
 }
 
-func matchesExceptionType(exception object.Object, exceptTypeExpr ast.Expression, env *object.Environment) bool {
+func matchesExceptionType(ctx context.Context, exception object.Object, exceptTypeExpr ast.Expression, env *object.Environment) bool {
 	// Get the exception type string
 	var exceptionType string
 	var chain []string
@@ -4174,7 +4406,7 @@ func matchesExceptionType(exception object.Object, exceptTypeExpr ast.Expression
 		return false
 	}
 
-	return matchesExceptionTypeExpr(exceptionType, exceptTypeExpr, env, chain)
+	return matchesExceptionTypeExpr(ctx, exceptionType, exceptTypeExpr, env, chain)
 }
 
 // evalExceptTypeSideEffects evaluates the parts of an except-type expression
@@ -4213,7 +4445,7 @@ func evalExceptTypeSideEffects(ctx context.Context, expr ast.Expression, env *ob
 	}
 }
 
-func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expression, env *object.Environment, chain []string) bool {
+func matchesExceptionTypeExpr(ctx context.Context, exceptionType string, exceptTypeExpr ast.Expression, env *object.Environment, chain []string) bool {
 	switch expr := exceptTypeExpr.(type) {
 	case *ast.Identifier:
 		// A name bound to an exception type or a tuple of them (E = KeyError,
@@ -4228,20 +4460,30 @@ func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expressio
 		}
 		return matchesNamedExceptionTypeChain(exceptionType, expr.Value(), chain)
 	case *ast.IndexExpression:
-		// Handle dotted names like requests.HTTPError — match on the last component
+		// A dotted name (re.error, json.JSONDecodeError) or a subscript
+		// (types[1]) matches the exception class it evaluates to. A dotted
+		// name that is not one (requests.HTTPError is a name) matches on its
+		// last component.
+		if env != nil {
+			if val := evalExceptTypeIndex(ctx, expr, env); val != nil && !propagates(val) {
+				if matched, isType := matchesExceptionValue(exceptionType, val, chain); isType {
+					return matched
+				}
+			}
+		}
 		dotted := buildDottedName(expr)
 		parts := strings.Split(dotted, ".")
 		return matchesNamedExceptionTypeChain(exceptionType, parts[len(parts)-1], chain)
 	case *ast.TupleLiteral:
 		for _, elem := range expr.Elements {
-			if matchesExceptionTypeExpr(exceptionType, elem, env, chain) {
+			if matchesExceptionTypeExpr(ctx, exceptionType, elem, env, chain) {
 				return true
 			}
 		}
 		return false
 	case *ast.ListLiteral:
 		for _, elem := range expr.Elements {
-			if matchesExceptionTypeExpr(exceptionType, elem, env, chain) {
+			if matchesExceptionTypeExpr(ctx, exceptionType, elem, env, chain) {
 				return true
 			}
 		}
@@ -4251,14 +4493,37 @@ func matchesExceptionTypeExpr(exceptionType string, exceptTypeExpr ast.Expressio
 	}
 }
 
+// evalExceptTypeIndex evaluates an except type written as a dotted name or
+// subscript, compiling its parts once (they are cached on the node).
+func evalExceptTypeIndex(ctx context.Context, expr *ast.IndexExpression, env *object.Environment) object.Object {
+	slots := expr.TargetSlots()
+	left := cachedExpr(&slots.Left, expr.Left)(ctx, env)
+	if propagates(left) {
+		return left
+	}
+	index := cachedExpr(&slots.Index, expr.Index)(ctx, env)
+	if propagates(index) {
+		return index
+	}
+	return evalIndexExpression(ctx, left, index, expr.IsDotAccess)
+}
+
 // matchesExceptionValue matches an exception against a value used as an
 // except type: an exception type, or a tuple of them. isType is false when
 // val is neither.
 func matchesExceptionValue(exceptionType string, val object.Object, chain []string) (matched, isType bool) {
 	switch v := val.(type) {
 	case *object.Builtin:
-		name, ok := exceptionBuiltins[v]
+		name, ok := exceptionClassName(v)
 		return ok && matchesNamedExceptionTypeChain(exceptionType, name, chain), ok
+	case *object.Class:
+		// A user exception class: its raised exceptions carry its name in
+		// their type chain.
+		if exceptionNameOf(v) == "" {
+			return false, false
+		}
+		return matchesNamedExceptionTypeChain(exceptionType, v.Name, chain), true
+
 	case *object.Tuple:
 		for _, elem := range v.Elements {
 			m, ok := matchesExceptionValue(exceptionType, elem, chain)
@@ -4292,8 +4557,13 @@ var exceptionParents = map[string]string{
 	"RecursionError":                      "RuntimeError",
 	"NotImplementedError":                 "RuntimeError",
 	"UnicodeError":                        "ValueError",
+	"UnicodeEncodeError":                  "UnicodeError",
+	"UnicodeDecodeError":                  "UnicodeError",
+	"IndentationError":                    "SyntaxError",
 	"FrozenInstanceError":                 "AttributeError",
+	"UnboundLocalError":                   "NameError",
 	"JSONDecodeError":                     "ValueError",
+	"StatisticsError":                     "ValueError",
 }
 
 // matchesNamedExceptionTypeChain reports whether an exception of type
@@ -4370,11 +4640,25 @@ func raisedAssignmentError(exceptionType, message string) error {
 // evalHashKeyChecked) into the Go error that assignToExpression and
 // deleteFromExpression return, preserving exception type information.
 func hashKeyAssignError(rerr object.Object) error {
-	if exc, ok := rerr.(*object.Exception); ok {
-		return &assignmentExceptionError{ex: exc}
-	}
-	if err, ok := rerr.(*object.Error); ok {
-		return fmt.Errorf("%s", err.Message)
+	return objectToAssignError(rerr)
+}
+
+// objectError carries an *object.Error through the Go error returned by
+// assignToExpression and deleteFromExpression unchanged, so its exception
+// type, position and run-stop status reach the script as they were.
+type objectError struct{ err *object.Error }
+
+func (e *objectError) Error() string { return e.err.Message }
+
+// objectToAssignError converts a propagating object (a raised exception or
+// an internal error) into the Go error assignToExpression and
+// deleteFromExpression return, keeping its exception type.
+func objectToAssignError(obj object.Object) error {
+	switch o := obj.(type) {
+	case *object.Exception:
+		return &assignmentExceptionError{ex: o}
+	case *object.Error:
+		return &objectError{err: o}
 	}
 	return fmt.Errorf("assignment error")
 }
@@ -4387,11 +4671,13 @@ func evalSliceObjectWithContext(ctx context.Context, node *ast.SliceExpression, 
 		if propagates(startObj) {
 			return nil, startObj
 		}
-		start, err := startObj.AsInt()
+		start, has, err := sliceBound(startObj)
 		if err != nil {
 			return nil, err
 		}
-		sliceObj.Start = object.NewInteger(start)
+		if has {
+			sliceObj.Start = object.NewInteger(start)
+		}
 	}
 
 	if node.End != nil {
@@ -4399,11 +4685,13 @@ func evalSliceObjectWithContext(ctx context.Context, node *ast.SliceExpression, 
 		if propagates(endObj) {
 			return nil, endObj
 		}
-		end, err := endObj.AsInt()
+		end, has, err := sliceBound(endObj)
 		if err != nil {
 			return nil, err
 		}
-		sliceObj.End = object.NewInteger(end)
+		if has {
+			sliceObj.End = object.NewInteger(end)
+		}
 	}
 
 	if node.GetStep() != nil {
@@ -4411,14 +4699,16 @@ func evalSliceObjectWithContext(ctx context.Context, node *ast.SliceExpression, 
 		if propagates(stepObj) {
 			return nil, stepObj
 		}
-		step, err := stepObj.AsInt()
+		step, has, err := sliceBound(stepObj)
 		if err != nil {
 			return nil, err
 		}
-		if step == 0 {
-			return nil, errors.NewError("slice step cannot be zero")
+		if has {
+			if step == 0 {
+				return nil, sliceStepZeroError()
+			}
+			sliceObj.Step = object.NewInteger(step)
 		}
-		sliceObj.Step = object.NewInteger(step)
 	}
 
 	return sliceObj, nil
@@ -4519,14 +4809,14 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 	switch target := expr.(type) {
 	case *ast.Identifier:
 		if _, ok := env.Get(target.Value()); !ok {
-			return fmt.Errorf("%s", errors.NewIdentifierError(target.Value()).Message)
+			return &objectError{err: errors.NewIdentifierError(target.Value())}
 		}
 		env.Delete(target.Value())
 		return nil
 	case *ast.IndexExpression:
 		obj := cachedExpr(&target.TargetSlots().Left, target.Left)(ctx, env)
 		if object.IsError(obj) {
-			return fmt.Errorf("deletion error")
+			return &objectError{err: obj.(*object.Error)}
 		}
 		if isRaised(obj) {
 			return &assignmentExceptionError{ex: obj.(*object.Exception)}
@@ -4534,7 +4824,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 
 		index := cachedExpr(&target.TargetSlots().Index, target.Index)(ctx, env)
 		if object.IsError(index) {
-			return fmt.Errorf("deletion error")
+			return &objectError{err: index.(*object.Error)}
 		}
 		if isRaised(index) {
 			return &assignmentExceptionError{ex: index.(*object.Exception)}
@@ -4542,17 +4832,22 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 
 		switch o := obj.(type) {
 		case *object.List:
-			idx, ok := index.(*object.Integer)
-			if !ok {
-				return fmt.Errorf("list index must be integer")
+			var i int64
+			switch idx := index.(type) {
+			case *object.Integer:
+				i = idx.IntValue()
+			case *object.Boolean:
+				i = boolToInt64(idx.BoolValue())
+			default:
+				return raisedAssignmentError(object.ExceptionTypeTypeError,
+					fmt.Sprintf("list indices must be integers or slices, not %s", getTypeName(index)))
 			}
-			i := idx.IntValue()
 			length := int64(len(o.Elements))
 			if i < 0 {
 				i += length
 			}
 			if i < 0 || i >= length {
-				return raisedAssignmentError(object.ExceptionTypeIndexError, "list index out of range")
+				return raisedAssignmentError(object.ExceptionTypeIndexError, "list assignment index out of range")
 			}
 			o.Elements = append(o.Elements[:i], o.Elements[i+1:]...)
 			return nil
@@ -4562,7 +4857,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 				return hashKeyAssignError(rerr)
 			}
 			if _, ok := o.Lookup(key); !ok {
-				return raisedAssignmentError(object.ExceptionTypeKeyError, index.Inspect())
+				return &assignmentExceptionError{ex: object.NewKeyError(index, object.ValueRepr(index))}
 			}
 			o.Delete(key)
 			return nil
@@ -4571,18 +4866,18 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 				if delitem, ok := o.Class.Methods["__delitem__"]; ok {
 					result := applyFunctionWithContext(ctx, delitem, []object.Object{obj, index}, object.Kwargs{}, nil)
 					if object.IsError(result) {
-						return fmt.Errorf("%s", result.(*object.Error).Message)
+						return &objectError{err: result.(*object.Error)}
 					}
 					if isRaised(result) {
 						return &assignmentExceptionError{ex: result.(*object.Exception)}
 					}
 					return nil
 				}
-				return fmt.Errorf("cannot delete index")
+				return raisedAssignmentError(object.ExceptionTypeTypeError, fmt.Sprintf("'%s' object does not support item deletion", getTypeName(obj)))
 			}
 			key, ok := index.(*object.String)
 			if !ok {
-				return fmt.Errorf("instance attribute must be string")
+				return raisedAssignmentError(object.ExceptionTypeTypeError, "attribute name must be string")
 			}
 			if _, exists := o.GetField(key.StringValue()); exists {
 				o.DeleteField(key.StringValue())
@@ -4596,7 +4891,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 		case *object.Class:
 			key, ok := index.(*object.String)
 			if !ok {
-				return fmt.Errorf("class attribute must be string")
+				return raisedAssignmentError(object.ExceptionTypeTypeError, "attribute name must be string")
 			}
 			if _, exists := o.Methods[key.StringValue()]; !exists {
 				return &assignmentExceptionError{ex: attributeError(o, key.StringValue()).(*object.Exception)}
@@ -4605,12 +4900,12 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			o.InvalidateLookupCache()
 			return nil
 		default:
-			return fmt.Errorf("cannot delete index")
+			return raisedAssignmentError(object.ExceptionTypeTypeError, fmt.Sprintf("'%s' object doesn't support item deletion", getTypeName(obj)))
 		}
 	case *ast.SliceExpression:
 		obj := cachedExpr(&target.TargetSlots().Left, target.Left)(ctx, env)
 		if object.IsError(obj) {
-			return fmt.Errorf("deletion error")
+			return &objectError{err: obj.(*object.Error)}
 		}
 		if isRaised(obj) {
 			return &assignmentExceptionError{ex: obj.(*object.Exception)}
@@ -4621,10 +4916,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			if exc, ok := errObj.(*object.Exception); ok {
 				return &assignmentExceptionError{ex: exc}
 			}
-			if evalErr, ok := errObj.(*object.Error); ok {
-				return fmt.Errorf("%s", evalErr.Message)
-			}
-			return fmt.Errorf("deletion error")
+			return objectToAssignError(errObj)
 		}
 
 		switch o := obj.(type) {
@@ -4648,19 +4940,19 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 			if delitem, ok := o.Class.Methods["__delitem__"]; ok {
 				result := applyFunctionWithContext(ctx, delitem, []object.Object{obj, sliceObj}, object.Kwargs{}, nil)
 				if object.IsError(result) {
-					return fmt.Errorf("%s", result.(*object.Error).Message)
+					return &objectError{err: result.(*object.Error)}
 				}
 				if isRaised(result) {
 					return &assignmentExceptionError{ex: result.(*object.Exception)}
 				}
 				return nil
 			}
-			return fmt.Errorf("cannot delete slice")
+			return raisedAssignmentError(object.ExceptionTypeTypeError, fmt.Sprintf("'%s' object does not support item deletion", getTypeName(obj)))
 		default:
-			return fmt.Errorf("cannot delete slice")
+			return raisedAssignmentError(object.ExceptionTypeTypeError, fmt.Sprintf("'%s' object does not support item deletion", getTypeName(obj)))
 		}
 	default:
-		return fmt.Errorf("cannot delete expression")
+		return raisedAssignmentError("SyntaxError", "cannot delete expression")
 	}
 }
 
@@ -4670,7 +4962,7 @@ func deleteFromExpression(ctx context.Context, expr ast.Expression, env *object.
 func assignToSliceExpression(ctx context.Context, target *ast.SliceExpression, value object.Object, env *object.Environment) error {
 	obj := fixErrorPos(ctx, cachedExpr(&target.TargetSlots().Left, target.Left)(ctx, env), target.Left.Line())
 	if object.IsError(obj) {
-		return fmt.Errorf("assignment error")
+		return &objectError{err: obj.(*object.Error)}
 	}
 	if isRaised(obj) {
 		return &assignmentExceptionError{ex: obj.(*object.Exception)}
@@ -4681,10 +4973,7 @@ func assignToSliceExpression(ctx context.Context, target *ast.SliceExpression, v
 		if exc, ok := errObj.(*object.Exception); ok {
 			return &assignmentExceptionError{ex: exc}
 		}
-		if evalErr, ok := errObj.(*object.Error); ok {
-			return fmt.Errorf("%s", evalErr.Message)
-		}
-		return fmt.Errorf("assignment error")
+		return objectToAssignError(errObj)
 	}
 
 	var values []object.Object
@@ -4737,16 +5026,16 @@ func assignToSliceExpression(ctx context.Context, target *ast.SliceExpression, v
 		if setitem, ok := o.Class.Methods["__setitem__"]; ok {
 			result := applyFunctionWithContext(ctx, setitem, []object.Object{obj, sliceObj, value}, object.Kwargs{}, nil)
 			if object.IsError(result) {
-				return fmt.Errorf("%s", result.(*object.Error).Message)
+				return &objectError{err: result.(*object.Error)}
 			}
 			if isRaised(result) {
 				return &assignmentExceptionError{ex: result.(*object.Exception)}
 			}
 			return nil
 		}
-		return fmt.Errorf("cannot assign to slice")
+		return raisedAssignmentError(object.ExceptionTypeTypeError, fmt.Sprintf("'%s' object does not support item assignment", getTypeName(obj)))
 	default:
-		return fmt.Errorf("cannot assign to slice")
+		return raisedAssignmentError(object.ExceptionTypeTypeError, fmt.Sprintf("'%s' object does not support item assignment", getTypeName(obj)))
 	}
 }
 
@@ -4813,14 +5102,14 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 			return &assignmentExceptionError{ex: obj.(*object.Exception)}
 		}
 		if object.IsError(obj) {
-			return fmt.Errorf("assignment error")
+			return &objectError{err: obj.(*object.Error)}
 		}
 		index := cachedExpr(&left.TargetSlots().Index, left.Index)(ctx, env)
 		if isRaised(index) {
 			return &assignmentExceptionError{ex: index.(*object.Exception)}
 		}
 		if object.IsError(index) {
-			return fmt.Errorf("assignment error")
+			return &objectError{err: index.(*object.Error)}
 		}
 		return assignIndexValue(ctx, left.IsDotAccess, obj, index, value)
 	case *ast.SliceExpression:
@@ -4830,7 +5119,7 @@ func assignToExpression(ctx context.Context, expr ast.Expression, value object.O
 	case *ast.ListLiteral:
 		return assignUnpackTargets(ctx, left.Elements, value, env)
 	default:
-		return fmt.Errorf("cannot assign to expression")
+		return raisedAssignmentError("SyntaxError", "cannot assign to expression")
 	}
 }
 
@@ -4847,10 +5136,7 @@ func assignUnpackTargets(ctx context.Context, targets []ast.Expression, value ob
 	default:
 		elems, ok, rerr := iterableToSliceChecked(ctx, value, env)
 		if rerr != nil {
-			if exc, ok := rerr.(*object.Exception); ok {
-				return &assignmentExceptionError{ex: exc}
-			}
-			return fmt.Errorf("assignment error")
+			return objectToAssignError(rerr)
 		}
 		if !ok {
 			return raisedAssignmentError(object.ExceptionTypeTypeError,
@@ -4918,7 +5204,7 @@ func assignToNestedFloatArrayIndex(ctx context.Context, expr *ast.IndexExpressio
 
 	baseObj := fixErrorPos(ctx, cachedExpr(&rowExpr.TargetSlots().Left, rowExpr.Left)(ctx, env), rowExpr.Left.Line())
 	if object.IsError(baseObj) {
-		return fmt.Errorf("assignment error")
+		return &objectError{err: baseObj.(*object.Error)}
 	}
 	fa, ok := baseObj.(*object.FloatArray)
 	if !ok || !fa.Is2D() {
@@ -4927,20 +5213,20 @@ func assignToNestedFloatArrayIndex(ctx context.Context, expr *ast.IndexExpressio
 
 	rowIndexObj := fixErrorPos(ctx, cachedExpr(&rowExpr.TargetSlots().Index, rowExpr.Index)(ctx, env), rowExpr.Index.Line())
 	if object.IsError(rowIndexObj) {
-		return fmt.Errorf("assignment error")
+		return &objectError{err: rowIndexObj.(*object.Error)}
 	}
 	rowIndex, ok := rowIndexObj.(*object.Integer)
 	if !ok {
-		return fmt.Errorf("float_array index must be integer")
+		return raisedAssignmentError(object.ExceptionTypeTypeError, "float_array index must be integer")
 	}
 
 	colIndexObj := fixErrorPos(ctx, cachedExpr(&expr.TargetSlots().Index, expr.Index)(ctx, env), expr.Index.Line())
 	if object.IsError(colIndexObj) {
-		return fmt.Errorf("assignment error")
+		return &objectError{err: colIndexObj.(*object.Error)}
 	}
 	colIndex, ok := colIndexObj.(*object.Integer)
 	if !ok {
-		return fmt.Errorf("float_array index must be integer")
+		return raisedAssignmentError(object.ExceptionTypeTypeError, "float_array index must be integer")
 	}
 
 	return assignNestedFloatArrayValue(fa, rowIndex, colIndex, value)
@@ -4955,7 +5241,7 @@ func assignNestedFloatArrayValue(fa *object.FloatArray, rowIndex, colIndex *obje
 		row += rows
 	}
 	if row < 0 || row >= rows {
-		return fmt.Errorf("index out of range")
+		return raisedAssignmentError(object.ExceptionTypeIndexError, "float_array assignment index out of range")
 	}
 
 	col := colIndex.IntValue()
@@ -4964,12 +5250,12 @@ func assignNestedFloatArrayValue(fa *object.FloatArray, rowIndex, colIndex *obje
 		col += cols
 	}
 	if col < 0 || col >= cols {
-		return fmt.Errorf("index out of range")
+		return raisedAssignmentError(object.ExceptionTypeIndexError, "float_array assignment index out of range")
 	}
 
 	f, err := value.AsFloat()
 	if err != nil {
-		return fmt.Errorf("float_array element must be a number")
+		return raisedAssignmentError(object.ExceptionTypeTypeError, "float_array element must be a number")
 	}
 	fa.Data[int(row)*fa.Cols()+int(col)] = f
 	return nil
@@ -5080,7 +5366,7 @@ func setForVariable(varExpr ast.Expression, value object.Object, env *object.Env
 	case *ast.ListLiteral:
 		return setForTargets(target.Elements, value, env)
 	default:
-		return fmt.Errorf("for loop variables must be identifiers")
+		return raisedAssignmentError("SyntaxError", "for loop variables must be identifiers")
 	}
 }
 
@@ -5179,7 +5465,7 @@ var iterableToSliceCheckedFn func(ctx context.Context, obj object.Object, env *o
 func iterableToSliceChecked(ctx context.Context, obj object.Object, env *object.Environment) ([]object.Object, bool, object.Object) {
 	if iter, isIter := obj.(*object.Iterator); isIter {
 		if iter.Infinite() {
-			return nil, false, errors.NewError("%s", object.InfiniteIteratorMessage)
+			return nil, false, errors.NewInfiniteIteratorError()
 		}
 		// A raw iterator may yield raised exceptions or internal errors
 		// (e.g. wrapped user iterators); check every element while pulling.
@@ -5220,6 +5506,16 @@ func iterableToSliceChecked(ctx context.Context, obj object.Object, env *object.
 		}
 		elems, ok := object.IterableToSlice(obj)
 		return elems, ok, nil
+	}
+	if inst.Class == generatorClass {
+		// A generator expression not yet started is collected in one loop.
+		if st, ok := inst.NativeData.(*genState); ok && st.plan.drain != nil && !st.done && st.cursor == st.plan.start {
+			elems, errObj := st.plan.drain(ctx, st)
+			if errObj != nil {
+				return nil, false, errObj
+			}
+			return elems, true, nil
+		}
 	}
 	fn, has := findDunderMethod(inst, "__iter__")
 	if !has {
@@ -6157,7 +6453,7 @@ func matchSequencePattern(ctx context.Context, subject object.Object, patterns [
 	for i, pat := range patterns {
 		if _, ok := pat.(*ast.StarredElement); ok {
 			if star >= 0 {
-				return errors.NewError("multiple starred names in sequence pattern"), NULL
+				return errors.NewSyntaxError("multiple starred names in sequence pattern"), NULL
 			}
 			star = i
 		}
@@ -6204,7 +6500,7 @@ var builtinSelfMatchTypes = map[string]bool{
 // match.
 func matchClassPattern(ctx context.Context, subject object.Object, p *ast.CallExpression, capturedVars map[string]object.Object, env *object.Environment) (object.Object, object.Object) {
 	if p.GetArgsUnpack() != nil || p.GetKwargsUnpack() != nil {
-		return errors.NewError("unpacking is not allowed in class patterns"), NULL
+		return errors.NewSyntaxError("unpacking is not allowed in class patterns"), NULL
 	}
 	ident, _ := p.Function.(*ast.Identifier)
 	var cls object.Object

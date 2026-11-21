@@ -116,6 +116,9 @@ func checkKwargs(fname string, kwargs object.Kwargs, allowed ...string) object.O
 var ItertoolsLibrary = object.NewLibrary(ItertoolsLibraryName, map[string]*object.Builtin{
 	"chain": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("chain", kwargs); err != nil {
+				return err
+			}
 			// chain(*iterables) - Chain multiple iterables together. With any
 			// iterator or instance input the result is a LAZY iterator (as in
 			// Python), so chaining an endless generator is safe; plain
@@ -201,10 +204,10 @@ Example:
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// repeat(elem[, times]) - Repeat element times times, or
 			// endlessly (a lazy iterator, as in Python) when times is omitted.
-			if err := errors.RangeArgs(args, 1, 2); err != nil {
+			if err := checkKwargs("repeat", kwargs, "times"); err != nil {
 				return err
 			}
-			if err := checkKwargs("repeat", kwargs, "times"); err != nil {
+			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
 			}
 			elem := args[0]
@@ -242,6 +245,9 @@ Example:
 	},
 	"cycle": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("cycle", kwargs); err != nil {
+				return err
+			}
 			// cycle(iterable) matches Python: a lazily infinite cycling
 			// iterator (list() of it never terminates, exactly like Python).
 			// The legacy finite form cycle(iterable, n) still works and
@@ -412,6 +418,9 @@ next(), zip(), enumerate() or itertools.islice.`,
 	},
 	"islice": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("islice", kwargs); err != nil {
+				return err
+			}
 			// islice(iterable, stop) or islice(iterable, start, stop[, step])
 			if err := errors.RangeArgs(args, 2, 4); err != nil {
 				return err
@@ -496,6 +505,9 @@ Example:
 	},
 	"takewhile": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("takewhile", kwargs); err != nil {
+				return err
+			}
 			// takewhile(predicate, iterable) - Take elements while predicate is true
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
@@ -521,8 +533,8 @@ Example:
 			}
 			result := []object.Object{}
 			for {
-				if err := ctx.Err(); err != nil {
-					return errors.NewError("%s", err.Error())
+				if errObj := libutil.CancelledError(ctx); errObj != nil {
+					return errObj
 				}
 				elem, more := next()
 				if !more {
@@ -552,6 +564,9 @@ Example:
 	},
 	"dropwhile": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("dropwhile", kwargs); err != nil {
+				return err
+			}
 			// dropwhile(predicate, iterable) - Drop elements while predicate is true
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
@@ -582,8 +597,8 @@ Example:
 			runTail := func(emit func(object.Object) object.Object) object.Object {
 				dropping := true
 				for {
-					if err := ctx.Err(); err != nil {
-						return errors.NewError("%s", err.Error())
+					if errObj := libutil.CancelledError(ctx); errObj != nil {
+						return errObj
 					}
 					elem, more := next()
 					if !more {
@@ -617,8 +632,8 @@ Example:
 				}
 				return mkIter(func() (object.Object, bool) {
 					for {
-						if err := ctx.Err(); err != nil {
-							return errors.NewError("%s", err.Error()), true
+						if errObj := libutil.CancelledError(ctx); errObj != nil {
+							return errObj, true
 						}
 						elem, more := next()
 						if !more {
@@ -660,6 +675,11 @@ Example:
 	},
 	"zip_longest": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("zip_longest", kwargs, "fillvalue"); err != nil {
+					return err
+				}
+			}
 			// zip_longest(*iterables, fillvalue=None)
 			if len(args) < 1 {
 				return &object.List{Elements: []object.Object{}}
@@ -715,8 +735,8 @@ Example:
 			if !lazy {
 				result := []object.Object{}
 				for {
-					if err := ctx.Err(); err != nil {
-						return errors.NewError("%s", err.Error())
+					if errObj := libutil.CancelledError(ctx); errObj != nil {
+						return errObj
 					}
 					tuple := make([]object.Object, len(srcs))
 					any := false
@@ -779,6 +799,11 @@ Example:
 	},
 	"product": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("product", kwargs, "repeat"); err != nil {
+					return err
+				}
+			}
 			// product(*iterables) - Cartesian product
 			if len(args) < 1 {
 				return &object.List{Elements: []object.Object{&object.Tuple{Elements: []object.Object{}}}}
@@ -792,6 +817,9 @@ Example:
 					repeatN = n
 				} else {
 					return errors.ParameterError("repeat", err)
+				}
+				if repeatN < 0 {
+					return errors.NewValueError("repeat argument cannot be negative")
 				}
 			}
 			// Materialize each argument once: iterator arguments are
@@ -974,7 +1002,10 @@ Example:
 			}
 			r := int(rArg.IntValue())
 
-			if r < 0 || r > len(elements) {
+			if r < 0 {
+				return errors.NewValueError("r must be non-negative")
+			}
+			if r > len(elements) {
 				return &object.List{Elements: []object.Object{}}
 			}
 
@@ -1029,7 +1060,7 @@ Example:
 			r := int(rArg.IntValue())
 
 			if r < 0 {
-				return &object.List{Elements: []object.Object{}}
+				return errors.NewValueError("r must be non-negative")
 			}
 			if len(elements) == 0 && r > 0 {
 				return &object.List{Elements: []object.Object{}}
@@ -1054,6 +1085,9 @@ Example:
 	"groupby": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// groupby(iterable[, key]) - Group consecutive elements
+			if err := checkKwargs("groupby", kwargs, "key"); err != nil {
+				return err
+			}
 			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
 			}
@@ -1071,9 +1105,6 @@ Example:
 				elements = elems
 			}
 
-			if err := checkKwargs("groupby", kwargs, "key"); err != nil {
-				return err
-			}
 			keyFunc, kerr := optionalArg("groupby", args, kwargs, 1, "key")
 			if kerr != nil {
 				return kerr
@@ -1140,6 +1171,9 @@ Example:
 	"accumulate": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// accumulate(iterable[, func]) - Running totals
+			if err := checkKwargs("accumulate", kwargs, "func", "initial"); err != nil {
+				return err
+			}
 			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
 			}
@@ -1161,8 +1195,8 @@ Example:
 				if it, isIter := srcArg.(*object.Iterator); isIter {
 					elems := []object.Object{}
 					for {
-						if err := ctx.Err(); err != nil {
-							return errors.NewError("%s", err.Error())
+						if errObj := libutil.CancelledError(ctx); errObj != nil {
+							return errObj
 						}
 						v, more := it.Next()
 						if !more {
@@ -1183,9 +1217,6 @@ Example:
 				}
 			}
 
-			if err := checkKwargs("accumulate", kwargs, "func", "initial"); err != nil {
-				return err
-			}
 			accumFunc, ferr := optionalArg("accumulate", args, kwargs, 1, "func")
 			if ferr != nil {
 				return ferr
@@ -1235,6 +1266,9 @@ Example:
 	},
 	"filterfalse": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("filterfalse", kwargs); err != nil {
+				return err
+			}
 			// filterfalse(predicate, iterable) - Filter elements where predicate is false
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
@@ -1278,6 +1312,9 @@ Example:
 	},
 	"starmap": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("starmap", kwargs); err != nil {
+				return err
+			}
 			// starmap(func, iterable) - Apply function to argument tuples
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
@@ -1308,7 +1345,7 @@ Example:
 				case *object.Tuple:
 					fnArgs = e.Elements
 				default:
-					return errors.NewError("starmap() iterable must contain sequences")
+					return errors.NewTypeErrorTagged("starmap() iterable must contain sequences")
 				}
 				res := callCallable(ctx, fn, fnArgs...)
 				if object.IsError(res) || res.Type() == object.EXCEPTION_OBJ {
@@ -1328,6 +1365,9 @@ Example:
 	},
 	"compress": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("compress", kwargs); err != nil {
+				return err
+			}
 			// compress(data, selectors) - Filter data based on selectors
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
@@ -1359,13 +1399,13 @@ Example:
 				return notIterableError(args[1])
 			}
 			if isEndless(args[0]) && isEndless(args[1]) {
-				return errors.NewError("%s", object.InfiniteIteratorMessage)
+				return errors.NewInfiniteIteratorError()
 			}
 
 			result := []object.Object{}
 			for {
-				if err := ctx.Err(); err != nil {
-					return errors.NewError("%s", err.Error())
+				if errObj := libutil.CancelledError(ctx); errObj != nil {
+					return errObj
 				}
 				d, ok := data()
 				if !ok {
@@ -1398,6 +1438,9 @@ Example:
 	},
 	"pairwise": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("pairwise", kwargs); err != nil {
+				return err
+			}
 			// pairwise(iterable) - Return successive overlapping pairs
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
@@ -1633,7 +1676,7 @@ func addObjects(a, b object.Object) object.Object {
 			return &object.List{Elements: newElements}
 		}
 	}
-	return errors.NewError("cannot add %s and %s", a.Type(), b.Type())
+	return errors.NewTypeErrorTagged("unsupported operand type(s) for +: '%s' and '%s'", object.PythonTypeName(a), object.PythonTypeName(b))
 }
 
 func isTruthy(obj object.Object) bool {
@@ -1710,7 +1753,7 @@ func collectIterable(ctx context.Context, obj object.Object) ([]object.Object, o
 	}
 	if it, ok := obj.(*object.Iterator); ok {
 		if it.Infinite() {
-			return nil, errors.NewError("%s", object.InfiniteIteratorMessage)
+			return nil, errors.NewInfiniteIteratorError()
 		}
 		// Collecting an iterator builds a container, so it is held to the
 		// interpreter's limits as a list growing by append is.
@@ -1749,7 +1792,7 @@ const slotBytes = int64(unsafe.Sizeof(object.Object(nil)))
 // into a list: a clear message for an infinite iterator, else a TypeError.
 func notIterableError(obj object.Object) object.Object {
 	if it, ok := obj.(*object.Iterator); ok && it.Infinite() {
-		return errors.NewError("%s", object.InfiniteIteratorMessage)
+		return errors.NewInfiniteIteratorError()
 	}
 	return errors.NewTypeError("iterable", obj.Type().String())
 }

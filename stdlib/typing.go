@@ -17,6 +17,9 @@ var typingAliasClass = &object.Class{
 	Methods: map[string]object.Object{
 		"__getitem__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__getitem__", kwargs); err != nil {
+					return err
+				}
 				return args[0]
 			},
 			HelpText: "__getitem__(item) - Typing aliases accept any subscript",

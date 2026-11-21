@@ -62,18 +62,18 @@ func sioGet(inst *object.Instance) (*stringIOData, bool) {
 
 func sioSelf(args []object.Object, method string) (*object.Instance, *stringIOData, object.Object) {
 	if len(args) < 1 {
-		return nil, nil, errors.NewError("%s() requires self", method)
+		return nil, nil, errors.NewTypeErrorTagged("%s() requires self", method)
 	}
 	inst, ok := args[0].(*object.Instance)
 	if !ok {
-		return nil, nil, errors.NewError("%s(): self must be a StringIO instance", method)
+		return nil, nil, errors.NewTypeErrorTagged("%s(): self must be a StringIO instance", method)
 	}
 	data, ok := sioGet(inst)
 	if !ok {
-		return nil, nil, errors.NewError("%s(): invalid StringIO instance", method)
+		return nil, nil, errors.NewTypeErrorTagged("%s(): invalid StringIO instance", method)
 	}
 	if data.closed {
-		return nil, nil, errors.NewError("I/O operation on closed file")
+		return nil, nil, errors.NewValueError("I/O operation on closed file")
 	}
 	return inst, data, nil
 }
@@ -83,12 +83,20 @@ var stringIOClass = &object.Class{
 	Methods: map[string]object.Object{
 		"__init__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if kwargs.Len() > 0 {
+					if err := errors.CheckKwargs("StringIO", kwargs, "initial_value"); err != nil {
+						return err
+					}
+				}
 				if len(args) < 1 {
-					return errors.NewError("StringIO.__init__ requires self")
+					return errors.NewTypeErrorTagged("StringIO.__init__ requires self")
+				}
+				if v, ok := kwargs.Lookup("initial_value"); ok && len(args) == 1 {
+					args = append(args[:1:1], v)
 				}
 				inst, ok := args[0].(*object.Instance)
 				if !ok {
-					return errors.NewError("StringIO.__init__: self must be an instance")
+					return errors.NewTypeErrorTagged("StringIO.__init__: self must be an instance")
 				}
 				data := &stringIOData{}
 				if len(args) >= 2 {
@@ -106,12 +114,15 @@ var stringIOClass = &object.Class{
 		},
 		"write": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("write", kwargs); err != nil {
+					return err
+				}
 				_, data, errObj := sioSelf(args, "write")
 				if errObj != nil {
 					return errObj
 				}
 				if len(args) < 2 {
-					return errors.NewError("write() requires a string argument")
+					return errors.NewTypeErrorTagged("write() requires a string argument")
 				}
 				s, err := args[1].AsString()
 				if err != nil {
@@ -126,6 +137,9 @@ var stringIOClass = &object.Class{
 		},
 		"getvalue": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("getvalue", kwargs); err != nil {
+					return err
+				}
 				_, data, errObj := sioSelf(args, "getvalue")
 				if errObj != nil {
 					return errObj
@@ -136,6 +150,9 @@ var stringIOClass = &object.Class{
 		},
 		"read": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("read", kwargs); err != nil {
+					return err
+				}
 				_, data, errObj := sioSelf(args, "read")
 				if errObj != nil {
 					return errObj
@@ -165,6 +182,9 @@ var stringIOClass = &object.Class{
 		},
 		"readline": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("readline", kwargs); err != nil {
+					return err
+				}
 				_, data, errObj := sioSelf(args, "readline")
 				if errObj != nil {
 					return errObj
@@ -187,6 +207,9 @@ var stringIOClass = &object.Class{
 		},
 		"readlines": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("readlines", kwargs); err != nil {
+					return err
+				}
 				_, data, errObj := sioSelf(args, "readlines")
 				if errObj != nil {
 					return errObj
@@ -211,12 +234,15 @@ var stringIOClass = &object.Class{
 		},
 		"seek": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("seek", kwargs); err != nil {
+					return err
+				}
 				_, data, errObj := sioSelf(args, "seek")
 				if errObj != nil {
 					return errObj
 				}
 				if len(args) < 2 {
-					return errors.NewError("seek() requires a position argument")
+					return errors.NewTypeErrorTagged("seek() requires a position argument")
 				}
 				pos, err := args[1].AsInt()
 				if err != nil {
@@ -224,7 +250,7 @@ var stringIOClass = &object.Class{
 				}
 				content := data.buf.String()
 				if pos < 0 {
-					pos = 0
+					return errors.NewValueError("Negative seek position %d", pos)
 				}
 				if int(pos) > len(content) {
 					pos = int64(len(content))
@@ -236,6 +262,9 @@ var stringIOClass = &object.Class{
 		},
 		"tell": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("tell", kwargs); err != nil {
+					return err
+				}
 				_, data, errObj := sioSelf(args, "tell")
 				if errObj != nil {
 					return errObj
@@ -246,6 +275,9 @@ var stringIOClass = &object.Class{
 		},
 		"truncate": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("truncate", kwargs); err != nil {
+					return err
+				}
 				_, data, errObj := sioSelf(args, "truncate")
 				if errObj != nil {
 					return errObj
@@ -260,7 +292,7 @@ var stringIOClass = &object.Class{
 					}
 				}
 				if pos < 0 {
-					pos = 0
+					return errors.NewValueError("Negative size value %d", pos)
 				}
 				if int(pos) > len(content) {
 					pos = int64(len(content))
@@ -280,16 +312,19 @@ var stringIOClass = &object.Class{
 		},
 		"close": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("close", kwargs); err != nil {
+					return err
+				}
 				if len(args) < 1 {
-					return errors.NewError("close() requires self")
+					return errors.NewTypeErrorTagged("close() requires self")
 				}
 				inst, ok := args[0].(*object.Instance)
 				if !ok {
-					return errors.NewError("close(): self must be a StringIO instance")
+					return errors.NewTypeErrorTagged("close(): self must be a StringIO instance")
 				}
 				data, ok := sioGet(inst)
 				if !ok {
-					return errors.NewError("close(): invalid StringIO instance")
+					return errors.NewTypeErrorTagged("close(): invalid StringIO instance")
 				}
 				data.closed = true
 				return &object.Null{}
@@ -298,14 +333,20 @@ var stringIOClass = &object.Class{
 		},
 		"__enter__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__enter__", kwargs); err != nil {
+					return err
+				}
 				if len(args) < 1 {
-					return errors.NewError("__enter__() requires self")
+					return errors.NewTypeErrorTagged("__enter__() requires self")
 				}
 				return args[0]
 			},
 		},
 		"__exit__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__exit__", kwargs); err != nil {
+					return err
+				}
 				if len(args) < 1 {
 					return object.NewBoolean(false)
 				}
@@ -323,6 +364,14 @@ var stringIOClass = &object.Class{
 
 // stringIONew creates a new StringIO instance (called as io.StringIO(...)).
 func stringIONew(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	if kwargs.Len() > 0 {
+		if err := errors.CheckKwargs("StringIO", kwargs, "initial_value"); err != nil {
+			return err
+		}
+	}
+	if v, ok := kwargs.Lookup("initial_value"); ok && len(args) == 0 {
+		args = []object.Object{v}
+	}
 	inst := object.NewInstanceWithFields(stringIOClass, nil)
 	data := &stringIOData{}
 	if len(args) >= 1 {

@@ -46,35 +46,44 @@ func sampleGamma(alpha float64) float64 {
 }
 
 // gaussianRandom returns a random number from Gaussian distribution
-func gaussianRandom(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-	if err := errors.ExactArgs(args, 2); err != nil {
-		return err
+func gaussianRandom(name string) func(context.Context, object.Kwargs, ...object.Object) object.Object {
+	return func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		if err := errors.NoKwargs(name, kwargs); err != nil {
+			return err
+		}
+		if err := errors.ExactArgs(args, 2); err != nil {
+			return err
+		}
+		var mu, sigma float64
+		switch arg := args[0].(type) {
+		case *object.Integer:
+			mu = float64(arg.IntValue())
+		case *object.Float:
+			mu = arg.FloatValue()
+		default:
+			return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
+		}
+		switch arg := args[1].(type) {
+		case *object.Integer:
+			sigma = float64(arg.IntValue())
+		case *object.Float:
+			sigma = arg.FloatValue()
+		default:
+			return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
+		}
+		// Box-Muller transform
+		val := rng.NormFloat64()*sigma + mu
+		return object.NewFloat(val)
 	}
-	var mu, sigma float64
-	switch arg := args[0].(type) {
-	case *object.Integer:
-		mu = float64(arg.IntValue())
-	case *object.Float:
-		mu = arg.FloatValue()
-	default:
-		return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
-	}
-	switch arg := args[1].(type) {
-	case *object.Integer:
-		sigma = float64(arg.IntValue())
-	case *object.Float:
-		sigma = arg.FloatValue()
-	default:
-		return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
-	}
-	// Box-Muller transform
-	val := rng.NormFloat64()*sigma + mu
-	return object.NewFloat(val)
 }
 
 var RandomLibrary = object.NewLibrary(RandomLibraryName, map[string]*object.Builtin{
 	"seed": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			args, kerr := kwargsToPositional("seed", args, kwargs, "a")
+			if kerr != nil {
+				return kerr
+			}
 			if err := errors.MaxArgs(args, 1); err != nil {
 				return err
 			}
@@ -121,7 +130,7 @@ If a is omitted, current time is used. Otherwise, a is used as the seed.`,
 				return errors.NewTypeError("INTEGER", args[1].Type().String())
 			}
 			if min > max {
-				return errors.NewError("randint() min must be <= max")
+				return errors.NewValueError("empty range in randint(%d, %d)", min, max)
 			}
 			val := min + rng.Int63n(max-min+1)
 			return object.NewInteger(val)
@@ -132,6 +141,9 @@ Returns a random integer N such that min <= N <= max.`,
 	},
 	"random": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("random", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 0); err != nil {
 				return err
 			}
@@ -143,6 +155,9 @@ Returns a random float in the range [0.0, 1.0).`,
 	},
 	"choice": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("choice", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -150,8 +165,15 @@ Returns a random float in the range [0.0, 1.0).`,
 				if len(str.StringValue()) == 0 {
 					return &object.Exception{Message: "choice() string cannot be empty", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
 				}
-				idx := rng.Intn(len(str.StringValue()))
-				return object.NewString(string(str.StringValue()[idx]))
+				// Choose a character, not a byte, of non-ASCII text.
+				runes := []rune(str.StringValue())
+				return object.NewString(string(runes[rng.Intn(len(runes))]))
+			}
+			if tup, ok := args[0].(*object.Tuple); ok {
+				if len(tup.Elements) == 0 {
+					return &object.Exception{Message: "Cannot choose from an empty sequence", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
+				}
+				return tup.Elements[rng.Intn(len(tup.Elements))]
 			}
 			if list, ok := args[0].(*object.List); ok {
 				if len(list.Elements) == 0 {
@@ -168,6 +190,9 @@ Returns a randomly selected element from the given list or string.`,
 	},
 	"shuffle": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("shuffle", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -283,8 +308,11 @@ Used for random sampling without replacement.`,
 	},
 	"randrange": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("randrange", kwargs); err != nil {
+				return err
+			}
 			if len(args) < 1 || len(args) > 3 {
-				return errors.NewError("randrange() takes 1 to 3 arguments (%d given)", len(args))
+				return errors.NewTypeErrorTagged("randrange() takes 1 to 3 arguments (%d given)", len(args))
 			}
 			var start, stop, step int64
 			step = 1
@@ -292,43 +320,43 @@ Used for random sampling without replacement.`,
 			case 1:
 				// randrange(stop) - from 0 to stop-1
 				start = 0
-				if i, ok := args[0].(*object.Integer); ok {
-					stop = i.IntValue()
-				} else {
-					return errors.NewTypeError("INTEGER", args[0].Type().String())
+				v0, errObj := mathIntArg(args[0])
+				if errObj != nil {
+					return errObj
 				}
+				stop = v0
 			case 2:
 				// randrange(start, stop) - from start to stop-1
-				if i, ok := args[0].(*object.Integer); ok {
-					start = i.IntValue()
-				} else {
-					return errors.NewTypeError("INTEGER", args[0].Type().String())
+				v0, errObj := mathIntArg(args[0])
+				if errObj != nil {
+					return errObj
 				}
-				if i, ok := args[1].(*object.Integer); ok {
-					stop = i.IntValue()
-				} else {
-					return errors.NewTypeError("INTEGER", args[1].Type().String())
+				start = v0
+				v1, errObj := mathIntArg(args[1])
+				if errObj != nil {
+					return errObj
 				}
+				stop = v1
 			case 3:
 				// randrange(start, stop, step)
-				if i, ok := args[0].(*object.Integer); ok {
-					start = i.IntValue()
-				} else {
-					return errors.NewTypeError("INTEGER", args[0].Type().String())
+				v0, errObj := mathIntArg(args[0])
+				if errObj != nil {
+					return errObj
 				}
-				if i, ok := args[1].(*object.Integer); ok {
-					stop = i.IntValue()
-				} else {
-					return errors.NewTypeError("INTEGER", args[1].Type().String())
+				start = v0
+				v1, errObj := mathIntArg(args[1])
+				if errObj != nil {
+					return errObj
 				}
-				if i, ok := args[2].(*object.Integer); ok {
-					step = i.IntValue()
-				} else {
-					return errors.NewTypeError("INTEGER", args[2].Type().String())
+				stop = v1
+				v2, errObj := mathIntArg(args[2])
+				if errObj != nil {
+					return errObj
 				}
+				step = v2
 			}
 			if step == 0 {
-				return errors.NewError("randrange() step argument must not be zero")
+				return errors.NewValueError("randrange() step argument must not be zero")
 			}
 			var n int64
 			if step > 0 {
@@ -347,13 +375,13 @@ Returns a randomly selected element from range(start, stop, step).
 Like randint, but doesn't include the endpoint.`,
 	},
 	"gauss": {
-		Fn: gaussianRandom,
+		Fn: gaussianRandom("gauss"),
 		HelpText: `gauss(mu, sigma) - Return random number from Gaussian distribution
 
 mu is the mean, sigma is the standard deviation.`,
 	},
 	"normalvariate": {
-		Fn: gaussianRandom,
+		Fn: gaussianRandom("normalvariate"),
 		HelpText: `normalvariate(mu, sigma) - Return random number from normal distribution
 
 mu is the mean, sigma is the standard deviation.
@@ -361,6 +389,9 @@ Same as gauss() but provided for compatibility.`,
 	},
 	"expovariate": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("expovariate", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -374,7 +405,8 @@ Same as gauss() but provided for compatibility.`,
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
 			if lambd == 0 {
-				return errors.NewError("expovariate() lambda must not be zero")
+				// CPython divides by lambd, so zero is a ZeroDivisionError.
+				return &object.Error{Message: "float division by zero", ExceptionType: object.ExceptionTypeZeroDivisionError}
 			}
 			// Exponential distribution: -ln(U) / lambda
 			val := -math.Log(1.0-rng.Float64()) / lambd
@@ -386,13 +418,13 @@ lambd is 1.0 divided by the desired mean.`,
 	},
 	"choices": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-			if err := errors.RangeArgs(args, 1, 3); err != nil {
-				return err
-			}
 			for _, key := range kwargs.Keys() {
 				if key != "weights" && key != "cum_weights" && key != "k" {
 					return newArgTypeError("choices() got an unexpected keyword argument '%s'", key)
 				}
+			}
+			if err := errors.RangeArgs(args, 1, 3); err != nil {
+				return err
 			}
 			population, errObj := collectIterable(ctx, args[0])
 			if errObj != nil {
@@ -427,7 +459,7 @@ lambd is 1.0 divided by the desired mean.`,
 						return nil, errors.NewTypeError("INTEGER or FLOAT", w.Type().String())
 					}
 					if math.IsNaN(f) || math.IsInf(f, 0) {
-						return nil, errors.NewError("choices: %s must be finite", name)
+						return nil, errors.NewValueError("choices: %s must be finite", name)
 					}
 					out[i] = f
 				}
@@ -437,7 +469,7 @@ lambd is 1.0 divided by the desired mean.`,
 			wObj := kwargs.Get("weights")
 			if len(args) >= 2 {
 				if kwargs.Has("weights") {
-					return errors.NewError("choices: weights specified both positionally and by keyword")
+					return errors.NewTypeErrorTagged("choices() got multiple values for argument 'weights'")
 				}
 				wObj = args[1]
 			}
@@ -456,7 +488,7 @@ lambd is 1.0 divided by the desired mean.`,
 			kObj := kwargs.Get("k")
 			if len(args) >= 3 {
 				if kwargs.Has("k") {
-					return errors.NewError("choices: k specified both positionally and by keyword")
+					return errors.NewTypeErrorTagged("choices() got multiple values for argument 'k'")
 				}
 				kObj = args[2]
 			}
@@ -465,10 +497,8 @@ lambd is 1.0 divided by the desired mean.`,
 				if err != nil {
 					return err
 				}
-				if kVal < 0 {
-					return errors.NewError("choices: k must be non-negative")
-				}
-				k = int(kVal)
+				// A negative k is an empty range in Python: no choices.
+				k = int(max(kVal, 0))
 			}
 			if k == 0 {
 				return &object.List{Elements: []object.Object{}}
@@ -486,7 +516,7 @@ lambd is 1.0 divided by the desired mean.`,
 				}
 				for _, f := range weights {
 					if f < 0 {
-						return errors.NewError("choices: weights must be finite and non-negative")
+						return errors.NewValueError("choices: weights must be finite and non-negative")
 					}
 				}
 				cumWeights = make([]float64, n)
@@ -526,6 +556,9 @@ Returns a list of k selected items.`,
 	},
 	"betavariate": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("betavariate", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -538,7 +571,7 @@ Returns a list of k selected items.`,
 				return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
 			}
 			if alpha <= 0 || beta <= 0 {
-				return errors.NewError("betavariate: alpha and beta must be positive")
+				return errors.NewValueError("betavariate: alpha and beta must be positive")
 			}
 			// Use the relation: if X ~ Gamma(alpha,1) and Y ~ Gamma(beta,1), then X/(X+Y) ~ Beta(alpha,beta)
 			x := sampleGamma(alpha)
@@ -554,6 +587,9 @@ alpha and beta must be positive. Returns a float in [0, 1].`,
 	},
 	"gammavariate": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("gammavariate", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -566,7 +602,7 @@ alpha and beta must be positive. Returns a float in [0, 1].`,
 				return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
 			}
 			if alpha <= 0 || beta <= 0 {
-				return errors.NewError("gammavariate: alpha and beta must be positive")
+				return errors.NewValueError("gammavariate: alpha and beta must be positive")
 			}
 			return object.NewFloat(sampleGamma(alpha) * beta)
 		},
@@ -629,6 +665,9 @@ low is the minimum, high is the maximum, mode is the peak (defaults to midpoint)
 	},
 	"paretovariate": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("paretovariate", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -637,7 +676,7 @@ low is the minimum, high is the maximum, mode is the peak (defaults to midpoint)
 				return errors.NewTypeError("INTEGER or FLOAT", args[0].Type().String())
 			}
 			if alpha <= 0 {
-				return errors.NewError("paretovariate: alpha must be positive")
+				return errors.NewValueError("paretovariate: alpha must be positive")
 			}
 			// Pareto: 1 / U^(1/alpha)
 			u := rng.Float64()
@@ -652,6 +691,9 @@ alpha is the shape parameter, must be positive.`,
 	},
 	"weibullvariate": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("weibullvariate", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -664,7 +706,7 @@ alpha is the shape parameter, must be positive.`,
 				return errors.NewTypeError("INTEGER or FLOAT", args[1].Type().String())
 			}
 			if alpha <= 0 || beta <= 0 {
-				return errors.NewError("weibullvariate: alpha and beta must be positive")
+				return errors.NewValueError("weibullvariate: alpha and beta must be positive")
 			}
 			// Weibull: alpha * (-ln(U))^(1/beta)
 			u := rng.Float64()

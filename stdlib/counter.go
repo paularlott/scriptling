@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/paularlott/scriptling/errors"
+	"github.com/paularlott/scriptling/libutil"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -156,7 +157,7 @@ func instanceElements(ctx context.Context, inst *object.Instance) ([]object.Obje
 	var elems []object.Object
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, errors.NewError("%s", err.Error())
+			return nil, libutil.CancelledError(ctx)
 		}
 		v := callCallable(ctx, nextFn, itInst)
 		if ex, isEx := v.(*object.Exception); isEx && ex.ExceptionType == object.ExceptionTypeStopIteration {
@@ -318,8 +319,11 @@ func counterSelf(args []object.Object) (*object.Instance, *object.Dict) {
 }
 
 // counterOperator wraps a binary Counter operator.
-func counterOperator(op byte) *object.Builtin {
+func counterOperator(name string, op byte) *object.Builtin {
 	return &object.Builtin{Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		if err := errors.NoKwargs(name, kwargs); err != nil {
+			return err
+		}
 		if err := errors.ExactArgs(args, 2); err != nil {
 			return err
 		}
@@ -355,6 +359,9 @@ var CounterClass = &object.Class{
 			return &object.Null{}
 		}),
 		"__getitem__": counterMethod("c[key] - count of key, 0 when missing", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("__getitem__", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -362,6 +369,9 @@ var CounterClass = &object.Class{
 			return counterCount(d, args[1])
 		}),
 		"__setitem__": counterMethod("c[key] = count", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("__setitem__", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 3); err != nil {
 				return err
 			}
@@ -373,6 +383,9 @@ var CounterClass = &object.Class{
 			return &object.Null{}
 		}),
 		"__delitem__": counterMethod("del c[key]", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("__delitem__", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -381,14 +394,23 @@ var CounterClass = &object.Class{
 			return &object.Null{}
 		}),
 		"__len__": counterMethod("len(c)", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("__len__", kwargs); err != nil {
+				return err
+			}
 			_, d := counterSelf(args)
 			return object.NewInteger(int64(d.Len()))
 		}),
 		"__bool__": counterMethod("bool(c)", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("__bool__", kwargs); err != nil {
+				return err
+			}
 			_, d := counterSelf(args)
 			return object.NewBoolean(d.Len() > 0)
 		}),
 		"__contains__": counterMethod("key in c", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("__contains__", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -397,10 +419,16 @@ var CounterClass = &object.Class{
 			return object.NewBoolean(ok)
 		}),
 		"__iter__": counterMethod("iter(c) - the keys", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("__iter__", kwargs); err != nil {
+				return err
+			}
 			_, d := counterSelf(args)
 			return d.CreateIterator()
 		}),
 		"__eq__": counterMethod("c == other - same counts", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("__eq__", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -440,6 +468,9 @@ var CounterClass = &object.Class{
 			return object.NewBoolean(same(d, other) && same(other, d))
 		}),
 		"__repr__": counterMethod("repr(c) - Counter({'a': 2, 'b': 1})", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("__repr__", kwargs); err != nil {
+				return err
+			}
 			_, d := counterSelf(args)
 			entries := counterSorted(d)
 			if len(entries) == 0 {
@@ -462,23 +493,35 @@ var CounterClass = &object.Class{
 			}
 			return object.NewString(out)
 		}),
-		"__add__": counterOperator('+'),
-		"__sub__": counterOperator('-'),
-		"__or__":  counterOperator('|'),
-		"__and__": counterOperator('&'),
+		"__add__": counterOperator("__add__", '+'),
+		"__sub__": counterOperator("__sub__", '-'),
+		"__or__":  counterOperator("__or__", '|'),
+		"__and__": counterOperator("__and__", '&'),
 		"keys": counterMethod("keys() - view of the elements", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("keys", kwargs); err != nil {
+				return err
+			}
 			_, d := counterSelf(args)
 			return &object.DictKeys{Dict: d}
 		}),
 		"values": counterMethod("values() - view of the counts", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("values", kwargs); err != nil {
+				return err
+			}
 			_, d := counterSelf(args)
 			return &object.DictValues{Dict: d}
 		}),
 		"items": counterMethod("items() - view of (element, count) pairs", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("items", kwargs); err != nil {
+				return err
+			}
 			_, d := counterSelf(args)
 			return &object.DictItems{Dict: d}
 		}),
 		"get": counterMethod("get(key, default=None)", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("get", kwargs); err != nil {
+				return err
+			}
 			if err := errors.RangeArgs(args, 2, 3); err != nil {
 				return err
 			}
@@ -492,6 +535,9 @@ var CounterClass = &object.Class{
 			return &object.Null{}
 		}),
 		"pop": counterMethod("pop(key[, default])", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("pop", kwargs); err != nil {
+				return err
+			}
 			if err := errors.RangeArgs(args, 2, 3); err != nil {
 				return err
 			}
@@ -504,7 +550,7 @@ var CounterClass = &object.Class{
 			if len(args) == 3 {
 				return args[2]
 			}
-			return &object.Exception{Message: counterKeyRepr(args[1]), ExceptionType: object.ExceptionTypeKeyError, Raised: true}
+			return object.NewKeyError(args[1], counterKeyRepr(args[1]))
 		}),
 		"update": counterMethod("update([iterable_or_mapping], **kwargs) - add counts", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.RangeArgs(args, 1, 2); err != nil {
@@ -537,6 +583,9 @@ var CounterClass = &object.Class{
 			return &object.Null{}
 		}),
 		"total": counterMethod("total() - sum of all counts", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("total", kwargs); err != nil {
+				return err
+			}
 			_, d := counterSelf(args)
 			var sum object.Object = counterZero
 			for _, p := range d.OrderedPairs() {
@@ -548,6 +597,17 @@ var CounterClass = &object.Class{
 			return sum
 		}),
 		"most_common": counterMethod("most_common([n]) - (element, count) pairs, most common first", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("most_common", kwargs, "n"); err != nil {
+					return err
+				}
+				if n := kwargs.Get("n"); n != nil {
+					if len(args) != 1 {
+						return errors.NewTypeErrorTagged("most_common() got multiple values for argument 'n'")
+					}
+					args = append(args[:1:1], n)
+				}
+			}
 			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
 			}
@@ -559,6 +619,9 @@ var CounterClass = &object.Class{
 			return counterMostCommon(inst, n, all)
 		}),
 		"elements": counterMethod("elements() - each element repeated by its count", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("elements", kwargs); err != nil {
+				return err
+			}
 			_, d := counterSelf(args)
 			var out []object.Object
 			for _, e := range counterSorted(d) {
@@ -577,6 +640,9 @@ var CounterClass = &object.Class{
 			return &object.List{Elements: out}
 		}),
 		"copy": counterMethod("copy() - a shallow copy", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("copy", kwargs); err != nil {
+				return err
+			}
 			_, d := counterSelf(args)
 			out := newCounter()
 			od := counterData(out)
@@ -584,6 +650,9 @@ var CounterClass = &object.Class{
 			return out
 		}),
 		"clear": counterMethod("clear() - remove all elements", func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("clear", kwargs); err != nil {
+				return err
+			}
 			_, d := counterSelf(args)
 			d.Clear()
 			return &object.Null{}
@@ -611,6 +680,17 @@ func counterConstructor(ctx context.Context, kwargs object.Kwargs, args ...objec
 
 // counterMostCommonFn is the module-level collections.most_common(counter, n).
 func counterMostCommonFn(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	if kwargs.Len() > 0 {
+		if err := errors.CheckKwargs("most_common", kwargs, "n"); err != nil {
+			return err
+		}
+		if n := kwargs.Get("n"); n != nil {
+			if len(args) != 1 {
+				return errors.NewTypeErrorTagged("most_common() got multiple values for argument 'n'")
+			}
+			args = append(args[:1:1], n)
+		}
+	}
 	if err := errors.RangeArgs(args, 1, 2); err != nil {
 		return err
 	}

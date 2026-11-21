@@ -507,7 +507,7 @@ func newTypeError(expected, got string) *Error {
 
 // newArgumentError creates an argument error object (matches errors.NewArgumentError format)
 func newArgumentError(got, want int) *Error {
-	return &Error{Message: fmt.Sprintf("argument error: got %d arguments, want %d", got, want)}
+	return &Error{Message: fmt.Sprintf("argument error: got %d arguments, want %d", got, want), ExceptionType: ExceptionTypeTypeError}
 }
 
 // convertObjectToValue converts a scriptling Object to a reflect.Value for the given type.

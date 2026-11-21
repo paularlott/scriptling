@@ -11,6 +11,9 @@ import (
 var UUIDLibrary = object.NewLibrary(UUIDLibraryName, map[string]*object.Builtin{
 	"uuid1": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("uuid1", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 0); err != nil {
 				return err
 			}
@@ -32,6 +35,9 @@ Example:
 	},
 	"uuid4": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("uuid4", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 0); err != nil {
 				return err
 			}
@@ -49,6 +55,9 @@ Example:
 	},
 	"uuid7": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("uuid7", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 0); err != nil {
 				return err
 			}
@@ -71,6 +80,9 @@ Example:
 	},
 	"UUID": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("UUID", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -80,7 +92,7 @@ Example:
 			}
 			id, ok := parseUUIDString(s)
 			if !ok {
-				return errors.NewError("badly formed hexadecimal UUID string")
+				return errors.NewValueError("badly formed hexadecimal UUID string")
 			}
 			return uuidInstance(id)
 		},
@@ -91,6 +103,9 @@ hyphenated form.`,
 	},
 	"uuid3": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("uuid3", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -104,7 +119,7 @@ hyphenated form.`,
 			}
 			ns, ok := parseUUIDString(nsStr)
 			if !ok {
-				return errors.NewError("uuid3: namespace must be a UUID string")
+				return errors.NewValueError("uuid3: namespace must be a UUID string")
 			}
 			return uuidInstance(uuid.NewMD5(ns, []byte(name)))
 		},
@@ -112,6 +127,9 @@ hyphenated form.`,
 	},
 	"uuid5": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("uuid5", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
 			}
@@ -125,7 +143,7 @@ hyphenated form.`,
 			}
 			ns, ok := parseUUIDString(nsStr)
 			if !ok {
-				return errors.NewError("uuid5: namespace must be a UUID string")
+				return errors.NewValueError("uuid5: namespace must be a UUID string")
 			}
 			return uuidInstance(uuid.NewSHA1(ns, []byte(name)))
 		},

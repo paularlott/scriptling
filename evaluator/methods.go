@@ -94,6 +94,9 @@ func fastStringLower(s string) string {
 	return s
 }
 
+// codecParams are the parameters of str.encode and bytes.decode.
+var codecParams = []string{"encoding", "errors"}
+
 func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method string, args []object.Object, keywords object.Kwargs, env *object.Environment) object.Object {
 	// Handle universal methods
 	switch method {
@@ -102,9 +105,19 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 			return err
 		}
 		if keywords.Len() > 0 {
-			return errors.NewError("type() does not accept keyword arguments")
+			return errors.NewTypeErrorTagged("type() does not accept keyword arguments")
 		}
 		return typeOf(obj)
+	}
+
+	// A keyword the built-in method does not read is a TypeError. A dict is
+	// checked in callDictMethod, after its library members.
+	if keywords.Len() > 0 {
+		if obj.Type() != object.DICT_OBJ {
+			if err := checkMethodKeywords(obj, method, keywords); err != nil {
+				return err
+			}
+		}
 	}
 
 	// Handle library method calls (dictionaries)
@@ -114,7 +127,7 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 
 	// Handle integer methods
 	if obj.Type() == object.INTEGER_OBJ {
-		return callIntegerMethod(obj.(*object.Integer), method, args)
+		return callIntegerMethod(obj.(*object.Integer), method, args, keywords)
 	}
 
 	// Handle float methods
@@ -198,6 +211,10 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 		if attr := functionAttribute(ctx, obj, method); !propagates(attr) {
 			return applyFunctionWithContext(ctx, attr, args, keywords, env)
 		}
+	}
+	// bool is an int: True.bit_length(), True.to_bytes(1, "big").
+	if b, ok := obj.(*object.Boolean); ok {
+		return callIntegerMethod(object.NewInteger(boolToInt64(b.BoolValue())), method, args, keywords)
 	}
 
 	return attributeError(obj, method)
@@ -311,7 +328,7 @@ func callInstanceMethod(ctx context.Context, instance *object.Instance, method s
 		}
 		// Property: calling a property raises an error (not callable)
 		if _, ok := fn.(*object.Property); ok {
-			return errors.NewError("'property' object is not callable")
+			return errors.NewTypeErrorTagged("'property' object is not callable")
 		}
 		// Bind 'self'
 		newArgs := prependSelf(instance, args)
@@ -359,6 +376,12 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		return attributeError(dict, method)
 	}
 
+	if keywords.Len() > 0 {
+		if err := checkMethodKeywords(dict, method, keywords); err != nil {
+			return err
+		}
+	}
+
 	// Check for dict instance methods
 	switch method {
 	case "keys":
@@ -366,7 +389,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 			return err
 		}
 		if keywords.Len() > 0 {
-			return errors.NewError("keys() does not accept keyword arguments")
+			return errors.NewTypeErrorTagged("keys() does not accept keyword arguments")
 		}
 		if builtin, ok := builtins["keys"]; ok {
 			ctxWithEnv := SetEnvInContext(ctx, env)
@@ -377,7 +400,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 			return err
 		}
 		if keywords.Len() > 0 {
-			return errors.NewError("values() does not accept keyword arguments")
+			return errors.NewTypeErrorTagged("values() does not accept keyword arguments")
 		}
 		if builtin, ok := builtins["values"]; ok {
 			ctxWithEnv := SetEnvInContext(ctx, env)
@@ -388,7 +411,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 			return err
 		}
 		if keywords.Len() > 0 {
-			return errors.NewError("items() does not accept keyword arguments")
+			return errors.NewTypeErrorTagged("items() does not accept keyword arguments")
 		}
 		if builtin, ok := builtins["items"]; ok {
 			ctxWithEnv := SetEnvInContext(ctx, env)
@@ -396,10 +419,10 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		}
 	case "get":
 		if len(args) < 1 || len(args) > 2 {
-			return errors.NewError("get() takes 1-2 arguments (%d given)", len(args))
+			return errors.NewTypeErrorTagged("get() takes 1-2 arguments (%d given)", len(args))
 		}
 		if keywords.Len() > 0 {
-			return errors.NewError("get() does not accept keyword arguments")
+			return errors.NewTypeErrorTagged("get() does not accept keyword arguments")
 		}
 		key, rerr := evalHashKeyChecked(ctx, args[0])
 		if rerr != nil {
@@ -414,10 +437,10 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		return NULL
 	case "pop":
 		if len(args) < 1 || len(args) > 2 {
-			return errors.NewError("pop() takes 1-2 arguments (%d given)", len(args))
+			return errors.NewTypeErrorTagged("pop() takes 1-2 arguments (%d given)", len(args))
 		}
 		if keywords.Len() > 0 {
-			return errors.NewError("pop() does not accept keyword arguments")
+			return errors.NewTypeErrorTagged("pop() does not accept keyword arguments")
 		}
 		key, rerr := evalHashKeyChecked(ctx, args[0])
 		if rerr != nil {
@@ -435,20 +458,13 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		if rerr != nil {
 			return rerr
 		}
-		return &object.Exception{
-			Message:       rendered,
-			ExceptionType: object.ExceptionTypeKeyError,
-			Raised:        true,
-		}
+		return object.NewKeyError(args[0], rendered)
 	case "update":
 		if len(args) > 1 {
-			return errors.NewError("update() takes at most 1 argument (%d given)", len(args))
+			return errors.NewTypeErrorTagged("update() takes at most 1 argument (%d given)", len(args))
 		}
-		// Handle kwargs
-		for k, v := range keywords.All() {
-			dict.SetByString(k, v)
-		}
-		// Handle positional argument (another dict or list of pairs)
+		// The positional argument (another dict or an iterable of pairs)
+		// first, then the keywords, which win, as in Python.
 		if len(args) == 1 {
 			switch other := args[0].(type) {
 			case *object.Dict:
@@ -456,32 +472,22 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 					return errObj
 				}
 				dict.StoreFrom(other)
-			case *object.List:
-				for _, elem := range other.Elements {
-					var pair []object.Object
-					switch p := elem.(type) {
-					case *object.List:
-						pair = p.Elements
-					case *object.Tuple:
-						pair = p.Elements
-					default:
-						return errors.NewError("dictionary update sequence element must be [key, value] pair")
-					}
-					if len(pair) != 2 {
-						return errors.NewError("dictionary update sequence element must be [key, value] pair")
-					}
-					hk, rerr := evalHashKeyChecked(ctx, pair[0])
-					if rerr != nil {
-						return rerr
-					}
-					if errObj := checkDictGrowth(dict, hk); errObj != nil {
-						return errObj
-					}
-					dict.Store(hk, pair[0], pair[1])
-				}
 			default:
-				return errors.NewTypeError("DICT or LIST of pairs", args[0].Type().String())
+				// Any other iterable of pairs: a list, a generator, ...
+				elems, ok, rerr := iterableToSliceChecked(ctx, other, env)
+				if rerr != nil {
+					return rerr
+				}
+				if !ok {
+					return errors.NewTypeErrorTagged("'%s' object is not iterable", getTypeName(other))
+				}
+				if errObj := storeDictPairs(ctx, dict, elems, env); errObj != nil {
+					return errObj
+				}
 			}
+		}
+		for k, v := range keywords.All() {
+			dict.SetByString(k, v)
 		}
 		return NULL
 	case "clear":
@@ -489,7 +495,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 			return err
 		}
 		if keywords.Len() > 0 {
-			return errors.NewError("clear() does not accept keyword arguments")
+			return errors.NewTypeErrorTagged("clear() does not accept keyword arguments")
 		}
 		dict.Clear()
 		return NULL
@@ -498,7 +504,7 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 			return err
 		}
 		if keywords.Len() > 0 {
-			return errors.NewError("copy() does not accept keyword arguments")
+			return errors.NewTypeErrorTagged("copy() does not accept keyword arguments")
 		}
 		copied := object.NewDictSized(dict.Len())
 		copied.SetFactory(dict.Factory())
@@ -506,10 +512,10 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 		return copied
 	case "setdefault":
 		if len(args) < 1 || len(args) > 2 {
-			return errors.NewError("setdefault() takes 1-2 arguments (%d given)", len(args))
+			return errors.NewTypeErrorTagged("setdefault() takes 1-2 arguments (%d given)", len(args))
 		}
 		if keywords.Len() > 0 {
-			return errors.NewError("setdefault() does not accept keyword arguments")
+			return errors.NewTypeErrorTagged("setdefault() does not accept keyword arguments")
 		}
 		key, rerr := evalHashKeyChecked(ctx, args[0])
 		if rerr != nil {
@@ -546,16 +552,12 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 			dict.Delete(canonical)
 			return &object.Tuple{Elements: []object.Object{pair.Key, pair.Value}}
 		}
-		return &object.Exception{
-			Message:       "popitem(): dictionary is empty",
-			ExceptionType: object.ExceptionTypeKeyError,
-			Raised:        true,
-		}
+		return object.NewKeyError(object.NewString("popitem(): dictionary is empty"), "'popitem(): dictionary is empty'")
 	case "move_to_end":
 		// move_to_end(key, last=True): reposition an existing key at the end,
 		// or the front with last=False (OrderedDict.move_to_end).
 		if len(args) < 1 || len(args) > 2 {
-			return errors.NewError("move_to_end() takes 1-2 arguments (%d given)", len(args))
+			return errors.NewTypeErrorTagged("move_to_end() takes 1-2 arguments (%d given)", len(args))
 		}
 		last, lerr := dictLastArg(args, keywords, 1, "move_to_end")
 		if lerr != nil {
@@ -570,16 +572,16 @@ func callDictMethod(ctx context.Context, dict *object.Dict, method string, args 
 			if rerr != nil {
 				return rerr
 			}
-			return &object.Exception{Message: rendered, ExceptionType: object.ExceptionTypeKeyError, Raised: true}
+			return object.NewKeyError(args[0], rendered)
 		}
 		return NULL
 	case "fromkeys":
 		// dict.fromkeys(iterable[, value]) - create new dict with keys from iterable
 		if len(args) < 1 || len(args) > 2 {
-			return errors.NewError("fromkeys() takes 1-2 arguments (%d given)", len(args))
+			return errors.NewTypeErrorTagged("fromkeys() takes 1-2 arguments (%d given)", len(args))
 		}
 		if keywords.Len() > 0 {
-			return errors.NewError("fromkeys() does not accept keyword arguments")
+			return errors.NewTypeErrorTagged("fromkeys() does not accept keyword arguments")
 		}
 		var defaultVal object.Object = NULL
 		if len(args) == 2 {
@@ -668,7 +670,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		return NULL
 	case "index":
 		if len(args) < 1 || len(args) > 3 {
-			return errors.NewError("index() takes 1-3 arguments (%d given)", len(args))
+			return errors.NewTypeErrorTagged("index() takes 1-3 arguments (%d given)", len(args))
 		}
 		value := args[0]
 		start := 0
@@ -711,7 +713,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 				return object.NewInteger(int64(i))
 			}
 		}
-		return errors.NewError("value not in list")
+		return errors.NewValueError("list.index(x): x not in list")
 	case "count":
 		if err := errors.ExactArgs(args, 1); err != nil {
 			return err
@@ -730,7 +732,7 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		return object.NewInteger(count)
 	case "pop":
 		if len(args) > 1 {
-			return errors.NewError("pop() takes at most 1 argument (%d given)", len(args))
+			return errors.NewTypeErrorTagged("pop() takes at most 1 argument (%d given)", len(args))
 		}
 		if len(list.Elements) == 0 {
 			return &object.Exception{Message: "pop from empty list", ExceptionType: object.ExceptionTypeIndexError, Raised: true}
@@ -825,6 +827,9 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 		reverse := false
 		if keywords.Len() > 0 {
 			if kf, ok := keywords.Lookup("key"); ok && kf.Type() != object.NULL_OBJ {
+				if !isCallableObject(kf) {
+					return notCallableError(kf)
+				}
 				keyFunc = kf // key=None means no key function
 			}
 			if rev, ok := keywords.Lookup("reverse"); ok {
@@ -994,8 +999,13 @@ func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args [
 	case "decode":
 		// Python signature: decode(encoding="utf-8", errors="strict"),
 		// positional or keyword.
+		if keywords.Len() > 0 && len(args) > 0 {
+			if _, errObj := foldKeywords("decode", args, keywords, codecParams, nil); errObj != nil {
+				return errObj
+			}
+		}
 		if len(args) > 2 {
-			return errors.NewError("decode() takes at most 2 arguments (%d given)", len(args))
+			return errors.NewTypeErrorTagged("decode() takes at most 2 arguments (%d given)", len(args))
 		}
 		encoding := "utf-8"
 		errorsMode := "strict"
@@ -1030,7 +1040,7 @@ func callBytesMethod(ctx context.Context, b *object.Bytes, method string, args [
 			}
 		}
 		if errorsMode != "strict" && errorsMode != "ignore" && errorsMode != "replace" {
-			return errors.NewError("decode: unknown error handler %q (use strict, ignore or replace)", errorsMode)
+			return errors.NewLookupError("decode: unknown error handler %q (use strict, ignore or replace)", errorsMode)
 		}
 		decoded, errObj := decodeBytes(b.BytesValue(), encoding, errorsMode)
 		if errObj != nil {
@@ -1338,8 +1348,14 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		return &object.List{Elements: elements}
 	case "replace":
+		if keywords.Len() > 0 {
+			var errObj object.Object
+			if args, errObj = foldKeywords("replace", args, keywords, []string{"old", "new", "count"}, nil); errObj != nil {
+				return errObj
+			}
+		}
 		if len(args) < 2 || len(args) > 3 {
-			return errors.NewError("replace() takes 2-3 arguments (%d given)", len(args))
+			return errors.NewTypeErrorTagged("replace() takes 2-3 arguments (%d given)", len(args))
 		}
 		old, err := args[0].AsString()
 		if err != nil {
@@ -1430,7 +1446,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		return object.NewString(cases.Title(language.Und).String(str.StringValue()))
 	case "strip":
 		if len(args) > 1 {
-			return errors.NewError("strip() takes at most 1 argument (%d given)", len(args))
+			return errors.NewTypeErrorTagged("strip() takes at most 1 argument (%d given)", len(args))
 		}
 		if len(args) == 1 {
 			chars, errObj := args[0].AsString()
@@ -1442,7 +1458,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		return object.NewSubstring(strings.TrimSpace(str.StringValue()), str.StringValue())
 	case "lstrip":
 		if len(args) > 1 {
-			return errors.NewError("lstrip() takes at most 1 argument (%d given)", len(args))
+			return errors.NewTypeErrorTagged("lstrip() takes at most 1 argument (%d given)", len(args))
 		}
 		if len(args) == 1 {
 			chars, errObj := args[0].AsString()
@@ -1454,7 +1470,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		return object.NewSubstring(strings.TrimLeft(str.StringValue(), " \t\n\r\v\f"), str.StringValue())
 	case "rstrip":
 		if len(args) > 1 {
-			return errors.NewError("rstrip() takes at most 1 argument (%d given)", len(args))
+			return errors.NewTypeErrorTagged("rstrip() takes at most 1 argument (%d given)", len(args))
 		}
 		if len(args) == 1 {
 			chars, errObj := args[0].AsString()
@@ -1466,7 +1482,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		return object.NewSubstring(strings.TrimRight(str.StringValue(), " \t\n\r\v\f"), str.StringValue())
 	case "startswith", "endswith":
 		if len(args) < 1 || len(args) > 3 {
-			return errors.NewError("%s() takes 1-3 arguments (%d given)", method, len(args))
+			return errors.NewTypeErrorTagged("%s() takes 1-3 arguments (%d given)", method, len(args))
 		}
 		atStart := method == "startswith"
 		if _, isTuple := args[0].(*object.Tuple); !isTuple {
@@ -1728,7 +1744,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 	case "splitlines":
 		keepends := false
 		if len(args) > 1 {
-			return errors.NewError("splitlines() takes at most 1 argument (%d given)", len(args))
+			return errors.NewTypeErrorTagged("splitlines() takes at most 1 argument (%d given)", len(args))
 		}
 		if len(args) == 1 {
 			b, errObj := args[0].AsBool()
@@ -1779,7 +1795,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		return &object.List{Elements: lines}
 	case "swapcase":
 		if len(args) != 0 {
-			return errors.NewError("swapcase() takes no arguments (%d given)", len(args))
+			return errors.NewTypeErrorTagged("swapcase() takes no arguments (%d given)", len(args))
 		}
 		result := make([]rune, len(str.StringValue()))
 		for i, r := range str.StringValue() {
@@ -1799,6 +1815,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		sep, err := args[0].AsString()
 		if err != nil {
 			return err
+		}
+		if sep == "" {
+			return errors.NewValueError("empty separator")
 		}
 		idx := strings.Index(str.StringValue(), sep)
 		if idx < 0 {
@@ -1820,6 +1839,9 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		sep, err := args[0].AsString()
 		if err != nil {
 			return err
+		}
+		if sep == "" {
+			return errors.NewValueError("empty separator")
 		}
 		idx := strings.LastIndex(str.StringValue(), sep)
 		if idx < 0 {
@@ -1860,8 +1882,13 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		return str
 	case "encode":
 		// Python signature: encode(encoding="utf-8", errors="strict").
+		if keywords.Len() > 0 && len(args) > 0 {
+			if _, errObj := foldKeywords("encode", args, keywords, codecParams, nil); errObj != nil {
+				return errObj
+			}
+		}
 		if len(args) > 2 {
-			return errors.NewError("encode() takes at most 2 arguments (%d given)", len(args))
+			return errors.NewTypeErrorTagged("encode() takes at most 2 arguments (%d given)", len(args))
 		}
 		encoding := "utf-8"
 		errorsMode := "strict"
@@ -1896,7 +1923,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 			}
 		}
 		if errorsMode != "strict" && errorsMode != "ignore" && errorsMode != "replace" {
-			return errors.NewError("encode: unknown error handler %q (use strict, ignore or replace)", errorsMode)
+			return errors.NewLookupError("encode: unknown error handler %q (use strict, ignore or replace)", errorsMode)
 		}
 		out, errObj := encodeStr(str.StringValue(), encoding, errorsMode)
 		if errObj != nil {
@@ -1904,9 +1931,15 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		}
 		return object.NewBytes(out)
 	case "expandtabs":
+		if keywords.Len() > 0 {
+			var errObj object.Object
+			if args, errObj = foldKeywords("expandtabs", args, keywords, []string{"tabsize"}, nil); errObj != nil {
+				return errObj
+			}
+		}
 		tabsize := 8
 		if len(args) > 1 {
-			return errors.NewError("expandtabs() takes at most 1 argument (%d given)", len(args))
+			return errors.NewTypeErrorTagged("expandtabs() takes at most 1 argument (%d given)", len(args))
 		}
 		if len(args) == 1 {
 			ts, errObj := args[0].AsInt()
@@ -1954,7 +1987,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		return object.NewString(strings.ToLower(str.StringValue()))
 	case "maketrans":
 		if len(args) < 1 || len(args) > 3 {
-			return errors.NewError("maketrans() takes 1, 2, or 3 arguments (%d given)", len(args))
+			return errors.NewTypeErrorTagged("maketrans() takes 1, 2, or 3 arguments (%d given)", len(args))
 		}
 		transMap := object.NewDict()
 		if len(args) == 1 {
@@ -1980,7 +2013,7 @@ func callStringMethod(ctx context.Context, str *object.String, method string, ar
 		fromRunes := []rune(from)
 		toRunes := []rune(to)
 		if len(fromRunes) != len(toRunes) {
-			return errors.NewError("maketrans() arguments must have equal length")
+			return errors.NewValueError("maketrans() arguments must have equal length")
 		}
 		for i, ch := range fromRunes {
 			key := object.DictKey(object.NewString(string(ch)))
@@ -2146,7 +2179,7 @@ func callTupleMethod(ctx context.Context, tuple *object.Tuple, method string, ar
 		return object.NewInteger(count)
 	case "index":
 		if len(args) < 1 || len(args) > 3 {
-			return errors.NewError("index() takes 1-3 arguments (%d given)", len(args))
+			return errors.NewTypeErrorTagged("index() takes 1-3 arguments (%d given)", len(args))
 		}
 		start, end := 0, len(tuple.Elements)
 		if len(args) >= 2 {
@@ -2187,7 +2220,7 @@ func callTupleMethod(ctx context.Context, tuple *object.Tuple, method string, ar
 				return object.NewInteger(int64(i))
 			}
 		}
-		return errors.NewError("value not in tuple")
+		return errors.NewValueError("tuple.index(x): x not in tuple")
 	}
 	return attributeError(tuple, method)
 }
@@ -2251,11 +2284,7 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 			if rerr != nil {
 				return rerr
 			}
-			return &object.Exception{
-				Message:       rendered,
-				ExceptionType: object.ExceptionTypeKeyError,
-				Raised:        true,
-			}
+			return object.NewKeyError(args[0], rendered)
 		}
 		set.DeleteKeyed(key)
 		return NULL
@@ -2274,11 +2303,7 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 			return err
 		}
 		if set.Len() == 0 {
-			return &object.Exception{
-				Message:       "pop from an empty set",
-				ExceptionType: object.ExceptionTypeKeyError,
-				Raised:        true,
-			}
+			return object.NewKeyError(object.NewString("pop from an empty set"), "'pop from an empty set'")
 		}
 		// Any element will do: Python's pop removes an arbitrary one.
 		for k, elem := range set.All() {
@@ -2300,7 +2325,12 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 		// In-place variants accepting any number of arguments; non-set
 		// iterables are materialized first (Python accepts any iterable).
 		if len(args) == 0 {
-			return errors.NewError("%s() takes at least 1 argument (0 given)", method)
+			// Python's update() with nothing to add does nothing;
+			// symmetric_difference_update takes exactly one.
+			if method == "symmetric_difference_update" {
+				return errors.NewTypeErrorTagged("%s() takes exactly one argument (0 given)", method)
+			}
+			return NULL
 		}
 		sets := make([]*object.Set, 0, len(args))
 		for _, arg := range args {
@@ -2332,7 +2362,7 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 	case "union", "intersection", "difference":
 		// Python takes any number of arguments, each any iterable.
 		if len(args) == 0 {
-			return errors.NewError("%s() takes at least 1 argument (0 given)", method)
+			return set.Copy() // s.union() is a copy of s, as in Python
 		}
 		result := set
 		for _, arg := range args {
@@ -2435,7 +2465,7 @@ func evalStringFormatMethod(ctx context.Context, format string, args []object.Ob
 				}
 			}
 			if end < 0 {
-				return "", errors.NewError("single '{' in format string")
+				return "", errors.NewValueError("single '{' in format string")
 			}
 			field := format[i+1 : i+1+end]
 			i += end + 2
@@ -2450,7 +2480,7 @@ func evalStringFormatMethod(ctx context.Context, format string, args []object.Ob
 				conv = name[bang+1:]
 				name = name[:bang]
 				if conv != "r" && conv != "s" && conv != "a" {
-					return "", errors.NewError("unknown conversion '%s'", conv)
+					return "", errors.NewValueError("unknown conversion '%s'", conv)
 				}
 			}
 
@@ -2480,7 +2510,7 @@ func evalStringFormatMethod(ctx context.Context, format string, args []object.Ob
 			default:
 				kw, ok := keywords.Lookup(name)
 				if !ok {
-					return "", &object.Exception{Message: "'" + name + "'", ExceptionType: object.ExceptionTypeKeyError, Raised: true}
+					return "", object.NewKeyError(object.NewString(name), object.ReprString(name))
 				}
 				val = kw
 			}
@@ -2513,7 +2543,7 @@ func evalStringFormatMethod(ctx context.Context, format string, args []object.Ob
 				i += 2
 				continue
 			}
-			return "", errors.NewError("single '}' in format string")
+			return "", errors.NewValueError("single '}' in format string")
 		}
 		b.WriteByte(c)
 		i++
@@ -2597,24 +2627,24 @@ func expandFormatSpecArgs(ctx context.Context, spec string, args []object.Object
 		}
 		end := strings.IndexByte(spec[i:], '}')
 		if end < 0 {
-			return "", errors.NewError("unbalanced '{' in format spec")
+			return "", errors.NewValueError("unbalanced '{' in format spec")
 		}
 		name := spec[i+1 : i+end]
 		i += end + 1
 		var val object.Object
 		switch {
 		case name == "":
-			return "", errors.NewError("empty nested format field")
+			return "", errors.NewValueError("empty nested format field")
 		case name[0] >= '0' && name[0] <= '9':
 			idx, err := strconv.Atoi(name)
 			if err != nil || idx < 0 || idx >= len(args) {
-				return "", errors.NewError("format index %s out of range (%d arguments)", name, len(args))
+				return "", formatIndexError(idx)
 			}
 			val = args[idx]
 		default:
 			kw, ok := keywords.Lookup(name)
 			if !ok {
-				return "", errors.NewError("nested format field '%s' has no matching keyword argument", name)
+				return "", object.NewKeyError(object.NewString(name), object.ReprString(name))
 			}
 			val = kw
 		}
@@ -2799,4 +2829,14 @@ func dictLastArg(args []object.Object, keywords object.Kwargs, pos int, method s
 		return false, errors.NewTypeErrorTagged("popitem() takes at most 1 argument (%d given)", len(args))
 	}
 	return last, nil
+}
+
+// formatIndexError is the IndexError str.format raises for a positional
+// field with no matching argument.
+func formatIndexError(idx int) object.Object {
+	return &object.Exception{
+		Message:       fmt.Sprintf("Replacement index %d out of range for positional args tuple", idx),
+		ExceptionType: object.ExceptionTypeIndexError,
+		Raised:        true,
+	}
 }

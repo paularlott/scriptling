@@ -24,6 +24,9 @@ func newXMLLibrary() *object.Library {
 	return object.NewLibrary(XMLLibraryName, map[string]*object.Builtin{
 		"loads": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("loads", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -56,12 +59,17 @@ Returns:
 		},
 		"dumps": {
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if kwargs.Len() > 0 {
+					if err := errors.CheckKwargs("dumps", kwargs, "indent"); err != nil {
+						return err
+					}
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
 				d, ok := args[0].(*object.Dict)
 				if !ok {
-					return errors.NewError("xml.dumps: expected a dict")
+					return errors.NewTypeErrorTagged("xml.dumps: expected a dict")
 				}
 				indent := kwargs.MustGetString("indent", "")
 				result, e := xmlDumps(d, indent)

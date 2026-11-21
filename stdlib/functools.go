@@ -15,13 +15,18 @@ var FunctoolsLibrary = object.NewLibrary(FunctoolsLibraryName, map[string]*objec
 			// Both decorator forms: @lru_cache (bare, the function as the
 			// first positional argument) and @lru_cache(maxsize=...) which
 			// returns the decorator.
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("lru_cache", kwargs, "maxsize", "typed"); err != nil {
+					return err
+				}
+			}
 			if len(args) > 0 {
 				switch args[0].(type) {
 				case *object.Function, *object.LambdaFunction, *object.Builtin, *object.BoundMethod:
 					return newLRUCacheWrapper(args[0], 128)
 				}
 				if len(args) > 1 {
-					return errors.NewError("lru_cache() takes at most 1 argument")
+					return errors.NewTypeErrorTagged("lru_cache() takes at most 1 argument")
 				}
 			}
 			maxsize := int64(128)
@@ -32,7 +37,7 @@ var FunctoolsLibrary = object.NewLibrary(FunctoolsLibraryName, map[string]*objec
 				case *object.Null:
 					maxsize = -1 // unbounded
 				default:
-					return errors.NewError("maxsize should be an integer or None")
+					return errors.NewTypeErrorTagged("Expected first argument to be an integer, a callable, or None")
 				}
 			} else if len(args) == 1 {
 				if iv, ok := args[0].(*object.Integer); ok {
@@ -40,14 +45,17 @@ var FunctoolsLibrary = object.NewLibrary(FunctoolsLibraryName, map[string]*objec
 				} else if _, isNull := args[0].(*object.Null); isNull {
 					maxsize = -1
 				} else {
-					return errors.NewError("maxsize should be an integer or None")
+					return errors.NewTypeErrorTagged("Expected first argument to be an integer, a callable, or None")
 				}
 			}
 			// Decorator-with-args form: return the decorator.
 			return &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("lru_cache", kwargs); err != nil {
+						return err
+					}
 					if len(args) != 1 {
-						return errors.NewError("lru_cache decorator requires 1 argument")
+						return errors.NewTypeErrorTagged("lru_cache decorator requires 1 argument")
 					}
 					switch args[0].(type) {
 					case *object.Function, *object.LambdaFunction, *object.Builtin, *object.BoundMethod:
@@ -68,8 +76,13 @@ arguments bypass the cache, as in Python.`,
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// wraps(wrapped) returns a decorator that copies the wrapped
 			// callable's identity (__name__ above all) onto the wrapper.
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("wraps", kwargs, "assigned", "updated"); err != nil {
+					return err
+				}
+			}
 			if len(args) != 1 {
-				return errors.NewError("wraps() requires 1 argument")
+				return errors.NewTypeErrorTagged("wraps() missing 1 required positional argument: 'wrapped'")
 			}
 			wrapped := args[0]
 			name := "<unknown>"
@@ -85,8 +98,11 @@ arguments bypass the cache, as in Python.`,
 			}
 			return &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("wraps", kwargs); err != nil {
+						return err
+					}
 					if len(args) != 1 {
-						return errors.NewError("wraps decorator requires the wrapper")
+						return errors.NewTypeErrorTagged("wraps decorator requires the wrapper")
 					}
 					switch wr := args[0].(type) {
 					case *object.Builtin:
@@ -129,8 +145,11 @@ The standard decorator pattern:
 	},
 	"cache": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("cache", kwargs); err != nil {
+				return err
+			}
 			if len(args) != 1 {
-				return errors.NewError("cache() requires 1 argument")
+				return errors.NewTypeErrorTagged("cache() missing 1 required positional argument: 'user_function'")
 			}
 			switch args[0].(type) {
 			case *object.Function, *object.LambdaFunction, *object.Builtin, *object.BoundMethod:
@@ -142,8 +161,18 @@ The standard decorator pattern:
 	},
 	"reduce": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("reduce", kwargs, "initial"); err != nil {
+					return err
+				}
+				if len(args) == 2 {
+					args = append(args[:2:2], kwargs.Get("initial"))
+				} else if len(args) == 3 {
+					return errors.NewTypeErrorTagged("reduce() got multiple values for argument 'initial'")
+				}
+			}
 			if len(args) < 2 || len(args) > 3 {
-				return errors.NewError("reduce() requires 2 or 3 arguments")
+				return errors.NewTypeErrorTagged("reduce() takes from 2 to 3 positional arguments but %d were given", len(args))
 			}
 
 			callable := args[0]
@@ -156,9 +185,14 @@ The standard decorator pattern:
 
 			list, ok := args[1].(*object.List)
 			if !ok {
-				// Any other built-in iterable (tuple, range, set, ...).
-				elems, isIterable := object.IterableToSlice(args[1])
-				if !isIterable {
+				// Any other iterable (tuple, range, set, generator, ...). An
+				// error raised while pulling a generator or iterator propagates.
+				elems, errObj := collectIterable(ctx, args[1])
+				if errObj != nil {
+					switch args[1].(type) {
+					case *object.Instance, *object.Iterator:
+						return errObj
+					}
 					return errors.NewTypeErrorTagged("reduce() arg 2 must support iteration")
 				}
 				list = &object.List{Elements: elems}
@@ -219,7 +253,7 @@ Example:
 	"partial": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if len(args) < 1 {
-				return errors.NewError("partial() requires at least 1 argument")
+				return errors.NewTypeErrorTagged("type 'partial' takes at least one argument")
 			}
 
 			var fn *object.Function

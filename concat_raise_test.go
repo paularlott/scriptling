@@ -69,7 +69,7 @@ for i in range(100000):
 		if err != nil {
 			t.Fatalf("%s: eval error %v", expr, err)
 		}
-		if got := result.Inspect(); !strings.HasPrefix(got, "TypeError: unsupported operand") {
+		if got := result.Inspect(); !strings.HasPrefix(got, "TypeError: unsupported operand") && !strings.HasPrefix(got, "TypeError: can only concatenate") {
 			t.Errorf("%s = %s, want a TypeError", expr, got)
 		}
 	}

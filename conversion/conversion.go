@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/paularlott/scriptling/errors"
@@ -24,12 +26,67 @@ func ParseJSON(jsonStr string) (object.Object, error) {
 	decoder.UseNumber()
 	result, err := decodeJSONValue(decoder, 0)
 	if err != nil {
+		// Python's json module also reads NaN, Infinity and -Infinity,
+		// which Go's decoder rejects: rewrite them as numbers it reads
+		// back as those floats, and parse again.
+		if rewritten, ok := rewriteNonFiniteJSON(jsonStr); ok {
+			return ParseJSON(rewritten)
+		}
 		return nil, err
 	}
 	if _, err := decoder.Token(); err != io.EOF {
 		return nil, fmt.Errorf("extra data after the JSON value at offset %d", decoder.InputOffset())
 	}
 	return result, nil
+}
+
+// jsonNaNNumber stands for a NaN token in rewritten JSON: a number literal
+// no encoder writes, read back as NaN. Infinity is rewritten as a number too
+// large for a float, which reads back as infinity.
+const jsonNaNNumber = json.Number("-0e-918273645546372819")
+
+// rewriteNonFiniteJSON replaces the NaN, Infinity and -Infinity tokens
+// outside strings in s with numbers that decode to those values. ok is false
+// when s has none.
+func rewriteNonFiniteJSON(s string) (string, bool) {
+	var b strings.Builder
+	inString, escaped, changed := false, false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			b.WriteByte(c)
+			continue
+		}
+		switch {
+		case c == '"':
+			inString = true
+		case strings.HasPrefix(s[i:], "NaN"):
+			b.WriteString(string(jsonNaNNumber))
+			i += len("NaN") - 1
+			changed = true
+			continue
+		case strings.HasPrefix(s[i:], "Infinity"):
+			b.WriteString("1e999999")
+			i += len("Infinity") - 1
+			changed = true
+			continue
+		case strings.HasPrefix(s[i:], "-Infinity"):
+			b.WriteString("-1e999999")
+			i += len("-Infinity") - 1
+			changed = true
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String(), changed
 }
 
 // decodeJSONValue reads one JSON value from the token stream, keeping object
@@ -169,7 +226,15 @@ func fromGo(v interface{}, depth int, tooDeep *bool) object.Object {
 		if intVal, err := v.Int64(); err == nil {
 			return object.NewInteger(intVal)
 		}
-		if floatVal, err := v.Float64(); err == nil {
+		if v == jsonNaNNumber {
+			return object.NewFloat(math.NaN())
+		}
+		floatVal, err := v.Float64()
+		if err == nil {
+			return object.NewFloat(floatVal)
+		}
+		// A number too large for a float is infinity, as Python reads it.
+		if numErr, ok := err.(*strconv.NumError); ok && numErr.Err == strconv.ErrRange {
 			return object.NewFloat(floatVal)
 		}
 		return object.NewString(string(v))

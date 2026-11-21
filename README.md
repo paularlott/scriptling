@@ -34,7 +34,7 @@ A minimal, sandboxed interpreter for LLM agents to execute code and interact wit
 While Scriptling is inspired by Python, it has some key differences:
 
 - **Single Inheritance Only**: Classes support single inheritance (e.g., `class Dog(Animal):`), but not multiple inheritance.
-- **No `async`/`await` or `yield` generators**.
+- **No `async`/`await`**. Generators (`yield`, `yield from`, generator expressions) are supported.
 - **Simplified Scope**: `nonlocal` and `global` keywords work slightly differently.
 - **Eager `lazy import`**: PEP 810 `lazy import x` / `lazy from x import y` is accepted, but the hint is ignored and the module is imported immediately.
 - **Go Integration**: Designed primarily for embedding in Go, with direct type mapping.

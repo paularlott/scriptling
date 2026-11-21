@@ -89,6 +89,13 @@ type Parser struct {
 
 	nestedFuncStack []bool // stack: one bool per active function parse, true if body contains nested func/lambda/class
 	symbols         *ast.SymbolTable
+
+	// genexps holds the generator expressions parsed in the function bodies
+	// being parsed; genexpBase is where each body's start in it. A generator
+	// expression left lazy makes its function count as containing a nested
+	// function (see parseGeneratorCore).
+	genexps    []*ast.ListComprehension
+	genexpBase []int
 }
 
 // Nesting limits. Every pass that runs after parsing (constant folding, the
@@ -142,7 +149,7 @@ func prefixParseFnFor(t token.TokenType) prefixParseFn {
 		return (*Parser).parseBoolean
 	case token.NONE:
 		return (*Parser).parseNone
-	case token.MINUS, token.NOT, token.TILDE:
+	case token.MINUS, token.NOT, token.TILDE, token.PLUS:
 		return (*Parser).parsePrefixExpression
 	case token.LPAREN:
 		return (*Parser).parseGroupedExpression
@@ -1293,6 +1300,10 @@ func parseFastIntegerLiteral(s string) (int64, bool) {
 func (p *Parser) parseFloatLiteral() ast.Expression {
 	lit := &ast.FloatLiteral{}
 	value, err := strconv.ParseFloat(strings.ReplaceAll(p.curToken.Literal, "_", ""), 64)
+	// A literal too large for a float is infinity, as in Python (1e400).
+	if numErr, ok := err.(*strconv.NumError); ok && numErr.Err == strconv.ErrRange {
+		err = nil
+	}
 	if err != nil {
 		msg := fmt.Sprintf("line %d: could not parse %q as float", p.curToken.Line, p.curToken.Literal)
 		p.errors = append(p.errors, msg)
@@ -1600,6 +1611,15 @@ func (p *Parser) parsePrefixExpression() ast.Expression {
 	expression := &ast.PrefixExpression{
 		Operator: ast.ParseOp(p.curToken.Literal),
 	}
+	if p.curTokenIs(token.PLUS) {
+		expression.Operator = ast.OpPos // unary plus, not addition
+	}
+	// The operand must follow on the same line, outside brackets: z = -
+	// at the end of a line is a syntax error, not -(the next line).
+	if p.skippedNewline && p.parenDepth == 0 {
+		p.errors = append(p.errors, fmt.Sprintf("line %d: expected an expression after '%s'", p.curToken.Line, p.curToken.Literal))
+		return nil
+	}
 	// `not` is a low-precedence prefix operator, as in Python: its operand
 	// swallows comparisons (not a == b is not (a == b)) but stops before
 	// and/or. Arithmetic prefixes (-, ~) sit between * and **, so
@@ -1756,16 +1776,22 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 func (p *Parser) parseCallExpression(function ast.Expression) ast.Expression {
 	exp := &ast.CallExpression{Function: function}
 	var unpackAt []int
-	args, keywords, argsUnpack, kwargsUnpack := p.parseCallArguments(&unpackAt)
+	var kwOrder []string
+	args, keywords, argsUnpack, kwargsUnpack := p.parseCallArguments(&unpackAt, &kwOrder)
 	exp.Arguments = args
 	exp.SetOverflow(keywords, argsUnpack, kwargsUnpack)
+	exp.SetKeywordOrder(kwOrder)
 	exp.SetArgsUnpackAt(unpackAt, len(args))
+	if id, ok := function.(*ast.Identifier); ok && id.Value() != "join" {
+		eagerGenexpArg(id.Value(), args, exp.HasOverflow())
+	}
 	return exp
 }
 
 // parseCallArguments parses a call's argument list. unpackAt receives, for each
-// *unpack, the count of positional arguments written before it.
-func (p *Parser) parseCallArguments(unpackAt *[]int) ([]ast.Expression, map[string]ast.Expression, []ast.Expression, ast.Expression) {
+// *unpack, the count of positional arguments written before it, and kwOrder
+// the keyword names in the order written.
+func (p *Parser) parseCallArguments(unpackAt *[]int, kwOrder *[]string) ([]ast.Expression, map[string]ast.Expression, []ast.Expression, ast.Expression) {
 	var args []ast.Expression
 	var keywords map[string]ast.Expression
 	var argsUnpack []ast.Expression
@@ -1830,6 +1856,7 @@ func (p *Parser) parseCallArguments(unpackAt *[]int) ([]ast.Expression, map[stri
 			p.nextToken() // consume =
 			value := p.parseExpression(LOWEST)
 			keywords[key] = value
+			*kwOrder = append(*kwOrder, key)
 		} else {
 			// Positional argument
 			if len(keywords) > 0 {
@@ -2007,6 +2034,32 @@ func (p *Parser) markNestedFunc() {
 	}
 }
 
+// pushFuncBody starts tracking a function or lambda body for nested
+// functions and generator expressions.
+func (p *Parser) pushFuncBody() {
+	p.nestedFuncStack = append(p.nestedFuncStack, false)
+	p.genexpBase = append(p.genexpBase, len(p.genexps))
+}
+
+// popFuncBody ends tracking the innermost body and reports whether it
+// contains a nested function, or a generator expression that stayed lazy:
+// both can outlive the call, so its scope must not be reused by the next.
+func (p *Parser) popFuncBody() bool {
+	n := len(p.nestedFuncStack) - 1
+	nested := p.nestedFuncStack[n]
+	p.nestedFuncStack = p.nestedFuncStack[:n]
+	base := p.genexpBase[n]
+	p.genexpBase = p.genexpBase[:n]
+	for _, g := range p.genexps[base:] {
+		if g.Generator {
+			nested = true
+		}
+	}
+	clear(p.genexps[base:])
+	p.genexps = p.genexps[:base]
+	return nested
+}
+
 func (p *Parser) parseFunctionStatement() *ast.FunctionStatement {
 	stmt := &ast.FunctionStatement{Token: p.nodeLine()}
 
@@ -2014,10 +2067,9 @@ func (p *Parser) parseFunctionStatement() *ast.FunctionStatement {
 	p.markNestedFunc()
 
 	// Push tracking flag for this function's body
-	p.nestedFuncStack = append(p.nestedFuncStack, false)
+	p.pushFuncBody()
 	defer func() {
-		hasNested := p.nestedFuncStack[len(p.nestedFuncStack)-1]
-		p.nestedFuncStack = p.nestedFuncStack[:len(p.nestedFuncStack)-1]
+		hasNested := p.popFuncBody()
 		if stmt.Function != nil {
 			stmt.Function.HasNestedFunc = hasNested
 		}
@@ -2337,16 +2389,53 @@ func (p *Parser) parseListComprehension(expr ast.Expression) ast.Expression {
 	return p.parseComprehensionCore(expr, token.RBRACKET)
 }
 
-// parseGeneratorExpression parses generator expressions like (x for x in list)
-// We treat them as list comprehensions for simplicity (eager evaluation)
+// parseGeneratorExpression parses generator expressions like (x for x in list).
 func (p *Parser) parseGeneratorExpression(expr ast.Expression) ast.Expression {
-	return p.parseComprehensionCore(expr, token.RPAREN)
+	return p.parseGeneratorCore(expr, token.RPAREN)
 }
 
 // parseGeneratorExpressionInCall parses generator expressions in function calls
 // like: func(x for x in list) - without surrounding parens
 func (p *Parser) parseGeneratorExpressionInCall(expr ast.Expression, end token.TokenType) ast.Expression {
-	return p.parseComprehensionCore(expr, end)
+	return p.parseGeneratorCore(expr, end)
+}
+
+// parseGeneratorCore parses a generator expression: a comprehension marked to
+// run lazily. Its generator keeps the enclosing scope alive after the
+// enclosing call returns, so unless the call it is passed to makes it eager
+// (eagerGenexpArg), its function counts as containing a nested function.
+func (p *Parser) parseGeneratorCore(expr ast.Expression, end token.TokenType) ast.Expression {
+	comp, ok := p.parseComprehensionCore(expr, end).(*ast.ListComprehension)
+	if !ok || comp == nil {
+		return nil
+	}
+	comp.Generator = true
+	if len(p.nestedFuncStack) > 0 {
+		p.genexps = append(p.genexps, comp)
+	}
+	return comp
+}
+
+// eagerConsumers are the builtins that take the whole of their one argument.
+// A generator expression passed as their only argument is built as a list
+// instead: they consume every element anyway, and a list comprehension is
+// several times cheaper per element than resuming a generator. A script that
+// rebinds one of these names receives a list rather than a generator.
+var eagerConsumers = map[string]bool{
+	"sum": true, "min": true, "max": true, "sorted": true, "list": true,
+	"tuple": true, "set": true, "frozenset": true, "dict": true,
+}
+
+// eagerGenexpArg turns a generator expression that is the only argument of
+// one of eagerConsumers, or of a .join method call, into a list
+// comprehension. The decision is made from the syntax alone.
+func eagerGenexpArg(callee string, args []ast.Expression, overflow bool) {
+	if len(args) != 1 || overflow {
+		return
+	}
+	if comp, ok := args[0].(*ast.ListComprehension); ok && comp.Generator && (callee == "join" || eagerConsumers[callee]) {
+		comp.Generator = false
+	}
 }
 
 // parseAdditionalClauses parses zero or more additional `for var in iter [if cond]` clauses
@@ -2436,10 +2525,9 @@ func (p *Parser) parseLambda() ast.Expression {
 
 	// Track lambdas nested inside this one, as parseFunctionStatement does
 	// for a def's body.
-	p.nestedFuncStack = append(p.nestedFuncStack, false)
+	p.pushFuncBody()
 	defer func() {
-		lambda.HasNestedFunc = p.nestedFuncStack[len(p.nestedFuncStack)-1]
-		p.nestedFuncStack = p.nestedFuncStack[:len(p.nestedFuncStack)-1]
+		lambda.HasNestedFunc = p.popFuncBody()
 	}()
 
 	if !p.peekTokenIs(token.COLON) {
@@ -3029,10 +3117,15 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 				Method:   methodName,
 			}
 			var unpackAt []int
-			args, keywords, argsUnpack, kwargsUnpack := p.parseCallArguments(&unpackAt)
+			var kwOrder []string
+			args, keywords, argsUnpack, kwargsUnpack := p.parseCallArguments(&unpackAt, &kwOrder)
 			methodCall.Arguments = args
 			methodCall.SetOverflow(keywords, argsUnpack, kwargsUnpack)
+			methodCall.SetKeywordOrder(kwOrder)
 			methodCall.SetArgsUnpackAt(unpackAt, len(args))
+			if methodName.Value() == "join" {
+				eagerGenexpArg("join", args, methodCall.HasOverflow())
+			}
 			return methodCall
 		}
 

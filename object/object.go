@@ -254,35 +254,39 @@ var smallIntegers [smallIntMax - smallIntMin + 1]Integer
 // Pre-allocated error singletons for type accessor methods.
 // These avoid allocating a new Error on every failed AsXxx() call.
 var (
-	errMustBeString  = &Error{Message: ErrMustBeString}
-	errMustBeInteger = &Error{Message: ErrMustBeInteger}
-	errMustBeNumber  = &Error{Message: ErrMustBeNumber}
-	errMustBeBoolean = &Error{Message: ErrMustBeBoolean}
-	errMustBeList    = &Error{Message: ErrMustBeList}
-	errMustBeDict    = &Error{Message: ErrMustBeDict}
+	errMustBeString  = &Error{Message: ErrMustBeString, ExceptionType: ExceptionTypeTypeError}
+	errMustBeInteger = &Error{Message: ErrMustBeInteger, ExceptionType: ExceptionTypeTypeError}
+	errMustBeNumber  = &Error{Message: ErrMustBeNumber, ExceptionType: ExceptionTypeTypeError}
+	errMustBeBoolean = &Error{Message: ErrMustBeBoolean, ExceptionType: ExceptionTypeTypeError}
+	errMustBeList    = &Error{Message: ErrMustBeList, ExceptionType: ExceptionTypeTypeError}
+	errMustBeDict    = &Error{Message: ErrMustBeDict, ExceptionType: ExceptionTypeTypeError}
 )
 
 // Exception type constants
 const (
-	ExceptionTypeSystemExit        = "SystemExit"
-	ExceptionTypePermissionError   = "PermissionError"
-	ExceptionTypeException         = "Exception"
-	ExceptionTypeValueError        = "ValueError"
-	ExceptionTypeTypeError         = "TypeError"
-	ExceptionTypeNameError         = "NameError"
-	ExceptionTypeImportError       = "ImportError"
-	ExceptionTypeStopIteration     = "StopIteration"
-	ExceptionTypeRuntimeError      = "RuntimeError"
-	ExceptionTypeRecursionError    = "RecursionError"
-	ExceptionTypeZeroDivisionError = "ZeroDivisionError"
-	ExceptionTypeOverflowError     = "OverflowError"
-	ExceptionTypeMemoryError       = "MemoryError"
-	ExceptionTypeIndexError        = "IndexError"
-	ExceptionTypeKeyError          = "KeyError"
-	ExceptionTypeAttributeError    = "AttributeError"
-	ExceptionTypeOSError           = "OSError"
-	ExceptionTypeAssertionError    = "AssertionError"
-	ExceptionTypeGeneric           = "" // Default for legacy compatibility
+	ExceptionTypeSystemExit         = "SystemExit"
+	ExceptionTypePermissionError    = "PermissionError"
+	ExceptionTypeException          = "Exception"
+	ExceptionTypeValueError         = "ValueError"
+	ExceptionTypeTypeError          = "TypeError"
+	ExceptionTypeNameError          = "NameError"
+	ExceptionTypeImportError        = "ImportError"
+	ExceptionTypeStopIteration      = "StopIteration"
+	ExceptionTypeRuntimeError       = "RuntimeError"
+	ExceptionTypeRecursionError     = "RecursionError"
+	ExceptionTypeZeroDivisionError  = "ZeroDivisionError"
+	ExceptionTypeOverflowError      = "OverflowError"
+	ExceptionTypeMemoryError        = "MemoryError"
+	ExceptionTypeIndexError         = "IndexError"
+	ExceptionTypeKeyError           = "KeyError"
+	ExceptionTypeAttributeError     = "AttributeError"
+	ExceptionTypeOSError            = "OSError"
+	ExceptionTypeAssertionError     = "AssertionError"
+	ExceptionTypeSyntaxError        = "SyntaxError"
+	ExceptionTypeLookupError        = "LookupError"
+	ExceptionTypeUnicodeEncodeError = "UnicodeEncodeError"
+	ExceptionTypeUnicodeDecodeError = "UnicodeDecodeError"
+	ExceptionTypeGeneric            = "" // Default for legacy compatibility
 )
 
 // Small integer cache for common values (-5 to 10000)
@@ -573,9 +577,12 @@ func (b *Boolean) Inspect() string {
 	return "False"
 }
 
-func (b *Boolean) AsString() (string, Object)          { return "", errMustBeString }
-func (b *Boolean) AsInt() (int64, Object)              { return 0, errMustBeInteger }
-func (b *Boolean) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
+func (b *Boolean) AsString() (string, Object) { return "", errMustBeString }
+
+// A bool is an int in Python: wherever an int or a float is taken, True is 1
+// and False is 0.
+func (b *Boolean) AsInt() (int64, Object)              { return b.CoerceInt() }
+func (b *Boolean) AsFloat() (float64, Object)          { return b.CoerceFloat() }
 func (b *Boolean) AsBool() (bool, Object)              { return b.value, nil }
 func (b *Boolean) AsList() ([]Object, Object)          { return nil, errMustBeList }
 func (b *Boolean) AsDict() (map[string]Object, Object) { return nil, errMustBeDict }
@@ -626,14 +633,14 @@ func (s *String) CoerceString() (string, Object) { return s.value, nil }
 func (s *String) CoerceInt() (int64, Object) {
 	val, err := strconv.ParseInt(strings.TrimSpace(s.value), 10, 64)
 	if err != nil {
-		return 0, &Error{Message: fmt.Sprintf("cannot convert %s to int", s.value)}
+		return 0, &Error{Message: fmt.Sprintf("cannot convert %s to int", s.value), ExceptionType: ExceptionTypeValueError}
 	}
 	return val, nil
 }
 func (s *String) CoerceFloat() (float64, Object) {
 	val, err := strconv.ParseFloat(strings.TrimSpace(s.value), 64)
 	if err != nil {
-		return 0, &Error{Message: fmt.Sprintf("cannot convert %s to float", s.value)}
+		return 0, &Error{Message: fmt.Sprintf("cannot convert %s to float", s.value), ExceptionType: ExceptionTypeValueError}
 	}
 	return val, nil
 }
@@ -2069,6 +2076,31 @@ func (e *Environment) MarkNonlocal(name string) {
 	e.nonlocals[name] = true
 }
 
+// comprehensionScopeKey marks, in nonlocals, an environment that is a
+// comprehension's scope (no name can be empty).
+const comprehensionScopeKey = ""
+
+// MarkWalrusTargets marks e, a comprehension's scope, as one whose
+// assignment expressions (name := v) to names bind in the enclosing scope,
+// as Python's do.
+func (e *Environment) MarkWalrusTargets(names []string) {
+	e.MarkNonlocal(comprehensionScopeKey)
+	for _, n := range names {
+		e.MarkNonlocal(n)
+	}
+}
+
+// WalrusScope returns the environment an assignment expression binding name
+// in e assigns to: e itself, or, from a comprehension's scope marked by
+// MarkWalrusTargets, the first enclosing scope that is not one.
+func (e *Environment) WalrusScope(name string) *Environment {
+	t := e
+	for t.nonlocals != nil && t.nonlocals[comprehensionScopeKey] && t.nonlocals[name] && t.outer != nil {
+		t = t.outer
+	}
+	return t
+}
+
 // MarkImportedBinding marks a local binding as coming from an import.
 func (e *Environment) MarkImportedBinding(name string) {
 	if e.importedBindings == nil {
@@ -3219,11 +3251,26 @@ func (i *Instance) FieldsSnapshot() map[string]Object {
 	return m
 }
 
-func (i *Instance) AsString() (string, Object)          { return i.Inspect(), nil }
-func (i *Instance) AsInt() (int64, Object)              { return 0, errMustBeInteger }
-func (i *Instance) AsFloat() (float64, Object)          { return 0, errMustBeNumber }
-func (i *Instance) AsBool() (bool, Object)              { return true, nil }
-func (i *Instance) AsList() ([]Object, Object)          { return nil, errMustBeList }
+func (i *Instance) AsString() (string, Object) { return i.Inspect(), nil }
+func (i *Instance) AsInt() (int64, Object)     { return 0, errMustBeInteger }
+func (i *Instance) AsFloat() (float64, Object) { return 0, errMustBeNumber }
+func (i *Instance) AsBool() (bool, Object)     { return true, nil }
+
+// Collector is implemented by the native state of an instance that Go code
+// may take as a list by running it to its end: a generator, so a function
+// that accepts a list through AsList accepts a generator expression too.
+type Collector interface {
+	Collect() ([]Object, Object)
+}
+
+// AsList collects a generator's remaining values; any other instance is not
+// a list.
+func (i *Instance) AsList() ([]Object, Object) {
+	if c, ok := i.NativeData.(Collector); ok {
+		return c.Collect()
+	}
+	return nil, errMustBeList
+}
 func (i *Instance) AsDict() (map[string]Object, Object) { return i.FieldsSnapshot(), nil }
 
 func (i *Instance) CoerceString() (string, Object) { return i.Inspect(), nil }

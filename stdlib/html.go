@@ -18,17 +18,17 @@ var (
 var HTMLLibrary = object.NewLibrary(HTMLLibraryName, map[string]*object.Builtin{
 	"escape": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("escape", kwargs, "quote"); err != nil {
+					return err
+				}
+			}
 			if err := errors.RangeArgs(args, 1, 2); err != nil {
 				return err
 			}
 			str, ok := args[0].(*object.String)
 			if !ok {
 				return errors.NewTypeError("STRING", args[0].Type().String())
-			}
-			for _, k := range kwargs.Keys() {
-				if k != "quote" {
-					return newArgTypeError("escape() got an unexpected keyword argument '%s'", k)
-				}
 			}
 			quote := true
 			if len(args) == 2 {
@@ -63,6 +63,9 @@ Example:
 	},
 	"unescape": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("unescape", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}

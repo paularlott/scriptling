@@ -3,6 +3,7 @@ package stdlib
 import (
 	"context"
 
+	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
 )
 
@@ -23,6 +24,9 @@ var EnumLibrary = object.NewLibrary(EnumLibraryName, nil, map[string]object.Obje
 	"IntEnum": intEnumBaseClass,
 	"auto": &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("auto", kwargs); err != nil {
+				return err
+			}
 			return AutoMarker
 		},
 		HelpText: `auto() - Placeholder for an automatically numbered enum member value

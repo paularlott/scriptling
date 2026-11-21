@@ -183,6 +183,9 @@ var TemplateClass = &object.Class{
 		"delimiter": object.NewString("$"),
 		"__init__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("Template", kwargs); err != nil {
+					return err
+				}
 				self, err := selfInstance(args, "__init__")
 				if err != nil {
 					return err
@@ -216,6 +219,9 @@ they are instead of raising.`,
 		},
 		"get_identifiers": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("get_identifiers", kwargs); err != nil {
+					return err
+				}
 				self, err := selfInstance(args, "get_identifiers")
 				if err != nil {
 					return err
@@ -238,6 +244,9 @@ they are instead of raising.`,
 		},
 		"is_valid": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("is_valid", kwargs); err != nil {
+					return err
+				}
 				self, err := selfInstance(args, "is_valid")
 				if err != nil {
 					return err
@@ -257,6 +266,9 @@ they are instead of raising.`,
 		},
 		"__repr__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__repr__", kwargs); err != nil {
+					return err
+				}
 				self, err := selfInstance(args, "__repr__")
 				if err != nil {
 					return err

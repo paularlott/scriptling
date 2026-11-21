@@ -68,6 +68,9 @@ func init() {
 	typeBuiltins[objectBuiltin] = "object"
 	builtins["ascii"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("ascii", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -83,6 +86,9 @@ func init() {
 	}
 	builtins["locals"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("locals", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 0); err != nil {
 				return err
 			}
@@ -94,6 +100,9 @@ A snapshot: assigning into the dict does not change the variables.`,
 	}
 	builtins["globals"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("globals", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 0); err != nil {
 				return err
 			}
@@ -151,7 +160,7 @@ func isClassLike(o object.Object) bool {
 		if _, ok := typeBuiltins[v]; ok {
 			return true
 		}
-		_, ok := exceptionBuiltins[v]
+		_, ok := exceptionClassName(v)
 		return ok
 	}
 	return false
@@ -168,7 +177,8 @@ func exceptionNameOf(o object.Object) string {
 			}
 		}
 	case *object.Builtin:
-		return exceptionBuiltins[v]
+		name, _ := exceptionClassName(v)
+		return name
 	}
 	return ""
 }
@@ -189,7 +199,7 @@ func issubclassOne(cls, parent object.Object) bool {
 		return false
 	}
 	pb := parent.(*object.Builtin)
-	if pExc, ok := exceptionBuiltins[pb]; ok {
+	if pExc, ok := exceptionClassName(pb); ok {
 		cExc := exceptionNameOf(cls)
 		return cExc != "" && matchesNamedExceptionTypeChain(cExc, pExc, nil)
 	}
@@ -209,6 +219,9 @@ func issubclassOne(cls, parent object.Object) bool {
 // issubclassFn is issubclass(cls, classinfo): classinfo is a class, a
 // builtin type or a tuple of them.
 func issubclassFn(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	if err := errors.NoKwargs("issubclass", kwargs); err != nil {
+		return err
+	}
 	if err := errors.ExactArgs(args, 2); err != nil {
 		return err
 	}
@@ -319,7 +332,7 @@ func exceptionCause(ctx context.Context, c object.Object, env *object.Environmen
 			return exc, nil
 		}
 	case *object.Builtin:
-		if _, ok := exceptionBuiltins[v]; ok {
+		if _, ok := exceptionClassName(v); ok {
 			if exc, ok := v.Fn(SetEnvInContext(ctx, env), object.NewKwargs(nil)).(*object.Exception); ok {
 				return exc, nil
 			}

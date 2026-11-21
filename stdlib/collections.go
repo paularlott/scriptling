@@ -2,8 +2,9 @@ package stdlib
 
 import (
 	"context"
-	"sort"
+	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
@@ -44,7 +45,14 @@ var defaultDictBuiltin = &object.Builtin{
 					return err
 				}
 			default:
-				return errors.NewTypeError("dict or iterable of pairs", args[1].Type().String())
+				// Any other iterable of pairs, such as a generator.
+				elems, errObj := collectIterable(ctx, init)
+				if errObj != nil {
+					return errObj
+				}
+				if err := defaultDictAddPairs(dd, elems); err != nil {
+					return err
+				}
 			}
 		}
 		for _, name := range kwargs.Keys() {
@@ -136,14 +144,18 @@ Example:
 				case *object.Dict:
 					od.StoreFrom(arg)
 				default:
-					return errors.NewTypeError("list of tuples or dict", args[0].Type().String())
+					// Any other iterable of pairs, such as a generator.
+					elems, errObj := collectIterable(ctx, arg)
+					if errObj != nil {
+						return errObj
+					}
+					if err := defaultDictAddPairs(od, elems); err != nil {
+						return err
+					}
 				}
 			}
-			// Keyword entries (call order is not kept, so they go in sorted order).
-			names := kwargs.Keys()
-			sort.Strings(names)
-			for _, name := range names {
-				od.SetByString(name, kwargs.Get(name))
+			for name, value := range kwargs.All() {
+				od.SetByString(name, value)
 			}
 			return od
 		},
@@ -157,6 +169,11 @@ Example:
 	},
 	"namedtuple": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("namedtuple", kwargs, "defaults", "rename", "module"); err != nil {
+					return err
+				}
+			}
 			// namedtuple(typename, field_names) - Create a named tuple class
 			if err := errors.ExactArgs(args, 2); err != nil {
 				return err
@@ -173,7 +190,7 @@ Example:
 					if s, ok := elem.(*object.String); ok {
 						fieldNames = append(fieldNames, s.StringValue())
 					} else {
-						return errors.NewError("field names must be strings")
+						return errors.NewValueError("Type names and field names must be valid identifiers: %s", elem.Inspect())
 					}
 				}
 			case *object.Tuple:
@@ -181,7 +198,7 @@ Example:
 					if s, ok := elem.(*object.String); ok {
 						fieldNames = append(fieldNames, s.StringValue())
 					} else {
-						return errors.NewError("field names must be strings")
+						return errors.NewValueError("Type names and field names must be valid identifiers: %s", elem.Inspect())
 					}
 				}
 			case *object.String:
@@ -197,6 +214,13 @@ Example:
 				}
 			default:
 				return errors.NewTypeError("list, tuple, or string", args[1].Type().String())
+			}
+			rename := false
+			if v := kwargs.Get("rename"); v != nil {
+				rename, _ = v.AsBool()
+			}
+			if errObj := checkNamedTupleFields(typename.StringValue(), fieldNames, rename); errObj != nil {
+				return errObj
 			}
 
 			// Create a NamedTuple class. ntClass is declared before the
@@ -291,6 +315,9 @@ Example:
 			// __getitem__ for dict-like access
 			methods["__getitem__"] = &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__getitem__", kwargs); err != nil {
+						return err
+					}
 					if err := errors.ExactArgs(args, 2); err != nil {
 						return err
 					}
@@ -341,6 +368,9 @@ Example:
 			// A named tuple's length is its field count, as a tuple's is.
 			methods["__len__"] = &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__len__", kwargs); err != nil {
+						return err
+					}
 					if err := errors.ExactArgs(args, 1); err != nil {
 						return err
 					}
@@ -353,6 +383,9 @@ Example:
 			// tuple unpacking (x, y = p) works as in Python.
 			methods["__iter__"] = &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__iter__", kwargs); err != nil {
+						return err
+					}
 					nt := args[0].(*object.Instance)
 					values := make([]object.Object, 0, len(fieldNames))
 					for _, name := range fieldNames {
@@ -378,6 +411,9 @@ Example:
 			// __repr__ renders Python's "Typename(field=value, ...)".
 			methods["__repr__"] = &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__repr__", kwargs); err != nil {
+						return err
+					}
 					nt := args[0].(*object.Instance)
 					display, errObj := fieldsRepr(typename.StringValue(), fieldNames, nt.GetField)
 					if errObj != nil {
@@ -421,6 +457,9 @@ Example:
 			// _asdict() returns the fields as a dict.
 			methods["_asdict"] = &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("_asdict", kwargs); err != nil {
+						return err
+					}
 					nt := args[0].(*object.Instance)
 					d := object.NewDictSized(len(fieldNames))
 					for _, name := range fieldNames {
@@ -471,6 +510,9 @@ Example:
 			// tuple with the same values).
 			methods["__eq__"] = &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__eq__", kwargs); err != nil {
+						return err
+					}
 					if len(args) != 2 {
 						return errors.NewArgumentError(len(args), 2)
 					}
@@ -489,9 +531,12 @@ Example:
 			}
 
 			// Ordering is tuple (lexicographic) ordering over the values.
-			orderMethod := func(name string, keep func(cmp int) bool) object.Object {
+			orderMethod := func(dunder, name string, keep func(cmp int) bool) object.Object {
 				return &object.Builtin{
 					Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+						if err := errors.NoKwargs(dunder, kwargs); err != nil {
+							return err
+						}
 						if len(args) != 2 {
 							return errors.NewArgumentError(len(args), 2)
 						}
@@ -515,10 +560,10 @@ Example:
 					HelpText: name + "(other) - Tuple ordering over the field values",
 				}
 			}
-			methods["__lt__"] = orderMethod("<", func(c int) bool { return c < 0 })
-			methods["__le__"] = orderMethod("<=", func(c int) bool { return c <= 0 })
-			methods["__gt__"] = orderMethod(">", func(c int) bool { return c > 0 })
-			methods["__ge__"] = orderMethod(">=", func(c int) bool { return c >= 0 })
+			methods["__lt__"] = orderMethod("__lt__", "<", func(c int) bool { return c < 0 })
+			methods["__le__"] = orderMethod("__le__", "<=", func(c int) bool { return c <= 0 })
+			methods["__gt__"] = orderMethod("__gt__", ">", func(c int) bool { return c > 0 })
+			methods["__ge__"] = orderMethod("__ge__", ">=", func(c int) bool { return c >= 0 })
 
 			// Named tuples are immutable: field writes raise AttributeError
 			// (shares the marker frozen dataclasses use).
@@ -534,6 +579,9 @@ Example:
 			// ...and hash by content, as tuples do (consistent with __eq__).
 			methods["__hash__"] = &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__hash__", kwargs); err != nil {
+						return err
+					}
 					if err := errors.ExactArgs(args, 1); err != nil {
 						return err
 					}
@@ -572,6 +620,9 @@ Example:
 	},
 	"ChainMap": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("ChainMap", kwargs); err != nil {
+				return err
+			}
 			// ChainMap(*maps) - Group multiple dicts for single lookup
 			// Returns a special dict that chains lookups
 			chainMap := object.NewDict()
@@ -812,4 +863,63 @@ func compareSequences(a, b []object.Object, depth int) (int, compareResult) {
 		return 1, compareOK
 	}
 	return 0, compareOK
+}
+
+// pythonKeywords are the names namedtuple refuses as field or type names.
+var pythonKeywords = map[string]bool{
+	"False": true, "None": true, "True": true, "and": true, "as": true, "assert": true,
+	"async": true, "await": true, "break": true, "class": true, "continue": true,
+	"def": true, "del": true, "elif": true, "else": true, "except": true,
+	"finally": true, "for": true, "from": true, "global": true, "if": true,
+	"import": true, "in": true, "is": true, "lambda": true, "nonlocal": true,
+	"not": true, "or": true, "pass": true, "raise": true, "return": true,
+	"try": true, "while": true, "with": true, "yield": true,
+}
+
+// isPyIdentifier reports whether s is a Python identifier.
+func isPyIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if r == '_' || unicode.IsLetter(r) || (i > 0 && unicode.IsDigit(r)) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// checkNamedTupleFields raises Python's ValueError for a namedtuple type or
+// field name that is not an identifier, is a keyword, starts with an
+// underscore or repeats. With rename=True, bad field names are replaced by
+// _0, _1, ... in place, as in Python.
+func checkNamedTupleFields(typename string, fields []string, rename bool) object.Object {
+	seen := make(map[string]bool, len(fields))
+	for i, f := range fields {
+		if rename && (!isPyIdentifier(f) || pythonKeywords[f] || strings.HasPrefix(f, "_") || seen[f]) {
+			fields[i] = fmt.Sprintf("_%d", i)
+			f = fields[i]
+		}
+		seen[f] = true
+	}
+	for _, name := range append([]string{typename}, fields...) {
+		if !isPyIdentifier(name) {
+			return errors.NewValueError("Type names and field names must be valid identifiers: '%s'", name)
+		}
+		if pythonKeywords[name] {
+			return errors.NewValueError("Type names and field names cannot be a keyword: '%s'", name)
+		}
+	}
+	dup := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		if strings.HasPrefix(f, "_") && !rename {
+			return errors.NewValueError("Field names cannot start with an underscore: '%s'", f)
+		}
+		if dup[f] {
+			return errors.NewValueError("Encountered duplicate field name: '%s'", f)
+		}
+		dup[f] = true
+	}
+	return nil
 }

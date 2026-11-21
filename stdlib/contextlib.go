@@ -32,12 +32,15 @@ var suppressClass = &object.Class{
 	Methods: map[string]object.Object{
 		"__init__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__init__", kwargs); err != nil {
+					return err
+				}
 				if len(args) < 1 {
-					return errors.NewError("suppress.__init__ requires self")
+					return errors.NewTypeErrorTagged("suppress.__init__ requires self")
 				}
 				inst, ok := args[0].(*object.Instance)
 				if !ok {
-					return errors.NewError("suppress.__init__: self must be an instance")
+					return errors.NewTypeErrorTagged("suppress.__init__: self must be an instance")
 				}
 				// Copy args[1:] so the stored List doesn't alias the caller's buffer.
 				excTypes := make([]object.Object, len(args)-1)
@@ -48,14 +51,20 @@ var suppressClass = &object.Class{
 		},
 		"__enter__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__enter__", kwargs); err != nil {
+					return err
+				}
 				if len(args) < 1 {
-					return errors.NewError("suppress.__enter__ requires self")
+					return errors.NewTypeErrorTagged("suppress.__enter__ requires self")
 				}
 				return args[0]
 			},
 		},
 		"__exit__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__exit__", kwargs); err != nil {
+					return err
+				}
 				// args: self, exc_type, exc_val, exc_tb
 				if len(args) < 2 {
 					return object.NewBoolean(false)
@@ -93,6 +102,9 @@ var suppressClass = &object.Class{
 }
 
 func suppressNew(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	if err := errors.NoKwargs("suppress", kwargs); err != nil {
+		return err
+	}
 	inst := object.NewInstanceWithFields(suppressClass, nil)
 	// Copy args so the stored List doesn't alias the caller's buffer.
 	excTypes := make([]object.Object, len(args))
@@ -104,11 +116,11 @@ func suppressNew(ctx context.Context, kwargs object.Kwargs, args ...object.Objec
 // selfInstance returns the instance a Go-defined method was called on.
 func selfInstance(args []object.Object, method string) (*object.Instance, object.Object) {
 	if len(args) < 1 {
-		return nil, errors.NewError("%s requires self", method)
+		return nil, errors.NewTypeErrorTagged("%s requires self", method)
 	}
 	inst, ok := args[0].(*object.Instance)
 	if !ok {
-		return nil, errors.NewError("%s: self must be an instance", method)
+		return nil, errors.NewTypeErrorTagged("%s: self must be an instance", method)
 	}
 	return inst, nil
 }
@@ -143,6 +155,9 @@ var generatorCMClass = &object.Class{
 	Methods: map[string]object.Object{
 		"__enter__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__enter__", kwargs); err != nil {
+					return err
+				}
 				self, err := selfInstance(args, "__enter__")
 				if err != nil {
 					return err
@@ -164,6 +179,9 @@ var generatorCMClass = &object.Class{
 		},
 		"__exit__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__exit__", kwargs); err != nil {
+					return err
+				}
 				self, err := selfInstance(args, "__exit__")
 				if err != nil {
 					return err
@@ -235,6 +253,9 @@ func generatorCMDidntStop(ctx context.Context, gen *object.Instance, msg string)
 
 // contextmanagerFn is contextlib.contextmanager(func).
 func contextmanagerFn(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	if err := errors.NoKwargs("contextmanager", kwargs); err != nil {
+		return err
+	}
 	if err := errors.ExactArgs(args, 1); err != nil {
 		return err
 	}
@@ -267,6 +288,9 @@ var nullcontextClass = &object.Class{
 	Methods: map[string]object.Object{
 		"__enter__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__enter__", kwargs); err != nil {
+					return err
+				}
 				self, err := selfInstance(args, "__enter__")
 				if err != nil {
 					return err
@@ -277,6 +301,9 @@ var nullcontextClass = &object.Class{
 		},
 		"__exit__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__exit__", kwargs); err != nil {
+					return err
+				}
 				return object.NewBoolean(false)
 			},
 			HelpText: "__exit__(exc_type, exc, tb) - Do nothing",
@@ -290,6 +317,9 @@ var closingClass = &object.Class{
 	Methods: map[string]object.Object{
 		"__enter__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__enter__", kwargs); err != nil {
+					return err
+				}
 				self, err := selfInstance(args, "__enter__")
 				if err != nil {
 					return err
@@ -300,6 +330,9 @@ var closingClass = &object.Class{
 		},
 		"__exit__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__exit__", kwargs); err != nil {
+					return err
+				}
 				self, err := selfInstance(args, "__exit__")
 				if err != nil {
 					return err
@@ -346,6 +379,11 @@ way, or catch the exception there to suppress it.`,
 	},
 	"nullcontext": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("nullcontext", kwargs, "enter_result"); err != nil {
+					return err
+				}
+			}
 			var v object.Object = &object.Null{}
 			if len(args) > 0 {
 				v = args[0]
@@ -360,6 +398,9 @@ way, or catch the exception there to suppress it.`,
 	},
 	"closing": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("closing", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}

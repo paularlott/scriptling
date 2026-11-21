@@ -12,6 +12,11 @@ import (
 // that matters, and == agrees by falling back to reference equality for
 // unknown types.
 func sentinelConstructorFn(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+	if kwargs.Len() > 0 {
+		if err := errors.CheckKwargs("sentinel", kwargs, "repr"); err != nil {
+			return err
+		}
+	}
 	if err := errors.ExactArgs(args, 1); err != nil {
 		return err
 	}

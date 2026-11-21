@@ -53,27 +53,27 @@ for bad in ['{"a": 1', '{"a" 1}', '[1,', '', '{1: 2}']:
     except ValueError:
         pass
 
-# --- **kwargs arrives in sorted name order (call-site order is not kept) ---
+# --- **kwargs arrives in the order the keywords were written ---
 def names(**kw):
     return list(kw)
 
-assert names(b=1, a=2, c=3) == ["a", "b", "c"]
+assert names(b=1, a=2, c=3) == ["b", "a", "c"]
 assert names() == [] and names(z=1) == ["z"]
-assert names(**{"y": 1, "b": 2}) == ["b", "y"]
+assert names(**{"y": 1, "b": 2}) == ["y", "b"]
 
 def mixed(x, **kw):
     return (x, list(kw.items()))
-assert mixed(1, q=1, a=2) == (1, [("a", 2), ("q", 1)])
+assert mixed(1, q=1, a=2) == (1, [("q", 1), ("a", 2)])
 
 class K:
     def m(self, **kw):
         return list(kw)
-assert K().m(zz=1, aa=2) == ["aa", "zz"]
-assert (lambda **kw: list(kw))(b=1, a=2) == ["a", "b"]
+assert K().m(zz=1, aa=2) == ["zz", "aa"]
+assert (lambda **kw: list(kw))(b=1, a=2) == ["b", "a"]
 
 def forward(**kw):
     return names(**kw)
-assert forward(d=1, c=2, b=3) == ["b", "c", "d"]
+assert forward(d=1, c=2, b=3) == ["d", "c", "b"]
 
 kw_dict = None
 def grab(**kw):
@@ -81,7 +81,7 @@ def grab(**kw):
     kw_dict = kw
 grab(m=1, k=2)
 kw_dict["a"] = 0
-assert list(kw_dict) == ["k", "m", "a"]
+assert list(kw_dict) == ["m", "k", "a"]
 
 # --- deleting from either end and the middle, at scale ---
 n = 5000

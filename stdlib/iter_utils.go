@@ -51,6 +51,19 @@ func instanceAsIterator(ctx context.Context, obj object.Object) (*object.Iterato
 	return nil, nil
 }
 
+// iterableElements returns the elements of an iterable argument: a list's or
+// tuple's own elements, or those of any other iterable (a generator, range,
+// set, iterator, ...) collected through collectIterable.
+func iterableElements(ctx context.Context, obj object.Object) ([]object.Object, object.Object) {
+	switch o := obj.(type) {
+	case *object.List:
+		return o.Elements, nil
+	case *object.Tuple:
+		return o.Elements, nil
+	}
+	return collectIterable(ctx, obj)
+}
+
 func typeNameOf(obj object.Object) string {
 	if s, err := obj.AsString(); err == nil {
 		return s

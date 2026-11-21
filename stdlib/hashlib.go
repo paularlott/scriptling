@@ -8,6 +8,7 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"hash"
+	"strings"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/object"
@@ -77,11 +78,11 @@ func toByteString(obj object.Object) ([]byte, object.Object) {
 		for i, el := range v.Elements {
 			iv, ok := el.(*object.Integer)
 			if !ok {
-				return nil, errors.NewError("byte buffer element %d is not an integer", i)
+				return nil, errors.NewTypeErrorTagged("byte buffer element %d is not an integer", i)
 			}
 			val := iv.IntValue()
 			if val < 0 || val > 255 {
-				return nil, errors.NewError("byte buffer element %d out of range (0-255): %d", i, val)
+				return nil, errors.NewValueError("byte buffer element %d out of range (0-255): %d", i, val)
 			}
 			b = append(b, byte(val))
 		}
@@ -97,6 +98,9 @@ var HashClass = &object.Class{
 	Methods: map[string]object.Object{
 		"update": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("update", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 2); err != nil {
 					return err
 				}
@@ -106,7 +110,7 @@ var HashClass = &object.Class{
 				}
 				state, ok := inst.NativeData.(*hashState)
 				if !ok {
-					return errors.NewError("invalid hash object")
+					return errors.NewTypeErrorTagged("invalid hash object")
 				}
 				b, errObj := toByteString(args[1])
 				if errObj != nil {
@@ -129,6 +133,9 @@ Example:
 		},
 		"digest": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("digest", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -138,7 +145,7 @@ Example:
 				}
 				state, ok := inst.NativeData.(*hashState)
 				if !ok {
-					return errors.NewError("invalid hash object")
+					return errors.NewTypeErrorTagged("invalid hash object")
 				}
 				h := hashConstructor(state.alg)()
 				h.Write(state.data)
@@ -151,6 +158,9 @@ Use hexdigest() for a lowercase-hex string representation.`,
 		},
 		"hexdigest": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("hexdigest", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -160,7 +170,7 @@ Use hexdigest() for a lowercase-hex string representation.`,
 				}
 				state, ok := inst.NativeData.(*hashState)
 				if !ok {
-					return errors.NewError("invalid hash object")
+					return errors.NewTypeErrorTagged("invalid hash object")
 				}
 				h := hashConstructor(state.alg)()
 				h.Write(state.data)
@@ -178,6 +188,9 @@ Example:
 		},
 		"copy": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("copy", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -187,7 +200,7 @@ Example:
 				}
 				state, ok := inst.NativeData.(*hashState)
 				if !ok {
-					return errors.NewError("invalid hash object")
+					return errors.NewTypeErrorTagged("invalid hash object")
 				}
 				newData := make([]byte, len(state.data))
 				copy(newData, state.data)
@@ -220,6 +233,14 @@ func newHashInstance(alg string, data []byte) *object.Instance {
 func makeHashBuiltin(alg, summary string) *object.Builtin {
 	return &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs(alg, kwargs, "data", "usedforsecurity"); err != nil {
+					return err
+				}
+				if v, ok := kwargs.Lookup("data"); ok && len(args) == 0 {
+					args = []object.Object{v}
+				}
+			}
 			if err := errors.MaxArgs(args, 1); err != nil {
 				return err
 			}
@@ -271,4 +292,54 @@ With data, hashes it immediately; without, call .update() then .hexdigest().`),
 With data, hashes it immediately; without, call .update() then .hexdigest().`),
 	"sha1": HashlibSHA1Builtin,
 	"md5":  HashlibMD5Builtin,
+	"new": {
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("new", kwargs, "name", "data", "usedforsecurity"); err != nil {
+					return err
+				}
+				if v, ok := kwargs.Lookup("name"); ok {
+					if len(args) > 0 {
+						return errors.NewTypeErrorTagged("argument for new() given by name ('name') and position (1)")
+					}
+					args = []object.Object{v}
+				}
+			}
+			if err := errors.RangeArgs(args, 1, 2); err != nil {
+				return err
+			}
+			name, ok := args[0].(*object.String)
+			if !ok {
+				return errors.NewTypeErrorTagged("new() argument 'name' must be str, not %s", object.PythonTypeName(args[0]))
+			}
+			ctor, ok := hashConstructors[strings.ToLower(name.StringValue())]
+			if !ok {
+				return errors.NewValueError("unsupported hash type %s", name.StringValue())
+			}
+			kw := object.Kwargs{}
+			if v, ok := kwargs.Lookup("data"); ok {
+				if len(args) > 1 {
+					return errors.NewTypeErrorTagged("argument for new() given by name ('data') and position (2)")
+				}
+				args = append(args, v)
+			}
+			return ctor.Fn(ctx, kw, args[1:]...)
+		},
+		HelpText: `new(name[, data]) - Create a hash object for the named algorithm
+
+name is one of "md5", "sha1", "sha224", "sha256", "sha384" or "sha512";
+any other name raises ValueError.`,
+	},
 }, nil, "Cryptographic hash functions library")
+
+// hashConstructors maps the algorithm names hashlib.new accepts to their
+// constructors; it is filled in init() from the library.
+var hashConstructors map[string]*object.Builtin
+
+func init() {
+	fns := HashlibLibrary.Functions()
+	hashConstructors = make(map[string]*object.Builtin)
+	for _, alg := range []string{"md5", "sha1", "sha224", "sha256", "sha384", "sha512"} {
+		hashConstructors[alg] = fns[alg]
+	}
+}

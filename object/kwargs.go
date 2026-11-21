@@ -159,6 +159,21 @@ func (k Kwargs) All() iter.Seq2[string, Object] {
 	}
 }
 
+// Unknown returns the name of the first keyword that is not one of allowed,
+// and whether there is one.
+func (k Kwargs) Unknown(allowed ...string) (string, bool) {
+outer:
+	for i := range k.pairs {
+		for _, name := range allowed {
+			if k.pairs[i].name == name {
+				continue outer
+			}
+		}
+		return k.pairs[i].name, true
+	}
+	return "", false
+}
+
 // Map returns the keywords as a new map, which the caller owns; nil when there
 // are none.
 func (k Kwargs) Map() map[string]Object {
@@ -178,7 +193,7 @@ func (k Kwargs) GetString(name string, defaultValue string) (string, Object) {
 		if s, err := obj.AsString(); err == nil {
 			return s, nil
 		}
-		return defaultValue, &Error{Message: fmt.Sprintf("%s: must be a string", name)}
+		return defaultValue, &Error{Message: fmt.Sprintf("%s: must be a string", name), ExceptionType: ExceptionTypeTypeError}
 	}
 	return defaultValue, nil
 }
@@ -189,7 +204,7 @@ func (k Kwargs) GetInt(name string, defaultValue int64) (int64, Object) {
 		if i, err := obj.AsInt(); err == nil {
 			return i, nil
 		}
-		return defaultValue, &Error{Message: fmt.Sprintf("%s: must be a number", name)}
+		return defaultValue, &Error{Message: fmt.Sprintf("%s: must be a number", name), ExceptionType: ExceptionTypeTypeError}
 	}
 	return defaultValue, nil
 }
@@ -200,7 +215,7 @@ func (k Kwargs) GetFloat(name string, defaultValue float64) (float64, Object) {
 		if f, err := obj.AsFloat(); err == nil {
 			return f, nil
 		}
-		return defaultValue, &Error{Message: fmt.Sprintf("%s: must be a number", name)}
+		return defaultValue, &Error{Message: fmt.Sprintf("%s: must be a number", name), ExceptionType: ExceptionTypeTypeError}
 	}
 	return defaultValue, nil
 }
@@ -211,7 +226,7 @@ func (k Kwargs) GetBool(name string, defaultValue bool) (bool, Object) {
 		if b, err := obj.AsBool(); err == nil {
 			return b, nil
 		}
-		return defaultValue, &Error{Message: fmt.Sprintf("%s: must be a boolean", name)}
+		return defaultValue, &Error{Message: fmt.Sprintf("%s: must be a boolean", name), ExceptionType: ExceptionTypeTypeError}
 	}
 	return defaultValue, nil
 }
@@ -222,7 +237,7 @@ func (k Kwargs) GetList(name string, defaultValue []Object) ([]Object, Object) {
 		if l, err := obj.AsList(); err == nil {
 			return l, nil
 		}
-		return defaultValue, &Error{Message: fmt.Sprintf("%s: must be a list", name)}
+		return defaultValue, &Error{Message: fmt.Sprintf("%s: must be a list", name), ExceptionType: ExceptionTypeTypeError}
 	}
 	return defaultValue, nil
 }

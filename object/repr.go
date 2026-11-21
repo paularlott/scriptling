@@ -79,10 +79,35 @@ func ReprException(e *Exception) string {
 	if name == "" {
 		name = "Exception"
 	}
+	if len(e.Args) > 0 {
+		// The constructor arguments, as Python shows them: KeyError('k'),
+		// ValueError('bad', 2).
+		parts := make([]string, len(e.Args))
+		for i, a := range e.Args {
+			parts[i] = ValueRepr(a)
+		}
+		return name + "(" + strings.Join(parts, ", ") + ")"
+	}
 	if e.Message == "" {
 		return name + "()"
 	}
 	return name + "(" + ReprString(e.Message) + ")"
+}
+
+// ValueRepr renders a single value as Python's repr does, quoting strings
+// and rendering containers with repr'd elements. Instances render via their
+// default representation.
+func ValueRepr(obj Object) string {
+	r := reprRenderer{seen: make(map[Object]struct{}), limit: OutputLimit()}
+	r.element(obj)
+	return r.out.String()
+}
+
+// NewKeyError builds the KeyError Python raises for a missing key: its args
+// hold the key itself and its message (what str(e) shows) is keyRepr, the
+// key's repr.
+func NewKeyError(key Object, keyRepr string) *Exception {
+	return &Exception{Message: keyRepr, ExceptionType: ExceptionTypeKeyError, Args: []Object{key}, Raised: true}
 }
 
 // InstanceReprFunc renders an instance nested in a container, normally by

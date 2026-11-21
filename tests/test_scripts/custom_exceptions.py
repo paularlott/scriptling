@@ -66,7 +66,11 @@ for exc_type, exc_name in [
         raise exc_type("test " + exc_name)
     except Exception as e:
         caught = True
-        assert str(e) == "test " + exc_name
+        # str(KeyError(k)) is repr(k), as in Python.
+        if exc_name == "KeyError":
+            assert str(e) == repr("test " + exc_name)
+        else:
+            assert str(e) == "test " + exc_name
     assert caught, exc_name + " not caught"
 
 # Confirm: inheriting from Exception is NOT supported

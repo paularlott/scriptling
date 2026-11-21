@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,11 +41,13 @@ var (
 	DateClass     *object.Class
 )
 
-// Helper to get time.Time from an instance's _time field (stored as Unix nanoseconds)
+// Helper to get time.Time from an instance's _time field (stored as Unix
+// microseconds, Python's resolution, which spans years 1 to 9999 where
+// nanoseconds would wrap outside 1678-2262)
 func getTimeFromInstance(instance *object.Instance) (time.Time, object.Object) {
 	if val, ok := instance.GetField("_time"); ok {
-		if ns, ok := val.(*object.Integer); ok {
-			t := time.Unix(0, ns.IntValue())
+		if us, ok := val.(*object.Integer); ok {
+			t := time.UnixMicro(us.IntValue())
 			// time.Unix always yields the local zone, but instances created
 			// from UTC times (utcnow, strptime) must render their fields in
 			// UTC, so restore the zone recorded at creation.
@@ -60,16 +63,16 @@ func getTimeFromInstance(instance *object.Instance) (time.Time, object.Object) {
 			return t, nil
 		}
 	}
-	return time.Time{}, &object.Error{Message: "invalid datetime instance"}
+	return time.Time{}, &object.Error{Message: "invalid datetime instance", ExceptionType: object.ExceptionTypeTypeError}
 }
 
-// Helper to create a datetime instance (stores time as Unix nanoseconds)
+// Helper to create a datetime instance (stores time as Unix microseconds)
 func createDatetimeInstance(t time.Time) *object.Instance {
 	// year/month/day/... are attributes in Python, not methods: they are
 	// set as fields (which resolve before class methods) so dt.year reads
 	// as an integer like Python, and dt.year() is "not callable" like Python.
 	return object.NewInstanceWithFields(DatetimeClass, map[string]object.Object{
-		"_time":        object.NewInteger(t.UnixNano()),
+		"_time":        object.NewInteger(t.UnixMicro()),
 		"_utc":         object.NewBoolean(t.Location() == time.UTC),
 		"__str_repr__": object.NewString(pyDatetimeString(t, " ")),
 		"tzinfo":       tzinfoOf(t),
@@ -83,12 +86,12 @@ func createDatetimeInstance(t time.Time) *object.Instance {
 	})
 }
 
-// Helper to create a date instance (stores time as Unix nanoseconds)
+// Helper to create a date instance (stores time as Unix microseconds)
 func createDateInstance(t time.Time) *object.Instance {
 	// Normalize to midnight for date
 	t = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 	return object.NewInstanceWithFields(DateClass, map[string]object.Object{
-		"_time":        object.NewInteger(t.UnixNano()),
+		"_time":        object.NewInteger(t.UnixMicro()),
 		"_utc":         object.NewBoolean(t.Location() == time.UTC),
 		"__str_repr__": object.NewString(t.Format("2006-01-02")),
 		"year":         object.NewInteger(int64(t.Year())),
@@ -102,7 +105,7 @@ func GetTimeFromObject(obj object.Object) (time.Time, object.Object) {
 	if inst, ok := obj.(*object.Instance); ok {
 		return getTimeFromInstance(inst)
 	}
-	return time.Time{}, &object.Error{Message: "expected datetime instance"}
+	return time.Time{}, &object.Error{Message: "expected datetime instance", ExceptionType: object.ExceptionTypeTypeError}
 }
 
 func init() {
@@ -113,6 +116,9 @@ func init() {
 			// __str__ for string representation
 			"__str__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__str__", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
@@ -131,6 +137,9 @@ func init() {
 			// Instance methods
 			"strftime": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("strftime", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 2); err != nil {
 						return err
 					}
@@ -153,6 +162,9 @@ func init() {
 			},
 			"timestamp": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("timestamp", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
@@ -170,6 +182,9 @@ func init() {
 			},
 			"year": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("year", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
@@ -187,6 +202,9 @@ func init() {
 			},
 			"month": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("month", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
@@ -204,6 +222,9 @@ func init() {
 			},
 			"day": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("day", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
@@ -221,6 +242,9 @@ func init() {
 			},
 			"hour": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("hour", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
@@ -238,6 +262,9 @@ func init() {
 			},
 			"minute": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("minute", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
@@ -255,6 +282,9 @@ func init() {
 			},
 			"second": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("second", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
@@ -272,6 +302,9 @@ func init() {
 			},
 			"weekday": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("weekday", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
@@ -296,6 +329,9 @@ func init() {
 			},
 			"isoweekday": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("isoweekday", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
@@ -318,6 +354,11 @@ func init() {
 			},
 			"isoformat": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if kwargs.Len() > 0 {
+						if err := errors.CheckKwargs("isoformat", kwargs, "sep"); err != nil {
+							return err
+						}
+					}
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
@@ -360,57 +401,40 @@ func init() {
 					if err != nil {
 						return err
 					}
-
-					// Apply replacements from kwargs
-					year, month, day := t.Year(), t.Month(), t.Day()
-					hour, minute, second, nsec := t.Hour(), t.Minute(), t.Second(), t.Nanosecond()
+					vals, errObj := bindDatetimeArgs("replace", datetimeFieldNames, 0, args[1:], kwargs)
+					if errObj != nil {
+						return errObj
+					}
+					f := datetimeFields{t.Year(), int(t.Month()), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond() / 1000}
+					if errObj := f.set(vals[:7]); errObj != nil {
+						return errObj
+					}
 					loc := t.Location()
-
-					for key, val := range kwargs.All() {
-						if key == "tzinfo" {
-							// Same wall time, new zone (None makes it naive).
-							tzLoc, err := tzinfoLocation(val)
-							if err != nil {
-								return err
-							}
-							loc = time.Local
-							if tzLoc != nil {
-								loc = tzLoc
-							}
-							continue
+					if tz := vals[7]; tz != nil {
+						// Same wall time, new zone (None makes it naive).
+						tzLoc, err := tzinfoLocation(tz)
+						if err != nil {
+							return err
 						}
-						intVal, ok := val.(*object.Integer)
-						if !ok {
-							return errors.NewTypeError("INTEGER", val.Type().String())
-						}
-						switch key {
-						case "year":
-							year = int(intVal.IntValue())
-						case "month":
-							month = time.Month(intVal.IntValue())
-						case "day":
-							day = int(intVal.IntValue())
-						case "hour":
-							hour = int(intVal.IntValue())
-						case "minute":
-							minute = int(intVal.IntValue())
-						case "second":
-							second = int(intVal.IntValue())
-						case "microsecond":
-							nsec = int(intVal.IntValue()) * 1000
-						default:
-							return errors.NewError("replace() unexpected keyword argument: %s", key)
+						loc = time.Local
+						if tzLoc != nil {
+							loc = tzLoc
 						}
 					}
-
-					newTime := time.Date(year, month, day, hour, minute, second, nsec, loc)
+					newTime, errObj := f.time(loc)
+					if errObj != nil {
+						return errObj
+					}
 					return createDatetimeInstance(newTime)
 				},
-				HelpText: "replace(**kwargs) - Return datetime with replaced fields (tzinfo= sets or, with None, removes the zone)",
+				HelpText: "replace(year, month, day, hour, minute, second, microsecond, tzinfo) - Return datetime with the given fields replaced (by position or keyword; tzinfo=None removes the zone)",
 			},
 			// Comparison dunder methods
 			"__lt__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__lt__", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 2); err != nil {
 						return err
 					}
@@ -435,6 +459,9 @@ func init() {
 			},
 			"__gt__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__gt__", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 2); err != nil {
 						return err
 					}
@@ -459,6 +486,9 @@ func init() {
 			},
 			"__le__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__le__", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 2); err != nil {
 						return err
 					}
@@ -483,6 +513,9 @@ func init() {
 			},
 			"__ge__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__ge__", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 2); err != nil {
 						return err
 					}
@@ -507,6 +540,9 @@ func init() {
 			},
 			"__eq__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__eq__", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 2); err != nil {
 						return err
 					}
@@ -531,6 +567,9 @@ func init() {
 			},
 			"__ne__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__ne__", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 2); err != nil {
 						return err
 					}
@@ -555,6 +594,9 @@ func init() {
 			},
 			"__sub__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__sub__", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 2); err != nil {
 						return err
 					}
@@ -588,14 +630,20 @@ func init() {
 							return err
 						}
 						// Python: datetime - datetime is a timedelta
-						return createTimedeltaInstance(lt.Sub(rt).Seconds())
+						return createTimedeltaInstance(datetimeDiffSeconds(lt, rt))
 					}
-					newTime := lt.Add(time.Duration(-seconds * float64(time.Second)))
+					newTime, errObj := datetimeAddSeconds(lt, -seconds)
+					if errObj != nil {
+						return errObj
+					}
 					return createDatetimeInstance(newTime)
 				},
 			},
 			"__add__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__add__", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 2); err != nil {
 						return err
 					}
@@ -623,7 +671,10 @@ func init() {
 					default:
 						return errors.NewTypeError("number or timedelta", args[1].Type().String())
 					}
-					newTime := lt.Add(time.Duration(seconds * float64(time.Second)))
+					newTime, errObj := datetimeAddSeconds(lt, seconds)
+					if errObj != nil {
+						return errObj
+					}
 					return createDatetimeInstance(newTime)
 				},
 			},
@@ -636,6 +687,9 @@ func init() {
 		Methods: map[string]object.Object{
 			"__str__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__str__", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
@@ -659,6 +713,9 @@ func init() {
 			"isoweekday": DatetimeClass.Methods["isoweekday"],
 			"isoformat": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("isoformat", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 1); err != nil {
 						return err
 					}
@@ -687,30 +744,21 @@ func init() {
 					if err != nil {
 						return err
 					}
-
-					year, month, day := t.Year(), t.Month(), t.Day()
-
-					for key, val := range kwargs.All() {
-						intVal, ok := val.(*object.Integer)
-						if !ok {
-							return errors.NewTypeError("INTEGER", val.Type().String())
-						}
-						switch key {
-						case "year":
-							year = int(intVal.IntValue())
-						case "month":
-							month = time.Month(intVal.IntValue())
-						case "day":
-							day = int(intVal.IntValue())
-						default:
-							return errors.NewError("replace() unexpected keyword argument: %s", key)
-						}
+					vals, errObj := bindDatetimeArgs("replace", datetimeFieldNames[:3], 0, args[1:], kwargs)
+					if errObj != nil {
+						return errObj
 					}
-
-					newTime := time.Date(year, month, day, 0, 0, 0, 0, t.Location())
+					f := datetimeFields{year: t.Year(), month: int(t.Month()), day: t.Day()}
+					if errObj := f.set(vals); errObj != nil {
+						return errObj
+					}
+					newTime, errObj := f.time(t.Location())
+					if errObj != nil {
+						return errObj
+					}
 					return createDateInstance(newTime)
 				},
-				HelpText: "replace(**kwargs) - Return date with replaced fields",
+				HelpText: "replace(year, month, day) - Return date with the given fields replaced (by position or keyword)",
 			},
 			// Share comparison dunder methods from datetime class
 			"__lt__": DatetimeClass.Methods["__lt__"],
@@ -721,6 +769,9 @@ func init() {
 			"__ne__": DatetimeClass.Methods["__ne__"],
 			"__sub__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__sub__", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 2); err != nil {
 						return err
 					}
@@ -752,16 +803,22 @@ func init() {
 							return err
 						}
 						// Python: date - date is a timedelta (whole days)
-						return createTimedeltaInstance(lt.Sub(rt).Seconds())
+						return createTimedeltaInstance(datetimeDiffSeconds(lt, rt))
 					default:
 						return errors.NewTypeError("date instance or number", args[1].Type().String())
 					}
 					newTime := lt.AddDate(0, 0, -days)
+					if y := newTime.Year(); y < 1 || y > 9999 {
+						return errors.NewOverflowError("date value out of range")
+					}
 					return createDateInstance(newTime)
 				},
 			},
 			"__add__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__add__", kwargs); err != nil {
+						return err
+					}
 					if err := errors.MinArgs(args, 2); err != nil {
 						return err
 					}
@@ -791,6 +848,9 @@ func init() {
 						return errors.NewTypeError("integer or float", args[1].Type().String())
 					}
 					newTime := lt.AddDate(0, 0, days)
+					if y := newTime.Year(); y < 1 || y > 9999 {
+						return errors.NewOverflowError("date value out of range")
+					}
 					return createDateInstance(newTime)
 				},
 			},
@@ -798,37 +858,152 @@ func init() {
 	}
 }
 
+// wallClock returns t's wall-clock fields as a UTC time, for arithmetic on
+// naive datetimes, which Python does on the wall clock: a day added across a
+// daylight-saving change is still 24 wall-clock hours.
+func wallClock(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
+}
+
+// isNaive reports whether t is a naive datetime: one with no tzinfo.
+func isNaive(t time.Time) bool {
+	_, aware := awareKey(t.Location())
+	return !aware
+}
+
+// datetimeDiffSeconds is a - b in seconds: on the wall clock when both are
+// naive, as in Python, and computed from Unix seconds so differences beyond
+// the 292 years a time.Duration holds stay exact.
+func datetimeDiffSeconds(a, b time.Time) float64 {
+	if isNaive(a) && isNaive(b) {
+		a, b = wallClock(a), wallClock(b)
+	}
+	return float64(a.Unix()-b.Unix()) + float64(a.Nanosecond()-b.Nanosecond())/1e9
+}
+
+// datetimeAddSeconds adds secs to t (on the wall clock when t is naive) with
+// Python's OverflowError for a result outside years 1 to 9999.
+func datetimeAddSeconds(t time.Time, secs float64) (time.Time, object.Object) {
+	if math.IsNaN(secs) || math.Abs(secs) > 4e11 {
+		return time.Time{}, errors.NewOverflowError("date value out of range")
+	}
+	micros := int64(math.Round(secs * 1e6))
+	base := t
+	if isNaive(t) {
+		base = wallClock(t)
+	}
+	r := time.UnixMicro(base.UnixMicro() + micros).In(base.Location())
+	if isNaive(t) {
+		r = time.Date(r.Year(), r.Month(), r.Day(), r.Hour(), r.Minute(), r.Second(), r.Nanosecond(), t.Location())
+	}
+	if y := r.Year(); y < 1 || y > 9999 {
+		return time.Time{}, errors.NewOverflowError("date value out of range")
+	}
+	return r, nil
+}
+
+// datetimeFieldNames are datetime's constructor and replace() parameters in
+// order; date uses the first three.
+var datetimeFieldNames = []string{"year", "month", "day", "hour", "minute", "second", "microsecond", "tzinfo"}
+
+// bindDatetimeArgs binds positional and keyword arguments to names as Python
+// does for datetime(), date() and their replace(): a value per name (nil when
+// not given), with TypeError for too many arguments, an unknown keyword, a
+// name given both ways, or one of the first required names missing.
+func bindDatetimeArgs(fn string, names []string, required int, args []object.Object, kwargs object.Kwargs) ([]object.Object, object.Object) {
+	if len(args) > len(names) {
+		return nil, errors.NewTypeErrorTagged("%s() takes at most %d arguments (%d given)", fn, len(names), len(args))
+	}
+	vals := make([]object.Object, len(names))
+	copy(vals, args)
+	if kwargs.Len() > 0 {
+		for key, val := range kwargs.All() {
+			i := slices.Index(names, key)
+			if i < 0 {
+				return nil, errors.NewTypeErrorTagged("'%s' is an invalid keyword argument for %s()", key, fn)
+			}
+			if i < len(args) {
+				return nil, errors.NewTypeErrorTagged("argument for %s() given by name ('%s') and position (%d)", fn, key, i+1)
+			}
+			vals[i] = val
+		}
+	}
+	for i := 0; i < required; i++ {
+		if vals[i] == nil {
+			return nil, errors.NewTypeErrorTagged("function missing required argument '%s' (pos %d)", names[i], i+1)
+		}
+	}
+	return vals, nil
+}
+
+// datetimeFields are the fields of a date or datetime being built.
+type datetimeFields struct {
+	year, month, day, hour, minute, second, microsecond int
+}
+
+// set stores the given values (nil keeps a field) in field order, each of
+// which must be an int.
+func (f *datetimeFields) set(vals []object.Object) object.Object {
+	ptrs := [...]*int{&f.year, &f.month, &f.day, &f.hour, &f.minute, &f.second, &f.microsecond}
+	for i, v := range vals {
+		if v == nil {
+			continue
+		}
+		n, ok := v.(*object.Integer)
+		if !ok {
+			return errors.NewTypeErrorTagged("'%s' object cannot be interpreted as an integer", object.PythonTypeName(v))
+		}
+		val := n.IntValue()
+		if val > math.MaxInt32 || val < math.MinInt32 {
+			return errors.NewOverflowError("Python int too large to convert to C int")
+		}
+		*ptrs[i] = int(val)
+	}
+	return nil
+}
+
+// time checks the fields are in range, raising Python's ValueError rather
+// than letting time.Date roll 30 February over into March, and returns the
+// time they name.
+func (f *datetimeFields) time(loc *time.Location) (time.Time, object.Object) {
+	switch {
+	case f.year < 1 || f.year > 9999:
+		return time.Time{}, errors.NewValueError("year %d is out of range", f.year)
+	case f.month < 1 || f.month > 12:
+		return time.Time{}, errors.NewValueError("month must be in 1..12")
+	case f.day < 1 || f.day > daysInMonth(f.year, time.Month(f.month)):
+		return time.Time{}, errors.NewValueError("day is out of range for month")
+	case f.hour < 0 || f.hour > 23:
+		return time.Time{}, errors.NewValueError("hour must be in 0..23")
+	case f.minute < 0 || f.minute > 59:
+		return time.Time{}, errors.NewValueError("minute must be in 0..59")
+	case f.second < 0 || f.second > 59:
+		return time.Time{}, errors.NewValueError("second must be in 0..59")
+	case f.microsecond < 0 || f.microsecond > 999999:
+		return time.Time{}, errors.NewValueError("microsecond must be in 0..999999")
+	}
+	return time.Date(f.year, time.Month(f.month), f.day, f.hour, f.minute, f.second, f.microsecond*1000, loc), nil
+}
+
+// daysInMonth is the number of days in month of year.
+func daysInMonth(year int, month time.Month) int {
+	return time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
+}
+
 // datetimeConstructorBuiltin is the callable that creates datetime instances
 var datetimeConstructorBuiltin = &object.Builtin{
 	Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) < 3 {
-			return errors.NewError("datetime() requires at least 3 arguments: year, month, day")
+		vals, errObj := bindDatetimeArgs("datetime", datetimeFieldNames, 3, args, kwargs)
+		if errObj != nil {
+			return errObj
 		}
-		if len(args) > 8 {
-			return errors.NewError("datetime() takes at most 8 arguments")
+		var f datetimeFields
+		if errObj := f.set(vals[:7]); errObj != nil {
+			return errObj
 		}
-
-		yearObj, ok := args[0].(*object.Integer)
-		if !ok {
-			return errors.NewTypeError("INTEGER", args[0].Type().String())
-		}
-		monthObj, ok := args[1].(*object.Integer)
-		if !ok {
-			return errors.NewTypeError("INTEGER", args[1].Type().String())
-		}
-		dayObj, ok := args[2].(*object.Integer)
-		if !ok {
-			return errors.NewTypeError("INTEGER", args[2].Type().String())
-		}
-
-		year := int(yearObj.IntValue())
-		month := time.Month(monthObj.IntValue())
-		day := int(dayObj.IntValue())
-		hour, minute, second, nsec := 0, 0, 0, 0
 		loc := time.Local
-
-		if len(args) > 7 {
-			tzLoc, err := tzinfoLocation(args[7])
+		if tz := vals[7]; tz != nil {
+			tzLoc, err := tzinfoLocation(tz)
 			if err != nil {
 				return err
 			}
@@ -836,65 +1011,10 @@ var datetimeConstructorBuiltin = &object.Builtin{
 				loc = tzLoc
 			}
 		}
-		if len(args) > 3 {
-			if h, ok := args[3].(*object.Integer); ok {
-				hour = int(h.IntValue())
-			} else {
-				return errors.NewTypeError("INTEGER", args[3].Type().String())
-			}
+		t, errObj := f.time(loc)
+		if errObj != nil {
+			return errObj
 		}
-		if len(args) > 4 {
-			if m, ok := args[4].(*object.Integer); ok {
-				minute = int(m.IntValue())
-			} else {
-				return errors.NewTypeError("INTEGER", args[4].Type().String())
-			}
-		}
-		if len(args) > 5 {
-			if s, ok := args[5].(*object.Integer); ok {
-				second = int(s.IntValue())
-			} else {
-				return errors.NewTypeError("INTEGER", args[5].Type().String())
-			}
-		}
-		if len(args) > 6 {
-			if us, ok := args[6].(*object.Integer); ok {
-				nsec = int(us.IntValue()) * 1000
-			} else {
-				return errors.NewTypeError("INTEGER", args[6].Type().String())
-			}
-		}
-
-		for key, val := range kwargs.All() {
-			if key == "tzinfo" {
-				tzLoc, err := tzinfoLocation(val)
-				if err != nil {
-					return err
-				}
-				if tzLoc != nil {
-					loc = tzLoc
-				}
-				continue
-			}
-			intVal, ok := val.(*object.Integer)
-			if !ok {
-				return errors.NewTypeError("INTEGER", val.Type().String())
-			}
-			switch key {
-			case "hour":
-				hour = int(intVal.IntValue())
-			case "minute":
-				minute = int(intVal.IntValue())
-			case "second":
-				second = int(intVal.IntValue())
-			case "microsecond":
-				nsec = int(intVal.IntValue()) * 1000
-			default:
-				return errors.NewError("datetime() unexpected keyword argument: %s", key)
-			}
-		}
-
-		t := time.Date(year, month, day, hour, minute, second, nsec, loc)
 		return createDatetimeInstance(t)
 	},
 	HelpText: `datetime(year, month, day, hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
@@ -904,6 +1024,9 @@ datetime.timezone) the datetime is aware and isoformat() shows its offset.`,
 	Attributes: map[string]object.Object{
 		"fromisoformat": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("fromisoformat", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -942,6 +1065,11 @@ datetime.timezone) the datetime is aware and isoformat() shows its offset.`,
 		},
 		"now": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if kwargs.Len() > 0 {
+					if err := errors.CheckKwargs("now", kwargs, "tz"); err != nil {
+						return err
+					}
+				}
 				tz := kwargs.Get("tz")
 				if len(args) > 0 {
 					tz = args[0]
@@ -959,12 +1087,18 @@ datetime.timezone) the datetime is aware and isoformat() shows its offset.`,
 		},
 		"utcnow": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("utcnow", kwargs); err != nil {
+					return err
+				}
 				return createDatetimeInstance(time.Now().UTC())
 			},
 			HelpText: "utcnow() - Return current UTC datetime",
 		},
 		"strftime": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("strftime", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 2); err != nil {
 					return err
 				}
@@ -994,6 +1128,9 @@ datetime.timezone) the datetime is aware and isoformat() shows its offset.`,
 		},
 		"strptime": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("strptime", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 2); err != nil {
 					return err
 				}
@@ -1008,7 +1145,7 @@ datetime.timezone) the datetime is aware and isoformat() shows its offset.`,
 				goFormat := PythonToGoDateFormat(format)
 				t, parseErr := time.Parse(goFormat, dateStr)
 				if parseErr != nil {
-					return errors.NewError("strptime() parse error: %s", parseErr.Error())
+					return errors.NewValueError("time data '%s' does not match format '%s'", dateStr, format)
 				}
 				return createDatetimeInstance(t)
 			},
@@ -1016,6 +1153,11 @@ datetime.timezone) the datetime is aware and isoformat() shows its offset.`,
 		},
 		"fromtimestamp": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if kwargs.Len() > 0 {
+					if err := errors.CheckKwargs("fromtimestamp", kwargs, "tz"); err != nil {
+						return err
+					}
+				}
 				if err := errors.RangeArgs(args, 1, 2); err != nil {
 					return err
 				}
@@ -1050,28 +1192,18 @@ datetime.timezone) the datetime is aware and isoformat() shows its offset.`,
 // dateConstructorBuiltin is the callable that creates date instances
 var dateConstructorBuiltin = &object.Builtin{
 	Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-		if len(args) != 3 {
-			return errors.NewError("date() requires exactly 3 arguments: year, month, day")
+		vals, errObj := bindDatetimeArgs("date", datetimeFieldNames[:3], 3, args, kwargs)
+		if errObj != nil {
+			return errObj
 		}
-
-		yearObj, ok := args[0].(*object.Integer)
-		if !ok {
-			return errors.NewTypeError("INTEGER", args[0].Type().String())
+		var f datetimeFields
+		if errObj := f.set(vals); errObj != nil {
+			return errObj
 		}
-		monthObj, ok := args[1].(*object.Integer)
-		if !ok {
-			return errors.NewTypeError("INTEGER", args[1].Type().String())
+		t, errObj := f.time(time.Local)
+		if errObj != nil {
+			return errObj
 		}
-		dayObj, ok := args[2].(*object.Integer)
-		if !ok {
-			return errors.NewTypeError("INTEGER", args[2].Type().String())
-		}
-
-		year := int(yearObj.IntValue())
-		month := time.Month(monthObj.IntValue())
-		day := int(dayObj.IntValue())
-
-		t := time.Date(year, month, day, 0, 0, 0, 0, time.Local)
 		return createDateInstance(t)
 	},
 	HelpText: `date(year, month, day)
@@ -1080,6 +1212,9 @@ Creates a date instance for the specified date.`,
 	Attributes: map[string]object.Object{
 		"fromisoformat": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("fromisoformat", kwargs); err != nil {
+					return err
+				}
 				if err := errors.ExactArgs(args, 1); err != nil {
 					return err
 				}
@@ -1097,6 +1232,9 @@ Creates a date instance for the specified date.`,
 		},
 		"today": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("today", kwargs); err != nil {
+					return err
+				}
 				now := time.Now()
 				return createDateInstance(now)
 			},
@@ -1108,6 +1246,11 @@ Creates a date instance for the specified date.`,
 // timedeltaBuiltinNew provides Python-compatible datetime.timedelta function
 var timedeltaBuiltinNew = &object.Builtin{
 	Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+		if kwargs.Len() > 0 {
+			if err := errors.CheckKwargs("timedelta", kwargs, "days", "seconds", "microseconds", "milliseconds", "minutes", "hours", "weeks"); err != nil {
+				return err
+			}
+		}
 		// Positional arguments in Python's order.
 		positional := []string{"days", "seconds", "microseconds", "milliseconds", "minutes", "hours", "weeks"}
 		if len(args) > len(positional) {
@@ -1158,7 +1301,7 @@ var timedeltaBuiltinNew = &object.Builtin{
 			case "weeks":
 				weeks = num
 			default:
-				return errors.NewError("timedelta() unexpected keyword argument: %s", key)
+				return errors.NewTypeErrorTagged("'%s' is an invalid keyword argument for timedelta()", key)
 			}
 		}
 
@@ -1228,6 +1371,9 @@ var TimedeltaClass = &object.Class{
 	Methods: map[string]object.Object{
 		"total_seconds": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("total_seconds", kwargs); err != nil {
+					return err
+				}
 				if err := errors.MinArgs(args, 1); err != nil {
 					return err
 				}
@@ -1245,6 +1391,9 @@ var TimedeltaClass = &object.Class{
 		},
 		"__str__": &object.Builtin{
 			Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+				if err := errors.NoKwargs("__str__", kwargs); err != nil {
+					return err
+				}
 				if err := errors.MinArgs(args, 1); err != nil {
 					return err
 				}
@@ -1259,12 +1408,12 @@ var TimedeltaClass = &object.Class{
 			},
 			HelpText: "__str__() - Return the Python-style duration string",
 		},
-		"__lt__": timedeltaCompare("<"),
-		"__gt__": timedeltaCompare(">"),
-		"__le__": timedeltaCompare("<="),
-		"__ge__": timedeltaCompare(">="),
-		"__eq__": timedeltaCompare("=="),
-		"__ne__": timedeltaCompare("!="),
+		"__lt__": timedeltaCompare("__lt__", "<"),
+		"__gt__": timedeltaCompare("__gt__", ">"),
+		"__le__": timedeltaCompare("__le__", "<="),
+		"__ge__": timedeltaCompare("__ge__", ">="),
+		"__eq__": timedeltaCompare("__eq__", "=="),
+		"__ne__": timedeltaCompare("__ne__", "!="),
 	},
 }
 
@@ -1285,9 +1434,12 @@ var DatetimeLibrary = object.NewLibrary(DatetimeLibraryName,
 // timedeltaCompare builds a comparison dunder for timedeltas: both operands
 // compare by their _total seconds; the right side may be a timedelta or a
 // number of seconds, matching how the arithmetic dunders accept both.
-func timedeltaCompare(op string) *object.Builtin {
+func timedeltaCompare(name, op string) *object.Builtin {
 	return &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs(name, kwargs); err != nil {
+				return err
+			}
 			if err := errors.MinArgs(args, 2); err != nil {
 				return err
 			}
@@ -1333,5 +1485,201 @@ func timedeltaCompare(op string) *object.Builtin {
 			return object.NewBoolean(result)
 		},
 		HelpText: "Compare two timedeltas (or a timedelta and a number of seconds)",
+	}
+}
+
+// Methods datetime, date and timedelta share with Python beyond the core set
+// above: datetime.date(), timetuple(), isocalendar(), toordinal(),
+// date.fromordinal(), hashing, and timedelta arithmetic.
+func init() {
+	// The date of the datetime's fields, at local midnight like date(y, m, d),
+	// so dt.date() == date(dt.year, dt.month, dt.day).
+	dateOnly := func(t time.Time) object.Object {
+		return createDateInstance(time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local))
+	}
+	DatetimeClass.Methods["date"] = timeMethod("date() - Return the date part as a date", dateOnly)
+	for _, c := range []*object.Class{DatetimeClass, DateClass} {
+		c.Methods["timetuple"] = timeMethod("timetuple() - Return (year, month, day, hour, minute, second, weekday, yearday, isdst)", timetuple)
+		c.Methods["isocalendar"] = timeMethod("isocalendar() - Return (ISO year, ISO week, ISO weekday)", isocalendar)
+		c.Methods["toordinal"] = timeMethod("toordinal() - Return the proleptic Gregorian ordinal, 1 for 0001-01-01", toordinal)
+		c.Methods["__hash__"] = timeMethod("__hash__() - Hash of the instant", func(t time.Time) object.Object {
+			return object.NewInteger(t.UnixMicro())
+		})
+	}
+	dateConstructorBuiltin.Attributes["fromordinal"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			n, err := args[0].AsInt()
+			if err != nil {
+				return err
+			}
+			if n < 1 {
+				return errors.NewValueError("ordinal must be >= 1")
+			}
+			t := time.Unix((n-unixEpochOrdinal)*86400, 0).UTC()
+			return createDateInstance(time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local))
+		},
+		HelpText: "fromordinal(n) - Return the date with proleptic Gregorian ordinal n",
+	}
+
+	TimedeltaClass.Methods["__add__"] = timedeltaArith(func(l, r float64) float64 { return l + r })
+	TimedeltaClass.Methods["__sub__"] = timedeltaArith(func(l, r float64) float64 { return l - r })
+	TimedeltaClass.Methods["__mul__"] = timedeltaScale(false)
+	TimedeltaClass.Methods["__rmul__"] = timedeltaScale(false)
+	TimedeltaClass.Methods["__truediv__"] = timedeltaScale(true)
+	TimedeltaClass.Methods["__neg__"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			total, err := timedeltaTotal(args, 0)
+			if err != nil {
+				return err
+			}
+			return createTimedeltaInstance(-total)
+		},
+		HelpText: "__neg__() - Return the negated duration",
+	}
+	TimedeltaClass.Methods["__abs__"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			total, err := timedeltaTotal(args, 0)
+			if err != nil {
+				return err
+			}
+			return createTimedeltaInstance(math.Abs(total))
+		},
+		HelpText: "__abs__() - Return the duration without its sign",
+	}
+	TimedeltaClass.Methods["__hash__"] = &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			total, err := timedeltaTotal(args, 0)
+			if err != nil {
+				return err
+			}
+			return object.NewInteger(int64(math.Round(total * 1e6)))
+		},
+		HelpText: "__hash__() - Hash of the duration",
+	}
+}
+
+// unixEpochOrdinal is the proleptic Gregorian ordinal of 1970-01-01.
+const unixEpochOrdinal = 719163
+
+// timeMethod builds an instance method of datetime or date from a function
+// of the instance's time.
+func timeMethod(help string, fn func(time.Time) object.Object) *object.Builtin {
+	return &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.ExactArgs(args, 1); err != nil {
+				return err
+			}
+			instance, ok := args[0].(*object.Instance)
+			if !ok {
+				return errors.NewTypeError("datetime instance", args[0].Type().String())
+			}
+			t, err := getTimeFromInstance(instance)
+			if err != nil {
+				return err
+			}
+			return fn(t)
+		},
+		HelpText: help,
+	}
+}
+
+func isoWeekday(t time.Time) int64 {
+	if w := int64(t.Weekday()); w != 0 {
+		return w
+	}
+	return 7
+}
+
+func timetuple(t time.Time) object.Object {
+	return &object.Tuple{Elements: []object.Object{
+		object.NewInteger(int64(t.Year())), object.NewInteger(int64(t.Month())), object.NewInteger(int64(t.Day())),
+		object.NewInteger(int64(t.Hour())), object.NewInteger(int64(t.Minute())), object.NewInteger(int64(t.Second())),
+		object.NewInteger(isoWeekday(t) - 1), object.NewInteger(int64(t.YearDay())), object.NewInteger(-1),
+	}}
+}
+
+func isocalendar(t time.Time) object.Object {
+	year, week := t.ISOWeek()
+	return &object.Tuple{Elements: []object.Object{
+		object.NewInteger(int64(year)), object.NewInteger(int64(week)), object.NewInteger(isoWeekday(t)),
+	}}
+}
+
+func toordinal(t time.Time) object.Object {
+	midnight := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+	return object.NewInteger(midnight.Unix()/86400 + unixEpochOrdinal)
+}
+
+// timedeltaTotal reads the duration in seconds of the timedelta args[i].
+func timedeltaTotal(args []object.Object, i int) (float64, object.Object) {
+	if i >= len(args) {
+		return 0, errors.NewArgumentError(len(args), i+1)
+	}
+	if inst, ok := args[i].(*object.Instance); ok {
+		if total, ok := inst.Field("_total").(*object.Float); ok {
+			return total.FloatValue(), nil
+		}
+	}
+	return 0, errors.NewTypeError("timedelta instance", args[i].Type().String())
+}
+
+// timedeltaArith builds timedelta + timedelta and timedelta - timedelta.
+func timedeltaArith(op func(l, r float64) float64) *object.Builtin {
+	return &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			l, err := timedeltaTotal(args, 0)
+			if err != nil {
+				return err
+			}
+			r, err := timedeltaTotal(args, 1)
+			if err != nil {
+				return err
+			}
+			return createTimedeltaInstance(op(l, r))
+		},
+		HelpText: "Add or subtract two timedeltas",
+	}
+}
+
+// timedeltaScale builds timedelta * number and timedelta / number; divide
+// also accepts a timedelta divisor, giving their ratio as a float.
+func timedeltaScale(divide bool) *object.Builtin {
+	return &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			l, err := timedeltaTotal(args, 0)
+			if err != nil {
+				return err
+			}
+			if len(args) < 2 {
+				return errors.NewArgumentError(len(args), 2)
+			}
+			var n float64
+			switch v := args[1].(type) {
+			case *object.Integer:
+				n = float64(v.IntValue())
+			case *object.Float:
+				n = v.FloatValue()
+			default:
+				r, rerr := timedeltaTotal(args, 1)
+				if rerr != nil || !divide {
+					return errors.NewTypeErrorTagged("unsupported operand type for timedelta: '%s'", args[1].Type().String())
+				}
+				if r == 0 {
+					return errors.NewZeroDivisionError()
+				}
+				return object.NewFloat(l / r)
+			}
+			if !divide {
+				return createTimedeltaInstance(l * n)
+			}
+			if n == 0 {
+				return errors.NewZeroDivisionError()
+			}
+			return createTimedeltaInstance(l / n)
+		},
+		HelpText: "Multiply or divide a timedelta by a number",
 	}
 }

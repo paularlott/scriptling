@@ -2,6 +2,7 @@ package stdlib
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/evaliface"
@@ -17,6 +18,9 @@ const CopyLibraryName = "copy"
 var CopyLibrary = object.NewLibrary(CopyLibraryName, map[string]*object.Builtin{
 	"copy": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("copy", kwargs); err != nil {
+				return err
+			}
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
@@ -29,11 +33,16 @@ top-level contents. Nested objects are shared (use deepcopy).`,
 	},
 	"deepcopy": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("deepcopy", kwargs, "memo"); err != nil {
+					return err
+				}
+			}
 			// The optional second argument of Python's deepcopy(x, memo) is
 			// accepted and ignored: scripts have no way to build a useful
 			// memo themselves.
 			if len(args) != 1 && len(args) != 2 {
-				return errors.NewError("deepcopy() takes 1 or 2 arguments (%d given)", len(args))
+				return errors.NewTypeErrorTagged("deepcopy() takes 1 or 2 arguments (%d given)", len(args))
 			}
 			return deepCopy(ctx, args[0], make(map[object.Object]object.Object))
 		},
@@ -110,7 +119,7 @@ func isCopyFailure(o object.Object) bool {
 
 func deepCopyDepth(ctx context.Context, obj object.Object, memo map[object.Object]object.Object, depth int) object.Object {
 	if depth == 0 {
-		return errors.NewError("deepcopy exceeded maximum nesting depth (%d)", maxDeepcopyDepth)
+		return &object.Error{Message: fmt.Sprintf("deepcopy exceeded maximum nesting depth (%d)", maxDeepcopyDepth), ExceptionType: object.ExceptionTypeRecursionError}
 	}
 	switch v := obj.(type) {
 	case *object.Null, *object.Boolean, *object.Integer, *object.Float,

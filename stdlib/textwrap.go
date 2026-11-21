@@ -75,8 +75,11 @@ Example:
 
 	"dedent": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("dedent", kwargs); err != nil {
+				return err
+			}
 			if len(args) != 1 {
-				return errors.NewError("dedent() requires exactly 1 argument")
+				return errors.NewTypeErrorTagged("dedent() takes exactly 1 argument (%d given)", len(args))
 			}
 
 			text, ok := args[0].(*object.String)
@@ -104,8 +107,13 @@ Example:
 
 	"indent": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("indent", kwargs, "predicate"); err != nil {
+					return err
+				}
+			}
 			if len(args) < 2 {
-				return errors.NewError("indent() requires at least 2 arguments")
+				return errors.NewTypeErrorTagged("indent() missing required argument: 'prefix'")
 			}
 
 			text, ok := args[0].(*object.String)
@@ -118,11 +126,6 @@ Example:
 				return errors.NewTypeError("STRING", args[1].Type().String())
 			}
 
-			for _, k := range kwargs.Keys() {
-				if k != "predicate" {
-					return newArgTypeError("indent() got an unexpected keyword argument '%s'", k)
-				}
-			}
 			var predicate object.Object
 			if len(args) >= 3 {
 				predicate = args[2]
@@ -183,11 +186,16 @@ Example:
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			// Python: TextWrapper(width=width, max_lines=1, **kwargs).fill(
 			// " ".join(text.strip().split())).
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("shorten", kwargs, textwrapOptions...); err != nil {
+					return err
+				}
+			}
 			if kwargs.Has("max_lines") {
 				return newArgTypeError("shorten() got multiple values for keyword argument 'max_lines'")
 			}
 			if len(args) < 2 && !kwargs.Has("width") {
-				return errors.NewError("shorten() missing required argument: 'width'")
+				return errors.NewTypeErrorTagged("shorten() missing required argument: 'width'")
 			}
 			text, w, err := textwrapArgs("shorten", args, kwargs)
 			if err != nil {
@@ -273,9 +281,19 @@ type textWrapper struct {
 	placeholder        string
 }
 
+// textwrapOptions are the keywords wrap, fill and shorten accept.
+var textwrapOptions = []string{"width", "tabsize", "max_lines", "initial_indent", "subsequent_indent",
+	"placeholder", "expand_tabs", "replace_whitespace", "fix_sentence_endings", "break_long_words",
+	"drop_whitespace", "break_on_hyphens"}
+
 // textwrapArgs parses (text, width=70, **options) for wrap/fill/shorten.
 // Unknown keywords raise an error, as Python's TextWrapper does.
 func textwrapArgs(fname string, args []object.Object, kwargs object.Kwargs) (string, *textWrapper, object.Object) {
+	if kwargs.Len() > 0 {
+		if err := errors.CheckKwargs(fname, kwargs, textwrapOptions...); err != nil {
+			return "", nil, err
+		}
+	}
 	w := &textWrapper{
 		width:             70,
 		expandTabs:        true,
@@ -287,10 +305,10 @@ func textwrapArgs(fname string, args []object.Object, kwargs object.Kwargs) (str
 		placeholder:       " [...]",
 	}
 	if len(args) < 1 {
-		return "", nil, errors.NewError("%s() missing required argument: 'text'", fname)
+		return "", nil, errors.NewTypeErrorTagged("%s() missing required argument: 'text'", fname)
 	}
 	if len(args) > 2 {
-		return "", nil, errors.NewError("%s() takes at most 2 positional arguments (%d given)", fname, len(args))
+		return "", nil, errors.NewTypeErrorTagged("%s() takes at most 2 positional arguments (%d given)", fname, len(args))
 	}
 	text, ok := args[0].(*object.String)
 	if !ok {

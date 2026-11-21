@@ -142,7 +142,7 @@ func tzinfoOf(t time.Time) object.Object {
 
 func timezoneSelf(args []object.Object) (tzKey, object.Object) {
 	if len(args) < 1 {
-		return tzKey{}, errors.NewError("timezone method requires self")
+		return tzKey{}, errors.NewTypeErrorTagged("timezone method requires self")
 	}
 	k, ok := timezoneKey(args[0])
 	if !ok {
@@ -154,7 +154,7 @@ func timezoneSelf(args []object.Object) (tzKey, object.Object) {
 // datetimeSelf reads the time of a datetime method's receiver.
 func datetimeSelf(args []object.Object) (time.Time, object.Object) {
 	if len(args) < 1 {
-		return time.Time{}, errors.NewError("datetime method requires self")
+		return time.Time{}, errors.NewTypeErrorTagged("datetime method requires self")
 	}
 	inst, ok := args[0].(*object.Instance)
 	if !ok {
@@ -169,6 +169,11 @@ func init() {
 	dm := DatetimeClass.Methods
 	dm["astimezone"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if kwargs.Len() > 0 {
+				if err := errors.CheckKwargs("astimezone", kwargs, "tz"); err != nil {
+					return err
+				}
+			}
 			t, err := datetimeSelf(args)
 			if err != nil {
 				return err
@@ -192,6 +197,9 @@ func init() {
 	}
 	dm["utcoffset"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("utcoffset", kwargs); err != nil {
+				return err
+			}
 			t, err := datetimeSelf(args)
 			if err != nil {
 				return err
@@ -206,6 +214,9 @@ func init() {
 	}
 	dm["tzname"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("tzname", kwargs); err != nil {
+				return err
+			}
 			t, err := datetimeSelf(args)
 			if err != nil {
 				return err
@@ -222,6 +233,9 @@ func init() {
 	m := TimezoneClass.Methods
 	m["utcoffset"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("utcoffset", kwargs); err != nil {
+				return err
+			}
 			k, err := timezoneSelf(args)
 			if err != nil {
 				return err
@@ -232,6 +246,9 @@ func init() {
 	}
 	m["tzname"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("tzname", kwargs); err != nil {
+				return err
+			}
 			k, err := timezoneSelf(args)
 			if err != nil {
 				return err
@@ -242,12 +259,18 @@ func init() {
 	}
 	m["dst"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("dst", kwargs); err != nil {
+				return err
+			}
 			return &object.Null{}
 		},
 		HelpText: "dst(dt) - None: a fixed-offset zone has no daylight saving",
 	}
 	m["__str__"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("__str__", kwargs); err != nil {
+				return err
+			}
 			k, err := timezoneSelf(args)
 			if err != nil {
 				return err
@@ -258,6 +281,9 @@ func init() {
 	}
 	m["__repr__"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("__repr__", kwargs); err != nil {
+				return err
+			}
 			k, err := timezoneSelf(args)
 			if err != nil {
 				return err
@@ -275,6 +301,9 @@ func init() {
 	}
 	m["__eq__"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("__eq__", kwargs); err != nil {
+				return err
+			}
 			k, err := timezoneSelf(args)
 			if err != nil {
 				return err
@@ -290,6 +319,9 @@ func init() {
 	}
 	m["__hash__"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if err := errors.NoKwargs("__hash__", kwargs); err != nil {
+				return err
+			}
 			k, err := timezoneSelf(args)
 			if err != nil {
 				return err

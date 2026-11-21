@@ -65,6 +65,7 @@ type genItem struct {
 	cont    int              // run: cursor target for continue
 	jump    int              // loop control: target index
 	slot    int              // for-loop nesting depth / try or with slot
+	bind    int              // genForNext: slot index+1 of a lone loop variable (generator expressions); 0 = bind by name
 	match   *genMatchItem    // genMatch only
 }
 
@@ -98,6 +99,11 @@ type genPlan struct {
 	regions []genRegion
 	nTry    int // try statements flattened (parked-completion slots)
 	nWith   int // with statements flattened (manager slots)
+	start   int // item a new generator starts at (1 for a generator expression)
+
+	// drain, for a generator expression, collects all of a generator that
+	// has not started in one loop (see compileGenexpDrain).
+	drain func(ctx context.Context, st *genState) ([]object.Object, object.Object)
 }
 
 // buildGeneratorPlan compiles a generator body into resumable items.
@@ -337,18 +343,24 @@ func init() {
 		Methods: map[string]object.Object{
 			"__iter__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__iter__", kwargs); err != nil {
+						return err
+					}
 					return args[0]
 				},
 				HelpText: "__iter__() - Generators are their own iterator",
 			},
 			"__next__": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("__next__", kwargs); err != nil {
+						return err
+					}
 					if len(args) < 1 {
-						return errors.NewError("__next__() requires the generator")
+						return errors.NewTypeErrorTagged("__next__() requires the generator")
 					}
 					g, ok := args[0].(*object.Instance)
 					if !ok {
-						return errors.NewError("__next__() must be called on a generator")
+						return errors.NewTypeErrorTagged("__next__() must be called on a generator")
 					}
 					return generatorNext(ctx, g, GetEnvFromContext(ctx))
 				},
@@ -356,6 +368,9 @@ func init() {
 			},
 			"send": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("send", kwargs); err != nil {
+						return err
+					}
 					g, errObj := generatorArg(args, "send")
 					if errObj != nil {
 						return errObj
@@ -369,6 +384,9 @@ func init() {
 			},
 			"throw": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("throw", kwargs); err != nil {
+						return err
+					}
 					g, errObj := generatorArg(args, "throw")
 					if errObj != nil {
 						return errObj
@@ -384,6 +402,9 @@ func init() {
 			},
 			"close": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+					if err := errors.NoKwargs("close", kwargs); err != nil {
+						return err
+					}
 					g, errObj := generatorArg(args, "close")
 					if errObj != nil {
 						return errObj
@@ -405,11 +426,11 @@ func init() {
 
 func generatorArg(args []object.Object, method string) (*object.Instance, object.Object) {
 	if len(args) < 1 {
-		return nil, errors.NewError("%s() requires the generator", method)
+		return nil, errors.NewTypeErrorTagged("%s() requires the generator", method)
 	}
 	g, ok := args[0].(*object.Instance)
 	if !ok {
-		return nil, errors.NewError("%s() must be called on a generator", method)
+		return nil, errors.NewTypeErrorTagged("%s() must be called on a generator", method)
 	}
 	return g, nil
 }
@@ -423,6 +444,10 @@ type genState struct {
 	iter   *object.Iterator // the outermost for-loop's iterator
 	cursor int
 	done   bool
+	// running is set while the body runs: resuming it from inside itself
+	// is Python's "generator already executing" ValueError.
+	running bool
+	hint    int32 // generator expression: its first iterable's length when known, to presize drain's result
 
 	// ext holds the state only some generators need: nested loops,
 	// delegation, sent values, and try/with bookkeeping. nil until first
@@ -434,6 +459,34 @@ type genState struct {
 	// context every time, and finding the tracker walks the context chain.
 	depthCtx context.Context
 	depth    *CallDepth
+
+	// ctx is the context the generator was created under, for Go code that
+	// collects it (Collect) before it has been resumed. It is not kept for a
+	// generator with a finalizer, which a context reaching back to the
+	// generator would keep alive.
+	ctx context.Context
+}
+
+// Collect runs the generator to its end and returns the values it yields:
+// object.Instance.AsList calls it, so a Go function taking a list accepts a
+// generator (as a script function taking an iterable would).
+func (st *genState) Collect() ([]object.Object, object.Object) {
+	ctx := st.depthCtx
+	if ctx == nil {
+		ctx = st.ctx
+	}
+	if ctx == nil {
+		ctx = ContextWithCallDepth(WithEvaluator(context.Background()), DefaultMaxCallDepth)
+	}
+	// Every genState is the st field of a genObject (newGenerator and
+	// compileGeneratorExpression allocate them together), so its instance
+	// is found from its address without a pointer back to it.
+	o := (*genObject)(unsafe.Add(unsafe.Pointer(st), -int(unsafe.Offsetof(genObject{}.st))))
+	elems, _, errObj := iterableToSliceChecked(ctx, &o.inst, st.env)
+	if errObj != nil {
+		return nil, errObj
+	}
+	return elems, nil
 }
 
 type genExtra struct {
@@ -510,9 +563,27 @@ func (st *genState) pausedRegion() int32 {
 func (st *genState) fail(ctx context.Context, g *object.Instance, region int32, err object.Object) (object.Object, bool) {
 	if region == 0 {
 		st.finish()
-		return err, true
+		return leakedStopIteration(err), true
 	}
 	return st.unwind(ctx, g, region, genCompletion{kind: compRaise, val: err})
+}
+
+// leakedStopIteration turns a StopIteration raised inside a generator's body
+// (by a next() on an exhausted iterator, say) into the RuntimeError Python
+// raises for it (PEP 479), so it cannot silently end a loop over the
+// generator. Anything else is returned unchanged.
+func leakedStopIteration(err object.Object) object.Object {
+	exc, ok := err.(*object.Exception)
+	if !ok || exc == genExhausted || exc.ExceptionType != object.ExceptionTypeStopIteration || !exc.Raised {
+		return err
+	}
+	exc.Raised = false
+	return &object.Exception{
+		Message:       "generator raised StopIteration",
+		ExceptionType: object.ExceptionTypeRuntimeError,
+		Cause:         exc,
+		Raised:        true,
+	}
 }
 
 // unwind carries completion c outward from region r: a try body's except
@@ -590,11 +661,11 @@ func (st *genState) unwind(ctx context.Context, g *object.Instance, r int32, c g
 	st.finish()
 	switch c.kind {
 	case compRaise:
-		return c.val, true
+		return leakedStopIteration(c.val), true
 	case compReturn:
 		return genStopIterationValue(c.val), true
 	}
-	return errors.NewError("'break' outside loop"), true
+	return errors.NewSyntaxError("'break' outside loop"), true
 }
 
 // park records completion c for the try in slot while its finally runs.
@@ -616,7 +687,9 @@ func newGenerator(ctx context.Context, fn *object.Function, args []object.Object
 	o.inst.Class = generatorClass
 	o.st.plan, o.st.env = plan, callEnv
 	o.inst.NativeData = &o.st
-	if plan.nTry > 0 || plan.nWith > 0 {
+	if plan.nTry == 0 && plan.nWith == 0 {
+		o.st.ctx = ctx
+	} else {
 		// A generator with try or with blocks may be dropped while paused
 		// inside one. Close it when it is collected so its finally blocks
 		// and __exit__ calls still run; generators without such blocks have
@@ -626,13 +699,191 @@ func newGenerator(ctx context.Context, fn *object.Function, args []object.Object
 	return &o.inst
 }
 
+// compileGeneratorExpression compiles (expr for a in A if c for b in B ...)
+// as the generator function Python defines it to be: a body of nested for
+// and if statements around `yield expr`, run in its own scope enclosed by the
+// one it appears in, so its loop variables stay local and its free variables
+// are looked up when it runs. As in Python, the first iterable is evaluated,
+// and iter() called on it, in the enclosing scope when the expression is
+// evaluated; the body runs lazily from the first next(). The plan's first
+// item, the outer loop's for-init, is never run: the generator starts at the
+// loop's first step with that iterator in place.
+func compileGeneratorExpression(n *ast.ListComprehension) object.EvalFn {
+	line := ast.LineInfo{Line: int32(n.Line())}
+	var body ast.Statement = &ast.YieldStatement{Token: line, Value: n.Expression}
+	wrap := func(vars []ast.Expression, iterable, cond ast.Expression) {
+		if cond != nil {
+			body = &ast.IfStatement{Token: line, Condition: cond, Consequence: &ast.BlockStatement{Token: line, Statements: []ast.Statement{body}}}
+		}
+		body = &ast.ForStatement{Token: line, Variables: vars, Iterable: iterable, Body: &ast.BlockStatement{Token: line, Statements: []ast.Statement{body}}}
+	}
+	for i := len(n.AdditionalClauses) - 1; i >= 0; i-- {
+		cl := n.AdditionalClauses[i]
+		wrap(cl.Variables, cl.Iterable, cl.Condition)
+	}
+	wrap(n.Variables, n.Iterable, n.Condition)
+	plan := buildGeneratorPlan(&ast.BlockStatement{Token: line, Statements: []ast.Statement{body}})
+	plan.start = 1
+	first := plan.items[0].fn
+	// Loop variables that are plain names get slots in the generator's
+	// scope, so binding one per element needs no map.
+	slotIndex := map[string]int{}
+	var slotNames []string
+	addNames := func(vars []ast.Expression) {
+		for _, v := range vars {
+			if id, ok := v.(*ast.Identifier); ok {
+				if _, dup := slotIndex[id.Value()]; !dup {
+					slotIndex[id.Value()] = len(slotNames)
+					slotNames = append(slotNames, id.Value())
+				}
+			}
+		}
+	}
+	addNames(n.Variables)
+	for _, cl := range n.AdditionalClauses {
+		addNames(cl.Variables)
+	}
+	// A loop binding one plain name stores straight into its slot.
+	for i := range plan.items {
+		if it := &plan.items[i]; it.kind == genForNext && len(it.targets) == 1 {
+			if id, ok := it.targets[0].(*ast.Identifier); ok {
+				it.bind = slotIndex[id.Value()] + 1
+			}
+		}
+	}
+	plan.drain = compileGenexpDrain(n, slotIndex)
+	walrus := comprehensionWalrusTargets(n.AdditionalClauses, n.Expression, n.Condition)
+	return func(ctx context.Context, env *object.Environment) object.Object {
+		src := first(ctx, env)
+		if propagates(src) {
+			return src
+		}
+		iter, errObj := generatorIterFor(ctx, src, env)
+		if errObj != nil {
+			return errObj
+		}
+		o := &genObject{}
+		object.TrackAlloc(o, int64(unsafe.Sizeof(*o)))
+		o.inst.Class = generatorClass
+		o.st.plan, o.st.env, o.st.iter, o.st.cursor = plan, object.NewEnclosedEnvironmentWithSlots(env, slotIndex, slotNames), iter, 1
+		if walrus != nil {
+			o.st.env.MarkWalrusTargets(walrus)
+		}
+		o.st.ctx = ctx
+		switch v := src.(type) {
+		case *object.List:
+			o.st.hint = int32(min(len(v.Elements), maxPresize))
+		case *object.Tuple:
+			o.st.hint = int32(min(len(v.Elements), maxPresize))
+		case *object.Iterator:
+			if k, ok := v.Len(); ok {
+				o.st.hint = int32(min(k, int64(maxPresize)))
+			}
+		}
+		o.inst.NativeData = &o.st
+		return &o.inst
+	}
+}
+
+// compileGenexpDrain compiles the loop that collects a generator
+// expression that has not started: the elements a list comprehension over
+// the same clauses would build, in the same order, with the same side
+// effects. A builtin that takes the whole of an iterable (list, sum,
+// sorted, ...) collects a generator before using any of it, so it cannot
+// tell this loop from resuming the generator once per element, which costs
+// several times more.
+func compileGenexpDrain(n *ast.ListComprehension, slotIndex map[string]int) func(ctx context.Context, st *genState) ([]object.Object, object.Object) {
+	expr := compileExpr(n.Expression)
+	var cond object.EvalFn
+	if n.Condition != nil {
+		cond = compileExpr(n.Condition)
+	}
+	clauses := compiledClauses(n.AdditionalClauses)
+	bind := -1
+	if len(n.Variables) == 1 {
+		if id, ok := n.Variables[0].(*ast.Identifier); ok {
+			bind = slotIndex[id.Value()]
+		}
+	}
+	return func(ctx context.Context, st *genState) ([]object.Object, object.Object) {
+		env, iter := st.env, st.iter
+		// Collecting runs the generator to its end, or to the error that
+		// ends it.
+		st.iter = nil
+		st.finish()
+		if iter.Infinite() {
+			// It would never end: fail at once, as a list comprehension does.
+			return nil, errors.NewInfiniteIteratorError()
+		}
+		if cd := GetCallDepthFromContext(ctx); cd != nil {
+			if !cd.Enter() {
+				return nil, cd.LimitError()
+			}
+			defer cd.Exit()
+		}
+		out := []object.Object{}
+		if st.hint > 0 && cond == nil && len(clauses) == 0 && checkElementCount(int(st.hint)) == nil {
+			// One element per source element: size the result once.
+			out = make([]object.Object, 0, min(int(st.hint), maxPresize))
+			object.TrackSlice(out)
+		}
+		emit := func() object.Object {
+			v := expr(ctx, env)
+			if propagates(v) {
+				return v
+			}
+			return appendElement(&out, v)
+		}
+		cc := newContextChecker(ctx)
+		for {
+			if err := cc.check(); err != nil {
+				return nil, err
+			}
+			elem, more := iter.Next()
+			if !more {
+				return out, nil
+			}
+			if propagates(elem) {
+				return nil, elem
+			}
+			if bind >= 0 {
+				env.SetSlotByIndex(bind, elem)
+			} else if err := setForVariables(n.Variables, elem, env); err != nil {
+				return nil, assignErrorToObject(err)
+			}
+			if cond != nil {
+				c := cond(ctx, env)
+				if propagates(c) {
+					return nil, c
+				}
+				truthy, errObj := evalTruthy(ctx, c, env)
+				if errObj != nil {
+					return nil, errObj
+				}
+				if !truthy {
+					continue
+				}
+			}
+			var r object.Object
+			if len(clauses) > 0 {
+				r = evalCompiledAdditionalClauses(ctx, clauses, 0, env, emit)
+			} else {
+				r = emit()
+			}
+			if r != nil {
+				return nil, r
+			}
+		}
+	}
+}
+
 // finalizeGenerator closes a generator that was collected unfinished. It
 // runs on the Go runtime's finalizer goroutine, so it takes the generator's
 // interpreter lock, bounds its own run time, and never lets a panic or an
 // error from the generator's cleanup escape.
 func finalizeGenerator(o *genObject) {
 	st := &o.st
-	if st.done || (st.cursor == 0 && !st.delegating()) || st.env == nil {
+	if st.done || (st.cursor == st.plan.start && !st.delegating()) || st.env == nil {
 		return // finished, or never started: nothing to clean up
 	}
 	defer func() { _ = recover() }()
@@ -700,7 +951,7 @@ const exceptionTypeGeneratorExit = "GeneratorExit"
 // instead of finishing.
 func generatorCloseRun(ctx context.Context, g *object.Instance, env *object.Environment) (object.Object, object.Object) {
 	st, _ := g.NativeData.(*genState)
-	if st == nil || st.done || (st.cursor == 0 && !st.delegating()) ||
+	if st == nil || st.done || (st.cursor == st.plan.start && !st.delegating()) ||
 		((st.ext == nil || st.ext.sub == nil) && st.pausedRegion() == 0) {
 		// Not started, finished, or paused outside every try and with:
 		// nothing can observe the GeneratorExit.
@@ -736,7 +987,7 @@ func generatorThrow(ctx context.Context, g *object.Instance, exc object.Object, 
 		generatorClose(g)
 		return exc
 	}
-	if st.cursor == 0 && !st.delegating() {
+	if st.cursor == st.plan.start && !st.delegating() {
 		// Not started: raised before the first statement, where nothing
 		// can catch it.
 		st.finish()
@@ -793,8 +1044,8 @@ func generatorSend(ctx context.Context, g *object.Instance, v object.Object, env
 		return generatorNext(ctx, g, env)
 	}
 	// Paused at a yield, the cursor is past it (or on a yield from that is
-	// delegating): only a generator that never ran sits at item 0.
-	if !st.done && st.cursor == 0 && !st.delegating() {
+	// delegating): only a generator that never ran sits at its start item.
+	if !st.done && st.cursor == st.plan.start && !st.delegating() {
 		return errors.NewTypeErrorTagged("can't send non-None value to a just-started generator")
 	}
 	x := st.extra()
@@ -828,7 +1079,7 @@ func toRaisedException(ctx context.Context, arg object.Object, extra []object.Ob
 			return toRaisedException(ctx, inst, nil, env)
 		}
 	case *object.Builtin:
-		if _, ok := exceptionBuiltins[a]; ok {
+		if _, ok := exceptionClassName(a); ok {
 			return toRaisedException(ctx, a.Fn(SetEnvInContext(ctx, env), object.NewKwargs(nil), extra...), nil, env)
 		}
 	}
@@ -871,15 +1122,23 @@ func generatorNextRaw(ctx context.Context, g *object.Instance, env *object.Envir
 	if ctx != st.depthCtx {
 		st.depthCtx, st.depth = ctx, GetCallDepthFromContext(ctx)
 	}
+	if st.running {
+		return errors.NewValueError("generator already executing")
+	}
 	cd := st.depth
 	if cd == nil {
-		return generatorResume(ctx, g, env, st)
+		st.running = true
+		r := generatorResume(ctx, g, env, st)
+		st.running = false
+		return r
 	}
 	if !cd.Enter() {
 		st.finish()
 		return cd.LimitError()
 	}
+	st.running = true
 	r := generatorResume(ctx, g, env, st)
+	st.running = false
 	cd.Exit()
 	return r
 }
@@ -927,7 +1186,7 @@ func generatorResume(ctx context.Context, g *object.Instance, env *object.Enviro
 			case *object.Break:
 				if it.brk < 0 {
 					st.finish()
-					return errors.NewError("'break' outside loop")
+					return errors.NewSyntaxError("'break' outside loop")
 				}
 				if res, stop := st.jump(ctx, g, it, it.brk); stop {
 					return res
@@ -935,7 +1194,7 @@ func generatorResume(ctx context.Context, g *object.Instance, env *object.Enviro
 			case *object.Continue:
 				if it.cont < 0 {
 					st.finish()
-					return errors.NewError("'continue' not properly in loop")
+					return errors.NewSyntaxError("'continue' not properly in loop")
 				}
 				if res, stop := st.jump(ctx, g, it, it.cont); stop {
 					return res
@@ -1036,7 +1295,9 @@ func generatorResume(ctx context.Context, g *object.Instance, env *object.Enviro
 				}
 				continue
 			}
-			if err := setForVariables(it.targets, elem, genv); err != nil {
+			if it.bind > 0 {
+				genv.SetSlotByIndex(it.bind-1, elem)
+			} else if err := setForVariables(it.targets, elem, genv); err != nil {
 				if res, stop := st.fail(ctx, g, it.region, assignErrorToObject(err)); stop {
 					return res
 				}
@@ -1096,7 +1357,7 @@ func generatorStep(ctx context.Context, g *object.Instance, st *genState, it *ge
 		}
 		inst, ok := obj.(*object.Instance)
 		if !ok {
-			return st.fail(ctx, g, it.region, errors.NewError("with statement requires an object with __enter__ and __exit__ methods"))
+			return st.fail(ctx, g, it.region, errors.NewTypeErrorTagged("with statement requires an object with __enter__ and __exit__ methods"))
 		}
 		enter := callDunderMethod(ctx, inst, "__enter__", nil, genv)
 		if enter == nil {
@@ -1226,9 +1487,19 @@ func generatorIterator(ctx context.Context, g *object.Instance, env *object.Envi
 func generatorIterFor(ctx context.Context, val object.Object, env *object.Environment) (*object.Iterator, object.Object) {
 	switch o := val.(type) {
 	case *object.Iterator:
-		return o, nil
+		return o.Iter(), nil // a range gets a fresh cursor, as iter() gives it
 	case *object.List:
-		return sliceIterator(o.Elements), nil
+		// Index the live list, as Python's list iterator does: elements
+		// appended while it is being iterated are seen.
+		i := 0
+		return object.NewIterator(func() (object.Object, bool) {
+			if i >= len(o.Elements) {
+				return nil, false
+			}
+			v := o.Elements[i]
+			i++
+			return v, true
+		}), nil
 	case *object.Tuple:
 		return sliceIterator(o.Elements), nil
 	case *object.String:
