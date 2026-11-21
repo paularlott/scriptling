@@ -104,7 +104,8 @@ func dictString(t *testing.T, dict *object.Dict, key string) string {
 // isolation instead.
 func TestRequestContextCopyDoesNotIsolateSetOrBytes(t *testing.T) {
 	shared := object.NewSet()
-	shared.Elements["blue"] = object.NewString("blue")
+	blue := object.NewString("blue")
+	shared.AddKeyed(object.DictKey(blue), blue)
 	root := object.NewStringDict(map[string]object.Object{"labels": shared})
 	req := object.NewInstanceWithFields(nil, map[string]object.Object{"context": root})
 	ctx := WithRequestContext(context.Background(), req)
@@ -130,13 +131,14 @@ func TestRequestContextCopyDoesNotIsolateSetOrBytes(t *testing.T) {
 		t.Fatalf("labels is not a set: %T", firstPair.Value)
 	}
 	// Mutate the set obtained from the first copy.
-	firstSet.Elements["green"] = object.NewString("green")
+	green := object.NewString("green")
+	firstSet.AddKeyed(object.DictKey(green), green)
 
 	secondPair, _ := second.GetByString("labels")
 	secondSet := secondPair.Value.(*object.Set)
 	// Current behaviour: the two copies share the same *Set, so the mutation
 	// is visible. Documenting this explicitly.
-	if _, leaked := secondSet.Elements["green"]; !leaked {
+	if !secondSet.ContainsKeyed(object.DictKey(green)) {
 		t.Fatal("set is now isolated between copies — copyValue was extended; " +
 			"update this test to assert isolation (and drop it from the known-edge list)")
 	}

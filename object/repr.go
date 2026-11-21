@@ -254,7 +254,7 @@ func (r *reprRenderer) container(obj Object) {
 			r.out.WriteByte(')')
 		}
 	case *Set:
-		if len(o.Elements) == 0 {
+		if o.Len() == 0 {
 			if o.Frozen {
 				r.out.WriteString("frozenset()")
 			} else {
@@ -263,9 +263,9 @@ func (r *reprRenderer) container(obj Object) {
 			return
 		}
 		// Sorted for deterministic output.
-		parts := make([]string, 0, len(o.Elements))
+		parts := make([]string, 0, o.Len())
 		used := r.used + int64(r.out.Len())
-		for _, e := range o.Elements {
+		for _, e := range o.All() {
 			sub := reprRenderer{seen: r.seen, instanceRepr: r.instanceRepr, depth: r.depth, limit: r.limit, used: used}
 			sub.element(e)
 			if sub.err == nil {

@@ -1,23 +1,40 @@
 package object
 
+import "unsafe"
+
 // CreateIterator returns an iterator over the dict's keys.
 // In Python, iterating a dict yields its keys (same as dict.keys()), in
 // insertion order.
 func (d *Dict) CreateIterator() *Iterator {
-	// Snapshot keys at the moment iteration begins, like DictKeys does, so
-	// concurrent map writes can't corrupt the range. Deleted keys are skipped
-	// to mirror view semantics.
-	keys := d.OrderedKeys()
+	return d.iterate(func(p DictPair) Object { return p.Key })
+}
 
-	index := 0
+// iterate returns an iterator over the dict's pairs in insertion order,
+// yielding pick(pair) for each. It walks the entries as they were when
+// iteration began: a pair deleted before the walk reaches it is skipped, a
+// pair added during the walk is not visited, and a value changed during the
+// walk is seen as changed.
+func (d *Dict) iterate(pick func(DictPair) Object) *Iterator {
+	entries := d.entries
+	pos := int(d.head)
 	return trackIterator(&Iterator{
 		next: func() (Object, bool) {
-			for index < len(keys) {
-				key := keys[index]
-				index++
-				if pair, ok := d.Lookup(key); ok {
-					return pair.Key, true
+			for pos < len(entries) {
+				e := &entries[pos]
+				pos++
+				if e.Key == nil {
+					continue
 				}
+				if unsafe.SliceData(entries) != unsafe.SliceData(d.entries) {
+					// The dict has moved its entries since the walk began
+					// (growth, compaction or clear): read the pair afresh.
+					pair, ok := d.Lookup(e.canonical)
+					if !ok {
+						continue
+					}
+					return pick(pair), true
+				}
+				return pick(e.DictPair), true
 			}
 			return nil, false
 		},
@@ -45,33 +62,7 @@ func (dk *DictKeys) CoerceFloat() (float64, Object) { return 0, errMustBeNumber 
 
 // CreateIterator returns an iterator for the keys
 func (dk *DictKeys) CreateIterator() *Iterator {
-	// Snapshot keys to avoid concurrent map modification issues during iteration
-	// In Python 3, modifying dict during iteration raises RuntimeError, but for simplicity
-	// we'll just iterate over a snapshot of keys at the start.
-	// To be truly dynamic/lazy, we'd need to iterate the map directly, but Go maps
-	// don't support safe concurrent modification/iteration easily without restart.
-	// However, "View" objects in Python reflect changes.
-	// Let's grab the keys at the moment CreateIterator is called, in
-	// insertion order.
-
-	keys := dk.Dict.OrderedKeys()
-
-	index := 0
-	return trackIterator(&Iterator{
-		next: func() (Object, bool) {
-			for index < len(keys) {
-				key := keys[index]
-				index++
-
-				// Check if key still exists (view behavior)
-				if pair, ok := dk.Dict.Lookup(key); ok {
-					return pair.Key, true
-				}
-				// If key deleted, loop continues to next key in snapshot
-			}
-			return nil, false
-		},
-	})
+	return dk.Dict.iterate(func(p DictPair) Object { return p.Key })
 }
 
 // DictValues represents a view of a dictionary's values
@@ -94,23 +85,7 @@ func (dv *DictValues) CoerceInt() (int64, Object)     { return 0, errMustBeInteg
 func (dv *DictValues) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 func (dv *DictValues) CreateIterator() *Iterator {
-	keys := dv.Dict.OrderedKeys()
-
-	index := 0
-	return trackIterator(&Iterator{
-		next: func() (Object, bool) {
-			for index < len(keys) {
-				key := keys[index]
-				index++
-
-				if pair, ok := dv.Dict.Lookup(key); ok {
-					return pair.Value, true
-				}
-				// If key deleted, loop to next
-			}
-			return nil, false
-		},
-	})
+	return dv.Dict.iterate(func(p DictPair) Object { return p.Value })
 }
 
 // DictItems represents a view of a dictionary's items
@@ -133,20 +108,5 @@ func (di *DictItems) CoerceInt() (int64, Object)     { return 0, errMustBeIntege
 func (di *DictItems) CoerceFloat() (float64, Object) { return 0, errMustBeNumber }
 
 func (di *DictItems) CreateIterator() *Iterator {
-	keys := di.Dict.OrderedKeys()
-
-	index := 0
-	return trackIterator(&Iterator{
-		next: func() (Object, bool) {
-			for index < len(keys) {
-				key := keys[index]
-				index++
-
-				if pair, ok := di.Dict.Lookup(key); ok {
-					return NewPair(pair.Key, pair.Value), true
-				}
-			}
-			return nil, false
-		},
-	})
+	return di.Dict.iterate(func(p DictPair) Object { return NewPair(p.Key, p.Value) })
 }

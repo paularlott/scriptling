@@ -72,7 +72,7 @@ func iterableToSet(ctx context.Context, obj object.Object, env *object.Environme
 	if !ok {
 		return nil, errors.NewTypeError("set or iterable", obj.Type().String())
 	}
-	result := object.NewSet()
+	result := object.NewSetSized(min(len(elements), object.SetSmallMax))
 	for _, elem := range elements {
 		if err := evalSetAdd(ctx, result, elem); err != nil {
 			return nil, err

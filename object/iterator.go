@@ -105,11 +105,7 @@ func IterableToSlice(obj Object) ([]Object, bool) {
 		}
 		return elements, true
 	case *Set:
-		elements := make([]Object, 0, len(iter.Elements))
-		for _, v := range iter.Elements {
-			elements = append(elements, v)
-		}
-		return elements, true
+		return iter.Values(), true
 	case *Dict:
 		// For dicts, return keys (like Python's list(dict)), in insertion order
 		elements := make([]Object, 0, iter.Len())

@@ -253,7 +253,7 @@ Examples:
 			case *object.DictItems:
 				return object.NewInteger(int64(arg.Dict.Len()))
 			case *object.Set:
-				return object.NewInteger(int64(len(arg.Elements)))
+				return object.NewInteger(int64(arg.Len()))
 			case *object.Iterator:
 				if n, ok := arg.Len(); ok {
 					return object.NewInteger(n)
@@ -689,7 +689,7 @@ Use list(zip(...)) to get a list.`,
 				// Find __class__ (should be in closure)
 				obj, ok := env.Get("__class__")
 				if !ok {
-					return errors.NewError("super(): __class__ cell not found - are you calling super() from within a class method?")
+					return &object.Exception{Message: "super(): __class__ cell not found - are you calling super() from within a class method?", ExceptionType: object.ExceptionTypeRuntimeError, Raised: true}
 				}
 				var isClass bool
 				classObj, isClass = obj.(*object.Class)
@@ -701,7 +701,7 @@ Use list(zip(...)) to get a list.`,
 				// Note: This relies on the first argument being named 'self'
 				obj, ok = env.Get("self")
 				if !ok {
-					return errors.NewError("super(): 'self' not found - parameterless super() requires 'self' argument")
+					return &object.Exception{Message: "super(): 'self' not found - parameterless super() requires 'self' argument", ExceptionType: object.ExceptionTypeRuntimeError, Raised: true}
 				}
 				var isInstance bool
 				instanceObj, isInstance = obj.(*object.Instance)
@@ -1490,7 +1490,7 @@ Otherwise, returns a tuple containing the items of the iterable.`,
 			if !ok {
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
-			s := object.NewSet()
+			s := object.NewSetSized(min(len(elements), object.SetSmallMax))
 			for _, e := range elements {
 				if err := evalSetAdd(ctx, s, e); err != nil {
 					return err
@@ -1539,7 +1539,7 @@ Example:
 				return errors.NewTypeError("iterable", args[0].Type().String())
 			}
 
-			s := object.NewSet()
+			s := object.NewSetSized(min(len(elements), object.SetSmallMax))
 			for _, e := range elements {
 				if err := evalSetAdd(ctx, s, e); err != nil {
 					return err
@@ -2688,8 +2688,10 @@ func sortedFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 		if keyFunc != nil {
 			keys = make([]object.Object, n)
 			env := GetEnvFromContext(ctx)
+			var callArg [1]object.Object // reused: a callee never keeps its args slice
 			for i, elem := range elements {
-				key := applyFunctionWithContext(ctx, keyFunc, []object.Object{elem}, nil, env)
+				callArg[0] = elem
+				key := applyFunctionWithContext(ctx, keyFunc, callArg[:], nil, env)
 				if propagates(key) {
 					return key
 				}
@@ -2886,8 +2888,8 @@ func mapFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...object.O
 	// Eagerly evaluate all results
 	results := make([]object.Object, minLen)
 	env := GetEnvFromContext(ctx)
+	callArgs := make([]object.Object, len(iterables)) // reused: a callee never keeps its args slice
 	for i := 0; i < minLen; i++ {
-		callArgs := make([]object.Object, len(iterables))
 		for j := range iterables {
 			callArgs[j] = iterables[j][i]
 		}
@@ -2946,6 +2948,7 @@ func filterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 	// Eagerly evaluate and filter
 	results := []object.Object{}
 	env := GetEnvFromContext(ctx)
+	var callArg [1]object.Object // reused: a callee never keeps its args slice
 	for _, elem := range iterable {
 		// If function is None, use truthiness of the element itself.
 		if fn.Type() == object.NULL_OBJ {
@@ -2957,7 +2960,8 @@ func filterFunctionImpl(ctx context.Context, kwargs object.Kwargs, args ...objec
 				results = append(results, elem)
 			}
 		} else {
-			res := applyFunctionWithContext(ctx, fn, []object.Object{elem}, nil, env)
+			callArg[0] = elem
+			res := applyFunctionWithContext(ctx, fn, callArg[:], nil, env)
 			// A raised exception from the predicate must propagate, not be
 			// coerced to "keep" via truthiness.
 			if propagates(res) {

@@ -72,14 +72,14 @@ func (e *Environment) CloseResources() {
 // interpreter, as a script library's environment does with the interpreter
 // that imports it. Call it before anything runs in e.
 func (e *Environment) ShareResources(from *Environment) {
-	if rs := from.resourceSet(); rs != nil && e != nil && e.root != nil && e.root.gil != nil {
-		e.root.gil.resources = rs
+	if rs := from.resourceSet(); rs != nil && e != nil && e.rs != nil && e.rs.gil != nil {
+		e.rs.gil.resources = rs
 	}
 }
 
 func (e *Environment) resourceSet() *resourceSet {
-	if e == nil || e.root == nil || e.root.gil == nil {
+	if e == nil || e.rs == nil || e.rs.gil == nil {
 		return nil
 	}
-	return e.root.gil.resources
+	return e.rs.gil.resources
 }

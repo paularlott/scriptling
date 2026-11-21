@@ -179,12 +179,12 @@ func deepCopyDepth(ctx context.Context, obj object.Object, memo map[object.Objec
 		if c, ok := memo[obj]; ok {
 			return c
 		}
-		result := object.NewSet()
+		result := object.NewSetSized(v.Len())
 		memo[obj] = result
 		// Elements are hashable, so effectively immutable: sharing them is
 		// safe and keeps their set keys valid.
-		for k, e := range v.Elements {
-			result.Elements[k] = e
+		for k, e := range v.All() {
+			result.AddKeyed(k, e)
 		}
 		return result
 	case *object.FloatArray:

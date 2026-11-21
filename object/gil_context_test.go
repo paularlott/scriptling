@@ -164,7 +164,7 @@ func TestEnterGILWithContextFastPaths(t *testing.T) {
 // nothing.
 func TestEnterGILWithContextCancelledWhileParked(t *testing.T) {
 	env := NewEnvironment()
-	g := env.root.gil
+	g := env.rs.gil
 
 	if !env.EnterGIL() {
 		t.Fatal("holder could not enter")
@@ -222,7 +222,7 @@ func TestEnterGILWithContextCancelledWhileParked(t *testing.T) {
 // business, not an assertion.
 func TestEnterGILWithContextCancelRacesUnlock(t *testing.T) {
 	env := NewEnvironment()
-	g := env.root.gil
+	g := env.rs.gil
 	const rounds = 500
 	acquiredDespiteCancel, abandoned := 0, 0
 	for i := 0; i < rounds; i++ {

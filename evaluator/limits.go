@@ -316,7 +316,7 @@ func checkDictMerge(d, other *object.Dict) object.Object {
 
 // checkSetGrowth checks a set about to gain the element keyed hk.
 func checkSetGrowth(s *object.Set, hk string) object.Object {
-	n := len(s.Elements) + 1
+	n := s.Len() + 1
 	if object.AllocWithin(int64(n) * objectSlotBytes) {
 		return nil
 	}
@@ -328,11 +328,11 @@ func checkSetGrowth(s *object.Set, hk string) object.Object {
 
 // checkSetMerge checks adding every element of other to s.
 func checkSetMerge(s, other *object.Set) object.Object {
-	if object.CheckElements(int64(len(s.Elements)+len(other.Elements))) == nil {
+	if object.CheckElements(int64(s.Len()+other.Len())) == nil {
 		return nil
 	}
-	n := len(s.Elements)
-	for k := range other.Elements {
+	n := s.Len()
+	for k := range other.All() {
 		if !s.ContainsKeyed(k) {
 			n++
 		}

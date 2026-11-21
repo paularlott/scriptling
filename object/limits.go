@@ -1102,7 +1102,7 @@ func checkValueSlow(obj Object) Object {
 	case *Dict:
 		n = int64(v.Len()) * int64(unsafe.Sizeof(Object(nil)))
 	case *Set:
-		n = int64(len(v.Elements)) * int64(unsafe.Sizeof(Object(nil)))
+		n = int64(v.Len()) * int64(unsafe.Sizeof(Object(nil)))
 	default:
 		return nil
 	}

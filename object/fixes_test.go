@@ -310,7 +310,7 @@ func TestTupleAsList(t *testing.T) {
 }
 
 func TestSetOperationsWithDictKey(t *testing.T) {
-	s := &Set{Elements: make(map[string]Object)}
+	s := NewSet()
 
 	// Add various types
 	s.add(NewString("hello"))

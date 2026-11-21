@@ -1430,10 +1430,19 @@ func compileCall(n *ast.CallExpression) object.EvalFn {
 				keywords[pair.StringKey()] = pair.Value
 			}
 		} else if len(kwVals) > 0 {
-			// A user function binds its keywords straight from the slices;
-			// every other callee takes them as a map.
-			if fn, ok := function.(*object.Function); ok {
-				res := applyUserFunctionKw(ctx, fn, args, nil, kwArgs{names: kwNames, values: kwVals}, env)
+			// Functions, lambdas and classes bind their keywords straight
+			// from the slices; every other callee takes them as a map.
+			kw := kwArgs{names: kwNames, values: kwVals}
+			var res object.Object
+			switch fn := function.(type) {
+			case *object.Function:
+				res = applyUserFunctionKw(ctx, fn, args, nil, kw, env)
+			case *object.LambdaFunction:
+				res = applyLambdaFunctionKw(ctx, fn, args, nil, kw)
+			case *object.Class:
+				res = createInstanceKw(ctx, fn, args, nil, kw, env)
+			}
+			if res != nil {
 				object.ReleaseArgs(env, kwVals)
 				return res
 			}
@@ -1548,7 +1557,7 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 	}
 	hasOverflow := n.HasOverflow()
 
-	return func(ctx context.Context, env *object.Environment) object.Object {
+	general := func(ctx context.Context, env *object.Environment) object.Object {
 		obj := receiver(ctx, env)
 		if propagates(obj) {
 			return obj
@@ -1603,6 +1612,15 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 			if failed != nil {
 				return failed
 			}
+			// A method defined as a plain function on the instance's class
+			// binds its keywords straight from the slices.
+			if inst, ok := obj.(*object.Instance); ok && len(unpackFns) == 0 && kwargsUnpackFn == nil {
+				if fn := plainInstanceMethod(inst, name); fn != nil {
+					res := applyUserFunctionKw(ctx, fn, prependSelf(inst, args), nil, kwArgs{names: kwNames, values: kwVals}, env)
+					object.ReleaseArgs(env, kwVals)
+					return res
+				}
+			}
 			keywords = keywordMap(kwNames, kwVals)
 			object.ReleaseArgs(env, kwVals)
 		}
@@ -1650,6 +1668,117 @@ func compileMethodCall(n *ast.MethodCallExpression) object.EvalFn {
 
 		return callStringMethodWithKeywords(ctx, obj, name, args, keywords, env)
 	}
+
+	// super().name(...) without star-unpacks: call the base class's method
+	// directly instead of building a Super object. The universal type() method
+	// is left to the general path.
+	if superCall := parameterlessSuperCall(n.Receiver); superCall != nil &&
+		name != "type" && len(unpackFns) == 0 && kwargsUnpackFn == nil {
+		superFn := builtins["super"]
+		return func(ctx context.Context, env *object.Environment) object.Object {
+			if res, handled := evalSuperMethodCall(ctx, env, superCall, superFn, name, argFns, kwNames, kwFns); handled {
+				return res
+			}
+			return general(ctx, env)
+		}
+	}
+	return general
+}
+
+// parameterlessSuperCall returns e when it is the call super() with no
+// arguments of any kind, else nil.
+func parameterlessSuperCall(e ast.Expression) *ast.CallExpression {
+	call, ok := e.(*ast.CallExpression)
+	if !ok || len(call.Arguments) != 0 || call.HasOverflow() {
+		return nil
+	}
+	if ident, ok := call.Function.(*ast.Identifier); !ok || ident.Value() != "super" {
+		return nil
+	}
+	return call
+}
+
+// evalSuperMethodCall runs super().name(args, keywords) the way the super
+// builtin followed by callSuperMethod would, without allocating the Super
+// object. It reports handled=false, having evaluated nothing, whenever the
+// general path must decide instead: super rebound by the script, any error
+// the builtin would raise, or a method no base class defines.
+func evalSuperMethodCall(ctx context.Context, env *object.Environment, superCall *ast.CallExpression, superFn *object.Builtin, name string, argFns []object.EvalFn, kwNames []string, kwFns []object.EvalFn) (object.Object, bool) {
+	if val, found := resolveCallee(superCall, "super", env); found {
+		if b, ok := val.(*object.Builtin); !ok || b != superFn {
+			return nil, false
+		}
+	}
+	clsObj, ok := env.Get("__class__")
+	if !ok {
+		return nil, false
+	}
+	cls, ok := clsObj.(*object.Class)
+	if !ok || cls.BaseClass == nil {
+		return nil, false
+	}
+	selfObj, ok := env.Get("self")
+	if !ok {
+		return nil, false
+	}
+	inst, ok := selfObj.(*object.Instance)
+	if !ok {
+		return nil, false
+	}
+	for c := inst.Class; c != cls; c = c.BaseClass {
+		if c == nil {
+			return nil, false
+		}
+	}
+	member, ok := cls.BaseClass.LookupMember(name)
+	if !ok {
+		return nil, false
+	}
+	// Only a plain function is called here; static and class methods,
+	// builtins and anything else go through the general path.
+	fn, ok := member.(*object.Function)
+	if !ok {
+		return nil, false
+	}
+	if len(kwFns) == 0 {
+		if res, handled := applyMethodFastCompiled(ctx, fn, inst, argFns, env); handled {
+			return res, true
+		}
+	}
+
+	args := evalCompiledCallArgs(ctx, env, argFns)
+	if isPropagatedError(args) {
+		return args[0], true
+	}
+	var kw kwArgs
+	if len(kwFns) > 0 {
+		kwVals, failed := evalKeywordValues(ctx, env, kwFns)
+		if failed != nil {
+			object.ReleaseArgs(env, args)
+			return failed, true
+		}
+		kw = kwArgs{names: kwNames, values: kwVals}
+	}
+	res := applyUserFunctionKw(ctx, fn, prependSelf(inst, args), nil, kw, env)
+	object.ReleaseArgs(env, kw.values)
+	object.ReleaseArgs(env, args)
+	return res, true
+}
+
+// plainInstanceMethod returns the function a call to inst.name(...) runs when
+// it is an ordinary method: a plain function on the class, not shadowed by an
+// instance field. It returns nil for anything else (static and class methods,
+// properties, builtins, missing names).
+func plainInstanceMethod(inst *object.Instance, name string) *object.Function {
+	if _, shadowed := inst.GetField(name); shadowed {
+		return nil
+	}
+	if member, ok := inst.Class.LookupMember(name); ok {
+		if fn, ok := member.(*object.Function); ok {
+			return fn
+		}
+	}
+	return nil
 }
 
 // evalFastDictGetCompiled is dict.get(key[, default]) without building an
@@ -1733,6 +1862,61 @@ func tryEvalInstanceMethodFastCompiled(ctx context.Context, inst *object.Instanc
 	if !ok {
 		return nil, false
 	}
+	if fn.Variadic != nil || fn.Kwargs != nil || len(fn.DefaultValues) != 0 || fn.KeywordOnlyStart != 0 {
+		return nil, false
+	}
+	nargs := len(argFns)
+	if nargs > 3 {
+		return nil, false
+	}
+	// Parameters include self, and every one must map to a slot so the argument
+	// can be written directly.
+	if len(fn.Parameters) != nargs+1 || len(fn.ParamSlotIndexes) != nargs+1 {
+		return nil, false
+	}
+
+	switch nargs {
+	case 0:
+		return applyUserFunctionDirect(ctx, fn, inst), true
+	case 1:
+		a0 := argFns[0](ctx, env)
+		if object.IsError(a0) {
+			return a0, true
+		}
+		return applyUserFunction2(ctx, fn, inst, a0), true
+	case 2:
+		a0 := argFns[0](ctx, env)
+		if object.IsError(a0) {
+			return a0, true
+		}
+		a1 := argFns[1](ctx, env)
+		if object.IsError(a1) {
+			return a1, true
+		}
+		return applyUserFunctionN(ctx, fn, inst, a0, a1), true
+	default:
+		a0 := argFns[0](ctx, env)
+		if object.IsError(a0) {
+			return a0, true
+		}
+		a1 := argFns[1](ctx, env)
+		if object.IsError(a1) {
+			return a1, true
+		}
+		a2 := argFns[2](ctx, env)
+		if object.IsError(a2) {
+			return a2, true
+		}
+		return applyUserFunctionN(ctx, fn, inst, a0, a1, a2), true
+	}
+}
+
+// applyMethodFastCompiled calls fn with self and up to three pre-compiled
+// positional arguments through the per-arity paths, when fn's signature lets
+// every argument go straight into a parameter slot. It repeats the tail of
+// tryEvalInstanceMethodFastCompiled on purpose: having that function call this
+// one instead measured 1-2.5% slower on plain method calls.
+func applyMethodFastCompiled(ctx context.Context, fn *object.Function, inst *object.Instance, argFns []object.EvalFn, env *object.Environment) (object.Object, bool) {
 	if fn.Variadic != nil || fn.Kwargs != nil || len(fn.DefaultValues) != 0 || fn.KeywordOnlyStart != 0 {
 		return nil, false
 	}
@@ -2043,7 +2227,7 @@ func compileSetLiteral(n *ast.SetLiteral) object.EvalFn {
 		if bounded {
 			object.TrackSlice(vals)
 		}
-		s := object.NewSet()
+		s := object.NewSetSized(len(vals))
 		for i, elem := range vals {
 			if starred[i] {
 				elems, ok, rerr := iterableToSliceChecked(ctx, elem, env)
@@ -2920,7 +3104,7 @@ func (s *compSource) run(ctx context.Context, env *object.Environment, sized fun
 		case *object.Tuple:
 			sized(len(it.Elements))
 		case *object.Set:
-			sized(len(it.Elements))
+			sized(it.Len())
 		}
 	}
 	return iterateObject(ctx, iterableVal, step)

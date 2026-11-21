@@ -663,11 +663,11 @@ func deepEqual(budget *cmpBudget, a, b object.Object, depth int) (bool, object.O
 		// Sets are keyed by DictKey (identity hash), so equal key sets means
 		// equal sets regardless of insertion/iteration order.
 		bv := b.(*object.Set)
-		if len(av.Elements) != len(bv.Elements) {
+		if av.Len() != bv.Len() {
 			return false, nil
 		}
-		for key := range av.Elements {
-			if _, ok := bv.Elements[key]; !ok {
+		for key := range av.All() {
+			if !bv.ContainsKeyed(key) {
 				return false, nil
 			}
 		}
@@ -1018,18 +1018,18 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 				}
 				return errors.NewTypeError("set", right.Type().String())
 			}
-			subset := len(l.Elements) <= len(r.Elements)
+			subset := l.Len() <= r.Len()
 			if subset {
-				for k := range l.Elements {
+				for k := range l.All() {
 					if !r.ContainsKeyed(k) {
 						subset = false
 						break
 					}
 				}
 			}
-			superset := len(r.Elements) <= len(l.Elements)
+			superset := r.Len() <= l.Len()
 			if superset {
-				for k := range r.Elements {
+				for k := range r.All() {
 					if !l.ContainsKeyed(k) {
 						superset = false
 						break
@@ -1039,11 +1039,11 @@ func evalInfixExpression(ctx context.Context, operator ast.Op, left, right objec
 			var b bool
 			switch operator {
 			case ast.OpLt:
-				b = subset && len(l.Elements) < len(r.Elements)
+				b = subset && l.Len() < r.Len()
 			case ast.OpLte:
 				b = subset
 			case ast.OpGt:
-				b = superset && len(r.Elements) < len(l.Elements)
+				b = superset && r.Len() < l.Len()
 			case ast.OpGte:
 				b = superset
 			case ast.OpEq:
@@ -2214,6 +2214,12 @@ func assignIndexValue(ctx context.Context, isDotAccess bool, obj, index, value o
 //   - ok=false, envFn==nil: not applicable, caller should use normal resolution.
 
 func createInstance(ctx context.Context, class *object.Class, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	return createInstanceKw(ctx, class, args, keywords, kwArgs{}, env)
+}
+
+// createInstanceKw is createInstance with keywords given as a map, as kwArgs
+// slices, or neither (never both).
+func createInstanceKw(ctx context.Context, class *object.Class, args []object.Object, keywords map[string]object.Object, kw kwArgs, env *object.Environment) object.Object {
 	// Enum classes construct by value lookup, not instantiation.
 	if class.IsEnum {
 		if len(args) != 1 {
@@ -2235,7 +2241,24 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 			break
 		}
 	}
+	if initMethod == nil && (len(args) > 0 || len(keywords) > 0 || len(kw.names) > 0) {
+		// As in Python: a class with no __init__ anywhere in its bases takes
+		// no arguments.
+		return &object.Exception{
+			Message:       fmt.Sprintf("%s() takes no arguments", class.Name),
+			ExceptionType: object.ExceptionTypeTypeError,
+			Raised:        true,
+		}
+	}
 	if initMethod != nil {
+		// An exception's args are the positional arguments it was constructed
+		// with, whether or not its own __init__ passes them on (Python sets
+		// them before __init__ runs).
+		if class.ExceptionBase != "" {
+			if _, userInit := initMethod.(*object.Function); userInit {
+				instance.SetField("args", &object.Tuple{Elements: append([]object.Object{}, args...)})
+			}
+		}
 		// Bind 'self' to the instance
 		n := len(args) + 1
 		var newArgs []object.Object
@@ -2249,7 +2272,12 @@ func createInstance(ctx context.Context, class *object.Class, args []object.Obje
 			newArgs[0] = instance
 			copy(newArgs[1:], args)
 		}
-		result := applyFunctionWithContext(ctx, initMethod, newArgs, keywords, env)
+		var result object.Object
+		if init, ok := initMethod.(*object.Function); ok {
+			result = applyUserFunctionKw(ctx, init, newArgs, keywords, kw, env)
+		} else {
+			result = applyFunctionWithContext(ctx, initMethod, newArgs, kw.merge(keywords), env)
+		}
 		// A raised exception (including an uncatchable security violation such as
 		// PermissionError) from __init__ must propagate out of instantiation, not
 		// be swallowed so the object constructs cleanly.
@@ -2587,6 +2615,12 @@ func applyFunctionWithContext(ctx context.Context, fn object.Object, args []obje
 }
 
 func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
+	return applyLambdaFunctionKw(ctx, fn, args, keywords, kwArgs{})
+}
+
+// applyLambdaFunctionKw is applyLambdaFunctionWithContext with keywords given
+// as a map, as kwArgs slices, or neither (never both).
+func applyLambdaFunctionKw(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object, kw kwArgs) object.Object {
 	// Check call depth to prevent stack overflow
 	if cd := GetCallDepthFromContext(ctx); cd != nil {
 		if !cd.enterCall() {
@@ -2597,7 +2631,7 @@ func applyLambdaFunctionWithContext(ctx context.Context, fn *object.LambdaFuncti
 		defer cd.Exit()
 	}
 
-	extendedEnv, err := extendLambdaEnv(ctx, fn, args, keywords)
+	extendedEnv, err := extendLambdaEnv(ctx, fn, args, keywords, kw)
 	if err != nil {
 		return err
 	}
@@ -2913,7 +2947,7 @@ func extendFunctionEnv(ctx context.Context, fn *object.Function, args []object.O
 	}, args, keywords, kw)
 }
 
-func extendLambdaEnv(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object) (*object.Environment, object.Object) {
+func extendLambdaEnv(ctx context.Context, fn *object.LambdaFunction, args []object.Object, keywords map[string]object.Object, kw kwArgs) (*object.Environment, object.Object) {
 	return extendEnvWithParams(ctx, funcParams{
 		parameters:       fn.Parameters,
 		defaultValues:    fn.DefaultValues,
@@ -2928,7 +2962,7 @@ func extendLambdaEnv(ctx context.Context, fn *object.LambdaFunction, args []obje
 		localSlotNames:   fn.LocalSlotNames,
 		paramSlotIndexes: fn.ParamSlotIndexes,
 		reuseCallEnv:     fn.ReuseCallEnv,
-	}, args, keywords, kwArgs{})
+	}, args, keywords, kw)
 }
 
 func analyzeFunctionLocals(stmt *ast.FunctionStatement) (map[string]int, []string) {
@@ -2985,7 +3019,7 @@ func isTruthy(obj object.Object) bool {
 		case *object.Dict:
 			return v.Len() > 0
 		case *object.Set:
-			return len(v.Elements) > 0
+			return v.Len() > 0
 		case *object.DictKeys:
 			return v.Dict.Len() > 0
 		case *object.DictValues:
@@ -3128,6 +3162,11 @@ func strInstanceChecked(ctx context.Context, inst *object.Instance, env *object.
 				return s.StringValue(), nil
 			}
 		}
+	}
+	// An exception instance with no __str__ of its own reads as its
+	// arguments, raised or not: str(MyError("boom")) is "boom".
+	if exc, _, _ := exceptionFromClassInstance(ctx, inst, env); exc != nil {
+		return exc.Message, nil
 	}
 	return inst.Inspect(), nil
 }

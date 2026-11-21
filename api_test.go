@@ -1145,8 +1145,8 @@ func TestGetVarAsSet(t *testing.T) {
 	if objErr != nil {
 		t.Fatalf("GetVarAsSet failed: %v", objErr)
 	}
-	if len(s.Elements) != 3 {
-		t.Errorf("expected 3 elements, got %d", len(s.Elements))
+	if s.Len() != 3 {
+		t.Errorf("expected 3 elements, got %d", s.Len())
 	}
 
 	_, objErr = p.GetVarAsSet("nonexistent")

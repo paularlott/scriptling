@@ -57,10 +57,7 @@ func DictKey(obj Object) string {
 		// dict/set key, as in Python. Mutable sets keep the identity key of
 		// the default case (they are unhashable at the language level).
 		if o.Frozen {
-			keys := make([]string, 0, len(o.Elements))
-			for k := range o.Elements {
-				keys = append(keys, k)
-			}
+			keys := o.Keys()
 			sort.Strings(keys)
 			return "fs:{" + strings.Join(keys, ",") + "}"
 		}
@@ -837,7 +834,7 @@ type ReturnValue struct {
 	// ReleaseReturnValue can return it to the correct per-root free-list
 	// without the caller threading the environment through. nil for values
 	// constructed outside AcquireReturnValue (those are simply left to GC).
-	root *Environment
+	root *rootState
 }
 
 func (rv *ReturnValue) Type() ObjectType { return RETURN_OBJ }
@@ -1187,18 +1184,10 @@ func InstanceDataFromContext(ctx context.Context) any {
 	return ctx.Value(instanceDataKey)
 }
 
-type Environment struct {
-	store                      map[string]Object
-	slotIndex                  map[string]int
-	slotNames                  []string
-	slots                      []Object
-	callPoolSlots              uint8 // slot count + 1 when this is a pooled call frame, else 0
-	ownSlots                   bool  // slotIndex and slotNames are this environment's own copy
-	outer                      *Environment
-	root                       *Environment
-	globals                    map[string]bool
-	nonlocals                  map[string]bool
-	importedBindings           map[string]bool
+// rootState is the part of an environment tree that exists once per tree
+// rather than once per scope. Keeping it out of Environment halves the size
+// of every scope and leaves a call frame one pointer to set up for it.
+type rootState struct {
 	output                     io.Writer
 	errOutput                  io.Writer
 	input                      io.Reader
@@ -1206,26 +1195,39 @@ type Environment struct {
 	availableLibrariesCallback func() []LibraryInfo
 	currentModule              string // Current module path for relative import resolution
 	// freeFrames is a free-list of reusable call-frame environments, populated
-	// lazily and only on root environments. It is accessed without locking; the
-	// interpreter lock (gil) guarantees only one goroutine runs script code in a
-	// tree at a time, so the free-list never sees concurrent access.
+	// lazily. It is accessed without locking; the interpreter lock (gil)
+	// guarantees only one goroutine runs script code in a tree at a time, so
+	// the free-list never sees concurrent access.
 	freeFrames *callFrameFreeList
-	// freeReturns is a free-list of reusable *ReturnValue wrappers, populated
-	// lazily and only on root environments. Like freeFrames it is accessed
-	// without locking — the interpreter lock (gil) serializes script execution
-	// on a tree, so the free-list never sees concurrent access. This avoids the
-	// per-call pin()/Get() overhead of a global sync.Pool on the return path.
+	// freeReturns is a free-list of reusable *ReturnValue wrappers, under the
+	// same contract as freeFrames. It avoids the per-call pin()/Get() overhead
+	// of a global sync.Pool on the return path.
 	freeReturns []*ReturnValue
 	// freeArgBufs is a free-list of reusable []Object argument buffers used by
-	// the evaluator's call-arg path. Like freeReturns it lives on the root
-	// environment and is touched without locking — the interpreter lock (gil)
-	// serializes script execution on a tree, so it never sees concurrent access.
+	// the evaluator's call-arg path, under the same contract as freeFrames.
 	freeArgBufs [][]Object
-	// gil is the per-tree interpreter lock, allocated only on the root. The
-	// evaluator acquires it at every Go->script boundary so that any number of
-	// goroutines may call into one Environment tree, but only one runs script at
-	// a time. nil on non-root environments — always reach it via root.gil.
+	// gil is the tree's interpreter lock. The evaluator acquires it at every
+	// Go->script boundary so that any number of goroutines may call into one
+	// Environment tree, but only one runs script at a time.
 	gil *gilLock
+}
+
+type Environment struct {
+	store            map[string]Object
+	slotIndex        map[string]int
+	slotNames        []string
+	slots            []Object
+	callPoolSlots    uint8 // slot count + 1 when this is a pooled call frame, else 0
+	ownSlots         bool  // slotIndex and slotNames are this environment's own copy
+	outer            *Environment
+	root             *Environment
+	globals          map[string]bool
+	nonlocals        map[string]bool
+	importedBindings map[string]bool
+	// rs is the state shared by every environment of a tree: the interpreter
+	// lock, the free-lists and the tree's I/O and import settings. Every
+	// environment points at its tree's one rootState.
+	rs *rootState
 	// ctxMemo caches this environment attached to a context; see
 	// CachedEnvContext. Held as an atomic pointer to an immutable value so it is
 	// safe to touch from any goroutine without relying on the interpreter lock —
@@ -1360,7 +1362,7 @@ func NewEnvironment() *Environment {
 		// globals and nonlocals are nil by default - allocated on demand
 	}
 	env.root = env
-	env.gil = &gilLock{resources: &resourceSet{}}
+	env.rs = &rootState{gil: &gilLock{resources: &resourceSet{}}}
 	return env
 }
 
@@ -1370,8 +1372,8 @@ func NewEnvironment() *Environment {
 // owner's store (which can create finalizer reachability cycles).
 func NewEnvironmentWithGILDomain(owner *Environment) *Environment {
 	env := NewEnvironment()
-	if owner != nil && owner.root != nil && owner.root.gil != nil {
-		env.gil = owner.root.gil
+	if owner != nil && owner.rs != nil && owner.rs.gil != nil {
+		env.rs.gil = owner.rs.gil
 	}
 	return env
 }
@@ -1382,23 +1384,11 @@ func NewEnclosedEnvironment(outer *Environment) *Environment {
 	}
 	if outer != nil {
 		env.root = outer.root
+		env.rs = outer.rs
 	} else {
 		env.root = env
-		env.gil = &gilLock{resources: &resourceSet{}}
+		env.rs = &rootState{gil: &gilLock{resources: &resourceSet{}}}
 	}
-
-	if outer != nil {
-		if outer.output != nil {
-			env.output = outer.output
-		}
-		if outer.errOutput != nil {
-			env.errOutput = outer.errOutput
-		}
-		if outer.input != nil {
-			env.input = outer.input
-		}
-	}
-
 	return env
 }
 
@@ -1439,10 +1429,10 @@ func RunBlocking(ctx interface{ Value(any) any }, fn func()) {
 // it actually acquired the lock (the caller must pair it with ExitGIL) and false
 // if the call was re-entrant (caller does nothing on exit).
 func (e *Environment) EnterGIL() bool {
-	if e.root == nil || e.root.gil == nil {
+	if e.rs == nil || e.rs.gil == nil {
 		return false
 	}
-	g := e.root.gil
+	g := e.rs.gil
 	id := goid()
 	if g.owner.Load() == id {
 		return false // re-entrant: already held by this goroutine
@@ -1482,10 +1472,10 @@ func (e *Environment) EnterGILWithContext(ctx context.Context) (acquired, entere
 	if ctx.Err() != nil {
 		return false, false
 	}
-	if e.root == nil || e.root.gil == nil {
+	if e.rs == nil || e.rs.gil == nil {
 		return false, true
 	}
-	g := e.root.gil
+	g := e.rs.gil
 	id := goid()
 	if g.owner.Load() == id {
 		return false, true
@@ -1535,10 +1525,10 @@ func (e *Environment) EnterGILWithContext(ctx context.Context) (acquired, entere
 
 // ExitGIL releases the interpreter lock previously acquired by EnterGIL.
 func (e *Environment) ExitGIL() {
-	if e.root == nil || e.root.gil == nil {
+	if e.rs == nil || e.rs.gil == nil {
 		return
 	}
-	g := e.root.gil
+	g := e.rs.gil
 	g.unbind(g.owner.Load())
 	g.owner.Store(0)
 	g.mu.Unlock()
@@ -1551,11 +1541,11 @@ func (e *Environment) ExitGIL() {
 // worker goroutines doing pure-Go I/O) simply run fn. This lets other goroutines
 // run script code in the same tree while the holder is blocked.
 func (e *Environment) RunUnlocked(fn func()) {
-	if e.root == nil || e.root.gil == nil {
+	if e.rs == nil || e.rs.gil == nil {
 		fn()
 		return
 	}
-	g := e.root.gil
+	g := e.rs.gil
 	id := goid()
 	if g.owner.Load() != id {
 		fn() // not the holder — must not touch the lock
@@ -1580,18 +1570,18 @@ func (e *Environment) RunUnlocked(fn func()) {
 // Set it before the interpreter runs; environments sharing the lock share the
 // guard.
 func (e *Environment) SetResourceGuard(guard *ResourceGuard) {
-	if e.root != nil && e.root.gil != nil {
-		e.root.gil.guard = guard
+	if e.rs != nil && e.rs.gil != nil {
+		e.rs.gil.guard = guard
 	}
 }
 
 // ResourceGuard returns the guard of the interpreter that owns e's lock, nil
 // when it has none.
 func (e *Environment) ResourceGuard() *ResourceGuard {
-	if e == nil || e.root == nil || e.root.gil == nil {
+	if e == nil || e.rs == nil || e.rs.gil == nil {
 		return nil
 	}
-	return e.root.gil.guard
+	return e.rs.gil.guard
 }
 
 // AcquireCallEnvironment returns a function-call environment, reusing an idle
@@ -1604,8 +1594,8 @@ func (e *Environment) ResourceGuard() *ResourceGuard {
 func AcquireCallEnvironment(outer *Environment, slotIndex map[string]int, slotNames []string) *Environment {
 	slotCount := len(slotNames)
 	if slotCount <= maxPooledCallEnvSlots && outer != nil {
-		if root := outer.root; root != nil {
-			if fl := root.freeFrames; fl != nil {
+		if rs := outer.rs; rs != nil {
+			if fl := rs.freeFrames; fl != nil {
 				if bucket := fl.buckets[slotCount]; len(bucket) > 0 {
 					n := len(bucket) - 1
 					env := bucket[n]
@@ -1616,13 +1606,8 @@ func AcquireCallEnvironment(outer *Environment, slotIndex map[string]int, slotNa
 					env.ownSlots = false
 					env.callPoolSlots = uint8(slotCount) + 1
 					env.outer = outer
-					env.root = root
-					env.output = outer.output
-					env.errOutput = outer.errOutput
-					env.input = outer.input
-					env.importCallback = outer.importCallback
-					env.availableLibrariesCallback = outer.availableLibrariesCallback
-					env.currentModule = outer.currentModule
+					env.root = outer.root
+					env.rs = rs
 					return env
 				}
 			}
@@ -1641,7 +1626,7 @@ func ReleaseCallEnvironment(env *Environment) {
 	if env == nil || env.callPoolSlots == 0 {
 		return
 	}
-	root := env.root
+	rs := env.rs
 	slotCount := env.callPoolSlots - 1
 	for i := range env.slots {
 		env.slots[i] = nil
@@ -1664,20 +1649,15 @@ func ReleaseCallEnvironment(env *Environment) {
 	env.slotIndex = nil
 	env.slotNames = nil
 	env.ownSlots = false
-	env.output = nil
-	env.errOutput = nil
-	env.input = nil
-	env.importCallback = nil
-	env.availableLibrariesCallback = nil
-	env.currentModule = ""
+	env.rs = nil
 
-	if root == nil {
+	if rs == nil {
 		return
 	}
-	fl := root.freeFrames
+	fl := rs.freeFrames
 	if fl == nil {
 		fl = &callFrameFreeList{}
-		root.freeFrames = fl
+		rs.freeFrames = fl
 	}
 	if len(fl.buckets[slotCount]) < maxFreeFramesPerBucket {
 		fl.buckets[slotCount] = append(fl.buckets[slotCount], env)
@@ -1694,7 +1674,7 @@ const maxFreeReturns = 256
 // Uses the same lock-free, GIL-serialized contract as AcquireCallEnvironment.
 func AcquireReturnValue(env *Environment, val Object) *ReturnValue {
 	if env != nil {
-		if root := env.root; root != nil {
+		if root := env.rs; root != nil {
 			if n := len(root.freeReturns); n > 0 {
 				rv := root.freeReturns[n-1]
 				root.freeReturns[n-1] = nil
@@ -1743,7 +1723,7 @@ func AcquireArgs(env *Environment, n int) []Object {
 		return nil
 	}
 	if env != nil {
-		if root := env.root; root != nil {
+		if root := env.rs; root != nil {
 			if s := root.freeArgBufs; len(s) > 0 {
 				i := len(s) - 1
 				if cap(s[i]) >= n {
@@ -1768,7 +1748,7 @@ func ReleaseArgs(env *Environment, args []Object) {
 	if env == nil || len(args) == 0 {
 		return
 	}
-	root := env.root
+	root := env.rs
 	if root == nil {
 		return
 	}
@@ -2085,12 +2065,21 @@ func (e *Environment) IsNonlocal(name string) bool {
 	return e.nonlocals != nil && e.nonlocals[name]
 }
 
+// shared returns the tree's root state, creating one for an Environment that
+// was not made by a constructor.
+func (e *Environment) shared() *rootState {
+	if e.rs == nil {
+		e.rs = &rootState{}
+	}
+	return e.rs
+}
+
 // EnableOutputCapture enables output capture for this environment. Captured
 // output is one value handed back to the host, so it is held to the
 // interpreter's value limit: a write that would take it over fails with
 // ErrOutputLimitExceeded.
 func (e *Environment) EnableOutputCapture() {
-	e.output = &captureBuffer{env: e}
+	e.shared().output = &captureBuffer{env: e}
 }
 
 // ErrOutputLimitExceeded is returned by a write to captured output that would
@@ -2151,28 +2140,28 @@ func (b *captureBuffer) track(oldCap int) {
 
 // SetOutputWriter sets a custom writer for output
 func (e *Environment) SetOutputWriter(w io.Writer) {
-	e.output = w
+	e.shared().output = w
 }
 
 // SetErrorWriter sets a custom writer for error/diagnostic output (sys.stderr)
 func (e *Environment) SetErrorWriter(w io.Writer) {
-	e.errOutput = w
+	e.shared().errOutput = w
 }
 
 // GetErrorWriter returns the appropriate writer for error output (sys.stderr)
 func (e *Environment) GetErrorWriter() io.Writer {
-	if e.errOutput != nil {
-		return e.errOutput
+	if e.shared().errOutput != nil {
+		return e.shared().errOutput
 	}
 	return os.Stderr
 }
 
 // GetOutput returns captured output and clears the buffer
 func (e *Environment) GetOutput() string {
-	if e.output == nil {
+	if e.shared().output == nil {
 		return ""
 	}
-	switch builder := e.output.(type) {
+	switch builder := e.shared().output.(type) {
 	case *captureBuffer:
 		result := builder.String()
 		builder.Reset()
@@ -2187,21 +2176,21 @@ func (e *Environment) GetOutput() string {
 
 // GetWriter returns the appropriate writer for output
 func (e *Environment) GetWriter() io.Writer {
-	if e.output != nil {
-		return e.output
+	if e.shared().output != nil {
+		return e.shared().output
 	}
 	return os.Stdout
 }
 
 // SetInputReader sets a custom reader for input
 func (e *Environment) SetInputReader(r io.Reader) {
-	e.input = r
+	e.shared().input = r
 }
 
 // GetReader returns the appropriate reader for input
 func (e *Environment) GetReader() io.Reader {
-	if e.input != nil {
-		return e.input
+	if e.shared().input != nil {
+		return e.shared().input
 	}
 	return os.Stdin
 }
@@ -2414,19 +2403,18 @@ func (e *Environment) ResetStore(keep map[string]bool) {
 // cancellation and values are preserved through imports.
 func (e *Environment) SetImportCallback(fn func(string) error) {
 	if fn == nil {
-		e.importCallback = nil
+		e.shared().importCallback = nil
 		return
 	}
-	e.importCallback = func(_ context.Context, name string) error {
+	e.shared().importCallback = func(_ context.Context, name string) error {
 		return fn(name)
 	}
 }
 
 // SetImportCallbackWithContext sets the context-aware import callback for this
-// environment. GetImportCallbackWithContext walks up the scope chain, so the
-// callback is available to enclosed environments.
+// environment's tree: every environment in the tree sees it.
 func (e *Environment) SetImportCallbackWithContext(fn func(context.Context, string) error) {
-	e.importCallback = fn
+	e.shared().importCallback = fn
 }
 
 // GetImportCallback returns a context-free view of the import callback for
@@ -2442,47 +2430,30 @@ func (e *Environment) GetImportCallback() func(string) error {
 	}
 }
 
-// GetImportCallbackWithContext gets the context-aware import callback from this
-// environment or an outer environment.
+// GetImportCallbackWithContext gets the tree's context-aware import callback.
 func (e *Environment) GetImportCallbackWithContext() func(context.Context, string) error {
-	for env := e; env != nil; env = env.outer {
-		if env.importCallback != nil {
-			return env.importCallback
-		}
-	}
-	return nil
+	return e.shared().importCallback
 }
 
-// SetAvailableLibrariesCallback sets the available libraries callback for this environment.
-// GetAvailableLibrariesCallback walks up the scope chain, so setting on any env
-// makes it available to that env and all enclosed children.
+// SetAvailableLibrariesCallback sets the available libraries callback for this
+// environment's tree.
 func (e *Environment) SetAvailableLibrariesCallback(fn func() []LibraryInfo) {
-	e.availableLibrariesCallback = fn
+	e.shared().availableLibrariesCallback = fn
 }
 
-// GetAvailableLibrariesCallback gets the available libraries callback from this environment or outer
+// GetAvailableLibrariesCallback gets the tree's available libraries callback
 func (e *Environment) GetAvailableLibrariesCallback() func() []LibraryInfo {
-	for env := e; env != nil; env = env.outer {
-		if env.availableLibrariesCallback != nil {
-			return env.availableLibrariesCallback
-		}
-	}
-	return nil
+	return e.shared().availableLibrariesCallback
 }
 
 // SetCurrentModule sets the current module path for relative import resolution
 func (e *Environment) SetCurrentModule(module string) {
-	e.currentModule = module
+	e.shared().currentModule = module
 }
 
-// GetCurrentModule gets the current module path from this environment or outer
+// GetCurrentModule gets the tree's current module path
 func (e *Environment) GetCurrentModule() string {
-	for env := e; env != nil; env = env.outer {
-		if env.currentModule != "" {
-			return env.currentModule
-		}
-	}
-	return ""
+	return e.shared().currentModule
 }
 
 type List struct {
@@ -2815,6 +2786,9 @@ type Class struct {
 	AssignNames []string
 	cacheMu     sync.RWMutex
 	cache       map[string]classLookupCacheEntry
+	// shapeRoot is the empty field layout of this class's instances, from
+	// which the shared layouts they move through grow; see instShape.
+	shapeRoot atomic.Pointer[instShape]
 }
 
 func (c *Class) Type() ObjectType { return CLASS_OBJ }
@@ -2874,27 +2848,33 @@ func (c *Class) InvalidateLookupCache() {
 	c.cacheMu.Unlock()
 }
 
-// inlineFieldCap is how many fields an Instance stores inline before spilling to
-// the overflow map. Most instances have only a handful of fields, so this keeps
-// the common case allocation-free (no map allocated at all).
-const inlineFieldCap = 4
+// instInlineVals is how many field values an Instance holds inline; values past
+// it live in ext. Most instances have only a handful of fields.
+const instInlineVals = 4
 
 type Instance struct {
 	Class *Class
-	// Field storage. The first inlineFieldCap fields live in the inline arrays
-	// (no heap map); additional fields spill into overflow, which is allocated
-	// lazily. Access only through the field accessor methods — never touch these
-	// directly so the representation can keep evolving.
-	inlineKeys [inlineFieldCap]string
-	inlineVals [inlineFieldCap]Object
-	inlineLen  int
-	overflow   map[string]Object
-	// overflowOrder lists the overflow keys in insertion order, so field order
-	// (vars(obj), obj.__dict__) follows assignment order past the inline fields.
-	overflowOrder []string
+	// Field storage: shape lists the field names in assignment order, and the
+	// value of the field at position n is vals[n] for the first instInlineVals
+	// fields and ext.more[n-instInlineVals] after that (an instance with a
+	// private shape keeps them all in ext.more). Instances of a class that
+	// assign the same fields in the same order share one shape, so the names
+	// are not stored per instance. nil shape means no fields. Access only
+	// through the field accessor methods — never touch these directly so the
+	// representation can keep evolving.
+	shape *instShape
+	vals  [instInlineVals]Object
 
 	NativeData       any
 	boundMethodCache map[string]boundMethodCacheEntry
+	ext              *instanceExt
+}
+
+// instanceExt holds the values of an instance's fields past the inline ones.
+// The first few share its allocation.
+type instanceExt struct {
+	more []Object
+	buf  [4]Object
 }
 
 // NewInstance creates an empty instance of the given class. Use the field
@@ -2910,7 +2890,7 @@ func NewInstance(class *Class) *Instance {
 }
 
 // instanceObjectOverhead approximates the bytes an Instance holds before any
-// overflow fields: the object itself, inline field storage included.
+// fields past the inline ones: the object itself, inline values included.
 const instanceObjectOverhead = int64(unsafe.Sizeof(Instance{})) + 16
 
 // trackInstance keeps NewInstance small enough to inline: it only calls out
@@ -2923,11 +2903,19 @@ func trackInstance(i *Instance) {
 
 // NewInstanceWithFields creates an instance of the given class pre-populated
 // with the supplied fields. The map is consumed (copied into the instance's
-// storage); a nil map yields an empty instance.
+// storage); a nil map yields an empty instance. Fields are set in name order:
+// a Go map has none, and one order per class lets its instances share a field
+// layout.
 func NewInstanceWithFields(class *Class, fields map[string]Object) *Instance {
 	i := NewInstance(class)
-	for k, v := range fields {
-		i.SetField(k, v)
+	var buf [16]string
+	names := buf[:0]
+	for k := range fields {
+		names = append(names, k)
+	}
+	slices.Sort(names)
+	for _, k := range names {
+		i.SetField(k, fields[k])
 	}
 	return i
 }
@@ -2957,18 +2945,41 @@ func (i *Instance) Inspect() string {
 // They exist so the underlying storage can change without affecting callers;
 // do not access the backing store directly. Field access is single-goroutine
 // per environment tree (serialized by the interpreter lock), so no locking is
-// required here.
+// required here; shared shapes are immutable apart from their transitions,
+// which are safe for concurrent use.
+
+// slot returns the storage of the value at field position n: the first
+// instInlineVals values of a shared shape live inline and the rest in
+// ext.more; a private shape keeps all its values in ext.more.
+func (i *Instance) slot(n int) *Object {
+	if i.shape.private {
+		return &i.ext.more[n]
+	}
+	if n < instInlineVals {
+		return &i.vals[n]
+	}
+	return &i.ext.more[n-instInlineVals]
+}
 
 // GetField returns the value of the named field and whether it was set.
 func (i *Instance) GetField(name string) (Object, bool) {
-	for n := 0; n < i.inlineLen; n++ {
-		if i.inlineKeys[n] == name {
-			return i.inlineVals[n], true
-		}
+	s := i.shape
+	if s == nil {
+		return nil, false
 	}
-	if i.overflow != nil {
-		v, ok := i.overflow[name]
-		return v, ok
+	if !s.private {
+		for n, k := range s.names {
+			if k == name {
+				if n < instInlineVals {
+					return i.vals[n], true
+				}
+				return i.ext.more[n-instInlineVals], true
+			}
+		}
+		return nil, false
+	}
+	if n, ok := s.index[name]; ok {
+		return i.ext.more[n], true
 	}
 	return nil, false
 }
@@ -2983,75 +2994,132 @@ func (i *Instance) Field(name string) Object {
 
 // SetField sets the named field, allocating backing storage on first use.
 func (i *Instance) SetField(name string, val Object) {
-	for n := 0; n < i.inlineLen; n++ {
-		if i.inlineKeys[n] == name {
-			i.inlineVals[n] = val
+	if s := i.shape; s != nil {
+		if !s.private {
+			for n, k := range s.names {
+				if k == name {
+					if n < instInlineVals {
+						i.vals[n] = val
+					} else {
+						i.ext.more[n-instInlineVals] = val
+					}
+					return
+				}
+			}
+		} else if n, ok := s.index[name]; ok {
+			i.ext.more[n] = val
 			return
 		}
 	}
-	if i.overflow != nil {
-		if _, ok := i.overflow[name]; ok {
-			i.overflow[name] = val
-			return
+	i.addField(name, val)
+}
+
+// addField appends a new field: the instance moves to the shared shape that
+// extends its current one by name, or to a private shape when there is none.
+func (i *Instance) addField(name string, val Object) {
+	s := i.shape
+	if s == nil {
+		s = i.Class.rootShape()
+		if s == nil {
+			s = newPrivateShape(nil)
+			i.shape = s
 		}
 	}
-	if i.inlineLen < inlineFieldCap {
-		i.inlineKeys[i.inlineLen] = name
-		i.inlineVals[i.inlineLen] = val
-		i.inlineLen++
-		return
+	if !s.private {
+		if t := s.next(name); t != nil {
+			n := len(s.names)
+			i.shape = t
+			if n < instInlineVals {
+				i.vals[n] = val
+				return
+			}
+			i.appendMore(val)
+			return
+		}
+		i.privatize(s.names)
+		s = i.shape
 	}
-	if i.overflow == nil {
-		i.overflow = make(map[string]Object)
+	s.add(name)
+	i.appendMore(val)
+}
+
+func (i *Instance) appendMore(val Object) {
+	if i.ext == nil {
+		i.ext = &instanceExt{}
+		i.ext.more = i.ext.buf[:0]
 	}
-	i.overflow[name] = val
-	if i.overflowOrder == nil {
-		i.overflowOrder = make([]string, 0, 8) // one allocation for the common case
-	}
-	oldCap := cap(i.overflowOrder)
-	i.overflowOrder = append(i.overflowOrder, name)
-	if cap(i.overflowOrder) != oldCap && accountingOn.Load() {
-		trackAlloc(&i.overflowOrder[0], int64(cap(i.overflowOrder))*dictEntryWeight)
+	oldCap := cap(i.ext.more)
+	i.ext.more = append(i.ext.more, val)
+	if cap(i.ext.more) != oldCap && accountingOn.Load() {
+		trackAlloc(&i.ext.more[0], int64(cap(i.ext.more))*dictEntryWeight)
 	}
 }
 
-// DeleteField removes the named field if present.
+// privatize gives the instance a private shape listing names, which are the
+// names of its current values in order, and moves all values into ext.more.
+func (i *Instance) privatize(names []string) {
+	more := make([]Object, 0, len(names)+4)
+	for n := range names {
+		if n < instInlineVals {
+			more = append(more, i.vals[n])
+			i.vals[n] = nil
+		} else {
+			more = append(more, i.ext.more[n-instInlineVals])
+		}
+	}
+	if i.ext == nil {
+		i.ext = &instanceExt{}
+	}
+	i.ext.more = more
+	if accountingOn.Load() && cap(more) > 0 {
+		trackAlloc(&more[:1][0], int64(cap(more))*dictEntryWeight)
+	}
+	i.shape = newPrivateShape(names)
+}
+
+// DeleteField removes the named field if present. The remaining fields keep
+// their order.
 func (i *Instance) DeleteField(name string) {
-	for n := 0; n < i.inlineLen; n++ {
-		if i.inlineKeys[n] == name {
-			// Shift left to keep insertion order, then refill the freed inline
-			// slot with the oldest overflow field so inline fields always come
-			// before overflow fields in order.
-			copy(i.inlineKeys[n:i.inlineLen-1], i.inlineKeys[n+1:i.inlineLen])
-			copy(i.inlineVals[n:i.inlineLen-1], i.inlineVals[n+1:i.inlineLen])
-			last := i.inlineLen - 1
-			i.inlineKeys[last] = ""
-			i.inlineVals[last] = nil
-			i.inlineLen--
-			if len(i.overflowOrder) > 0 {
-				k := i.overflowOrder[0]
-				v := i.overflow[k]
-				delete(i.overflow, k)
-				i.overflowOrder = i.overflowOrder[1:]
-				i.inlineKeys[i.inlineLen] = k
-				i.inlineVals[i.inlineLen] = v
-				i.inlineLen++
-			}
-			return
+	s := i.shape
+	if s == nil {
+		return
+	}
+	n := s.find(name)
+	if n < 0 {
+		return
+	}
+	last := len(s.names) - 1
+	for k := n; k < last; k++ {
+		*i.slot(k) = *i.slot(k + 1)
+	}
+	*i.slot(last) = nil
+	if s.private {
+		i.ext.more = i.ext.more[:last]
+		s.remove(n)
+		return
+	}
+	if last >= instInlineVals {
+		i.ext.more = i.ext.more[:last-instInlineVals]
+	}
+	// Move to the shared shape holding the remaining names, reached from the
+	// class's root as an instance assigning them in order would reach it.
+	t := i.Class.rootShape()
+	for k, nm := range s.names {
+		if t == nil {
+			break
+		}
+		if k != n {
+			t = t.next(nm)
 		}
 	}
-	if i.overflow != nil {
-		if _, ok := i.overflow[name]; !ok {
-			return
-		}
-		delete(i.overflow, name)
-		for n, k := range i.overflowOrder {
-			if k == name {
-				i.overflowOrder = append(i.overflowOrder[:n], i.overflowOrder[n+1:]...)
-				break
-			}
-		}
+	if t != nil {
+		i.shape = t
+		return
 	}
+	rest := make([]string, 0, last)
+	rest = append(rest, s.names[:n]...)
+	rest = append(rest, s.names[n+1:]...)
+	i.privatize(rest)
 }
 
 // HasField reports whether the named field is set.
@@ -3062,22 +3130,22 @@ func (i *Instance) HasField(name string) bool {
 
 // FieldCount returns the number of set fields.
 func (i *Instance) FieldCount() int {
-	return i.inlineLen + len(i.overflow)
+	if i.shape == nil {
+		return 0
+	}
+	return len(i.shape.names)
 }
 
 // RangeFields calls fn for each set field in insertion order (the order the
 // fields were first assigned) and stops early if fn returns false.
 func (i *Instance) RangeFields(fn func(name string, val Object) bool) {
-	for n := 0; n < i.inlineLen; n++ {
-		if !fn(i.inlineKeys[n], i.inlineVals[n]) {
-			return
-		}
+	s := i.shape
+	if s == nil {
+		return
 	}
-	for _, k := range i.overflowOrder {
-		if v, ok := i.overflow[k]; ok {
-			if !fn(k, v) {
-				return
-			}
+	for n, k := range s.names {
+		if !fn(k, *i.slot(n)) {
+			return
 		}
 	}
 }
@@ -3087,12 +3155,10 @@ func (i *Instance) RangeFields(fn func(name string, val Object) bool) {
 // does not affect the instance.
 func (i *Instance) FieldsSnapshot() map[string]Object {
 	m := make(map[string]Object, i.FieldCount())
-	for n := 0; n < i.inlineLen; n++ {
-		m[i.inlineKeys[n]] = i.inlineVals[n]
-	}
-	for k, v := range i.overflow {
+	i.RangeFields(func(k string, v Object) bool {
 		m[k] = v
-	}
+		return true
+	})
 	return m
 }
 
@@ -3279,7 +3345,7 @@ func validateTransferable(obj Object, visited map[any]struct{}) error {
 			return fmt.Errorf("circular reference in set")
 		}
 		visited[v] = struct{}{}
-		for k, e := range v.Elements {
+		for k, e := range v.All() {
 			if err := validateTransferable(e, visited); err != nil {
 				return fmt.Errorf("set element %q: %w", k, err)
 			}
@@ -3330,12 +3396,12 @@ func CloneObject(obj Object) Object {
 		}
 		return out
 	case *Set:
-		elements := make(map[string]Object, len(v.Elements))
-		TrackMap(elements, int64(len(v.Elements))*setEntryWeight)
-		for k, e := range v.Elements {
-			elements[k] = CloneObject(e)
+		out := NewSetSized(v.Len())
+		for k, e := range v.All() {
+			out.AddKeyed(k, CloneObject(e))
 		}
-		return &Set{Elements: elements, Frozen: v.Frozen}
+		out.Frozen = v.Frozen
+		return out
 	case *Instance:
 		clone := NewInstance(v.Class)
 		v.RangeFields(func(k string, val Object) bool {

@@ -55,7 +55,7 @@ func boundEnv(t *testing.T) (*Environment, *ResourceGuard) {
 	}
 	// The lock only binds when a limit needs it; tests set limits after
 	// taking the lock, so bind regardless.
-	if gil := env.root.gil; !gil.bound {
+	if gil := env.rs.gil; !gil.bound {
 		gil.boundPrev = bindGuard(goid(), g)
 		gil.bound = true
 	}
@@ -487,7 +487,7 @@ func TestContainerGrowthIsCharged(t *testing.T) {
 		s.add(NewInteger(int64(i + 100000)))
 	}
 	if s.charged < 5000 {
-		t.Fatalf("set charged for %d elements, has %d", s.charged, len(s.Elements))
+		t.Fatalf("set charged for %d elements, has %d", s.charged, s.Len())
 	}
 	afterSet := g.Usage().AllocatedBytes
 	if afterSet-afterDict < 5000*setEntryWeight/2 {

@@ -193,7 +193,15 @@ func callStringMethodWithKeywords(ctx context.Context, obj object.Object, method
 func callSuperMethod(ctx context.Context, super *object.Super, method string, args []object.Object, keywords map[string]object.Object, env *object.Environment) object.Object {
 	if super.Class.BaseClass != nil {
 		if fn, ok := super.Class.BaseClass.LookupMember(method); ok {
-			// Bind 'self' for all callable types (Function, Builtin, LambdaFunction, etc.)
+			// A static method takes no receiver and a class method takes the
+			// instance's class, as when either is called on the instance.
+			switch m := fn.(type) {
+			case *object.StaticMethod:
+				return applyFunctionWithContext(ctx, m.Fn, args, keywords, env)
+			case *object.ClassMethod:
+				return applyFunctionWithContext(ctx, m.Fn, prependSelf(super.Instance.Class, args), keywords, env)
+			}
+			// Bind 'self' for all other callable types (Function, Builtin, LambdaFunction, etc.)
 			newArgs := prependSelf(super.Instance, args)
 			return applyFunctionWithContext(ctx, fn, newArgs, keywords, env)
 		}
@@ -212,6 +220,15 @@ func callSuperMethod(ctx context.Context, super *object.Super, method string, ar
 func callObjectDefault(self object.Object, method string, args []object.Object, keywords map[string]object.Object) object.Object {
 	switch method {
 	case "__init__":
+		// A class deriving directly from a built-in exception has that
+		// exception's __init__ as its base: it keeps the arguments as e.args.
+		if inst, ok := self.(*object.Instance); ok && inst.Class != nil && inst.Class.ExceptionBase != "" {
+			if len(keywords) > 0 {
+				return errors.NewTypeErrorTagged("%s() takes no keyword arguments", inst.Class.ExceptionBase)
+			}
+			inst.SetField("args", &object.Tuple{Elements: append([]object.Object{}, args...)})
+			return NULL
+		}
 		// object.__init__ takes only self; extra arguments are a TypeError.
 		if len(args) > 0 || len(keywords) > 0 {
 			return errors.NewTypeErrorTagged("object.__init__() takes exactly one argument (the instance to initialize)")
@@ -797,8 +814,10 @@ func callListMethod(ctx context.Context, list *object.List, method string, args 
 			var keys []object.Object
 			if keyFunc != nil {
 				keys = make([]object.Object, n)
+				var callArg [1]object.Object // reused: a callee never keeps its args slice
 				for i, elem := range list.Elements {
-					key := applyFunctionWithContext(ctx, keyFunc, []object.Object{elem}, nil, env)
+					callArg[0] = elem
+					key := applyFunctionWithContext(ctx, keyFunc, callArg[:], nil, env)
 					if object.IsError(key) {
 						return key
 					}
@@ -2212,7 +2231,7 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 				Raised:        true,
 			}
 		}
-		delete(set.Elements, key)
+		set.DeleteKeyed(key)
 		return NULL
 	case "discard":
 		if err := errors.ExactArgs(args, 1); err != nil {
@@ -2222,29 +2241,29 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 		if rerr != nil {
 			return rerr
 		}
-		delete(set.Elements, key)
+		set.DeleteKeyed(key)
 		return NULL
 	case "pop":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		if len(set.Elements) == 0 {
+		if set.Len() == 0 {
 			return &object.Exception{
 				Message:       "pop from an empty set",
 				ExceptionType: object.ExceptionTypeKeyError,
 				Raised:        true,
 			}
 		}
-		// Go map iteration order is random, which matches Python's arbitrary pop
-		for k, elem := range set.Elements {
-			delete(set.Elements, k)
+		// Any element will do: Python's pop removes an arbitrary one.
+		for k, elem := range set.All() {
+			set.DeleteKeyed(k)
 			return elem
 		}
 	case "clear":
 		if err := errors.ExactArgs(args, 0); err != nil {
 			return err
 		}
-		set.Elements = make(map[string]object.Object)
+		set.Clear()
 		return NULL
 	case "copy":
 		if err := errors.ExactArgs(args, 0); err != nil {
@@ -2333,7 +2352,7 @@ func callSetMethod(ctx context.Context, set *object.Set, method string, args []o
 		if errObj != nil {
 			return errObj
 		}
-		for key := range set.Elements {
+		for key := range set.All() {
 			if other.ContainsKeyed(key) {
 				return FALSE
 			}
