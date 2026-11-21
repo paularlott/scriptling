@@ -111,7 +111,6 @@ func (p *PathlibLibraryInstance) createPathObject(pathStr string) object.Object 
 		"stem":         object.NewString(stem),
 		"suffix":       object.NewString(ext),
 		"suffixes":     pathSuffixes(base),
-		"parent":       object.NewString(filepath.Dir(cleanPath)),
 		"parts":        &object.Tuple{Elements: partObjs},
 		"__str__":      object.NewString(cleanPath),
 		"__str_repr__": object.NewString(cleanPath),

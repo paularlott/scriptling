@@ -12,7 +12,7 @@ assert str(p) == "/home/user/file.txt"
 assert p.name == "file.txt"
 assert p.stem == "file"
 assert p.suffix == ".txt"
-assert p.parent == "/home/user"
+assert str(p.parent) == "/home/user"
 assert len(p.parts) == 4
 assert p.parts[0] == "/"
 assert p.parts[1] == "home"
@@ -30,14 +30,14 @@ p3 = pathlib.Path("/")
 assert p3.name == "/"
 assert p3.stem == ""
 assert p3.suffix == ""
-assert p3.parent == "/"
+assert str(p3.parent) == "/"
 
 # Test relative path
 p4 = pathlib.Path("relative/path/file.py")
 assert p4.name == "file.py"
 assert p4.stem == "file"
 assert p4.suffix == ".py"
-assert p4.parent == "relative/path"
+assert str(p4.parent) == "relative/path"
 
 # Test 2: Path exists, is_file, is_dir
 print("Testing Path exists/is_file/is_dir...")

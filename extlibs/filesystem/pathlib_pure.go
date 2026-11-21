@@ -47,6 +47,18 @@ func pathRepr(path string) string {
 
 func (p *PathlibLibraryInstance) addPurePathMethods() {
 	m := p.PathClass.Methods
+	// parent is itself a Path, built when it is read: building it with the
+	// path would build every ancestor up to the root.
+	m["parent"] = &object.Property{Getter: &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			path, errObj := pathArg(args)
+			if errObj != nil {
+				return errObj
+			}
+			return p.createPathObject(filepath.Dir(path))
+		},
+		HelpText: "parent - The path's parent directory, as a Path",
+	}}
 	// withName replaces the final component, or fails as Python does for a
 	// path with no name.
 	withName := func(path, name string) object.Object {

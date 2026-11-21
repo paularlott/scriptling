@@ -41,3 +41,15 @@ assert [str(x) for x in sorted([Path("b"), Path("a")])] == ["a", "b"]
 assert os.path.join(Path("/a"), "b") == "/a/b"
 
 print("OK")
+
+# parent is a Path, so it chains and joins
+pp = Path("/home/user/file.txt")
+assert pp.parent == Path("/home/user")
+assert str(pp.parent) == "/home/user"
+assert pp.parent.name == "user"
+assert pp.parent.parent == Path("/home")
+assert pp.parent / "other.txt" == Path("/home/user/other.txt")
+assert Path("/").parent == Path("/")
+assert Path("a").parent == Path(".")
+assert pp.parent.parent.parent.parent == Path("/")
+print("OK")
