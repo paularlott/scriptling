@@ -412,10 +412,7 @@ func nativeBoolToBooleanObject(input bool) *object.Boolean {
 
 func objectsEqual(a, b object.Object) bool {
 	if a.Type() != b.Type() {
-		// type() reports type names as strings ("int") while int, str,
-		// ... are builtins; `type(x) is int` / `type(x) == int` — a Python
-		// idiom — must bridge the two representations.
-		return typeBridgeEqual(a, b)
+		return false
 	}
 	switch av := a.(type) {
 	case *object.Integer:
@@ -437,10 +434,6 @@ func objectsEqual(a, b object.Object) bool {
 	}
 }
 
-// typeBridgeEqual reports whether a type-name string and a type builtin
-// (int, str, dict, ..., or an exception constructor) name the same type:
-// type() returns names, so type(x) == int compares the name with the
-// builtin's.
 // mixedNumbersEqual compares two numbers of different types (int, float and
 // bool in any pairing) by value. numeric is false when either is not a number.
 func mixedNumbersEqual(a, b object.Object) (equal, numeric bool) {
@@ -479,43 +472,6 @@ func numberParts(o object.Object) (i int64, f float64, isFloat, ok bool) {
 // floatEqualsInt reports whether f is exactly the integer i.
 func floatEqualsInt(f float64, i int64) bool {
 	return f == math.Trunc(f) && f >= math.MinInt64 && f < math.MaxInt64 && int64(f) == i
-}
-
-func typeBridgeEqual(a, b object.Object) bool {
-	var name string
-	var t object.Object
-	if sv, ok := a.(*object.String); ok {
-		name, t = sv.StringValue(), b
-	} else if sv, ok := b.(*object.String); ok {
-		name, t = sv.StringValue(), a
-	} else {
-		return false
-	}
-	// type(obj) is C for an instance (or a raised exception) of a user class.
-	if c, ok := t.(*object.Class); ok {
-		return name == c.Name
-	}
-	bi, ok := t.(*object.Builtin)
-	if !ok {
-		return false
-	}
-	var typeName string
-	if n, found := typeBuiltins[bi]; found {
-		typeName = n
-	} else if excName, isExc := exceptionClassName(bi); isExc {
-		typeName = excName
-	} else if n := syntheticTypeName(bi); n != "" {
-		typeName = n
-	} else if bi == object.DefaultDictType {
-		typeName = "defaultdict"
-	} else if bi == object.OrderedDictType {
-		typeName = "OrderedDict"
-	} else if classes, ok := object.BuiltinTypeClasses(bi); ok && len(classes) > 0 {
-		typeName = classes[0].Name
-	} else {
-		return false
-	}
-	return name == typeName
 }
 
 // evalObjectsEqualChecked compares a and b for equality, dispatching to a
@@ -683,9 +639,7 @@ func deepEqual(budget *cmpBudget, a, b object.Object, depth int) (bool, object.O
 				return eq, errObj
 			}
 		}
-		// Same bridge as objectsEqual: type-name strings and type builtins
-		// ("int" vs int) name the same type.
-		return typeBridgeEqual(a, b), nil
+		return false, nil
 	}
 	// Instances with a Go-native __eq__ (dataclasses, namedtuples, enums)
 	// compare by value even nested in containers. Script-level __eq__
@@ -4608,11 +4562,6 @@ func evalIsOperator(left, right object.Object) object.Object {
 		return FALSE
 	}
 
-	// type(x) is int: bridge the type-name string to the type builtin.
-	if typeBridgeEqual(left, right) {
-		return TRUE
-	}
-
 	// Special handling for boolean singletons
 	if left == TRUE && right == TRUE {
 		return TRUE
@@ -6760,11 +6709,6 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 		case *object.Instance:
 			// A str subclass such as a StrEnum member compares with ==.
 			return matchValue(ctx, subject, object.NewString(p.Value), env)
-		case *object.Builtin, *object.Class:
-			// match type(x): case "int" names the type, as type(x) == "int".
-			if typeBridgeEqual(subject, object.NewString(p.Value)) {
-				return TRUE, subject
-			}
 		}
 		return FALSE, NULL
 

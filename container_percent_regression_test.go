@@ -419,8 +419,8 @@ class C:
 "%r|%r" % (B(), C())
 `)
 		// As in Python, repr ignores __str__: C has the default repr.
-		if !strings.HasPrefix(got, "B(repr)|<C object at 0x") {
-			t.Fatalf("result = %q, want B(repr)|<C object at 0x...>", got)
+		if !strings.HasPrefix(got, "B(repr)|<__main__.C object at 0x") {
+			t.Fatalf("result = %q, want B(repr)|<__main__.C object at 0x...>", got)
 		}
 	})
 

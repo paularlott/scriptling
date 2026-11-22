@@ -67,3 +67,9 @@ except Exception as e:
 assert type(range(2)) is range and isinstance(range(2), range)
 assert isinstance(map(str, []), map) and isinstance(zip(), zip) and isinstance(enumerate([]), enumerate)
 assert str(range) == "<class 'range'>" and isinstance(range, type)
+
+# A type is not its name, and classes print with their module.
+assert type(1) != "int" and not (type("") == "str") and "int" != int
+assert str(Point) == "<class '__main__.Point'>" and Point.__module__ == "__main__"
+assert repr(Point()).startswith("<__main__.Point object at ")
+assert str(type(Point3(0))) == "<class '__main__.Point3'>"

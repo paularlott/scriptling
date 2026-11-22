@@ -56,7 +56,7 @@ assert len(escaped) > len("a.b+c*")
 
 # Test re.compile returns a Regex object
 pattern = re.compile("hello")
-assert type(pattern) == "Regex"
+assert type(pattern).__name__ == "Regex"
 
 # Test Word boundary matching - use simpler pattern
 words = re.findall("[A-Za-z]+", "Hello, World!")
@@ -88,11 +88,11 @@ assert len(matches) == 2
 
 # Test re.compile with flags returns Regex object
 pattern = re.compile("hello", re.I)
-assert type(pattern) == "Regex"
+assert type(pattern).__name__ == "Regex"
 
 # Test Combined flags (IGNORECASE | MULTILINE)
 pattern = re.compile("hello", re.I | re.M)
-assert type(pattern) == "Regex"
+assert type(pattern).__name__ == "Regex"
 
 # Test MULTILINE flag for ^ and $ matching
 result = re.match("^line", "line1\nline2", re.M)
@@ -105,7 +105,7 @@ assert result != None and result.group(0) == "a\nb"
 # Test re.finditer returns list of Match objects
 matches = re.finditer("[0-9]+", "a1b2c3")
 assert len(matches) == 3
-assert type(matches[0]) == "Match" and matches[0].group(0) == "1"
+assert type(matches[0]).__name__ == "Match" and matches[0].group(0) == "1"
 
 # Additional simple tests
 phones = re.findall("[0-9]{3}-[0-9]{4}", "Call 555-1234 or 555-5678")

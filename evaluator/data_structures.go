@@ -860,6 +860,9 @@ func evalClassIndexExpression(class, index object.Object) object.Object {
 	case "__qualname__":
 		return object.NewString(cl.Name)
 	case "__module__":
+		if cl.Module != "" {
+			return object.NewString(cl.Module)
+		}
 		return object.NewString("__main__")
 	case "__bases__":
 		if cl.BaseClass != nil {

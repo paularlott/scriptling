@@ -70,7 +70,7 @@ class Bucket:
         self.values = ["a", "b", "c", "d"]
 
     def __delitem__(self, key):
-        if type(key) == "slice":
+        if type(key).__name__ == "slice":
             self.values = [self.values[0]]
         else:
             self.values = self.values[:key] + self.values[key + 1:]

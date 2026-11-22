@@ -494,7 +494,7 @@ func TestFloatArrayTransposeZeroWidthPreservesType(t *testing.T) {
 import math
 a = math.array([[]])
 t = math.transpose(a)
-is_fa = type(t) == "FloatArray"
+is_fa = type(t).__name__ == "FloatArray"
 s = math.shape(t)
 `)
 	if err != nil {
@@ -543,7 +543,7 @@ func TestListInputReturnsList(t *testing.T) {
 import math
 a = [[1.0, 2.0], [3.0, 4.0]]
 r = math.transpose(a)
-is_list = type(r) == "list"
+is_list = type(r).__name__ == "list"
 `)
 	if err != nil {
 		t.Fatalf("Error: %v", err)
@@ -561,7 +561,7 @@ func TestFloatArrayInputReturnsFloatArray(t *testing.T) {
 import math
 a = math.array([[1.0, 2.0], [3.0, 4.0]])
 r = math.transpose(a)
-is_fa = type(r) == "FloatArray"
+is_fa = type(r).__name__ == "FloatArray"
 `)
 	if err != nil {
 		t.Fatalf("Error: %v", err)

@@ -55,9 +55,9 @@ assert raises_attribute_error(lambda: fs.intersection_update([1]))
 # Non-mutating methods still work and stay frozen
 c = fs.copy()
 assert c == fs
-assert type(c) == "frozenset"
+assert type(c).__name__ == "frozenset"
 u = fs.union({9})
-assert type(u) == "frozenset"
+assert type(u).__name__ == "frozenset"
 assert u == frozenset([1, 2, 9])
 assert fs.issubset({1, 2, 3})
 assert fs.issuperset({2})
@@ -76,15 +76,15 @@ assert fs.issuperset([2])
 assert fs.issuperset([9]) is False
 assert {1, 2}.union([3]) == {1, 2, 3}
 assert {1, 2}.intersection("ab") == set()
-assert type(fs.union([9])) == "frozenset"
+assert type(fs.union([9])).__name__ == "frozenset"
 
 # Operators: result type follows the left operand, as in Python
 big = fs | {3}
-assert type(big) == "frozenset"
+assert type(big).__name__ == "frozenset"
 assert big == frozenset([1, 2, 3])
-assert type({3} | fs) != "frozenset"
+assert type({3} | fs).__name__ != "frozenset"
 assert (fs & {2, 9}) == frozenset([2])
-assert type(fs & {2}) == "frozenset"
+assert type(fs & {2}).__name__ == "frozenset"
 assert (fs - {2}) == frozenset([1])
 assert (fs ^ {2, 9}) == frozenset([1, 9])
 
@@ -103,9 +103,9 @@ assert raises_type_error(lambda: frozenset([[1]]))
 mutable = set(fs)
 mutable.add(99)
 assert 99 in mutable
-assert type(mutable) != "frozenset"
+assert type(mutable).__name__ != "frozenset"
 assert fs.copy() == fs
-assert type(fs.copy()) == "frozenset"
+assert type(fs.copy()).__name__ == "frozenset"
 
 # isinstance distinguishes frozenset from set
 assert isinstance(fs, frozenset)

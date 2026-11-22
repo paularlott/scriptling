@@ -6,9 +6,9 @@ values = d.values()
 items = d.items()
 
 # Test types
-assert type(keys) == "dict_keys"
-assert type(values) == "dict_values"
-assert type(items) == "dict_items"
+assert type(keys).__name__ == "dict_keys"
+assert type(values).__name__ == "dict_values"
+assert type(items).__name__ == "dict_items"
 
 # Test len
 assert len(keys) == 2

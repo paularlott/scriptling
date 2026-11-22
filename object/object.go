@@ -2909,7 +2909,10 @@ func (ex *Exception) GetExitCode() int {
 }
 
 type Class struct {
-	Name      string
+	Name string
+	// Module is the module a script class was defined in ("__main__" for
+	// the main script); "" for classes defined in Go.
+	Module    string
 	BaseClass *Class // optional parent class for inheritance
 	Methods   map[string]Object
 	Env       *Environment
@@ -2960,7 +2963,16 @@ func (c *Class) Inspect() string {
 	if c.IsEnum {
 		return "<enum '" + c.Name + "'>"
 	}
-	return fmt.Sprintf("<class '%s'>", c.Name)
+	return fmt.Sprintf("<class '%s'>", c.QualifiedName())
+}
+
+// QualifiedName is the class name with its module, as Python prints it:
+// "__main__.Point"; just the name for a class defined in Go.
+func (c *Class) QualifiedName() string {
+	if c.Module == "" {
+		return c.Name
+	}
+	return c.Module + "." + c.Name
 }
 
 func (c *Class) AsString() (string, Object)          { return c.Name, nil }
@@ -3121,7 +3133,7 @@ func (i *Instance) Inspect() string {
 			return s.value
 		}
 	}
-	return fmt.Sprintf("<%s object at %p>", i.Class.Name, i)
+	return fmt.Sprintf("<%s object at %p>", i.Class.QualifiedName(), i)
 }
 
 // --- Instance field accessors ---

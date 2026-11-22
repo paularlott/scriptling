@@ -70,14 +70,14 @@ class C:
 	}
 }
 
-// TestTypeNameComparisons: type() returns Python's names, compared exactly;
-// the upper-case names it returned before 0.32.0 no longer match.
+// TestTypeNameComparisons: type() returns the type, which compares with
+// types, not with names.
 func TestTypeNameComparisons(t *testing.T) {
 	tests := []struct {
 		expr string
 		want string
 	}{
-		{`type(1) == "int"`, "True"},
+		{`type(1) == "int"`, "False"}, // a type is not its name, as in Python
 		{`type(1) == "INTEGER"`, "False"},
 		{`type(None) == "NULL"`, "False"},
 		{`type(range(3)) == "ITERATOR"`, "False"},
@@ -88,7 +88,9 @@ func TestTypeNameComparisons(t *testing.T) {
 		{`type(1) == type(2)`, "True"},
 		{`type(1) == type("a")`, "False"},
 		{`type(range(1)) == type(map(str, []))`, "False"},
-		{`type(1.5) in ("int", "float")`, "True"},
+		{`type(1.5) in ("int", "float")`, "False"},
+		{`type(1.5) in (int, float)`, "True"},
+		{`"int" == int`, "False"},
 		{`"INTEGER" == int`, "False"},
 		{`"STR" == str`, "False"},
 	}
@@ -124,7 +126,7 @@ class Child(Base):
 func TestTypeNameMatchCase(t *testing.T) {
 	script := `
 def kind(x):
-    match type(x):
+    match type(x).__name__:
         case "int":
             return "int"
         case "INTEGER":

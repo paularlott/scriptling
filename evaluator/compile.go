@@ -4114,8 +4114,13 @@ func compileClass(n *ast.ClassStatement) object.EvalFn {
 	}
 
 	return func(ctx context.Context, env *object.Environment) object.Object {
+		module := env.GetCurrentModule()
+		if module == "" {
+			module = "__main__"
+		}
 		class := &object.Class{
 			Name:        name,
+			Module:      module,
 			Methods:     make(map[string]object.Object),
 			Env:         env,
 			FieldNames:  annotatedNames,

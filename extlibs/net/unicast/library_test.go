@@ -73,7 +73,7 @@ conn.close()
 sc.close()
 server.close()
 
-[type(msg) == "dict", "data" in msg, "source" in msg]
+[type(msg).__name__ == "dict", "data" in msg, "source" in msg]
 `
 	result, err := p.Eval(script)
 	if err != nil {
@@ -142,7 +142,7 @@ msg = server.receive(timeout=5)
 conn.close()
 server.close()
 
-[type(msg) == "dict", "data" in msg, "source" in msg, msg["data"].decode() == "check"]
+[type(msg).__name__ == "dict", "data" in msg, "source" in msg, msg["data"].decode() == "check"]
 `
 	result, err := p.Eval(script)
 	if err != nil {

@@ -67,7 +67,7 @@ func TestMulticastLibraryRegistered(t *testing.T) {
 
 	result, err := p.Eval(`
 import scriptling.net.multicast as mc
-type(mc) == "module"
+type(mc).__name__ == "module"
 `)
 	if err != nil {
 		t.Fatalf("script error: %v", err)

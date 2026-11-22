@@ -49,8 +49,8 @@ func TestContainerRenderMatchesPythonEverywhere(t *testing.T) {
 			}
 			if name == "default instance in list" {
 				// Address is dynamic; check the shape only.
-				if !strings.HasPrefix(got, "[<P object at 0x") || !strings.HasSuffix(got, ">]") {
-					t.Fatalf("got %q, want [<P object at 0x...>]", got)
+				if !strings.HasPrefix(got, "[<__main__.P object at 0x") || !strings.HasSuffix(got, ">]") {
+					t.Fatalf("got %q, want [<__main__.P object at 0x...>]", got)
 				}
 				return
 			}

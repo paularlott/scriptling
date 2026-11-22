@@ -15,5 +15,5 @@ assert isinstance(d, dict) and isinstance(d, "dict")
 assert type(collections).__name__ == "module", type(collections)
 assert type(itertools).__name__ == "module", type(itertools)
 
-assert type(1) == int and type(1) == "int" and type(1) != "INTEGER"
+assert type(1) == int and type(1).__name__ == "int" and type(1).__name__ != "INTEGER"
 print("✓ type names")
