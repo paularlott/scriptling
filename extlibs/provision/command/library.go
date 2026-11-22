@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/paularlott/scriptling/errors"
 	"github.com/paularlott/scriptling/extlibs/provision/become"
@@ -78,7 +77,7 @@ Parameters:
   cwd (str): Working directory (supports ~ expansion). Default: the current one
   env (dict): Environment variables to add to the inherited environment
   input (str): Text for the command's standard input. Default: none
-  timeout (float): Seconds to allow; the command is stopped after that and an error raised
+  timeout (int, float or None): Seconds to allow; the command is stopped after that and an error raised
   check (bool): Raise an error when the command exits with a non-zero status (default True)
 
 Returns:
@@ -206,15 +205,11 @@ func run(ctx context.Context, inst *libraryInstance, kwargs object.Kwargs, args 
 			ra.Input = []byte(in)
 		}
 	}
-	if v := kwargs.Get("timeout"); v != nil {
-		if _, null := v.(*object.Null); !null {
-			secs, errObj := v.AsFloat()
-			if errObj != nil || secs <= 0 {
-				return errors.NewValueError("run: timeout must be a number of seconds above 0")
-			}
-			ra.Timeout = time.Duration(secs * float64(time.Second))
-		}
+	timeout, _, errObj := kwargs.GetTimeout("timeout", 0, object.TimeoutAllowNone)
+	if errObj != nil {
+		return errObj
 	}
+	ra.Timeout = timeout
 
 	var res become.RunResult
 	var err error

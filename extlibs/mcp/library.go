@@ -224,19 +224,9 @@ Example:
 					authProvider = mcplib.NewBearerTokenAuth(bearerToken)
 				}
 
-				timeout := defaultClientTimeout
-				if kwargs.Has("timeout") {
-					tv := kwargs.Get("timeout")
-					switch tv.(type) {
-					case *object.Integer, *object.Float:
-					default:
-						return nil, fmt.Errorf("mcp.Client: 'timeout' must be a positive number of seconds")
-					}
-					secs, terr := tv.CoerceFloat()
-					if terr != nil || secs <= 0 {
-						return nil, fmt.Errorf("mcp.Client: 'timeout' must be a positive number of seconds")
-					}
-					timeout = time.Duration(secs * float64(time.Second))
+				timeout, _, errObj := kwargs.GetTimeout("timeout", defaultClientTimeout, 0)
+				if errObj != nil {
+					return errObj, nil
 				}
 
 				client := mcplib.NewClientWithPool(target, authProvider, namespace, poolWithTimeout(guard, timeout))
@@ -303,7 +293,7 @@ Parameters:
   target (str): HTTP(S) URL of the server, or path/command of a stdio server
   namespace (str, optional): Namespace prefixed to tool names (e.g. "t1" exposes "search" as "t1__search")
   bearer_token (str, optional): Bearer token for authentication (HTTP only)
-  timeout (number, optional): Per-request HTTP timeout in seconds, default 30.
+  timeout (int or float, optional): Per-request HTTP timeout in seconds, default 30.
                  Raise it for servers whose tools are known to be slow
                  (e.g. LLM-backed tools taking minutes). HTTP only.
   args (list, optional): Command-line arguments for the stdio server (stdio only)

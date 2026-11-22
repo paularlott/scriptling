@@ -123,7 +123,10 @@ func buildLibrary(inst *libraryInstance) *object.Library {
 
 				insecure := kwargs.MustGetBool("insecure", false)
 				unpackZip := kwargs.MustGetBool("unpack_zip", false)
-				timeoutSecs := int(kwargs.MustGetInt("timeout", defaultTimeout))
+				timeout, _, errObj := kwargs.GetTimeout("timeout", defaultTimeout*time.Second, 0)
+				if errObj != nil {
+					return errObj
+				}
 				maxBytes := kwargs.MustGetInt("max_bytes", 0)
 				mode := int(kwargs.MustGetInt("mode", defaultFileMode))
 				dirMode := int(kwargs.MustGetInt("dir_mode", defaultDirMode))
@@ -136,9 +139,6 @@ func buildLibrary(inst *libraryInstance) *object.Library {
 					}
 				}
 
-				if timeoutSecs <= 0 {
-					return &object.Error{Message: "file: timeout must be greater than zero"}
-				}
 				if maxBytes < 0 {
 					return &object.Error{Message: "file: max_bytes must be non-negative"}
 				}
@@ -196,7 +196,7 @@ func buildLibrary(inst *libraryInstance) *object.Library {
 					}
 				}
 
-				data, err := fetchURL(ctx, inst.client, src, insecure, time.Duration(timeoutSecs)*time.Second, maxBytes)
+				data, err := fetchURL(ctx, inst.client, src, insecure, timeout, maxBytes)
 				if err != nil {
 					return &object.Error{Message: "file: " + err.Error()}
 				}
@@ -233,7 +233,7 @@ Parameters:
   dest (str): Destination file path, or destination directory when unpack_zip=True
   insecure (bool): If True, skip HTTPS certificate verification (default False)
   unpack_zip (bool): If True, unpack the response body as a zip archive (default False)
-  timeout (int): Request timeout in seconds (default 30)
+  timeout (int or float): Request timeout in seconds (default 30)
   max_bytes (int): Maximum response size in bytes, or 0 for no cap (default 0)
   mode (int): File permission mode for written files (default 0o644)
   dir_mode (int): Directory permission mode for created directories (default 0o755)

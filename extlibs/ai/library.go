@@ -518,10 +518,16 @@ Example:
 			if !ok {
 				return &object.Error{Message: "collect_stream: stream must be a ChatStream"}, nil
 			}
-			chunkTimeoutSec := kwargs.MustGetInt("chunk_timeout", 0)
-			firstChunkTimeoutSec := kwargs.MustGetInt("first_chunk_timeout", 0)
+			chunkTimeout, _, timeoutErr := kwargs.GetTimeout("chunk_timeout", 0, object.TimeoutAllowNone|object.TimeoutAllowZero)
+			if timeoutErr != nil {
+				return timeoutErr, nil
+			}
+			firstChunkTimeout, _, timeoutErr := kwargs.GetTimeout("first_chunk_timeout", 0, object.TimeoutAllowNone|object.TimeoutAllowZero)
+			if timeoutErr != nil {
+				return timeoutErr, nil
+			}
 			callback := kwargs.Get("on_event")
-			result, errObj := collectStream(ctx, stream, chunkTimeoutSec, firstChunkTimeoutSec, callback)
+			result, errObj := collectStream(ctx, stream, chunkTimeout, firstChunkTimeout, callback)
 			if errObj != nil {
 				return errObj, nil
 			}
@@ -533,8 +539,8 @@ and optionally emits events to a callback while chunks are processed.
 
 Parameters:
   stream (ChatStream): Stream returned by client.completion_stream()
-  chunk_timeout (int, optional): Per-chunk timeout in seconds. Default: 0
-  first_chunk_timeout (int, optional): Timeout for the first chunk only (models may need time to load). Falls back to chunk_timeout. Default: 0
+  chunk_timeout (int, float or None, optional): Per-chunk timeout in seconds; None or 0 for none. Default: 0
+  first_chunk_timeout (int, float or None, optional): Timeout for the first chunk only (models may need time to load). Falls back to chunk_timeout. Default: 0
   on_event (callable, optional): Callback invoked with event dicts during collection
 
 Returns:
@@ -1136,8 +1142,8 @@ func executeToolCalls(ctx context.Context, registry *object.Instance, toolCalls 
 // is abandoned mid-way, so its connection is released here: otherwise the
 // server keeps sending into a socket nobody reads until the instance is
 // collected.
-func collectStream(ctx context.Context, stream *object.Instance, chunkTimeoutSec int64, firstChunkTimeoutSec int64, callback object.Object) (map[string]any, *object.Error) {
-	result, errObj := collectStreamChunks(ctx, stream, chunkTimeoutSec, firstChunkTimeoutSec, callback)
+func collectStream(ctx context.Context, stream *object.Instance, chunkTimeout, firstChunkTimeout time.Duration, callback object.Object) (map[string]any, *object.Error) {
+	result, errObj := collectStreamChunks(ctx, stream, chunkTimeout, firstChunkTimeout, callback)
 	if errObj != nil {
 		if si, cerr := getStreamInstance(stream); cerr == nil {
 			si.cancelStream(true)
@@ -1146,7 +1152,7 @@ func collectStream(ctx context.Context, stream *object.Instance, chunkTimeoutSec
 	return result, errObj
 }
 
-func collectStreamChunks(ctx context.Context, stream *object.Instance, chunkTimeoutSec int64, firstChunkTimeoutSec int64, callback object.Object) (map[string]any, *object.Error) {
+func collectStreamChunks(ctx context.Context, stream *object.Instance, chunkTimeout, firstChunkTimeout time.Duration, callback object.Object) (map[string]any, *object.Error) {
 	reasoning := strings.Builder{}
 	content := strings.Builder{}
 	thinkingState := &streamingThinkingState{}
@@ -1173,13 +1179,13 @@ func collectStreamChunks(ctx context.Context, stream *object.Instance, chunkTime
 
 	for {
 		var chunkObj object.Object
-		if chunkTimeoutSec > 0 || firstChunkTimeoutSec > 0 {
-			timeout := chunkTimeoutSec
-			if firstChunk && firstChunkTimeoutSec > 0 {
-				timeout = firstChunkTimeoutSec
+		if chunkTimeout > 0 || firstChunkTimeout > 0 {
+			timeout := chunkTimeout
+			if firstChunk && firstChunkTimeout > 0 {
+				timeout = firstChunkTimeout
 			}
 			if timeout > 0 {
-				chunkObj = nextTimeoutStreamMethod(stream, ctx, timeout)
+				chunkObj = nextTimeoutStream(stream, ctx, timeout)
 			} else {
 				chunkObj = nextStreamMethod(stream, ctx)
 			}

@@ -860,7 +860,7 @@ func TestArgumentTypesAndNone(t *testing.T) {
 	f := newFakeIdP(t)
 	for call, want := range map[string]string{
 		`oauth.Client("` + f.issuer + `", client_id=1)`:                                        "client_id: must be a string",
-		`oauth.Client("` + f.issuer + `", client_id="c", timeout="x")`:                         "timeout: must be a number",
+		`oauth.Client("` + f.issuer + `", client_id="c", timeout="x")`:                         "timeout must be an int or float, not str",
 		f.newClientCall("") + `.verify("a.b.c", "https://x/", leeway="x")`:                     "leeway: must be a number",
 		f.newClientCall("") + `.token_from_dict({"access_token": "a"}).is_expired(margin="x")`: "margin: must be a number",
 	} {
@@ -880,7 +880,7 @@ func TestTypeErrors(t *testing.T) {
 		f.newClientCall("") + `.device_start(scope=1)`:               "STRING or LIST",
 		f.newClientCall("") + `.token_from_dict("x")`:                "DICT",
 		f.newClientCall("") + `.device_resume({"user_code": "x"})`:   "not a device sign-in dict",
-		`oauth.Client("` + f.issuer + `", client_id="c", timeout=0)`: "timeout must be positive",
+		`oauth.Client("` + f.issuer + `", client_id="c", timeout=0)`: "timeout must be a number of seconds greater than 0",
 	} {
 		if _, err := evalScript(t, plain, call); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: want %q, got %v", call, want, err)

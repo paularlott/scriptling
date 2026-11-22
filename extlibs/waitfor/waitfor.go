@@ -77,48 +77,43 @@ func waitForContains(paths *fssecurity.Config, path string, needle []byte) (bool
 	return readErr == nil && bytes.Contains(data, needle), nil
 }
 
-// parseWaitOptions parses common wait options from args and kwargs
-// Returns (timeout, pollRate, errorOrNil)
-func parseWaitOptions(args []object.Object, kwargs map[string]object.Object) (int, float64, object.Object) {
-	timeout := 30   // default timeout in seconds
-	pollRate := 1.0 // default poll rate in seconds
+// defaultWaitTimeout and defaultPollRate apply when a script gives none.
+const (
+	defaultWaitTimeout = 30 * time.Second
+	defaultPollRate    = time.Second
+	// finalHTTPCheck bounds http()'s last request after the deadline, as
+	// port() bounds each connection attempt.
+	finalHTTPCheck = time.Second
+)
 
-	// Handle positional args (timeout can be positional)
+// parseWaitOptions parses the wait options: timeout, positionally after the
+// target or as a keyword, and poll_rate. Both are seconds, int or float; a
+// timeout of 0 checks once without waiting.
+func parseWaitOptions(args []object.Object, kwargs object.Kwargs) (time.Duration, time.Duration, object.Object) {
+	timeout := defaultWaitTimeout
 	if len(args) > 1 {
-		if t, err := args[1].AsInt(); err == nil {
-			timeout = int(t)
-		} else {
-			return 0, 0, err
+		if _, dup := kwargs.Lookup("timeout"); dup {
+			return 0, 0, errors.NewTypeErrorTagged("got multiple values for argument 'timeout'")
 		}
+		d, _, errObj := object.ParseTimeout("timeout", args[1], object.TimeoutAllowZero)
+		if errObj != nil {
+			return 0, 0, errObj
+		}
+		timeout = d
 	}
-
-	return parseWaitOptionsKwargsOnly(timeout, pollRate, kwargs)
+	return parseWaitOptionsKwargsOnly(timeout, kwargs)
 }
 
-// parseWaitOptionsKwargsOnly parses wait options only from kwargs (no positional args)
-// Returns (timeout, pollRate, errorOrNil)
-func parseWaitOptionsKwargsOnly(defaultTimeout int, defaultPollRate float64, kwargs map[string]object.Object) (int, float64, object.Object) {
-	timeout := defaultTimeout
-	pollRate := defaultPollRate
-
-	// Handle keyword args
-	for k, v := range kwargs {
-		switch k {
-		case "timeout":
-			if t, err := v.AsInt(); err == nil {
-				timeout = int(t)
-			} else {
-				return 0, 0, err
-			}
-		case "poll_rate":
-			if f, err := v.AsFloat(); err == nil {
-				pollRate = f
-			} else {
-				return 0, 0, err
-			}
-		}
+// parseWaitOptionsKwargsOnly parses the wait options from keywords only.
+func parseWaitOptionsKwargsOnly(timeout time.Duration, kwargs object.Kwargs) (time.Duration, time.Duration, object.Object) {
+	timeout, _, errObj := kwargs.GetTimeout("timeout", timeout, object.TimeoutAllowZero)
+	if errObj != nil {
+		return 0, 0, errObj
 	}
-
+	pollRate, _, errObj := kwargs.GetTimeout("poll_rate", defaultPollRate, 0)
+	if errObj != nil {
+		return 0, 0, errObj
+	}
 	return timeout, pollRate, nil
 }
 
@@ -192,13 +187,13 @@ func newWaitForLibrary(guard *netsecurity.Guard, paths *fssecurity.Config) *obje
 						return err
 					}
 
-					timeout, pollRate, err := parseWaitOptions(args, kwargs.Map())
+					timeout, pollRate, err := parseWaitOptions(args, kwargs)
 					if err != nil {
 						return err
 					}
 
-					deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-					pollInterval := time.Duration(pollRate * float64(time.Second))
+					deadline := time.Now().Add(timeout)
+					pollInterval := pollRate
 					timer := time.NewTimer(pollInterval)
 					defer stopTimer(timer)
 
@@ -229,8 +224,8 @@ Waits for the specified file to become available.
 
 Parameters:
   path (string): Path to the file to wait for
-  timeout (int): Maximum time to wait in seconds (default: 30)
-  poll_rate (float): Time between checks in seconds (default: 1)
+  timeout (int or float): Maximum time to wait in seconds (default: 30)
+  poll_rate (int or float): Time between checks in seconds (default: 1)
 
 Returns:
   bool: True if file exists, False if timeout exceeded
@@ -248,13 +243,13 @@ Raises PermissionError if the path is outside the allowed paths.`,
 						return err
 					}
 
-					timeout, pollRate, err := parseWaitOptions(args, kwargs.Map())
+					timeout, pollRate, err := parseWaitOptions(args, kwargs)
 					if err != nil {
 						return err
 					}
 
-					deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-					pollInterval := time.Duration(pollRate * float64(time.Second))
+					deadline := time.Now().Add(timeout)
+					pollInterval := pollRate
 					timer := time.NewTimer(pollInterval)
 					defer stopTimer(timer)
 
@@ -285,8 +280,8 @@ Waits for the specified directory to become available.
 
 Parameters:
   path (string): Path to the directory to wait for
-  timeout (int): Maximum time to wait in seconds (default: 30)
-  poll_rate (float): Time between checks in seconds (default: 1)
+  timeout (int or float): Maximum time to wait in seconds (default: 30)
+  poll_rate (int or float): Time between checks in seconds (default: 1)
 
 Returns:
   bool: True if directory exists, False if timeout exceeded
@@ -318,13 +313,13 @@ Raises PermissionError if the path is outside the allowed paths.`,
 						return errors.NewTypeError("INT|STRING", args[1].Type().String())
 					}
 
-					timeout, pollRate, err := parseWaitOptionsKwargsOnly(30, 1.0, kwargs.Map())
+					timeout, pollRate, err := parseWaitOptionsKwargsOnly(defaultWaitTimeout, kwargs)
 					if err != nil {
 						return err
 					}
 
-					deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-					pollInterval := time.Duration(pollRate * float64(time.Second))
+					deadline := time.Now().Add(timeout)
+					pollInterval := pollRate
 					address := net.JoinHostPort(host, strconv.Itoa(port))
 					timer := time.NewTimer(pollInterval)
 					defer stopTimer(timer)
@@ -357,8 +352,8 @@ Waits for the specified TCP port to accept connections.
 Parameters:
   host (string): Hostname or IP address
   port (int|string): Port number
-  timeout (int): Maximum time to wait in seconds (default: 30)
-  poll_rate (float): Time between checks in seconds (default: 1)
+  timeout (int or float): Maximum time to wait in seconds (default: 30)
+  poll_rate (int or float): Time between checks in seconds (default: 1)
 
 Returns:
   bool: True if port is open, False if timeout exceeded
@@ -376,47 +371,21 @@ Raises an error if a configured network policy denies the address.`,
 						return err
 					}
 
-					timeout := 30
-					pollRate := 1.0
 					expectedStatus := int64(200)
-
-					// Handle positional timeout
-					if len(args) > 1 {
-						if t, err := args[1].AsInt(); err == nil {
-							timeout = int(t)
-						} else {
+					timeout, pollRate, errObj := parseWaitOptions(args, kwargs)
+					if errObj != nil {
+						return errObj
+					}
+					if v, ok := kwargs.Lookup("status_code"); ok {
+						s, err := v.AsInt()
+						if err != nil {
 							return err
 						}
+						expectedStatus = s
 					}
 
-					// Handle kwargs
-					for k, v := range kwargs.All() {
-						switch k {
-						case "timeout":
-							if t, err := v.AsInt(); err == nil {
-								timeout = int(t)
-							} else {
-								return err
-							}
-						case "poll_rate":
-							if f, err := v.AsFloat(); err == nil {
-								pollRate = f
-							} else if i, err := v.AsInt(); err == nil {
-								pollRate = float64(i)
-							} else {
-								return errors.NewTypeError("FLOAT", v.Type().String())
-							}
-						case "status_code":
-							if s, err := v.AsInt(); err == nil {
-								expectedStatus = s
-							} else {
-								return err
-							}
-						}
-					}
-
-					deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-					pollInterval := time.Duration(pollRate * float64(time.Second))
+					deadline := time.Now().Add(timeout)
+					pollInterval := pollRate
 					timer := time.NewTimer(pollInterval)
 					defer stopTimer(timer)
 
@@ -426,44 +395,46 @@ Raises an error if a configured network policy denies the address.`,
 						client = guard.HTTPClient()
 					}
 
-					for time.Now().Before(deadline) {
-						req, httpErr := http.NewRequestWithContext(ctx, "GET", url, nil)
+					// probe makes one request, stopped at until so a server that
+					// never answers cannot hold the wait past its timeout.
+					probe := func(until time.Time) (bool, object.Object) {
+						reqCtx, cancel := context.WithDeadline(ctx, until)
+						defer cancel()
+						req, httpErr := http.NewRequestWithContext(reqCtx, "GET", url, nil)
 						if httpErr != nil {
-							return errors.NewError("http request error: %s", httpErr.Error())
+							return false, errors.NewError("http request error: %s", httpErr.Error())
 						}
-
 						var resp *http.Response
 						object.RunBlocking(ctx, func() { resp, httpErr = client.Do(req) })
-						if httpErr == nil {
-							statusMatch := int64(resp.StatusCode) == expectedStatus
-							resp.Body.Close()
-							if statusMatch {
-								return object.NewBoolean(true)
+						if httpErr != nil {
+							if stderrors.Is(httpErr, netsecurity.ErrPolicy) {
+								return false, errors.NewError("http error: %s", httpErr.Error())
 							}
-						} else if stderrors.Is(httpErr, netsecurity.ErrPolicy) {
-							return errors.NewError("http error: %s", httpErr.Error())
+							return false, nil
 						}
+						resp.Body.Close()
+						return int64(resp.StatusCode) == expectedStatus, nil
+					}
 
+					for time.Now().Before(deadline) {
+						if ok, errObj := probe(deadline); errObj != nil {
+							return errObj
+						} else if ok {
+							return object.NewBoolean(true)
+						}
 						if !waitForNextPoll(ctx, timer, pollInterval) {
 							return object.NewBoolean(false)
 						}
 					}
 
-					// Final check
-					req, httpErr := http.NewRequestWithContext(ctx, "GET", url, nil)
-					if httpErr != nil {
-						return object.NewBoolean(false)
+					// Final check, with a short limit of its own: with timeout=0
+					// it is the only one.
+					ok, errObj := probe(time.Now().Add(finalHTTPCheck))
+					if errObj != nil {
+						return errObj
 					}
-					var resp *http.Response
-					object.RunBlocking(ctx, func() { resp, httpErr = client.Do(req) })
-					if httpErr == nil {
-						statusMatch := int64(resp.StatusCode) == expectedStatus
-						resp.Body.Close()
-						if statusMatch {
-							return object.NewBoolean(true)
-						}
-					} else if stderrors.Is(httpErr, netsecurity.ErrPolicy) {
-						return errors.NewError("http error: %s", httpErr.Error())
+					if ok {
+						return object.NewBoolean(true)
 					}
 					return object.NewBoolean(false)
 				},
@@ -473,8 +444,8 @@ Waits for the specified HTTP endpoint to respond with the expected status code.
 
 Parameters:
   url (string): URL to check
-  timeout (int): Maximum time to wait in seconds (default: 30)
-  poll_rate (float): Time between checks in seconds (default: 1)
+  timeout (int or float): Maximum time to wait in seconds (default: 30)
+  poll_rate (int or float): Time between checks in seconds (default: 1)
   status_code (int): Expected HTTP status code (default: 200)
 
 Returns:
@@ -498,13 +469,13 @@ Raises an error if a configured network policy denies the URL.`,
 						return err
 					}
 
-					timeout, pollRate, err := parseWaitOptionsKwargsOnly(30, 1.0, kwargs.Map())
+					timeout, pollRate, err := parseWaitOptionsKwargsOnly(defaultWaitTimeout, kwargs)
 					if err != nil {
 						return err
 					}
 
-					deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-					pollInterval := time.Duration(pollRate * float64(time.Second))
+					deadline := time.Now().Add(timeout)
+					pollInterval := pollRate
 					needle := []byte(content)
 					timer := time.NewTimer(pollInterval)
 					defer stopTimer(timer)
@@ -537,8 +508,8 @@ Waits for the specified file to exist and contain the given content.
 Parameters:
   path (string): Path to the file to check
   content (string): Content to search for in the file
-  timeout (int): Maximum time to wait in seconds (default: 30)
-  poll_rate (float): Time between checks in seconds (default: 1)
+  timeout (int or float): Maximum time to wait in seconds (default: 30)
+  poll_rate (int or float): Time between checks in seconds (default: 1)
 
 Returns:
   bool: True if file contains the content, False if timeout exceeded
@@ -556,13 +527,13 @@ Raises PermissionError if the path is outside the allowed paths.`,
 						return err
 					}
 
-					timeout, pollRate, err := parseWaitOptions(args, kwargs.Map())
+					timeout, pollRate, err := parseWaitOptions(args, kwargs)
 					if err != nil {
 						return err
 					}
 
-					deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-					pollInterval := time.Duration(pollRate * float64(time.Second))
+					deadline := time.Now().Add(timeout)
+					pollInterval := pollRate
 					timer := time.NewTimer(pollInterval)
 					defer stopTimer(timer)
 
@@ -588,8 +559,8 @@ Waits for a process with the specified name to be running.
 
 Parameters:
   name (string): Process name to search for
-  timeout (int): Maximum time to wait in seconds (default: 30)
-  poll_rate (float): Time between checks in seconds (default: 1)
+  timeout (int or float): Maximum time to wait in seconds (default: 30)
+  poll_rate (int or float): Time between checks in seconds (default: 1)
 
 Returns:
   bool: True if process is running, False if timeout exceeded`,

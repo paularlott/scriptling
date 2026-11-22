@@ -52,7 +52,7 @@ func TestParseWaitOptions(t *testing.T) {
 		name         string
 		args         []object.Object
 		kwargs       map[string]object.Object
-		wantTimeout  int
+		wantTimeout  float64 // seconds
 		wantPollRate float64
 		wantErr      bool
 	}{
@@ -113,20 +113,45 @@ func TestParseWaitOptions(t *testing.T) {
 			wantPollRate: 0.2,
 			wantErr:      false,
 		},
+		{
+			name:         "fractional timeout",
+			args:         []object.Object{object.NewString("test"), object.NewFloat(2.5)},
+			kwargs:       map[string]object.Object{},
+			wantTimeout:  2.5,
+			wantPollRate: 1.0,
+		},
+		{
+			name:    "string timeout",
+			args:    []object.Object{object.NewString("test")},
+			kwargs:  map[string]object.Object{"timeout": object.NewString("10")},
+			wantErr: true,
+		},
+		{
+			name:    "zero poll_rate",
+			args:    []object.Object{object.NewString("test")},
+			kwargs:  map[string]object.Object{"poll_rate": object.NewInteger(0)},
+			wantErr: true,
+		},
+		{
+			name:    "timeout given twice",
+			args:    []object.Object{object.NewString("test"), object.NewInteger(5)},
+			kwargs:  map[string]object.Object{"timeout": object.NewInteger(5)},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			timeout, pollRate, err := parseWaitOptions(tt.args, tt.kwargs)
+			timeout, pollRate, err := parseWaitOptions(tt.args, object.NewKwargs(tt.kwargs))
 			if (err != nil) != tt.wantErr {
 				t.Errorf("parseWaitOptions() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !tt.wantErr {
-				if timeout != tt.wantTimeout {
+				if timeout.Seconds() != tt.wantTimeout {
 					t.Errorf("parseWaitOptions() timeout = %v, want %v", timeout, tt.wantTimeout)
 				}
-				if pollRate != tt.wantPollRate {
+				if pollRate.Seconds() != tt.wantPollRate {
 					t.Errorf("parseWaitOptions() pollRate = %v, want %v", pollRate, tt.wantPollRate)
 				}
 			}
@@ -477,4 +502,31 @@ func TestProcessRunning(t *testing.T) {
 			t.Errorf("expected false for non-existent process, got true")
 		}
 	})
+}
+
+// A server that never answers must not hold http() past its timeout: each
+// request used to wait out the HTTP client's own 30 seconds.
+func TestWaitForHTTPStopsAtTimeout(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+
+	start := time.Now()
+	result := Library.Functions()["http"].Fn(context.Background(), object.NewKwargs(map[string]object.Object{
+		"timeout":   object.NewFloat(0.3),
+		"poll_rate": object.NewFloat(0.1),
+	}), object.NewString(server.URL))
+	if b, ok := result.(*object.Boolean); !ok || b.BoolValue() {
+		t.Fatalf("want False, got %v", result.Inspect())
+	}
+	// The wait plus the one-second final check, with room for a slow machine.
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("http(timeout=0.3) took %v", d)
+	}
 }

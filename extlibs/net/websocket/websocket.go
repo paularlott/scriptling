@@ -165,11 +165,9 @@ func newWebSocketLibrary(guard *netsecurity.Guard) *object.Library {
 				}
 
 				// Parse timeout from kwargs
-				timeout := 10
-				if t := kwargs.Get("timeout"); t != nil {
-					if timeoutInt, e := t.AsInt(); e == nil {
-						timeout = int(timeoutInt)
-					}
+				timeout, _, timeoutErr := kwargs.GetTimeout("timeout", 10*time.Second, 0)
+				if timeoutErr != nil {
+					return timeoutErr
 				}
 
 				// Parse headers from kwargs
@@ -202,7 +200,7 @@ func newWebSocketLibrary(guard *netsecurity.Guard) *object.Library {
 				}
 
 				// Dial with context and timeout
-				dialCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+				dialCtx, cancel := context.WithTimeout(ctx, timeout)
 				defer cancel()
 
 				var conn *websocket.Conn
@@ -299,18 +297,16 @@ Parameters:
 						},
 						"receive": &object.Builtin{
 							Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-								timeout := 30
-								if t := kwargs.Get("timeout"); t != nil {
-									if timeoutInt, e := t.AsInt(); e == nil {
-										timeout = int(timeoutInt)
-									}
+								timeout, _, timeoutErr := kwargs.GetTimeout("timeout", 30*time.Second, object.TimeoutAllowNone)
+								if timeoutErr != nil {
+									return timeoutErr
 								}
 
 								var msgType int
 								var data []byte
 								var err error
 								object.RunBlocking(ctx, func() {
-									msgType, data, err = wsConn.ReadWithTimeout(time.Duration(timeout) * time.Second)
+									msgType, data, err = wsConn.ReadWithTimeout(timeout)
 								})
 								if err != nil {
 									// Connection error - return None
@@ -334,7 +330,7 @@ Parameters:
 							HelpText: `receive(timeout=30) - Receive a message
 
 Parameters:
-  timeout (int, optional): Timeout in seconds (default: 30)
+  timeout (int, float or None, optional): Timeout in seconds, None to wait without one (default: 30)
 
 Returns:
   string for text messages, list of bytes for binary, or None on timeout/disconnect`,
@@ -370,7 +366,7 @@ Returns:
 
 Parameters:
   url (string): WebSocket URL (ws:// or wss://)
-  timeout (int, optional): Connection timeout in seconds (default: 10)
+  timeout (int or float): Connection timeout in seconds (default: 10)
   headers (dict, optional): HTTP headers to send with the handshake
 
 Returns:

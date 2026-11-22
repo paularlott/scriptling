@@ -48,7 +48,7 @@ Parameters:
   top_p (float, optional): Nucleus sampling threshold (0.0-1.0)
   max_tokens (int, optional): Maximum tokens to generate
   extra_body (dict, optional): Provider-specific fields to merge into the request body
-  timeout (int, optional): Request timeout in seconds
+  timeout (int, float or None, optional): Request timeout in seconds; None or 0 for none
 
 Returns:
   dict: Response containing id, choices, usage, etc.
@@ -85,7 +85,7 @@ Parameters:
   top_p (float, optional): Nucleus sampling threshold (0.0-1.0)
   max_tokens (int, optional): Maximum tokens to generate
   extra_body (dict, optional): Provider-specific fields to merge into the request body
-  timeout (int, optional): Overall request timeout in seconds
+  timeout (int, float or None, optional): Overall request timeout in seconds; None or 0 for none
 
 Returns:
   ChatStream: A stream object with a next() method
@@ -386,7 +386,7 @@ Parameters:
   top_p (float, optional): Nucleus sampling threshold (0.0-1.0)
   max_tokens (int, optional): Maximum tokens to generate
   extra_body (dict, optional): Provider-specific fields to merge into the request body
-  timeout (int, optional): Request timeout in seconds
+  timeout (int, float or None, optional): Request timeout in seconds; None or 0 for none
 
 Returns:
   list: List of response dicts in the same order as messages_list
@@ -435,7 +435,7 @@ Parameters:
   top_p (float, optional): Nucleus sampling threshold (0.0-1.0)
   max_tokens (int, optional): Maximum tokens to generate
   extra_body (dict, optional): Provider-specific fields merged into every request body
-  timeout (int, optional): Request timeout in seconds
+  timeout (int, float or None, optional): Request timeout in seconds; None or 0 for none
 
 Returns:
   Pipeline: Pipeline instance with add() and complete() methods
@@ -863,13 +863,14 @@ func completionMethod(self *object.Instance, ctx context.Context, kwargs object.
 	if kwargs.Has("max_tokens") {
 		req.MaxTokens = int(kwargs.MustGetInt("max_tokens", 0))
 	}
-	if kwargs.Has("timeout") {
-		timeoutSec := kwargs.MustGetInt("timeout", 0)
-		if timeoutSec > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
-			defer cancel()
-		}
+	timeout, _, timeoutErr := kwargs.GetTimeout("timeout", 0, object.TimeoutAllowNone|object.TimeoutAllowZero)
+	if timeoutErr != nil {
+		return timeoutErr
+	}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
 
 	tools, toolsErr := toolsFromKwargs(kwargs)
@@ -1476,7 +1477,7 @@ Advances to the next response chunk and returns it. If no chunk arrives within
 the timeout, returns a dict with {"timed_out": true}.
 
 Parameters:
-  timeout (int): Timeout in seconds
+  timeout (int, float or None): Timeout in seconds; None or 0 waits without one
 
 Returns:
   dict: The next response chunk, {"timed_out": true}, or null if the stream is complete`).
@@ -1560,8 +1561,19 @@ func closeStreamMethod(self *object.Instance, ctx context.Context) object.Object
 	return &object.Null{}
 }
 
-// nextTimeoutStream method implementation
-func nextTimeoutStreamMethod(self *object.Instance, ctx context.Context, timeoutSec int64) object.Object {
+// nextTimeoutStreamMethod is next_timeout(timeout): seconds, int or float;
+// None or 0 waits without a limit, as next() does.
+func nextTimeoutStreamMethod(self *object.Instance, ctx context.Context, timeoutArg object.Object) object.Object {
+	timeout, _, errObj := object.ParseTimeout("timeout", timeoutArg, object.TimeoutAllowNone|object.TimeoutAllowZero)
+	if errObj != nil {
+		return errObj
+	}
+	return nextTimeoutStream(self, ctx, timeout)
+}
+
+// nextTimeoutStream returns the next chunk, or the timed-out marker when none
+// comes within timeout; zero waits without a limit.
+func nextTimeoutStream(self *object.Instance, ctx context.Context, timeout time.Duration) object.Object {
 	si, cerr := getStreamInstance(self)
 	if cerr != nil {
 		return cerr
@@ -1571,7 +1583,7 @@ func nextTimeoutStreamMethod(self *object.Instance, ctx context.Context, timeout
 		return &object.Error{Message: "next_timeout: stream is nil"}
 	}
 
-	if timeoutSec <= 0 {
+	if timeout <= 0 {
 		return nextStreamMethod(self, ctx)
 	}
 
@@ -1599,7 +1611,7 @@ func nextTimeoutStreamMethod(self *object.Instance, ctx context.Context, timeout
 		select {
 		case r := <-done:
 			got = r
-		case <-time.After(time.Duration(timeoutSec) * time.Second):
+		case <-time.After(timeout):
 			timedOut = true
 		case <-ctx.Done():
 			canceled = true
@@ -1872,11 +1884,12 @@ func completionStreamMethod(self *object.Instance, ctx context.Context, kwargs o
 	}
 
 	streamCancel := context.CancelFunc(nil)
-	if kwargs.Has("timeout") {
-		timeoutSec := kwargs.MustGetInt("timeout", 0)
-		if timeoutSec > 0 {
-			ctx, streamCancel = context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
-		}
+	timeout, _, timeoutErr := kwargs.GetTimeout("timeout", 0, object.TimeoutAllowNone|object.TimeoutAllowZero)
+	if timeoutErr != nil {
+		return timeoutErr
+	}
+	if timeout > 0 {
+		ctx, streamCancel = context.WithTimeout(ctx, timeout)
 	}
 
 	streamCtx, cancel := context.WithCancel(ctx)

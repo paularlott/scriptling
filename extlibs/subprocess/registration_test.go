@@ -43,3 +43,23 @@ func TestSubprocessNotImportableWithoutRegister(t *testing.T) {
 	stdlib.RegisterAll(p)
 	scripttest.ImportFails(t, p, "subprocess", "it is only available after subprocess.Register(p)")
 }
+
+// timeout takes seconds as an int or float, or None, and a fraction stops
+// the command after that fraction; anything else is a TypeError.
+func TestSubprocessTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX sleep")
+	}
+	p := scriptling.New()
+	subprocess.Register(p)
+	if typ, _ := scripttest.Raises(t, p, "import subprocess\nsubprocess.run(['sleep', '5'], timeout=0.2)"); typ != "TimeoutError" {
+		t.Errorf("timeout=0.2: want TimeoutError, got %q", typ)
+	}
+	if typ, _ := scripttest.Raises(t, p, "import subprocess\nsubprocess.run(['true'], timeout='5')"); typ != "TypeError" {
+		t.Errorf("timeout='5': want TypeError, got %q", typ)
+	}
+	got := scripttest.Eval(t, p, "import subprocess\nsubprocess.run(['true'], timeout=None).returncode").Inspect()
+	if got != "0" {
+		t.Errorf("timeout=None: got %s", got)
+	}
+}

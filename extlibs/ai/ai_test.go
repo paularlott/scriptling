@@ -707,7 +707,7 @@ func TestNextTimeoutSuppressesFallbackCancelError(t *testing.T) {
 		},
 	})
 
-	result := nextTimeoutStreamMethod(instance, ctx, 5)
+	result := nextTimeoutStream(instance, ctx, 5*time.Second)
 	if result.Type() != object.DICT_OBJ {
 		t.Fatalf("expected dict timeout marker, got %v", result.Type())
 	}
@@ -744,7 +744,7 @@ func TestNextTimeoutCancelsStreamOnCallerCancellation(t *testing.T) {
 		},
 	})
 
-	result := nextTimeoutStreamMethod(instance, callCtx, 100)
+	result := nextTimeoutStream(instance, callCtx, 100*time.Second)
 	if result.Type() != object.NULL_OBJ {
 		t.Fatalf("expected null on caller cancellation, got %v", result.Type())
 	}
@@ -785,7 +785,7 @@ func TestNextTimeoutCallerCancellationDoesNotWedgeSubsequentNext(t *testing.T) {
 		},
 	})
 
-	result := nextTimeoutStreamMethod(instance, callCtx, 100)
+	result := nextTimeoutStream(instance, callCtx, 100*time.Second)
 	if result.Type() != object.NULL_OBJ {
 		t.Fatalf("expected null on caller cancellation, got %v", result.Type())
 	}
@@ -1530,7 +1530,7 @@ func TestCollectStreamAggregatesToolCalls(t *testing.T) {
 		},
 	})
 
-	result, errObj := collectStream(context.Background(), instance, 100, 0, nil)
+	result, errObj := collectStream(context.Background(), instance, 100*time.Second, 0, nil)
 	if errObj != nil {
 		t.Fatalf("collectStream returned error: %s", errObj.Message)
 	}
@@ -1564,7 +1564,7 @@ func TestCollectStreamExtractsThinkingTagsFromContentDeltas(t *testing.T) {
 		},
 	})
 
-	result, errObj := collectStream(context.Background(), instance, 100, 0, nil)
+	result, errObj := collectStream(context.Background(), instance, 100*time.Second, 0, nil)
 	if errObj != nil {
 		t.Fatalf("collectStream returned error: %s", errObj.Message)
 	}
@@ -3278,5 +3278,15 @@ func TestMaxParallelLimitClampsPipelines(t *testing.T) {
 	SetMaxParallelLimit(-1)
 	if MaxParallelLimit() != 0 {
 		t.Fatalf("negative ceiling stored as %d", MaxParallelLimit())
+	}
+}
+
+// next_timeout takes seconds like every other timeout: a string is a
+// TypeError, not a silent wait without a limit.
+func TestNextTimeoutRejectsString(t *testing.T) {
+	result := nextTimeoutStreamMethod(nil, context.Background(), object.NewString("5"))
+	errObj, ok := result.(*object.Error)
+	if !ok || errObj.ExceptionType != object.ExceptionTypeTypeError {
+		t.Fatalf("want a TypeError, got %#v", result)
 	}
 }

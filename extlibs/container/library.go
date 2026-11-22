@@ -642,9 +642,12 @@ Example:
 		if err != nil {
 			return err
 		}
-		timeoutSecs := kwargs.MustGetInt("timeout", 30)
+		timeout, _, errObj := kwargs.GetTimeout("timeout", 30*time.Second, 0)
+		if errObj != nil {
+			return errObj
+		}
 		stopped, goErr := runDriverVal(ctx, func() (bool, error) {
-			return ci.driver.WaitStopped(ctx, nameOrID, time.Duration(timeoutSecs)*time.Second)
+			return ci.driver.WaitStopped(ctx, nameOrID, timeout)
 		})
 		if goErr != nil {
 			return &object.Error{Message: goErr.Error()}
@@ -659,7 +662,7 @@ no longer exist (treated as already stopped).
 
 Parameters:
   name_or_id (str): Container name or ID
-  timeout (int, optional): Maximum time to wait in seconds (default 30)
+  timeout (int or float, optional): Maximum time to wait in seconds (default 30)
 
 Returns:
   bool: True if the container is stopped, False if the timeout was reached

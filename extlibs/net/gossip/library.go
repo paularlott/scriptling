@@ -914,19 +914,15 @@ Returns:
 
 					leaderCfg := leader.DefaultConfig()
 
-					if ci := kwargs.Get("check_interval"); ci != nil {
-						if v, e := ci.AsString(); e == nil {
-							if d, pErr := time.ParseDuration(v); pErr == nil {
-								leaderCfg.LeaderCheckInterval = d
-							}
-						}
+					if d, ok, errObj := durationKwarg(kwargs, "check_interval"); errObj != nil {
+						return errObj
+					} else if ok {
+						leaderCfg.LeaderCheckInterval = d
 					}
-					if lt := kwargs.Get("leader_timeout"); lt != nil {
-						if v, e := lt.AsString(); e == nil {
-							if d, pErr := time.ParseDuration(v); pErr == nil {
-								leaderCfg.LeaderTimeout = d
-							}
-						}
+					if d, ok, errObj := durationKwarg(kwargs, "leader_timeout"); errObj != nil {
+						return errObj
+					} else if ok {
+						leaderCfg.LeaderTimeout = d
 					}
 					if hmt := kwargs.Get("heartbeat_msg_type"); hmt != nil {
 						if v, e := hmt.AsInt(); e == nil {
@@ -954,8 +950,8 @@ Returns:
 				HelpText: `create_leader_election(check_interval="1s", leader_timeout="3s", heartbeat_msg_type=65, min_cluster_size=0, metadata_criteria=None) - Create a leader election manager
 
 Parameters:
-  check_interval (string): Duration between leader checks (default: "1s")
-  leader_timeout (string): Duration without heartbeat before leader is considered lost (default: "3s")
+  check_interval (number or string): Seconds, or a duration like "1s", between leader checks (default: "1s")
+  leader_timeout (number or string): Duration without heartbeat before leader is considered lost (default: "3s")
   heartbeat_msg_type (int): Message type for heartbeat messages (default: 65, reserved range)
   min_cluster_size (int): Minimum nodes required for quorum, a hard floor; set to the majority of the smallest cluster (default: 0)
   metadata_criteria (dict): Optional metadata criteria to limit eligible nodes
@@ -1311,33 +1307,25 @@ func buildLibrary(policy *peerPolicy) *object.Library {
 						config.CompressMinSize = int(iv)
 					}
 				}
-				if v := kwargs.Get("gossip_interval"); v != nil {
-					if sv, e := v.AsString(); e == nil {
-						if d, pErr := time.ParseDuration(sv); pErr == nil {
-							config.GossipInterval = d
-						}
-					}
+				if d, ok, errObj := durationKwarg(kwargs, "gossip_interval"); errObj != nil {
+					return errObj
+				} else if ok {
+					config.GossipInterval = d
 				}
-				if v := kwargs.Get("gossip_max_interval"); v != nil {
-					if sv, e := v.AsString(); e == nil {
-						if d, pErr := time.ParseDuration(sv); pErr == nil {
-							config.GossipMaxInterval = d
-						}
-					}
+				if d, ok, errObj := durationKwarg(kwargs, "gossip_max_interval"); errObj != nil {
+					return errObj
+				} else if ok {
+					config.GossipMaxInterval = d
 				}
-				if v := kwargs.Get("metadata_gossip_interval"); v != nil {
-					if sv, e := v.AsString(); e == nil {
-						if d, pErr := time.ParseDuration(sv); pErr == nil {
-							config.MetadataGossipInterval = d
-						}
-					}
+				if d, ok, errObj := durationKwarg(kwargs, "metadata_gossip_interval"); errObj != nil {
+					return errObj
+				} else if ok {
+					config.MetadataGossipInterval = d
 				}
-				if v := kwargs.Get("state_gossip_interval"); v != nil {
-					if sv, e := v.AsString(); e == nil {
-						if d, pErr := time.ParseDuration(sv); pErr == nil {
-							config.StateGossipInterval = d
-						}
-					}
+				if d, ok, errObj := durationKwarg(kwargs, "state_gossip_interval"); errObj != nil {
+					return errObj
+				} else if ok {
+					config.StateGossipInterval = d
 				}
 				if v := kwargs.Get("fan_out_multiplier"); v != nil {
 					if fv, e := v.AsFloat(); e == nil {
@@ -1364,61 +1352,45 @@ func buildLibrary(policy *peerPolicy) *object.Library {
 						config.PreferIPv6 = bv
 					}
 				}
-				if v := kwargs.Get("node_cleanup_interval"); v != nil {
-					if sv, e := v.AsString(); e == nil {
-						if d, pErr := time.ParseDuration(sv); pErr == nil {
-							config.NodeCleanupInterval = d
-						}
-					}
+				if d, ok, errObj := durationKwarg(kwargs, "node_cleanup_interval"); errObj != nil {
+					return errObj
+				} else if ok {
+					config.NodeCleanupInterval = d
 				}
-				if v := kwargs.Get("node_retention_time"); v != nil {
-					if sv, e := v.AsString(); e == nil {
-						if d, pErr := time.ParseDuration(sv); pErr == nil {
-							config.NodeRetentionTime = d
-						}
-					}
+				if d, ok, errObj := durationKwarg(kwargs, "node_retention_time"); errObj != nil {
+					return errObj
+				} else if ok {
+					config.NodeRetentionTime = d
 				}
-				if v := kwargs.Get("leaving_node_timeout"); v != nil {
-					if sv, e := v.AsString(); e == nil {
-						if d, pErr := time.ParseDuration(sv); pErr == nil {
-							config.LeavingNodeTimeout = d
-						}
-					}
+				if d, ok, errObj := durationKwarg(kwargs, "leaving_node_timeout"); errObj != nil {
+					return errObj
+				} else if ok {
+					config.LeavingNodeTimeout = d
 				}
-				if v := kwargs.Get("health_check_interval"); v != nil {
-					if sv, e := v.AsString(); e == nil {
-						if d, pErr := time.ParseDuration(sv); pErr == nil {
-							config.HealthCheckInterval = d
-						}
-					}
+				if d, ok, errObj := durationKwarg(kwargs, "health_check_interval"); errObj != nil {
+					return errObj
+				} else if ok {
+					config.HealthCheckInterval = d
 				}
-				if v := kwargs.Get("suspect_timeout"); v != nil {
-					if sv, e := v.AsString(); e == nil {
-						if d, pErr := time.ParseDuration(sv); pErr == nil {
-							config.SuspectTimeout = d
-						}
-					}
+				if d, ok, errObj := durationKwarg(kwargs, "suspect_timeout"); errObj != nil {
+					return errObj
+				} else if ok {
+					config.SuspectTimeout = d
 				}
-				if v := kwargs.Get("suspect_retry_interval"); v != nil {
-					if sv, e := v.AsString(); e == nil {
-						if d, pErr := time.ParseDuration(sv); pErr == nil {
-							config.SuspectRetryInterval = d
-						}
-					}
+				if d, ok, errObj := durationKwarg(kwargs, "suspect_retry_interval"); errObj != nil {
+					return errObj
+				} else if ok {
+					config.SuspectRetryInterval = d
 				}
-				if v := kwargs.Get("dead_node_timeout"); v != nil {
-					if sv, e := v.AsString(); e == nil {
-						if d, pErr := time.ParseDuration(sv); pErr == nil {
-							config.DeadNodeTimeout = d
-						}
-					}
+				if d, ok, errObj := durationKwarg(kwargs, "dead_node_timeout"); errObj != nil {
+					return errObj
+				} else if ok {
+					config.DeadNodeTimeout = d
 				}
-				if v := kwargs.Get("peer_recovery_interval"); v != nil {
-					if sv, e := v.AsString(); e == nil {
-						if d, pErr := time.ParseDuration(sv); pErr == nil {
-							config.PeerRecoveryInterval = d
-						}
-					}
+				if d, ok, errObj := durationKwarg(kwargs, "peer_recovery_interval"); errObj != nil {
+					return errObj
+				} else if ok {
+					config.PeerRecoveryInterval = d
 				}
 				if v := kwargs.Get("insecure_skip_verify"); v != nil {
 					if bv, e := v.AsBool(); e == nil {
@@ -1482,25 +1454,25 @@ Parameters:
   app_version (string): Application version for compatibility checks
   transport (string): Transport type: "socket" or "http" (default: "socket"); http serves gossip on bind_addr and relies on HTTPS for encryption
 
-Advanced configuration:
+Advanced configuration (durations are seconds, int or float, or strings like "1.5s"):
   compress_min_size (int): Min message size for compression (default: 256)
-  gossip_interval (string): Gossip interval duration (default: "5s")
-  gossip_max_interval (string): Max gossip interval (default: "20s")
-  metadata_gossip_interval (string): Metadata gossip interval (default: "500ms")
-  state_gossip_interval (string): State exchange interval (default: "45s")
+  gossip_interval (number or string): Gossip interval duration (default: "5s")
+  gossip_max_interval (number or string): Max gossip interval (default: "20s")
+  metadata_gossip_interval (number or string): Metadata gossip interval (default: "500ms")
+  state_gossip_interval (number or string): State exchange interval (default: "45s")
   fan_out_multiplier (float): Fan-out scaling factor (default: 1.0)
   ttl_multiplier (float): TTL scaling factor (default: 1.0)
   state_exchange_multiplier (float): State exchange scaling (default: 0.8)
   force_reliable_transport (bool): Force TCP for all messages (default: False; always on under a network policy)
   prefer_ipv6 (bool): Prefer IPv6 for DNS resolution (default: False)
-  node_cleanup_interval (string): Dead node cleanup interval (default: "20s")
-  node_retention_time (string): How long to keep dead nodes (default: "1h")
-  leaving_node_timeout (string): Timeout before moving leaving->dead (default: "30s")
-  health_check_interval (string): Health check interval (default: "2s")
-  suspect_timeout (string): Time before marking node suspect (default: "1.5s")
-  suspect_retry_interval (string): Suspect node retry interval (default: "1s")
-  dead_node_timeout (string): Time before marking suspect->dead (default: "15s")
-  peer_recovery_interval (string): Peer recovery check interval (default: "30s")
+  node_cleanup_interval (number or string): Dead node cleanup interval (default: "20s")
+  node_retention_time (number or string): How long to keep dead nodes (default: "1h")
+  leaving_node_timeout (number or string): Timeout before moving leaving->dead (default: "30s")
+  health_check_interval (number or string): Health check interval (default: "2s")
+  suspect_timeout (number or string): Time before marking node suspect (default: "1.5s")
+  suspect_retry_interval (number or string): Suspect node retry interval (default: "1s")
+  dead_node_timeout (number or string): Time before marking suspect->dead (default: "15s")
+  peer_recovery_interval (number or string): Peer recovery check interval (default: "30s")
   insecure_skip_verify (bool): Skip TLS verification for HTTP (default: False)
 
 Returns:
@@ -1738,4 +1710,23 @@ func (d *peerDialer) Dial(ctx context.Context, network, addr string) (net.Conn, 
 		return d.dialer.DialContext(ctx, network, addr)
 	}
 	return d.policy.guard.Dial(ctx, network, addr)
+}
+
+// durationKwarg reads the timeout or interval keyword called name: a number
+// of seconds (int or float), as every library's timeouts take, or a Go
+// duration string such as "1.5s". ok is false when it is absent.
+func durationKwarg(kwargs object.Kwargs, name string) (d time.Duration, ok bool, errObj object.Object) {
+	v, ok := kwargs.Lookup(name)
+	if !ok {
+		return 0, false, nil
+	}
+	if str, isStr := v.(*object.String); isStr {
+		d, err := time.ParseDuration(str.StringValue())
+		if err != nil || d <= 0 {
+			return 0, false, errors.NewValueError("%s must be a positive number of seconds or a duration like \"1.5s\", got %s", name, v.Inspect())
+		}
+		return d, true, nil
+	}
+	d, _, errObj = object.ParseTimeout(name, v, 0)
+	return d, errObj == nil, errObj
 }

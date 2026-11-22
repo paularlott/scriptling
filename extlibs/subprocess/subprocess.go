@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -114,7 +115,7 @@ var Library = object.NewLibrary(LibraryName, map[string]*object.Builtin{
 			captureOutput := false
 			shell := false
 			cwd := ""
-			timeout := 0.0
+			var timeout time.Duration
 			check := false
 			text := false
 			encoding := "utf-8"
@@ -138,11 +139,11 @@ var Library = object.NewLibrary(LibraryName, map[string]*object.Builtin{
 				}
 			}
 			if to, exists := kwargs.Lookup("timeout"); exists {
-				if f, ok := to.(*object.Float); ok {
-					timeout = f.FloatValue()
-				} else if i, ok := to.(*object.Integer); ok {
-					timeout = float64(i.IntValue())
+				d, _, errObj := object.ParseTimeout("timeout", to, object.TimeoutAllowNone)
+				if errObj != nil {
+					return errObj
 				}
+				timeout = d
 			}
 			if ch, exists := kwargs.Lookup("check"); exists {
 				if b, ok := ch.(*object.Boolean); ok {
@@ -204,10 +205,12 @@ var Library = object.NewLibrary(LibraryName, map[string]*object.Builtin{
 				cmd.Stdin = strings.NewReader(inputData)
 			}
 
+			var timeoutCtx context.Context
 			if timeout > 0 {
-				ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout*float64(time.Second)))
+				var cancel context.CancelFunc
+				timeoutCtx, cancel = context.WithTimeout(ctx, timeout)
 				defer cancel()
-				cmd = exec.CommandContext(ctx, cmd.Path, cmd.Args[1:]...)
+				cmd = exec.CommandContext(timeoutCtx, cmd.Path, cmd.Args[1:]...)
 				cmd.Dir = cwd
 				if len(env) > 0 {
 					cmd.Env = make([]string, 0, len(env))
@@ -234,6 +237,15 @@ var Library = object.NewLibrary(LibraryName, map[string]*object.Builtin{
 					err = cmd.Run()
 				}
 			})
+
+			// As Python's TimeoutExpired: the command was stopped, so there is
+			// no result to return. Catchable, unlike the run's own timeout.
+			if timeoutCtx != nil && timeoutCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+				return &object.Error{
+					Message:       fmt.Sprintf("Command '%s' timed out after %s seconds", strings.Join(cmd.Args, " "), strconv.FormatFloat(timeout.Seconds(), 'g', -1, 64)),
+					ExceptionType: "TimeoutError",
+				}
+			}
 
 			returncode := 0
 			if err != nil {
@@ -282,7 +294,7 @@ Parameters:
     - capture_output (bool): Capture stdout and stderr (default: false)
     - shell (bool): Run command through shell (default: false)
     - cwd (string): Working directory for command
-    - timeout (int): Timeout in seconds
+    - timeout (int, float or None): Timeout in seconds, None for none (default: None); raises TimeoutError when it expires
     - check (bool): Raise exception if returncode is non-zero
 
 Returns:

@@ -421,11 +421,9 @@ Returns True if connected, False otherwise.`,
 					return errors.NewError("receive() called on non-WebSocketClient object")
 				}
 
-				timeout := 30.0
-				if t := kwargs.Get("timeout"); t != nil {
-					if timeoutFloat, e := t.AsFloat(); e == nil {
-						timeout = timeoutFloat
-					}
+				timeout, _, timeoutErr := kwargs.GetTimeout("timeout", 30*time.Second, object.TimeoutAllowNone)
+				if timeoutErr != nil {
+					return timeoutErr
 				}
 
 				conn := getWSConnFromInstance(instance)
@@ -433,7 +431,7 @@ Returns True if connected, False otherwise.`,
 					return &object.Null{}
 				}
 
-				msgType, data, err := conn.ReadWithTimeout(time.Duration(timeout * float64(time.Second)))
+				msgType, data, err := conn.ReadWithTimeout(timeout)
 				if err != nil || data == nil {
 					return &object.Null{}
 				}
@@ -451,7 +449,7 @@ Returns True if connected, False otherwise.`,
 			HelpText: `receive(timeout=30) - Receive a message from the WebSocket
 
 Parameters:
-  timeout (number, optional): Timeout in seconds (default: 30)
+  timeout (int, float or None, optional): Timeout in seconds, None to wait without one (default: 30)
 
 Returns:
   string for text messages, list of bytes for binary, or None on timeout/disconnect`,

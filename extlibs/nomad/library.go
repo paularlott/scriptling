@@ -44,8 +44,11 @@ func buildLibrary(guard *netsecurity.Guard) *object.Library {
 	b.FunctionWithHelp("Client", func(ctx context.Context, kwargs object.Kwargs, addr string) (object.Object, error) {
 		token := kwargs.MustGetString("token", "")
 		insecure := kwargs.MustGetBool("insecure", false)
-		timeoutSecs := kwargs.MustGetFloat("timeout", DefaultTimeout.Seconds())
-		c, err := newClient(addr, token, insecure, time.Duration(timeoutSecs*float64(time.Second)), t)
+		timeout, _, errObj := kwargs.GetTimeout("timeout", DefaultTimeout, 0)
+		if errObj != nil {
+			return errObj, nil
+		}
+		c, err := newClient(addr, token, insecure, timeout, t)
 		if err != nil {
 			return nil, err
 		}
@@ -56,7 +59,7 @@ Parameters:
   addr (str): Nomad HTTP API address, e.g. "http://127.0.0.1:4646" (no query or fragment)
   token (str, optional): ACL token, sent as the X-Nomad-Token header. Default: ""
   insecure (bool, optional): Skip TLS certificate verification. Default: False
-  timeout (float, optional): Per-request HTTP timeout in seconds. Default: 10
+  timeout (int or float, optional): Per-request HTTP timeout in seconds. Default: 10
 
 Returns:
   NomadClient: A client instance
@@ -614,9 +617,12 @@ Example:
 			return errObj
 		}
 		namespace := kwargs.MustGetString("namespace", "")
-		timeoutSecs := kwargs.MustGetInt("timeout", 30)
+		timeout, _, timeoutErr := kwargs.GetTimeout("timeout", 30*time.Second, 0)
+		if timeoutErr != nil {
+			return timeoutErr
+		}
 		stopped, err := runBlockingVal(ctx, func() (bool, error) {
-			return ci.c.WaitJobStopped(ctx, id, namespace, time.Duration(timeoutSecs)*time.Second)
+			return ci.c.WaitJobStopped(ctx, id, namespace, timeout)
 		})
 		if err != nil {
 			return &object.Error{Message: err.Error()}
@@ -627,7 +633,7 @@ Example:
 Parameters:
   id (str): Job ID
   namespace (str, optional): Namespace. Default: "" (Nomad default namespace)
-  timeout (int, optional): Maximum time to wait in seconds. Default: 30
+  timeout (int or float, optional): Maximum time to wait in seconds. Default: 30
 
 Returns:
   bool: True if the job is stopped, False if the timeout was reached

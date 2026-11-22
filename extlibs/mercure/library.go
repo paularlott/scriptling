@@ -46,7 +46,7 @@ const (
 	defaultIssuer = "https://localhost"
 
 	defaultTimeout        = 30 * time.Second
-	defaultReceiveTimeout = 30.0
+	defaultReceiveTimeout = 30 * time.Second
 	// closeWait bounds how long a closed client waits for its subscriptions
 	// to let go of their connections before it closes the idle ones.
 	closeWait = 5 * time.Second
@@ -224,7 +224,7 @@ Parameters:
     faster for many updates. "auto": stream to a gossiper hub, a POST per update to any other
   verify (bool or str, optional): Verify the hub's TLS certificate (default: True); False accepts any
     certificate (development only); a path names a PEM bundle of CA certificates to trust
-  timeout (float, optional): Seconds to wait for the hub to answer a publish, or to accept a
+  timeout (int or float, optional): Seconds to wait for the hub to answer a publish, or to accept a
     subscription. Default: 30
   headers (dict, optional): Headers added to every request
   host (str, optional): The host name to ask for, when it is not the URL's (a node reached by address)
@@ -311,14 +311,10 @@ func newClient(ctx context.Context, t *transports, kwargs object.Kwargs, hubURL 
 	if errObj != nil {
 		return errObj
 	}
-	timeoutSecs, errObj := kwargs.GetFloat("timeout", defaultTimeout.Seconds())
+	timeout, _, errObj := kwargs.GetTimeout("timeout", defaultTimeout, 0)
 	if errObj != nil {
 		return errObj
 	}
-	if timeoutSecs <= 0 {
-		return scriptlingerrors.NewValueError("timeout must be positive")
-	}
-	timeout := time.Duration(timeoutSecs * float64(time.Second))
 	h2c, errObj := kwargs.GetBool("h2c", false)
 	if errObj != nil {
 		return errObj
@@ -1033,31 +1029,22 @@ func buildSubscriptionClass() *object.Class {
 		if errObj != nil {
 			return errObj
 		}
-		timeout := defaultReceiveTimeout
-		if v := kwargs.Get("timeout"); v != nil {
-			if _, null := v.(*object.Null); null {
-				timeout = 0
-			} else {
-				f, err := v.AsFloat()
-				if err != nil {
-					return scriptlingerrors.NewTypeError("FLOAT", v.Type().String())
-				}
-				timeout = max(f, 0)
-				if f <= 0 {
-					timeout = -1 // no wait: only an event already there
-				}
-			}
+		// None waits without limit (next takes 0 as no limit); 0 takes only
+		// an event already received.
+		timeout, none, errObj := kwargs.GetTimeout("timeout", defaultReceiveTimeout, object.TimeoutAllowNone|object.TimeoutAllowZero)
+		if errObj != nil {
+			return errObj
 		}
 		var ev client.Event
 		var ok, ended bool
-		if timeout < 0 {
+		if timeout == 0 && !none {
 			select {
 			case e, open := <-s.s.Events():
 				ev, ok, ended = e, open, !open
 			default:
 			}
 		} else {
-			ev, ok, ended = s.next(ctx, time.Duration(timeout*float64(time.Second)))
+			ev, ok, ended = s.next(ctx, timeout)
 		}
 		if errObj := ctxError(ctx); errObj != nil {
 			return errObj
@@ -1075,7 +1062,7 @@ func buildSubscriptionClass() *object.Class {
 	}, `receive(timeout=30) - The next event, or None when none comes within timeout seconds
 
 Parameters:
-  timeout (float, optional): Seconds to wait. Default: 30. None waits until an event comes or the
+  timeout (int, float or None, optional): Seconds to wait. Default: 30. None waits until an event comes or the
     subscription is closed; 0 takes only an event already received
 
 Returns:

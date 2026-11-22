@@ -585,3 +585,29 @@ func TestGossipCleanupNoPanic(t *testing.T) {
 	}
 	clusters.Unlock()
 }
+
+// Durations take seconds as numbers, like every other timeout, or duration
+// strings; anything else is an error rather than silently ignored.
+func TestDurationKwarg(t *testing.T) {
+	kw := object.NewKwargs(map[string]object.Object{
+		"a": object.NewFloat(1.5),
+		"b": object.NewString("250ms"),
+		"c": object.NewString("soon"),
+		"d": object.NewInteger(0),
+	})
+	if d, ok, err := durationKwarg(kw, "a"); err != nil || !ok || d.Seconds() != 1.5 {
+		t.Errorf("a: %v %v %v", d, ok, err)
+	}
+	if d, ok, err := durationKwarg(kw, "b"); err != nil || !ok || d.Milliseconds() != 250 {
+		t.Errorf("b: %v %v %v", d, ok, err)
+	}
+	if _, _, err := durationKwarg(kw, "c"); err == nil {
+		t.Error("c: want an error for an unparseable duration")
+	}
+	if _, _, err := durationKwarg(kw, "d"); err == nil {
+		t.Error("d: want an error for zero")
+	}
+	if _, ok, err := durationKwarg(kw, "missing"); ok || err != nil {
+		t.Errorf("missing: %v %v", ok, err)
+	}
+}

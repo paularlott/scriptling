@@ -139,18 +139,16 @@ Parameters:
 			},
 			"receive": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					timeout := 30.0
-					if t := kwargs.Get("timeout"); t != nil {
-						if timeoutFloat, e := t.AsFloat(); e == nil {
-							timeout = timeoutFloat
-						}
+					timeout, _, timeoutErr := kwargs.GetTimeout("timeout", 30*time.Second, object.TimeoutAllowNone)
+					if timeoutErr != nil {
+						return timeoutErr
 					}
 
 					var data []byte
 					var src *net.UDPAddr
 					var err error
 					object.RunBlocking(ctx, func() {
-						data, src, err = g.receive(time.Duration(timeout * float64(time.Second)))
+						data, src, err = g.receive(timeout)
 					})
 					if err != nil {
 						return errors.NewError("receive failed: %s", err.Error())
@@ -167,7 +165,7 @@ Parameters:
 				HelpText: `receive(timeout=30) - Receive a message from the multicast group
 
 Parameters:
-  timeout (number, optional): Timeout in seconds (default: 30)
+  timeout (int, float or None, optional): Timeout in seconds, None to wait without one (default: 30)
 
 Returns:
   dict with "data" and "source" keys, or None on timeout`,

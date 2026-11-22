@@ -7,9 +7,12 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -212,22 +215,37 @@ func parseVerify(options map[string]object.Object) (tlsVerify, object.Object) {
 	return tlsVerify{}, errors.NewTypeError("BOOLEAN or STRING", v.Type().String())
 }
 
+// parseTimeout reads the timeout option in seconds, as Python's requests
+// does: an int or a float, or None for no timeout of its own, leaving the
+// caller's context to bound the request.
+func parseTimeout(options map[string]object.Object, def time.Duration) (time.Duration, object.Object) {
+	v, ok := options["timeout"]
+	if !ok {
+		return def, nil
+	}
+	d, _, errObj := object.ParseTimeout("timeout", v, object.TimeoutAllowNone)
+	return d, errObj
+}
+
+// formatSeconds writes d in seconds without a trailing ".0": 5, 0.5, 120.
+func formatSeconds(d time.Duration) string {
+	return strconv.FormatFloat(d.Seconds(), 'g', -1, 64)
+}
+
 // parseRequestOptions parses the options dict and returns timeout, headers, params, user, pass, verify
-func parseRequestOptions(options map[string]object.Object) (int, map[string]string, map[string]string, string, string, tlsVerify, object.Object) {
+func parseRequestOptions(options map[string]object.Object) (time.Duration, map[string]string, map[string]string, string, string, tlsVerify, object.Object) {
 	verify, errObj := parseVerify(options)
 	if errObj != nil {
 		return 0, nil, nil, "", "", tlsVerify{}, errObj
 	}
-	timeout := 5
+	timeout, errObj := parseTimeout(options, 5*time.Second)
+	if errObj != nil {
+		return 0, nil, nil, "", "", tlsVerify{}, errObj
+	}
 	headers := make(map[string]string)
 	params := make(map[string]string)
 	user := ""
 	pass := ""
-	if timeoutPair, ok := options["timeout"]; ok {
-		if timeoutInt, err := timeoutPair.AsInt(); err == nil {
-			timeout = int(timeoutInt)
-		}
-	}
 	if headersPair, ok := options["headers"]; ok {
 		if headersDict, err := headersPair.AsDict(); err == nil {
 			headers = extractHeaders(headersDict)
@@ -464,17 +482,34 @@ func (l *requestsLib) checkCABundlePath(path string) object.Object {
 
 // clientFor returns the client for a request's verify option. A guarded
 // library never falls back to the unguarded pool.
+//
+// Without a policy the request's own timeout is its only limit: the shared
+// pool's client carries a general 30s default that would otherwise cut every
+// longer timeout short. With one, the guard's client timeout is the
+// operator's client_timeout cap and stays.
 func (l *requestsLib) clientFor(ctx context.Context, v tlsVerify) (*http.Client, object.Object) {
+	var c *http.Client
 	switch {
 	case v.caBundle != "":
-		return l.caBundleClient(ctx, v.caBundle)
+		var errObj object.Object
+		if c, errObj = l.caBundleClient(ctx, v.caBundle); errObj != nil {
+			return nil, errObj
+		}
+	case !v.off && l.client != nil:
+		c = l.client
 	case !v.off:
-		return l.client, nil // nil: the shared pool
+		c = pool.GetHTTPClient()
 	case l.insecureClient != nil:
-		return l.insecureClient, nil
+		c = l.insecureClient
 	default:
-		return pool.GetInsecureHTTPClient(), nil
+		c = pool.GetInsecureHTTPClient()
 	}
+	if l.guard == nil && c.Timeout != 0 {
+		uncapped := *c
+		uncapped.Timeout = 0
+		c = &uncapped
+	}
+	return c, nil
 }
 
 // caBundleClient returns a client trusting only the CA certificates in the PEM
@@ -557,7 +592,7 @@ Sends an HTTP GET request to the specified URL.
 Parameters:
   url (string): The URL to send the request to
   **kwargs: Optional arguments
-    - timeout (int): Request timeout in seconds (default: 5)
+    - timeout (int or float): Request timeout in seconds, None for none (default: 5)
     - headers (dict): HTTP headers as key-value pairs
     - params (dict): Query parameters to append to URL
     - auth (tuple/list): Basic authentication as (username, password)
@@ -596,7 +631,7 @@ Parameters:
   data (string, optional): The request body data as a string
   json (dict/list, optional): Data to be JSON-encoded and sent (sets Content-Type to application/json)
   **kwargs: Optional arguments
-    - timeout (int): Request timeout in seconds (default: 5)
+    - timeout (int or float): Request timeout in seconds, None for none (default: 5)
     - headers (dict): HTTP headers as key-value pairs
     - auth (tuple/list): Basic authentication as (username, password)
     - verify (bool or str): Verify the server's TLS certificate (default: True). False accepts any certificate, for a development server only; a path names a PEM bundle of CA certificates to trust instead of the system's
@@ -635,7 +670,7 @@ Parameters:
   data (string, optional): The request body data as a string
   json (dict/list, optional): Data to be JSON-encoded and sent (sets Content-Type to application/json)
   **kwargs: Optional arguments
-    - timeout (int): Request timeout in seconds (default: 5)
+    - timeout (int or float): Request timeout in seconds, None for none (default: 5)
     - headers (dict): HTTP headers as key-value pairs
     - auth (tuple/list): Basic authentication as (username, password)
     - verify (bool or str): Verify the server's TLS certificate (default: True). False accepts any certificate, for a development server only; a path names a PEM bundle of CA certificates to trust instead of the system's
@@ -672,7 +707,7 @@ Sends an HTTP DELETE request to the specified URL.
 Parameters:
   url (string): The URL to send the request to
   **kwargs: Optional arguments
-    - timeout (int): Request timeout in seconds (default: 5)
+    - timeout (int or float): Request timeout in seconds, None for none (default: 5)
     - headers (dict): HTTP headers as key-value pairs
     - auth (tuple/list): Basic authentication as (username, password)
     - verify (bool or str): Verify the server's TLS certificate (default: True). False accepts any certificate, for a development server only; a path names a PEM bundle of CA certificates to trust instead of the system's
@@ -709,7 +744,7 @@ Parameters:
   data (string, optional): The request body data as a string
   json (dict/list, optional): Data to be JSON-encoded and sent (sets Content-Type to application/json)
   **kwargs: Optional arguments
-    - timeout (int): Request timeout in seconds (default: 5)
+    - timeout (int or float): Request timeout in seconds, None for none (default: 5)
     - headers (dict): HTTP headers as key-value pairs
     - auth (tuple/list): Basic authentication as (username, password)
     - verify (bool or str): Verify the server's TLS certificate (default: True). False accepts any certificate, for a development server only; a path names a PEM bundle of CA certificates to trust instead of the system's
@@ -858,7 +893,7 @@ Parameters:
     - headers (dict, optional): HTTP headers
     - params (dict, optional): Query parameters
     - auth (list/tuple, optional): [username, password] for basic auth
-    - timeout (int, optional): Timeout in seconds (default: 30)
+    - timeout (int or float, optional): Timeout in seconds, None for none (default: 30)
     - verify (bool or str, optional): Verify the server's TLS certificate (default: True), or a CA bundle path
   max_parallel (int): Maximum concurrent requests (default: 4). The host may cap this; a larger request is reduced to the cap.
 
@@ -930,12 +965,15 @@ func basicAuthHeaderBytes(user, pass string) int64 {
 	return int64(len("Authorization: Basic ") + base64.StdEncoding.EncodedLen(credentials))
 }
 
-func httpRequestWithContext(parentCtx context.Context, method, url, body string, timeoutSecs int, headers map[string]string, user, pass string, client *http.Client) object.Object {
+func httpRequestWithContext(parentCtx context.Context, method, url, body string, timeout time.Duration, headers map[string]string, user, pass string, client *http.Client) object.Object {
 	if errObj := checkOutgoingRequest(url, body, headers, user, pass); errObj != nil {
 		return errObj
 	}
-	// Combine parent context with timeout
-	ctx, cancel := context.WithTimeout(parentCtx, time.Duration(timeoutSecs)*time.Second)
+	// Combine parent context with timeout; zero means none of its own.
+	ctx, cancel := parentCtx, context.CancelFunc(func() {})
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(parentCtx, timeout)
+	}
 	defer cancel()
 
 	var req *http.Request
@@ -973,8 +1011,12 @@ func httpRequestWithContext(parentCtx context.Context, method, url, body string,
 	}
 	object.RunBlocking(ctx, func() { resp, err = reqClient.Do(req) })
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return errors.NewError("http timeout after %d seconds", timeoutSecs)
+		if timeout > 0 && ctx.Err() == context.DeadlineExceeded && parentCtx.Err() == nil {
+			return errors.NewError("http timeout after %s seconds", formatSeconds(timeout))
+		}
+		var netErr net.Error
+		if reqClient.Timeout > 0 && stderrors.As(err, &netErr) && netErr.Timeout() && parentCtx.Err() == nil {
+			return errors.NewError("http timeout after %s seconds (the network policy's client_timeout)", formatSeconds(reqClient.Timeout))
 		}
 		return errors.NewError("http error: %s", err.Error())
 	}
@@ -1026,11 +1068,9 @@ func executeParallelRequest(ctx context.Context, spec map[string]object.Object, 
 	}
 
 	// Extract timeout (default 30s for parallel — longer than individual default)
-	timeout := 30
-	if timeoutObj, ok := spec["timeout"]; ok {
-		if t, err := timeoutObj.AsInt(); err == nil {
-			timeout = int(t)
-		}
+	timeout, errObj := parseTimeout(spec, 30*time.Second)
+	if errObj != nil {
+		return createResponseInstance(0, nil, []byte(errObj.(*object.Error).Message), urlStr)
 	}
 
 	// Extract headers

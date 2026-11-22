@@ -176,16 +176,14 @@ Parameters:
 			},
 			"receive": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					timeout := 30.0
-					if t := kwargs.Get("timeout"); t != nil {
-						if timeoutFloat, e := t.AsFloat(); e == nil {
-							timeout = timeoutFloat
-						}
+					timeout, _, timeoutErr := kwargs.GetTimeout("timeout", 30*time.Second, object.TimeoutAllowNone)
+					if timeoutErr != nil {
+						return timeoutErr
 					}
 					var data []byte
 					var err error
 					object.RunBlocking(ctx, func() {
-						data, err = c.receive(time.Duration(timeout * float64(time.Second)))
+						data, err = c.receive(timeout)
 					})
 					if err != nil {
 						return errors.NewError("receive failed: %s", err.Error())
@@ -201,7 +199,7 @@ Parameters:
 				HelpText: `receive(timeout=30) - Receive a message
 
 Parameters:
-  timeout (number, optional): Timeout in seconds (default: 30)
+  timeout (int, float or None, optional): Timeout in seconds, None to wait without one (default: 30)
 
 Returns:
   dict with "data" and "source" keys, or None on timeout
@@ -300,17 +298,15 @@ func buildUDPListenerObject(l *udpListener, guard *netsecurity.Guard) *object.Bu
 		Attributes: map[string]object.Object{
 			"receive": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					timeout := 30.0
-					if t := kwargs.Get("timeout"); t != nil {
-						if timeoutFloat, e := t.AsFloat(); e == nil {
-							timeout = timeoutFloat
-						}
+					timeout, _, timeoutErr := kwargs.GetTimeout("timeout", 30*time.Second, object.TimeoutAllowNone)
+					if timeoutErr != nil {
+						return timeoutErr
 					}
 					var data []byte
 					var src *net.UDPAddr
 					var err error
 					object.RunBlocking(ctx, func() {
-						data, src, err = l.receive(time.Duration(timeout * float64(time.Second)))
+						data, src, err = l.receive(timeout)
 					})
 					if err != nil {
 						return errors.NewError("receive failed: %s", err.Error())
@@ -413,16 +409,14 @@ func buildTCPListenerObject(l *tcpListener) *object.Builtin {
 		Attributes: map[string]object.Object{
 			"accept": &object.Builtin{
 				Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
-					timeout := 30.0
-					if t := kwargs.Get("timeout"); t != nil {
-						if timeoutFloat, e := t.AsFloat(); e == nil {
-							timeout = timeoutFloat
-						}
+					timeout, _, timeoutErr := kwargs.GetTimeout("timeout", 30*time.Second, object.TimeoutAllowNone)
+					if timeoutErr != nil {
+						return timeoutErr
 					}
 					var conn net.Conn
 					var acceptErr error
 					object.RunBlocking(ctx, func() {
-						conn, acceptErr = l.accept(time.Duration(timeout * float64(time.Second)))
+						conn, acceptErr = l.accept(timeout)
 					})
 					if acceptErr != nil {
 						if netErr, ok := acceptErr.(net.Error); ok && netErr.Timeout() {
@@ -441,7 +435,7 @@ func buildTCPListenerObject(l *tcpListener) *object.Builtin {
 				HelpText: `accept(timeout=30) - Accept an incoming TCP connection
 
 Parameters:
-  timeout (number, optional): Timeout in seconds (default: 30)
+  timeout (int, float or None, optional): Timeout in seconds, None to wait without one (default: 30)
 
 Returns:
   TCP connection object or None on timeout`,
@@ -516,15 +510,13 @@ func buildLibrary(guard *netsecurity.Guard) *object.Library {
 					}
 				}
 
-				timeout := 10.0
-				if t := kwargs.Get("timeout"); t != nil {
-					if timeoutFloat, e := t.AsFloat(); e == nil {
-						timeout = timeoutFloat
-					}
+				timeout, _, timeoutErr := kwargs.GetTimeout("timeout", 10*time.Second, 0)
+				if timeoutErr != nil {
+					return timeoutErr
 				}
 
 				addr := net.JoinHostPort(host, fmt.Sprint(port))
-				dialTimeout := time.Duration(timeout * float64(time.Second))
+				dialTimeout := timeout
 
 				switch protocol {
 				case "udp":
@@ -566,7 +558,7 @@ Parameters:
   host (string): Remote host address
   port (int): Remote port number
   protocol (string): "udp" or "tcp" (default: "udp")
-  timeout (number): Connection timeout in seconds (default: 10)
+  timeout (int or float): Connection timeout in seconds (default: 10)
 
 Returns:
   Connection object with methods: send(), receive(), close(), connected()

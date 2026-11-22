@@ -156,15 +156,12 @@ func buildLibrary(t *transports) *object.Library {
 		if errObj != nil {
 			return errObj
 		}
-		timeout, errObj := kwargs.GetFloat("timeout", defaultTimeout.Seconds())
+		timeout, _, errObj := kwargs.GetTimeout("timeout", defaultTimeout, 0)
 		if errObj != nil {
 			return errObj
 		}
-		if timeout <= 0 {
-			return scriptlingerrors.NewValueError("timeout must be positive")
-		}
 		c, err := newClient(issuer, clientID, clientSecret,
-			httpClient, time.Duration(timeout*float64(time.Second)))
+			httpClient, timeout)
 		if err != nil {
 			return &object.Error{Message: err.Error()}
 		}
@@ -179,7 +176,7 @@ Parameters:
     out of the script: read it with the secret library or os.getenv
   verify (bool or str, optional): Verify the IdP's TLS certificate (default: True); False accepts any
     certificate (development only); a path names a PEM bundle of CA certificates to trust
-  timeout (float, optional): Per-request timeout in seconds. Default: 10
+  timeout (int or float, optional): Per-request timeout in seconds. Default: 10
 
 Returns:
   OAuthClient
@@ -551,14 +548,13 @@ Returns:
 		if errObj != nil {
 			return errObj
 		}
-		var timeout float64
-		if v := kwargs.Get("timeout"); v != nil && !isNull(v) {
-			if timeout, errObj = kwargs.GetFloat("timeout", 0); errObj != nil {
-				return errObj
-			}
+		// None (the default) waits until the code expires.
+		timeout, _, errObj := kwargs.GetTimeout("timeout", 0, object.TimeoutAllowNone)
+		if errObj != nil {
+			return errObj
 		}
 		tok, err := blocking(ctx, func() (*token, error) {
-			return f.Wait(ctx, time.Duration(timeout*float64(time.Second)))
+			return f.Wait(ctx, timeout)
 		})
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -570,7 +566,7 @@ Returns:
 	}, `wait(**kwargs) - Wait until the sign-in is approved, polling at the IdP's interval
 
 Parameters:
-  timeout (float, optional): Give up after this many seconds. Default: until the code expires
+  timeout (int, float or None, optional): Give up after this many seconds. Default: None, until the code expires
 
 Returns:
   Token. Raises if the sign-in was denied, the code expired or the timeout passed.`)
