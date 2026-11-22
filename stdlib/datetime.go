@@ -1438,6 +1438,14 @@ func init() {
 	object.RegisterBuiltinType(timedeltaBuiltinNew, TimedeltaClass)
 	object.RegisterBuiltinType(timeConstructorBuiltin, TimeClass)
 	object.RegisterBuiltinType(timezoneConstructorBuiltin, TimezoneClass)
+	// They print as the types they are: <class 'datetime.date'>.
+	for name, b := range map[string]*object.Builtin{
+		"date": dateConstructorBuiltin, "datetime": datetimeConstructorBuiltin,
+		"timedelta": timedeltaBuiltinNew, "time": timeConstructorBuiltin,
+		"timezone": timezoneConstructorBuiltin,
+	} {
+		b.Repr = "<class 'datetime." + name + "'>"
+	}
 }
 
 // DatetimeLibrary is the main datetime module

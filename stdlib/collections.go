@@ -97,7 +97,10 @@ func defaultDictAddPairs(ctx context.Context, dd *object.Dict, items []object.Ob
 	return nil
 }
 
-func init() { object.DefaultDictType = defaultDictBuiltin }
+func init() {
+	object.DefaultDictType = defaultDictBuiltin
+	defaultDictBuiltin.Repr = "<class 'collections.defaultdict'>"
+}
 
 // createCounterInstance creates a new Counter instance
 
@@ -842,6 +845,7 @@ func init() {
 	dequeClassRef = DequeClass
 	counterClassRef = CounterClass
 	object.OrderedDictType = CollectionsLibrary.Functions()["OrderedDict"]
+	object.OrderedDictType.Repr = "<class 'collections.OrderedDict'>"
 }
 
 // reprBuilder assembles a library type's repr, such as P(x=1, y=[2]), held

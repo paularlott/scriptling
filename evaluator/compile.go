@@ -3744,7 +3744,7 @@ func exceptionTypeObject(exc *object.Exception) object.Object {
 			return b
 		}
 	}
-	return typeOf(exc)
+	return typeObjectNamed(typeOf(exc).(*object.String).StringValue())
 }
 
 // callWithExit calls a context manager's __exit__ for a with block whose

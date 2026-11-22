@@ -26,7 +26,7 @@ func TestClientCreation(t *testing.T) {
 	p := setupInterpreter()
 	result, err := p.Eval(`import scriptling.messaging.discord as discord
 c = discord.client("test-token")
-type(c)`)
+type(c).__name__`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -1,6 +1,122 @@
 package evaluator
 
-import "github.com/paularlott/scriptling/object"
+import (
+	"context"
+	"sync"
+
+	"github.com/paularlott/scriptling/errors"
+
+	"github.com/paularlott/scriptling/object"
+)
+
+// typeObjectOf is type(obj): the type as a value, as in Python. An
+// instance gives its class, int gives int, and a value whose type has no
+// builtin name (None, a function, an iterator) gives a type object that
+// prints as <class 'NoneType'>, has __name__, and works with is, == and
+// isinstance.
+func typeObjectOf(obj object.Object) object.Object {
+	switch o := obj.(type) {
+	case *object.Integer:
+		return typeObjInt
+	case *object.String:
+		return typeObjStr
+	case *object.Float:
+		return typeObjFloat
+	case *object.Boolean:
+		return typeObjBool
+	case *object.Null:
+		return typeObjNone
+	case *object.List:
+		return typeObjList
+	case *object.Tuple:
+		return typeObjTuple
+	case *object.Instance:
+		if b, ok := object.BuiltinTypeFor(o.Class); ok {
+			return b
+		}
+		return o.Class
+	case *object.Exception:
+		return exceptionTypeObject(o)
+	case *object.Class:
+		return typeTypeBuiltin
+	case *object.Builtin:
+		if o == typeTypeBuiltin || isClassLike(o) {
+			return typeTypeBuiltin
+		}
+	case *object.Dict:
+		if o.Module == "" {
+			if o.Factory() != nil && object.DefaultDictType != nil {
+				return object.DefaultDictType
+			}
+			if o.IsOrderedDict() && object.OrderedDictType != nil {
+				return object.OrderedDictType
+			}
+		}
+	}
+	t := typeOf(obj)
+	if s, ok := t.(*object.String); ok {
+		return typeObjectNamed(s.StringValue())
+	}
+	return typeObjectNamed(t.Inspect())
+}
+
+// The types of the common values, set once the builtins exist.
+var typeObjInt, typeObjStr, typeObjFloat, typeObjBool, typeObjNone, typeObjList, typeObjTuple object.Object
+
+func initTypeObjects() {
+	typeObjInt = typeObjectNamed("int")
+	typeObjStr = typeObjectNamed("str")
+	typeObjFloat = typeObjectNamed("float")
+	typeObjBool = typeObjectNamed("bool")
+	typeObjNone = typeObjectNamed("NoneType")
+	typeObjList = typeObjectNamed("list")
+	typeObjTuple = typeObjectNamed("tuple")
+}
+
+// syntheticTypes holds the type objects for names with no builtin, made on
+// first use so type(None) is type(None).
+var syntheticTypes sync.Map // name -> *object.Builtin
+
+// typeObjectNamed is the type object for a type name: the builtin for int,
+// str and the other builtin types, else a synthetic type.
+func typeObjectNamed(name string) object.Object {
+	if b, ok := builtins[name]; ok {
+		if _, isType := typeBuiltins[b]; isType {
+			return b
+		}
+		if excName, isExc := exceptionClassName(b); isExc && excName == name {
+			return b
+		}
+	}
+	if t, ok := syntheticTypes.Load(name); ok {
+		return t.(*object.Builtin)
+	}
+	b := &object.Builtin{
+		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
+			if name == "NoneType" && len(args) == 0 && kwargs.Len() == 0 {
+				return NULL // type(None)() is None
+			}
+			return errors.NewTypeErrorTagged("cannot create '%s' instances", name)
+		},
+		Repr:       "<class '" + name + "'>",
+		Attributes: map[string]object.Object{"__name__": object.NewString(name), "__qualname__": object.NewString(name)},
+	}
+	t, _ := syntheticTypes.LoadOrStore(name, b)
+	return t.(*object.Builtin)
+}
+
+// syntheticTypeName is the name of a type object typeObjectNamed made, ""
+// for any other value.
+func syntheticTypeName(b *object.Builtin) string {
+	n, ok := b.Attributes["__name__"].(*object.String)
+	if !ok {
+		return ""
+	}
+	if t, ok := syntheticTypes.Load(n.StringValue()); ok && t == b {
+		return n.StringValue()
+	}
+	return ""
+}
 
 // Type names type() returns, shared so type() does not allocate.
 var (

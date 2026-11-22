@@ -62,7 +62,7 @@ def f():
 class C:
     def m(self):
         pass
-[type(f), type(C), type(C()), type(C().m)]`
+[type(f).__name__, type(C).__name__, type(C()).__name__, type(C().m).__name__]`
 	got := testEval(script).Inspect()
 	want := "['function', 'type', 'C', 'method']"
 	if got != want {

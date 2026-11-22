@@ -196,6 +196,9 @@ Use list(filter(...)) to get a list.`,
 					// str() semantics: __str__, then __repr__, then default.
 					return strInstanceChecked(ctx, inst, env)
 				}
+				if c, ok := arg.(*object.Class); ok {
+					return c.Inspect(), nil // print(C) is <class 'C'>
+				}
 				if str, err := arg.AsString(); err == nil && !object.IsReprContainer(arg) {
 					return str, nil
 				}
@@ -328,14 +331,13 @@ Returns the number of items in a string, bytes, list, dict, or tuple.`,
 			if err := errors.ExactArgs(args, 1); err != nil {
 				return err
 			}
-			return typeOf(args[0])
+			return typeObjectFn(args[0])
 		},
 		HelpText: `type(obj) - Return the type of an object
 
-Returns the type's name as a string, as Python's type(obj).__name__ spells it:
-"int", "str", "list", "NoneType", "function", "list_iterator", the class name
-for an instance, and the class it was raised as for an exception (e.g.
-"ValueError"). type(x) == int and type(x).__name__ work as in Python.`,
+Returns the type as Python does: int for 1, the class for an instance, the
+exception type for an exception. type(x) is int, type(x).__name__ and
+type(self)(...) work as in Python; type(x) == "int" also holds.`,
 	},
 	"str": {
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
@@ -1475,6 +1477,8 @@ Equivalent to (a // b, a % b) for integers.`,
 					typeName = s
 				} else if b, ok := typeArg.(*object.Builtin); ok {
 					if name, found := typeBuiltins[b]; found {
+						typeName = name
+					} else if name := syntheticTypeName(b); name != "" {
 						typeName = name
 					} else {
 						return errors.NewTypeErrorTagged("isinstance() arg 2 must be a type, string, or tuple of types")
@@ -2983,6 +2987,8 @@ func init() {
 
 	// Build reverse lookup for isinstance() to support bare type names
 	typeTypeBuiltin = builtins["type"]
+	typeObjectFn = typeObjectOf
+	typeTypeBuiltin.Repr = "<class 'type'>"
 	typeBuiltins = map[*object.Builtin]string{
 		builtins["int"]:       "int",
 		builtins["str"]:       "str",
@@ -3050,6 +3056,7 @@ func init() {
 			b.Repr = "<class '" + name + "'>"
 		}
 	}
+	initTypeObjects()
 }
 
 // instanceIndex converts an instance to an integer through its __index__,
@@ -3202,6 +3209,10 @@ func storeDictPairs(ctx context.Context, d *object.Dict, elems []object.Object, 
 
 // typeTypeBuiltin is the type builtin, for isinstance(C, type).
 var typeTypeBuiltin *object.Builtin
+
+// typeObjectFn is typeObjectOf, set in init to break the cycle through the
+// builtins table.
+var typeObjectFn func(object.Object) object.Object
 
 // exceptionClassName returns the exception type a builtin exception class
 // (ValueError, ...) or a library's registered one (re.error,

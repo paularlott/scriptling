@@ -18,6 +18,19 @@ var builtinTypeClasses = map[*Builtin][]*Class{}
 // classes. Call it from package init only.
 func RegisterBuiltinType(b *Builtin, classes ...*Class) {
 	builtinTypeClasses[b] = classes
+	if len(classes) > 0 {
+		classBuiltinType[classes[0]] = b
+	}
+}
+
+// classBuiltinType maps a class to the builtin registered with it first, so
+// type(d) is datetime.date.
+var classBuiltinType = map[*Class]*Builtin{}
+
+// BuiltinTypeFor returns the builtin whose first registered class is c.
+func BuiltinTypeFor(c *Class) (*Builtin, bool) {
+	b, ok := classBuiltinType[c]
+	return b, ok
 }
 
 // BuiltinTypeClasses returns the instance classes registered for b.

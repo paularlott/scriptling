@@ -230,7 +230,7 @@ str(b) + "|" + b.decode() + "|" + str(len(b))`)
 		t.Errorf("expected b'hi'|hi|2, got %s", result.StringValue())
 	}
 
-	if got := testEval(`type(b"\\x00")`); got.Inspect() != "bytes" {
+	if got := testEval(`type(b"\\x00").__name__`); got.Inspect() != "bytes" {
 		t.Errorf("bytes literal type: got %s", got.Inspect())
 	}
 	// A variable named b (the prefix must not eat identifiers).
@@ -431,7 +431,7 @@ ok`
 
 func TestEncodeReturnsBytes(t *testing.T) {
 	s := testEval(`b = "héllo".encode()
-type(b) + "|" + str(len(b)) + "|" + b.decode() + "|" + str("hi".encode())`)
+type(b).__name__ + "|" + str(len(b)) + "|" + b.decode() + "|" + str("hi".encode())`)
 	result, ok := s.(*object.String)
 	if !ok {
 		t.Fatalf("object is not String. got=%T (%+v)", s, s)

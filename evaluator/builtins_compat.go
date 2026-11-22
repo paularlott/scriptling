@@ -71,6 +71,14 @@ var notImplementedValue = object.NewSentinel("NotImplemented", "NotImplemented")
 func init() {
 	builtins["object"] = objectBuiltin
 	typeBuiltins[objectBuiltin] = "object"
+	// range, map and the other lazy iterables are types too: type(r) is
+	// range and isinstance(m, map) hold, and they print as classes.
+	for _, name := range []string{"range", "map", "filter", "zip", "enumerate", "reversed"} {
+		if b, ok := builtins[name]; ok {
+			typeBuiltins[b] = name
+			b.Repr = "<class '" + name + "'>"
+		}
+	}
 	builtins["ascii"] = &object.Builtin{
 		Fn: func(ctx context.Context, kwargs object.Kwargs, args ...object.Object) object.Object {
 			if err := errors.NoKwargs("ascii", kwargs); err != nil {
@@ -163,6 +171,12 @@ func isClassLike(o object.Object) bool {
 			return true
 		}
 		if _, ok := typeBuiltins[v]; ok {
+			return true
+		}
+		if _, ok := object.BuiltinTypeClasses(v); ok {
+			return true
+		}
+		if syntheticTypeName(v) != "" {
 			return true
 		}
 		_, ok := exceptionClassName(v)

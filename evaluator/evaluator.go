@@ -504,6 +504,14 @@ func typeBridgeEqual(a, b object.Object) bool {
 		typeName = n
 	} else if excName, isExc := exceptionClassName(bi); isExc {
 		typeName = excName
+	} else if n := syntheticTypeName(bi); n != "" {
+		typeName = n
+	} else if bi == object.DefaultDictType {
+		typeName = "defaultdict"
+	} else if bi == object.OrderedDictType {
+		typeName = "OrderedDict"
+	} else if classes, ok := object.BuiltinTypeClasses(bi); ok && len(classes) > 0 {
+		typeName = classes[0].Name
 	} else {
 		return false
 	}
@@ -6752,6 +6760,11 @@ func matchPattern(ctx context.Context, subject object.Object, pattern ast.Expres
 		case *object.Instance:
 			// A str subclass such as a StrEnum member compares with ==.
 			return matchValue(ctx, subject, object.NewString(p.Value), env)
+		case *object.Builtin, *object.Class:
+			// match type(x): case "int" names the type, as type(x) == "int".
+			if typeBridgeEqual(subject, object.NewString(p.Value)) {
+				return TRUE, subject
+			}
 		}
 		return FALSE, NULL
 

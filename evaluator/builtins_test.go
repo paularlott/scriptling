@@ -144,13 +144,9 @@ func TestBuiltinType(t *testing.T) {
 
 	for _, tt := range tests {
 		result := builtins["type"].Fn(context.Background(), object.NewKwargs(nil), tt.input)
-		str, ok := result.(*object.String)
-		if !ok {
-			t.Errorf("object is not String. got=%T (%+v)", result, result)
-			continue
-		}
-		if str.StringValue() != tt.expected {
-			t.Errorf("wrong value. got=%q, want=%q", str.StringValue(), tt.expected)
+		// type() returns the type itself: int for 1, printed <class 'int'>.
+		if got, want := result.Inspect(), "<class '"+tt.expected+"'>"; got != want {
+			t.Errorf("wrong value. got=%q, want=%q", got, want)
 		}
 	}
 }
@@ -496,8 +492,8 @@ t`, "KeyError"},
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := testEval(tt.script)
-			if result.Inspect() != tt.expected {
-				t.Errorf("got=%s, want=%s", result.Inspect(), tt.expected)
+			if want := "<class '" + tt.expected + "'>"; result.Inspect() != want {
+				t.Errorf("got=%s, want=%s", result.Inspect(), want)
 			}
 		})
 	}

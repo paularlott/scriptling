@@ -6,7 +6,7 @@ import scriptling.ai.agent as agent
 
 # Test 1: ToolRegistry accessible from ai namespace
 registry = ai.ToolRegistry()
-assert str(type(registry)) == "Registry", "ToolRegistry should create Registry instance"
+assert type(registry).__name__ == "Registry", "ToolRegistry should create Registry instance"
 print("✓ ToolRegistry accessible from ai namespace")
 
 # Test 2: Agent accessible from agent namespace
@@ -30,7 +30,7 @@ class MockClient:
 
 client = MockClient()
 bot = agent.Agent(client, system_prompt="test", model="test")
-assert str(type(bot)) == "Agent", "Agent should create Agent instance"
+assert type(bot).__name__ == "Agent", "Agent should create Agent instance"
 print("✓ Agent accessible from agent namespace")
 
 # Test 3: Nested access via attribute
