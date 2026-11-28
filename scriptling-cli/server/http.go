@@ -245,7 +245,7 @@ func (s *Server) buildMux() http.Handler {
 	mux := http.NewServeMux()
 
 	if s.mcpHandler != nil {
-		mcp := mcpCorsMiddleware(s.config.MCPCorsOrigins, s.hosts, s.scriptProtocolMiddleware(sseWriteDeadline(s.mcpHandler)))
+		mcp := mcpCorsMiddleware(s.config.MCPCorsOrigins, s.hosts, s.scriptProtocolMiddleware(sseWriteDeadline(s.lenientMCPSessions(s.mcpHandler))))
 		mux.Handle("POST /mcp", mcp)
 		mux.Handle("GET /mcp", mcp)
 		mux.Handle("DELETE /mcp", mcp)
@@ -413,6 +413,16 @@ func (s *Server) Stop(ctx context.Context) error {
 
 	if s.webRootZip != nil {
 		s.webRootZip.Close()
+	}
+
+	// Close the MCP server's 2026-07-28 subscriptions/listen streams first,
+	// so the HTTP shutdown isn't held up by them, and stop its session
+	// sweeping. A 2025 GET stream, or a call waiting on someone's answer,
+	// still has the shutdown's grace period to finish.
+	if s.mcpHandler != nil {
+		if mcpServer := s.mcpHandler.server.Load(); mcpServer != nil {
+			mcpServer.Shutdown()
+		}
 	}
 
 	err := s.httpServer.Shutdown(ctx)

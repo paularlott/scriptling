@@ -384,6 +384,13 @@ func buildRootCommand() *cli.Command {
 				EnvVars:    []string{"SCRIPTLING_MCP_CORS_ORIGIN"},
 				ConfigPath: []string{"server.mcp_cors_origins"},
 			},
+			&cli.StringFlag{
+				Name:         "mcp-secret",
+				Usage:        "Shared secret for MCP sessions and question state, so several server instances behind a load balancer (and restarts) accept each other's; at least 32 characters (default: a random key per process)",
+				DefaultValue: "",
+				EnvVars:      []string{"SCRIPTLING_MCP_SECRET"},
+				ConfigPath:   []string{"server.mcp_secret"},
+			},
 			&cli.StringSliceFlag{
 				Name:       "json-rpc-cors-origin",
 				Usage:      "Allowed browser origin for cross-origin /json-rpc requests (repeatable, \"*\" for any; default: same-origin only)",
@@ -1151,6 +1158,7 @@ func runServer(ctx context.Context, cmd *cli.Command, address string) error {
 		JSONRPCMaxConcurrency:   cmd.GetInt("json-rpc-concurrency"),
 		WebSocketOrigins:        cmd.GetStringSlice("websocket-origin"),
 		MCPCorsOrigins:          cmd.GetStringSlice("mcp-cors-origin"),
+		MCPSecret:               cmd.GetString("mcp-secret"),
 		JSONRPCCorsOrigins:      cmd.GetStringSlice("json-rpc-cors-origin"),
 		AllowedHosts:            cmd.GetStringSlice("allowed-hosts"),
 		AllowedPaths:            bootstrap.ParseAllowedPaths(cmd.GetString("allowed-paths")),

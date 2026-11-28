@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"net/http"
+	"crypto/hmac"
+	"crypto/sha256"
 	"fmt"
 	"io/fs"
 	"os"
@@ -19,6 +22,59 @@ import (
 	"github.com/paularlott/scriptling/extlibs/runtime"
 	mcpcli "github.com/paularlott/scriptling/scriptling-cli/mcp"
 )
+
+// mcpSessionTTL is how long an MCP session lasts; a client whose session has
+// expired gets 404 and starts a new one, as the protocol has it.
+const mcpSessionTTL = 24 * time.Hour
+
+// mcpQuestionTimeout is how long a tool's question waits for a 2025 client's
+// answer; it must stay under the HTTP server's WriteTimeout.
+const mcpQuestionTimeout = 4 * time.Minute
+
+// lenientMCPSessions serves a request whose MCP-Session-Id this server can't
+// verify (issued by another instance without a shared --mcp-secret, before a
+// restart, or expired) without a session, as before sessions existed, rather
+// than refusing it with 404: a client that worked without sessions keeps
+// working, and only loses being asked questions until it initializes again.
+func (s *Server) lenientMCPSessions(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if id := r.Header.Get("MCP-Session-Id"); id != "" && s.mcpSessions != nil {
+			if ok, err := s.mcpSessions.ValidateSession(r.Context(), id); err == nil && !ok {
+				r = r.Clone(r.Context())
+				r.Header.Del("MCP-Session-Id")
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// minMCPSecretLen is the shortest MCPSecret accepted.
+const minMCPSecretLen = 32
+
+// mcpSessionManager signs sessions with a key derived from MCPSecret, so
+// instances sharing it accept each other's sessions, or with a random key
+// per process when it is not set.
+func (s *Server) mcpSessionManager() (*mcp_lib.JWTSessionManager, error) {
+	if s.config.MCPSecret == "" {
+		sessions, err := mcp_lib.NewJWTSessionManagerWithAutoKey(mcpSessionTTL)
+		if err != nil {
+			return nil, fmt.Errorf("mcp sessions: %w", err)
+		}
+		return sessions, nil
+	}
+	if len(s.config.MCPSecret) < minMCPSecretLen {
+		return nil, fmt.Errorf("mcp secret must be at least %d characters", minMCPSecretLen)
+	}
+	return mcp_lib.NewJWTSessionManager(deriveMCPKey(s.config.MCPSecret, "sessions"), mcpSessionTTL), nil
+}
+
+// deriveMCPKey derives a separate key for each use of MCPSecret, so the
+// session key and the question-state key are never the same bytes.
+func deriveMCPKey(secret, purpose string) []byte {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte("scriptling mcp " + purpose + " v1"))
+	return mac.Sum(nil)
+}
 
 // setupMCP initializes the MCP server if configured
 func (s *Server) setupMCP() error {
@@ -116,6 +172,28 @@ func watchTree(watcher *fsnotify.Watcher, dir string) int {
 func (s *Server) createMCPServer() (*mcp_lib.Server, error) {
 	server := mcp_lib.NewServer("scriptling-server", build.Version)
 	server.SetInstructions("Execute Scriptling tools from the tools folder.")
+	// Sessions let the server ask MCP 2025-06-18 and 2025-11-25 clients
+	// questions mid-call (tool.ask / tool.confirm), as it asks 2026-07-28
+	// clients without them. The sessions are signed tokens, so the server
+	// keeps nothing per session itself; what the library keeps (what each
+	// client declared, its resource subscriptions) it sweeps once the
+	// session goes idle, and Stop shuts the MCP server down.
+	sessions, err := s.mcpSessionManager()
+	if err != nil {
+		return nil, err
+	}
+	server.SetSessionManager(sessions)
+	s.mcpSessions = sessions
+	// A question waits at most mcpQuestionTimeout for its answer: under the
+	// HTTP server's write budget, so the answer and the tool's result still
+	// reach the client on the call's stream.
+	server.SetElicitationTimeout(mcpQuestionTimeout)
+	if s.config.MCPSecret != "" {
+		server.SetRequestStateKey(deriveMCPKey(s.config.MCPSecret, "requestState"))
+	}
+	// Callers that never initialize (scripts, curl) keep working, served
+	// without a session; only a client that uses its session can be asked.
+	server.SetSessionsOptional(true)
 	server.DeclareExtension(mcp_lib.UIAppsExtensionID, map[string]any{
 		"mimeTypes": []string{mcp_lib.UIAppMimeType},
 	})

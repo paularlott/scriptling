@@ -678,6 +678,9 @@ Example:
 		functions[name] = builtin
 	}
 	functions["progress"] = progressBuiltin()
+	for name, builtin := range elicitBuiltins() {
+		functions[name] = builtin
+	}
 
 	return object.NewLibrary("scriptling.mcp.tool", functions, nil, "MCP tool parameter access and result functions")
 }

@@ -6,7 +6,7 @@ go 1.27.4
 replace github.com/paularlott/scriptling => ../..
 
 require (
-	github.com/paularlott/scriptling v0.43.0
+	github.com/paularlott/scriptling v0.44.0
 	github.com/paularlott/scriptling-onepassword v0.1.1
 )
 
@@ -24,7 +24,7 @@ require (
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/go-sql-driver/mysql v1.10.2 // indirect
+	github.com/go-sql-driver/mysql v1.11.0 // indirect
 	github.com/gobwas/glob v1.1.0 // indirect
 	github.com/google/flatbuffers v25.12.19+incompatible // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -43,11 +43,11 @@ require (
 	github.com/paularlott/gossiper/client v1.0.0 // indirect
 	github.com/paularlott/jsonrpc v0.4.0 // indirect
 	github.com/paularlott/logger v0.4.0 // indirect
-	github.com/paularlott/mcp v0.36.0 // indirect
+	github.com/paularlott/mcp v0.39.0 // indirect
 	github.com/paularlott/snapshotkv v0.6.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20260916203055-22a1a467d9f0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/shamaton/msgpack/v3 v3.2.8 // indirect
+	github.com/shamaton/msgpack/v3 v3.3.0 // indirect
 	github.com/shirou/gopsutil/v3 v3.24.5 // indirect
 	github.com/shoenig/go-m1cpu v0.2.4 // indirect
 	github.com/tetratelabs/wabin v0.0.0-20230304001439-f6f874872834 // indirect
@@ -71,8 +71,8 @@ require (
 	golang.org/x/text v0.44.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	modernc.org/libc v1.82.12 // indirect
+	modernc.org/libc v1.82.14 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
-	modernc.org/memory v1.13.0 // indirect
+	modernc.org/memory v1.13.1 // indirect
 	modernc.org/sqlite v1.63.0 // indirect
 )

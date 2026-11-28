@@ -145,6 +145,12 @@ type ServerConfig struct {
 	// examples/mcp-app-host-harness from a different origin).
 	MCPCorsOrigins []string
 
+	// MCPSecret, when set, signs MCP sessions and the state a 2026-07-28
+	// client sends back with its answers, so every instance sharing it (and
+	// the same instance after a restart) accepts what another issued. Empty:
+	// a random key per process, fine for a single instance. Never logged.
+	MCPSecret string
+
 	// JSONRPCCorsOrigins restricts which browser origins may call /json-rpc:
 	// an origin allowlist, "*" to allow every origin, or empty for the
 	// same-origin default. Same shape as MCPCorsOrigins. A disallowed origin
@@ -206,6 +212,7 @@ type Server struct {
 	config                ServerConfig
 	httpServer            *http.Server
 	mcpHandler            *reloadableMCPHandler
+	mcpSessions           *mcp_lib.JWTSessionManager // the MCP server's sessions (lenientMCPSessions)
 	pluginServer          *scriptlingplugin.Server // non-nil when plugin mode is active
 	handlers              map[string]string        // path -> "library.function"
 	wsHandlers            map[string]string        // path -> "library.function" for WebSocket

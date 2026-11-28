@@ -140,9 +140,9 @@ func TestMCPRoute_POST_CrossOrigin_DefaultDeniesForeignOrigin(t *testing.T) {
 // TestMCPRoute_DELETE_Routed proves DELETE /mcp still reaches
 // mcp.Server.HandleRequest (rather than ServeMux's own unrouted 405) without
 // relying on the CORS header for that signal, since the header's presence
-// is now origin-dependent: this server has no session manager configured,
-// so a request that reached HandleRequest gets its specific "Session
-// management not enabled" message, not net/http's generic 405 body.
+// is now origin-dependent: a DELETE without a session id that reached
+// HandleRequest gets its specific "MCP-Session-Id header required" message,
+// not net/http's generic 405 body.
 func TestMCPRoute_DELETE_Routed(t *testing.T) {
 	s := buildMinimalMCPServer(t, nil)
 	ts := httptest.NewServer(s.buildMux())
@@ -157,12 +157,14 @@ func TestMCPRoute_DELETE_Routed(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d, want 405 (no session manager configured)", resp.StatusCode)
+	// Sessions are enabled, so the MCP handler answers a DELETE without a
+	// session id itself: there is no session to end.
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (no MCP-Session-Id to end)", resp.StatusCode)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	if !bytes.Contains(body, []byte("Session management not enabled")) {
-		t.Errorf("body = %q, want HandleRequest's own \"Session management not enabled\" message (DELETE /mcp may not be routed to the MCP handler)", body)
+	if !bytes.Contains(body, []byte("MCP-Session-Id header required")) {
+		t.Errorf("body = %q, want HandleRequest's own \"MCP-Session-Id header required\" message (DELETE /mcp may not be routed to the MCP handler)", body)
 	}
 }
 

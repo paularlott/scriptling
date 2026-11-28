@@ -219,6 +219,7 @@ func RunMCPStdioServer(ctx context.Context, config ServerConfig) error {
 
 	Log.Info("MCP stdio server ready")
 	serveErr := mcpServer.ServeStdio(ctx)
+	mcpServer.Shutdown()
 
 	if serveErr != nil {
 		return fmt.Errorf("mcp server failed: %w", serveErr)
