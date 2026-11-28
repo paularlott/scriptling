@@ -43,7 +43,7 @@ require (
 	github.com/paularlott/gossiper/client v1.0.0 // indirect
 	github.com/paularlott/jsonrpc v0.4.0 // indirect
 	github.com/paularlott/logger v0.4.0 // indirect
-	github.com/paularlott/mcp v0.39.0 // indirect
+	github.com/paularlott/mcp v0.41.0 // indirect
 	github.com/paularlott/snapshotkv v0.6.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20260916203055-22a1a467d9f0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

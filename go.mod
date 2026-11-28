@@ -16,7 +16,7 @@ require (
 	github.com/paularlott/gossiper/client v1.0.0
 	github.com/paularlott/jsonrpc v0.4.0
 	github.com/paularlott/logger v0.4.0
-	github.com/paularlott/mcp v0.39.0
+	github.com/paularlott/mcp v0.41.0
 	github.com/paularlott/snapshotkv v0.6.0
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/valkey-io/valkey-go v1.0.80
