@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -233,9 +234,13 @@ Example:
 				} else if d := kwargs.Get("default"); d != nil {
 					fallback = d
 				}
-				var value any
-				found, err := mcplib.Recall(ctx, name, &value)
+				var raw json.RawMessage
+				found, err := mcplib.Recall(ctx, name, &raw)
 				if err != nil || !found {
+					return fallback
+				}
+				value, err := decodeKept(raw)
+				if err != nil {
 					return fallback
 				}
 				return conversion.FromGo(value)
@@ -243,7 +248,11 @@ Example:
 			HelpText: `recall(name, default=None) - Read back what remember() kept on an earlier run
 
 Returns the value an earlier run of this same tool call kept with
-remember(name, value), or default when there is none. See remember().`,
+remember(name, value), or default when there is none. See remember().
+
+A kept value travels as JSON, so it comes back as JSON types: a whole number
+is an int (also inside lists and dicts), any other number a float, a tuple a
+list.`,
 		},
 	}
 }
@@ -298,6 +307,41 @@ func elicitNamed(ctx context.Context, base, message string, schema map[string]an
 func shortHash(text string) string {
 	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:8])
+}
+
+// decodeKept decodes a value kept with remember. Numbers are read exactly
+// (json.Number), and a whole number becomes an int64, so a kept 3 comes back
+// as an int rather than the float JSON would otherwise give.
+func decodeKept(raw json.RawMessage) (any, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	return wholeNumbers(v), nil
+}
+
+func wholeNumbers(v any) any {
+	switch t := v.(type) {
+	case json.Number:
+		if i, err := t.Int64(); err == nil {
+			return i
+		}
+		f, _ := t.Float64()
+		return f
+	case []any:
+		for i, e := range t {
+			t[i] = wholeNumbers(e)
+		}
+		return t
+	case map[string]any:
+		for k, e := range t {
+			t[k] = wholeNumbers(e)
+		}
+		return t
+	}
+	return v
 }
 
 // typedAnswer returns content with each integer property's value as an

@@ -207,3 +207,42 @@ tool.return_object({"ok": tool.confirm("Go?"), "answer": tool.ask("Which?", {"ty
 		t.Fatalf("timeout: %v %v", resp, err)
 	}
 }
+
+// Values kept with remember() come back with JSON's types, but a whole
+// number as an int, also inside lists and dicts.
+func TestRecallKeepsWholeNumbersAsInts(t *testing.T) {
+	var runs atomic.Int32
+	srv := elicitScriptServer(t, `
+import scriptling.mcp.tool as tool
+kept = tool.recall("kept")
+if kept == None:
+    tool.remember("kept", {"n": 3, "f": 1.5, "big": 9007199254740993, "neg": -4, "items": [1, 2.5, {"k": 7}], "s": "x", "b": True})
+ok = tool.confirm("Go?")
+if kept == None:
+    tool.return_object({"first": True})
+types = {
+    "n": type(kept["n"]).__name__, "f": type(kept["f"]).__name__, "big": type(kept["big"]).__name__,
+    "neg": type(kept["neg"]).__name__, "item0": type(kept["items"][0]).__name__,
+    "item1": type(kept["items"][1]).__name__, "nested": type(kept["items"][2]["k"]).__name__,
+    "s": type(kept["s"]).__name__, "b": type(kept["b"]).__name__,
+}
+tool.return_object({"types": types, "sum": kept["n"] + kept["items"][2]["k"], "big": kept["big"], "range": len(range(kept["n"]))})
+`, &runs)
+	ctx := context.Background()
+	_, need, err := srv.CallToolWithInput(ctx, "s", nil, nil)
+	if err != nil || need == nil {
+		t.Fatal(need, err)
+	}
+	var key string
+	for k := range need.Requests {
+		key = k
+	}
+	resp, _, err := srv.CallToolWithInput(ctx, "s", nil, &mcplib.ToolInput{
+		Responses: map[string]*mcplib.ElicitResult{key: {Action: mcplib.ElicitAccept, Content: map[string]any{"approve": true}}},
+		State:     need.State,
+	})
+	want := `{"big":9007199254740993,"range":3,"sum":10,"types":{"b":"bool","big":"int","f":"float","item0":"int","item1":"float","n":"int","neg":"int","nested":"int","s":"str"}}`
+	if err != nil || text(t, resp) != want {
+		t.Fatalf("got %v %v\nwant %s", resp, err, want)
+	}
+}
