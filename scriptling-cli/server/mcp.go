@@ -2,11 +2,11 @@ package server
 
 import (
 	"context"
-	"net/http"
 	"crypto/hmac"
 	"crypto/sha256"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -32,8 +32,8 @@ const mcpSessionTTL = 24 * time.Hour
 const mcpQuestionTimeout = 4 * time.Minute
 
 // lenientMCPSessions serves a request whose MCP-Session-Id this server can't
-// verify (issued by another instance without a shared --mcp-secret, before a
-// restart, or expired) without a session, as before sessions existed, rather
+// verify (issued before a restart without --mcp-secret, or expired) without
+// a session, as before sessions existed, rather
 // than refusing it with 404: a client that worked without sessions keeps
 // working, and only loses being asked questions until it initializes again.
 func (s *Server) lenientMCPSessions(next http.Handler) http.Handler {
@@ -52,8 +52,8 @@ func (s *Server) lenientMCPSessions(next http.Handler) http.Handler {
 const minMCPSecretLen = 32
 
 // mcpSessionManager signs sessions with a key derived from MCPSecret, so
-// instances sharing it accept each other's sessions, or with a random key
-// per process when it is not set.
+// they survive a restart, or with a random key per process when it is not
+// set.
 func (s *Server) mcpSessionManager() (*mcp_lib.JWTSessionManager, error) {
 	if s.config.MCPSecret == "" {
 		sessions, err := mcp_lib.NewJWTSessionManagerWithAutoKey(mcpSessionTTL)

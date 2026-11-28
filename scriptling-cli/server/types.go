@@ -146,9 +146,9 @@ type ServerConfig struct {
 	MCPCorsOrigins []string
 
 	// MCPSecret, when set, signs MCP sessions and the state a 2026-07-28
-	// client sends back with its answers, so every instance sharing it (and
-	// the same instance after a restart) accepts what another issued. Empty:
-	// a random key per process, fine for a single instance. Never logged.
+	// client sends back with its answers, so both stay valid when the server
+	// restarts. Empty: a random key per process, which is all one instance
+	// needs. Never logged.
 	MCPSecret string
 
 	// JSONRPCCorsOrigins restricts which browser origins may call /json-rpc:
@@ -213,12 +213,12 @@ type Server struct {
 	httpServer            *http.Server
 	mcpHandler            *reloadableMCPHandler
 	mcpSessions           *mcp_lib.JWTSessionManager // the MCP server's sessions (lenientMCPSessions)
-	pluginServer          *scriptlingplugin.Server // non-nil when plugin mode is active
-	handlers              map[string]string        // path -> "library.function"
-	wsHandlers            map[string]string        // path -> "library.function" for WebSocket
-	jsonrpcMethods        map[string]string        // JSON-RPC method name -> "library.function"
-	jsonrpcNotifications  map[string]string        // JSON-RPC notification name -> "library.function"
-	jsonrpcServer         *jsonrpc.Server          // built lazily from the maps above
+	pluginServer          *scriptlingplugin.Server   // non-nil when plugin mode is active
+	handlers              map[string]string          // path -> "library.function"
+	wsHandlers            map[string]string          // path -> "library.function" for WebSocket
+	jsonrpcMethods        map[string]string          // JSON-RPC method name -> "library.function"
+	jsonrpcNotifications  map[string]string          // JSON-RPC notification name -> "library.function"
+	jsonrpcServer         *jsonrpc.Server            // built lazily from the maps above
 	jsonrpcServerOnce     sync.Once
 	middleware            string
 	notFoundHandler       string

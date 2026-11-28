@@ -386,7 +386,7 @@ func buildRootCommand() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:         "mcp-secret",
-				Usage:        "Shared secret for MCP sessions and question state, so several server instances behind a load balancer (and restarts) accept each other's; at least 32 characters (default: a random key per process)",
+				Usage:        "Secret that signs MCP sessions and question state, so they stay valid when the server restarts; at least 32 characters (default: a random key per process)",
 				DefaultValue: "",
 				EnvVars:      []string{"SCRIPTLING_MCP_SECRET"},
 				ConfigPath:   []string{"server.mcp_secret"},

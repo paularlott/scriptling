@@ -81,7 +81,7 @@ The linter exits with code 0 if no errors are found, and code 1 if any errors ex
 | `--json-rpc` | `SCRIPTLING_JSONRPC` | Enable JSON-RPC 2.0 server mode: stdio by default, HTTP `/json-rpc` with `--server` | false |
 | `--mcp-tools` | `SCRIPTLING_MCP_TOOLS` | Directory containing MCP tools | (disabled) |
 | `--mcp-cors-origin` | `SCRIPTLING_MCP_CORS_ORIGIN` | Allowed browser origin for cross-origin `/mcp` requests (repeatable, `*` for any) | same-origin only |
-| `--mcp-secret` | `SCRIPTLING_MCP_SECRET` | Shared secret (32+ characters) for MCP sessions and question state, so several instances behind a load balancer, and restarts, accept each other's | random per process |
+| `--mcp-secret` | `SCRIPTLING_MCP_SECRET` | Secret (32+ characters) that signs MCP sessions and question state, so they stay valid when the server restarts | random per process |
 | `--bearer-token` | `SCRIPTLING_BEARER_TOKEN` | Bearer token for authentication | none |
 | `--oidc-issuer` | `SCRIPTLING_OIDC_ISSUER` | Accept OAuth JWT access tokens from this identity provider (issuer URL); with `--bearer-token`, either is accepted | none |
 | `--oidc-jwks-url` | `SCRIPTLING_OIDC_JWKS_URL` | Identity provider JWKS URL | discovered from the issuer |
@@ -536,15 +536,11 @@ The server gives each client that initializes an MCP session, which lets it ask 
 such as a plain `curl` call, is still served, it just can't be asked anything. Sessions are signed tokens that
 expire after 24 hours; the server keeps nothing for them beyond what it sweeps once a session goes idle.
 
-They are signed with a random key per process unless `--mcp-secret` is set. Running several instances behind a
-load balancer, give them all the same secret: every instance then accepts every session, a 2026-07-28 client's
-answer to a question can land on any instance, and sessions survive a restart. A session id the server can't
-verify (another instance without the secret, an earlier run, or one past its 24 hours) is served as if no session
-were sent, so nothing stops working; that client just can't be asked questions until it initializes again.
-A question waits up to 4 minutes for its answer, then counts as dismissed. Asking a 2025 client mid-call is the
-exception: what the client declared and the question waiting for its answer live in the instance it connected
-to, so for that the load balancer must route by the `MCP-Session-Id` header (sticky sessions). Without it the
-tool may not be able to ask, or may wait for an answer that went to another instance.
+The MCP server is meant to run as a single instance. Sessions are signed with a random key per process, so a
+restart ends them; set `--mcp-secret` to keep them, and a 2026-07-28 client's pending answers, valid across
+restarts. A session id the server can't verify (from before a restart without the secret, or past its 24 hours)
+is served as if no session were sent, so nothing stops working; that client just can't be asked questions until
+it initializes again. A question waits up to 4 minutes for its answer, then counts as dismissed.
 
 ##### Complete Example
 
