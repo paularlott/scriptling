@@ -1930,10 +1930,11 @@ func formatPercentValue(ctx context.Context, spec string, conversion byte, val o
 	case 'c':
 		switch v := boolAsInt(val).(type) {
 		case *object.Integer:
-			if v.IntValue() < 0 || v.IntValue() > 0x10ffff {
+			code := v.IntValue()
+			if code < 0 || code > 0x10ffff {
 				return "", errors.NewOverflowError("%%c arg not in range(0x110000)")
 			}
-			return string(rune(v.IntValue())), nil
+			return string(rune(code)), nil
 		case *object.String:
 			if len(v.StringValue()) != 1 {
 				return "", errors.NewTypeErrorTagged("%%c requires int or char")
@@ -4350,10 +4351,11 @@ func evalInOperator(ctx context.Context, left, right object.Object, env *object.
 		// substring containment. Anything else is a type error.
 		switch needle := boolAsInt(left).(type) {
 		case *object.Integer:
-			if needle.IntValue() < 0 || needle.IntValue() > 255 {
+			n := needle.IntValue()
+			if n < 0 || n > 255 {
 				return errors.NewValueError("byte must be in range(0, 256)")
 			}
-			target := byte(needle.IntValue())
+			target := byte(n)
 			for _, b := range container.BytesValue() {
 				if b == target {
 					return TRUE

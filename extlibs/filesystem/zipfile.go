@@ -326,6 +326,12 @@ func (z *zipfileLibraryInstance) fnExtractall(ctx context.Context, kwargs object
 
 // extractZipFile extracts a single zip.File to dest, with zip-slip protection.
 func (z *zipfileLibraryInstance) extractZipFile(f *zip.File, dest string) (string, error) {
+	// A member name must be a local, relative path: no "..", no absolute
+	// path, no volume name (zip slip). isWithinDir below checks the result
+	// too.
+	if !filepath.IsLocal(filepath.FromSlash(f.Name)) {
+		return "", fmt.Errorf("zip entry %q escapes destination directory", f.Name)
+	}
 	target := filepath.Join(dest, f.Name)
 	if !isWithinDir(dest, target) {
 		return "", fmt.Errorf("zip entry %q escapes destination directory", f.Name)

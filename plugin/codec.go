@@ -90,7 +90,8 @@ func objectToValueWithCallbacks(obj object.Object, callbacks *callbackSet) (Valu
 		}
 		return Value{Type: valueList, Items: items}, nil
 	case *object.Dict:
-		entries := make(map[string]Value, v.Len())
+		// No size hint: the map grows as entries are encoded.
+		entries := make(map[string]Value)
 		for _, pair := range v.All() {
 			key, ok := pair.Key.(*object.String)
 			if !ok {
